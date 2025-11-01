@@ -1,0 +1,51 @@
+name: update main with release version tag
+
+run-name: update main with release ${{ inputs.release_tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Select release tag to merge (e.g., v1.2.3)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  
+jobs:
+  merge-release:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history and tags
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      
+      - name: Validate tag exists
+        run: |
+          if ! git rev-parse "${{ inputs.release_tag }}" >/dev/null 2>&1; then
+            echo "Error: Tag ${{ inputs.release_tag }} does not exist"
+            exit 1
+          fi
+          echo "Tag ${{ inputs.release_tag }} validated successfully"
+      
+      - name: Checkout main branch
+        run: |
+          git checkout main
+          git pull origin main
+      
+      - name: Merge release tag with theirs strategy
+        run: |
+          git merge ${{ inputs.release_tag }} -X theirs -m "Merge release ${{ inputs.release_tag }} into main"
+      
+      - name: Push changes to main
+        run: |
+          git push origin main

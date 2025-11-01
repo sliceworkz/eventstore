@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>org.sliceworkz</groupId>
+		<artifactId>sliceworkz-eventstore-dependencies</artifactId>
+		<version>0.1.0-SNAPSHOT</version>
+		<relativePath>../sliceworkz-eventstore-dependencies</relativePath>
+	</parent>
+	<artifactId>sliceworkz-eventstore-parent-pom</artifactId>
+	
+	<name>${project.artifactId}}</name>
+	<description>DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)</description>
+	<url>https://sliceworkz.github.io/eventstore</url>
+	
+	<packaging>pom</packaging>
+
+	<properties>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+		<java.version>21</java.version>
+		<maven.compiler.release>21</maven.compiler.release>
+		<maven.compiler.source>21</maven.compiler.source>
+		<maven.compiler.target>21</maven.compiler.target>
+
+		<maven.maven-surefire-plugin.version>3.5.4</maven.maven-surefire-plugin.version>
+		<maven.maven-compiler-plugin.version>3.14.1</maven.maven-compiler-plugin.version>
+		<maven.maven-source-plugin.version>3.3.1</maven.maven-source-plugin.version>
+		<maven.maven-javadoc-plugin.version>3.12.0</maven.maven-javadoc-plugin.version>
+		<maven.maven-jar-plugin.version>3.4.2</maven.maven-jar-plugin.version>
+		<maven.maven-assembly-plugin.version>3.7.1</maven.maven-assembly-plugin.version>
+		<maven.maven-pgp-plugin.version>3.2.8</maven.maven-pgp-plugin.version>
+	
+		<!-- modules are deployed to the repo by default, ones that should not be deployed can override this to true -->		
+		<maven.deploy.skip>false</maven.deploy.skip>
+	</properties>
+	
+	<dependencies>
+	
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+		</dependency>
+		<dependency>
+		  <groupId>com.fasterxml.jackson.datatype</groupId>
+		  <artifactId>jackson-datatype-jsr310</artifactId>
+		</dependency>
+		
+		<dependency>
+			<groupId>org.junit.jupiter</groupId>
+			<artifactId>junit-jupiter-api</artifactId>
+			<scope>test</scope>
+		</dependency>
+
+		<dependency>
+		    <groupId>org.slf4j</groupId>
+		    <artifactId>slf4j-api</artifactId>
+		</dependency>
+		<dependency>
+		    <groupId>org.slf4j</groupId>
+		    <artifactId>slf4j-simple</artifactId>
+		    <scope>test</scope>
+		</dependency>
+
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<version>${maven.maven-surefire-plugin.version}</version>
+			</plugin>
+			<plugin>
+				<artifactId>maven-failsafe-plugin</artifactId>
+				<version>${maven.maven-surefire-plugin.version}</version>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-assembly-plugin</artifactId>
+				<version>${maven.maven-assembly-plugin.version}</version>
+			</plugin>
+			<plugin>
+			    <groupId>org.apache.maven.plugins</groupId>
+			    <artifactId>maven-compiler-plugin</artifactId>
+			    <version>${maven.maven-compiler-plugin.version}</version>
+			</plugin>
+	        <plugin>
+	            <groupId>org.apache.maven.plugins</groupId>
+	            <artifactId>maven-source-plugin</artifactId>
+	            <version>${maven.maven-source-plugin.version}</version>
+	            <executions>
+					<execution>
+						<id>attach-javadocs</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>jar-no-fork</goal>
+						</goals>
+					</execution>
+	            </executions>
+	        </plugin>	
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-javadoc-plugin</artifactId>
+				<version>${maven.maven-javadoc-plugin.version}</version>
+				<executions>
+					<execution>
+						<id>attach-javadocs</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>jar</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+
+	</build>
+	
+	<profiles>
+		<profile>
+			<id>gpg-ci</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-gpg-plugin</artifactId>
+						<version>${maven.maven-pgp-plugin.version}</version>
+						<executions>
+							<execution>
+								<id>sign-artifacts</id>
+								<phase>verify</phase>
+								<goals>
+									<goal>sign</goal>
+								</goals>
+							</execution>
+						</executions>
+						<configuration>
+							<gpgArguments>
+								<arg>--pinentry-mode</arg>
+								<arg>loopback</arg>
+							</gpgArguments>
+							<passphrase>${env.GPG_PASSPHRASE}</passphrase>
+						</configuration>
+					</plugin>
+		        				
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
+
+	<distributionManagement>
+		<repository>
+			<id>io.cloudrepo.xti.opensource</id>
+			<name>CloudRepo Releases</name>
+			<url>https://xti.mycloudrepo.io/repositories/opensource</url>
+		</repository>
+		<snapshotRepository>
+			<id>io.cloudrepo.xti.opensource</id>
+			<name>CloudRepo Snapshots</name>
+			<url>https://xti.mycloudrepo.io/repositories/opensource</url>
+		</snapshotRepository>
+	</distributionManagement>
+	
+	<licenses>
+		<license>
+			<name>LGPL License</name>
+			<url>https://opensource.org/licenses/LGPL</url>
+		</license>
+	</licenses>
+
+	<developers>
+		<developer>
+			<name>Günther Van Roey</name>
+			<email>gunther.vanroey@xt-i.com</email>
+		</developer>
+	</developers>
+	
+	<scm>
+		<connection>https://github.com/sliceworkz/eventstore.git</connection>
+		<developerConnection>scm:git:git://github.com/sliceworkz/eventstore.git</developerConnection>
+		<url>https://github.com/sliceworkz/eventstore</url>
+	</scm>
+	
+</project>

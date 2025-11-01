@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>org.sliceworkz</groupId>
+		<artifactId>sliceworkz-eventstore-parent-pom</artifactId>
+		<version>0.1.0-SNAPSHOT</version>
+		<relativePath>sliceworkz-eventstore-parent-pom</relativePath>
+	</parent>
+	<artifactId>sliceworkz-eventstore</artifactId>
+	<!-- version must be kept here in order to be able to update it automatically, would not work if inherited -->
+	<version>0.1.0-SNAPSHOT</version>
+	<packaging>pom</packaging>
+	
+	<properties>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+	</properties>
+	
+	<modules>
+		<!-- maven build constructs -->
+		<module>sliceworkz-eventstore-dependencies</module>
+		<module>sliceworkz-eventstore-parent-pom</module>
+		<module>sliceworkz-eventstore-bom</module>
+		
+		<!-- project modules -->
+		<module>sliceworkz-eventstore-api</module>
+		<module>sliceworkz-eventstore-impl</module>
+
+		<!-- examples -->
+		<module>sliceworkz-eventstore-examples</module>
+
+		<!-- tests, those same scenarios will be run inmem as wel as on postgres  -->
+		<module>sliceworkz-eventstore-tests</module>
+		
+		<!-- infra implementations -->
+		<module>sliceworkz-eventstore-infra-inmem</module>
+		<module>sliceworkz-eventstore-infra-postgres</module>
+	</modules>
+	
+</project>

@@ -1,0 +1,123 @@
+name: create-release-tag-and-bump - on release/<major>.<micro>
+
+run-name: "create-release-tag-and-bump on [${{ github.ref_name }}]"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # using a PAT as otherwise the workflow on the tag is not kicked off
+          token: ${{ secrets.PAT_TOKEN }}
+      
+      - name: Validate branch name
+        run: |
+          BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+          echo "Current branch: $BRANCH_NAME"
+          
+          if [[ ! "$BRANCH_NAME" =~ ^release/[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: Current branch must match pattern 'release/<major>.<minor>'"
+            echo "Current branch is: $BRANCH_NAME"
+            exit 1
+          fi
+          
+          # Extract major and minor version
+          VERSION_PREFIX=$(echo "$BRANCH_NAME" | sed 's/release\///')
+          echo "VERSION_PREFIX=$VERSION_PREFIX" >> $GITHUB_ENV
+          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
+      
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
+      
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      
+      - name: Get current Maven version
+        run: |
+          CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          echo "Current version: $CURRENT_VERSION"
+          
+          # Validate version format (should be X.Y.Z-SNAPSHOT)
+          if [[ ! "$CURRENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-SNAPSHOT$ ]]; then
+            echo "Error: Current version must be in format X.Y.Z-SNAPSHOT"
+            echo "Found: $CURRENT_VERSION"
+            exit 1
+          fi
+          
+          # Extract version components
+          RELEASE_VERSION=${CURRENT_VERSION%-SNAPSHOT}
+          echo "CURRENT_VERSION=$CURRENT_VERSION" >> $GITHUB_ENV
+          echo "RELEASE_VERSION=$RELEASE_VERSION" >> $GITHUB_ENV
+          
+          # Extract major, minor, micro
+          IFS='.' read -r MAJOR MINOR MICRO <<< "$RELEASE_VERSION"
+          echo "MAJOR=$MAJOR" >> $GITHUB_ENV
+          echo "MINOR=$MINOR" >> $GITHUB_ENV
+          echo "MICRO=$MICRO" >> $GITHUB_ENV
+          
+          # Validate that major.minor matches branch
+          if [[ "$MAJOR.$MINOR" != "$VERSION_PREFIX" ]]; then
+            echo "Error: Version prefix $MAJOR.$MINOR doesn't match branch prefix $VERSION_PREFIX"
+            exit 1
+          fi
+      
+      - name: Update workflow run name
+        run: |
+          echo "::notice title=create-release-tag-and-bump - release: v$RELEASE_VERSION"
+      
+      - name: Set release version
+        run: |
+          echo "Setting version to $RELEASE_VERSION"
+          mvn versions:set -DnewVersion=$RELEASE_VERSION -DprocessAllModules -DgenerateBackupPoms=false
+          
+          git add .
+          git commit -m "Release version $RELEASE_VERSION" || echo "No changes to commit"
+      
+      - name: Create and push tag
+        run: |
+          TAG_NAME="v$RELEASE_VERSION"
+          echo "Creating tag: $TAG_NAME"
+          
+          git tag -a "$TAG_NAME" -m "Release version $RELEASE_VERSION"
+          git push origin "$TAG_NAME"
+      
+      - name: Set next development version
+        run: |
+          NEXT_MICRO=$((MICRO + 1))
+          NEXT_VERSION="$MAJOR.$MINOR.$NEXT_MICRO-SNAPSHOT"
+          echo "Setting next development version to $NEXT_VERSION"
+          
+          mvn versions:set -DnewVersion=$NEXT_VERSION -DprocessAllModules -DgenerateBackupPoms=false
+          
+          git add .
+          git commit -m "Prepare for next development iteration: $NEXT_VERSION"
+      
+      - name: Push changes
+        run: |
+          git push origin $BRANCH_NAME
+      
+      - name: Summary
+        run: |
+          echo "### Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: $BRANCH_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "- **Released Version**: $RELEASE_VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag Created**: v$RELEASE_VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "- **Next Dev Version**: $MAJOR.$MINOR.$((MICRO + 1))-SNAPSHOT" >> $GITHUB_STEP_SUMMARY

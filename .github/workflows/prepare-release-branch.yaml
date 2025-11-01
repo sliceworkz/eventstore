@@ -1,0 +1,115 @@
+name: prepare-release-branch - create release branch and bump develop
+
+run-name: "prepare-release-branch - create release branch and bump develop"
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - major
+          - minor
+
+jobs:
+  version-bump:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+        
+    steps:
+      - name: Checkout develop branch
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      
+      - name: Extract current version
+        id: current_version
+        run: |
+          CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout | grep -v '\[')
+          echo "Current version: $CURRENT_VERSION"
+          
+          # Extract major and minor from version (assumes format X.Y.Z-SNAPSHOT or X.Y.Z)
+          MAJOR=$(echo $CURRENT_VERSION | cut -d. -f1)
+          MINOR=$(echo $CURRENT_VERSION | cut -d. -f2)
+          
+          echo "major=$MAJOR" >> $GITHUB_OUTPUT
+          echo "minor=$MINOR" >> $GITHUB_OUTPUT
+      
+      - name: Calculate new versions
+        id: new_versions
+        run: |
+          MAJOR=${{ steps.current_version.outputs.major }}
+          MINOR=${{ steps.current_version.outputs.minor }}
+          BUMP_TYPE=${{ github.event.inputs.bump_type }}
+          
+          # Release version (same as current)
+          RELEASE_MAJOR=$MAJOR
+          RELEASE_MINOR=$MINOR
+          
+          # Next development version
+          if [ "$BUMP_TYPE" == "major" ]; then
+            NEXT_MAJOR=$((MAJOR + 1))
+            NEXT_MINOR=0
+          else
+            NEXT_MAJOR=$MAJOR
+            NEXT_MINOR=$((MINOR + 1))
+          fi
+          
+          echo "release_major=$RELEASE_MAJOR" >> $GITHUB_OUTPUT
+          echo "release_minor=$RELEASE_MINOR" >> $GITHUB_OUTPUT
+          echo "next_major=$NEXT_MAJOR" >> $GITHUB_OUTPUT
+          echo "next_minor=$NEXT_MINOR" >> $GITHUB_OUTPUT
+          
+          echo "Release version: $RELEASE_MAJOR.$RELEASE_MINOR"
+          echo "Next dev version: $NEXT_MAJOR.$NEXT_MINOR"
+      
+      - name: Create and checkout release branch
+        run: |
+          RELEASE_BRANCH="release/${{ steps.new_versions.outputs.release_major }}.${{ steps.new_versions.outputs.release_minor }}"
+          git checkout -b $RELEASE_BRANCH
+          echo "Created branch: $RELEASE_BRANCH"
+      
+      - name: Push release branch
+        run: |
+          git push origin release/${{ steps.new_versions.outputs.release_major }}.${{ steps.new_versions.outputs.release_minor }}
+      
+      - name: Checkout develop branch
+        run: |
+          git checkout develop
+      
+      - name: Set next development version on develop
+        run: |
+          NEXT_VERSION="${{ steps.new_versions.outputs.next_major }}.${{ steps.new_versions.outputs.next_minor }}.0-SNAPSHOT"
+          mvn versions:set -DnewVersion=$NEXT_VERSION -DprocessAllModules
+          mvn versions:commit
+      
+      - name: Commit next development version
+        run: |
+          git add .
+          git commit -m "bump version to ${{ steps.new_versions.outputs.next_major }}.${{ steps.new_versions.outputs.next_minor }}.0-SNAPSHOT"
+      
+      - name: Push develop branch
+        run: |
+          git push origin develop
+      
+      - name: Summary
+        run: |
+          echo "✅ Release branch created: release/${{ steps.new_versions.outputs.release_major }}.${{ steps.new_versions.outputs.release_minor }}"
+          echo "✅ Release version set to: ${{ steps.new_versions.outputs.release_major }}.${{ steps.new_versions.outputs.release_minor }}.0-SNAPSHOT"
+          echo "✅ Develop version bumped to: ${{ steps.new_versions.outputs.next_major }}.${{ steps.new_versions.outputs.next_minor }}.0-SNAPSHOT"

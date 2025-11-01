@@ -6,7 +6,7 @@
 	<parent>
 		<groupId>org.sliceworkz</groupId>
 		<artifactId>sliceworkz-eventstore-parent-pom</artifactId>
-		<version>0.2.0-SNAPSHOT</version>
+		<version>0.1.0</version>
 		<relativePath>../sliceworkz-eventstore-parent-pom</relativePath>
 	</parent>
 	<artifactId>sliceworkz-eventstore-tests</artifactId>

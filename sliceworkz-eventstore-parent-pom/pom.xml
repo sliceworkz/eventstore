@@ -29,7 +29,7 @@
 		<maven.maven-javadoc-plugin.version>3.12.0</maven.maven-javadoc-plugin.version>
 		<maven.maven-jar-plugin.version>3.4.2</maven.maven-jar-plugin.version>
 		<maven.maven-assembly-plugin.version>3.7.1</maven.maven-assembly-plugin.version>
-		<maven.maven-pgp-plugin.version>3.2.8</maven.maven-pgp-plugin.version>
+		<maven.maven-gpg-plugin.version>3.2.8</maven.maven-gpg-plugin.version>
 	
 		<!-- modules are deployed to the repo by default, ones that should not be deployed can override this to true -->		
 		<maven.deploy.skip>false</maven.deploy.skip>
@@ -112,6 +112,18 @@
 					</execution>
 				</executions>
 			</plugin>
+			
+						
+			<plugin>
+			    <groupId>org.sonatype.central</groupId>
+			    <artifactId>central-publishing-maven-plugin</artifactId>
+			    <version>0.6.0</version>
+			    <extensions>true</extensions>
+			    <configuration>
+			        <publishingServerId>central</publishingServerId>
+			    </configuration>
+			</plugin>
+
 		</plugins>
 
 	</build>
@@ -124,7 +136,7 @@
 					<plugin>
 						<groupId>org.apache.maven.plugins</groupId>
 						<artifactId>maven-gpg-plugin</artifactId>
-						<version>${maven.maven-pgp-plugin.version}</version>
+						<version>${maven.maven-gpg-plugin.version}</version>
 						<executions>
 							<execution>
 								<id>sign-artifacts</id>

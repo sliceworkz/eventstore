@@ -27,6 +27,7 @@
 
 		<maven.maven-versions-plugin.version>2.19.1</maven.maven-versions-plugin.version>
 		<maven.maven-enforcer-plugin.version>3.6.2</maven.maven-enforcer-plugin.version>
+		<maven.maven-gpg-plugin.version>3.2.8</maven.maven-gpg-plugin.version>
 		
 		<maven.deploy.skip>false</maven.deploy.skip>
 
@@ -172,10 +173,52 @@
 					</execution>
 				</executions>
 			</plugin>
+			
+			<plugin>
+			    <groupId>org.sonatype.central</groupId>
+			    <artifactId>central-publishing-maven-plugin</artifactId>
+			    <version>0.6.0</version>
+			    <extensions>true</extensions>
+			    <configuration>
+			        <publishingServerId>central</publishingServerId>
+			    </configuration>
+			</plugin>
       
 		</plugins>
 	</build>
-
+	
+	<profiles>
+		<profile>
+			<id>gpg-ci</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-gpg-plugin</artifactId>
+						<version>${maven.maven-gpg-plugin.version}</version>
+						<executions>
+							<execution>
+								<id>sign-artifacts</id>
+								<phase>verify</phase>
+								<goals>
+									<goal>sign</goal>
+								</goals>
+							</execution>
+						</executions>
+						<configuration>
+							<gpgArguments>
+								<arg>--pinentry-mode</arg>
+								<arg>loopback</arg>
+							</gpgArguments>
+							<passphrase>${env.GPG_PASSPHRASE}</passphrase>
+						</configuration>
+					</plugin>
+		        				
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
+	
 	<distributionManagement>
 		<repository>
 			<id>io.cloudrepo.xti.opensource</id>

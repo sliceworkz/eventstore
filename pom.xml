@@ -95,30 +95,28 @@
 			</plugin>
       		
 			<plugin>
-			    <groupId>org.codehaus.mojo</groupId>
+			    <groupId>com.mycila</groupId>
 			    <artifactId>license-maven-plugin</artifactId>
-			    <version>2.7.0</version>
+			    <version>4.3</version>
 			    <configuration>
-			        <licenseName>lgpl_v3</licenseName>
-			        <organizationName>Sliceworkz (brand of XTi NV)</organizationName>
-			        <inceptionYear>2025</inceptionYear>
-			        <projectName>Sliceworkz Eventstore</projectName>
-			        <roots>
-			            <root>src/main/java</root>
-			            <root>src/test/java</root>
-			        </roots>
+				<header>com/mycila/maven/plugin/license/templates/LGPL-3.txt</header>
+				<properties>
+				    <owner>Sliceworkz (brand of XTi NV)</owner>
+				    <year>2025</year>
+				</properties>
+				<mapping>
+				    <java>SLASHSTAR_STYLE</java>
+				</mapping>
+				<includes>
+				    <include>**/*.java</include>
+				</includes>
+				<excludes>
+				    <exclude>**/target/**</exclude>
+				</excludes>
+				<strictCheck>true</strictCheck>
 			    </configuration>
-			    <executions>
-			        <execution>
-			            <id>check-headers</id>
-			            <phase>verify</phase>
-			            <goals>
-			                <goal>check-file-header</goal>
-			            </goals>
-			        </execution>
-			    </executions>
 			</plugin>
-			
+
 		</plugins>
 	</build>
 	

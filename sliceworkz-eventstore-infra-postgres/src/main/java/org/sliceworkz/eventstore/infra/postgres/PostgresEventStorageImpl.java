@@ -15,6 +15,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Stream;
@@ -47,7 +48,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private String name;
 	private String prefix;
 	private DataSource dataSource;
-	private List<EventStoreListener> listeners = new ArrayList<>();
+	private List<EventStoreListener> listeners = new CopyOnWriteArrayList<>();
 	private ExecutorService executorService;
 	private boolean stopped;
 	
@@ -536,10 +537,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 				        }
 				    }
 
-				    List<EventStoreListener> copiedListeners = new ArrayList<>(listeners);
-				    
 				    // notify all listeners - with max 1 notification per message stream (the most recent one)
-				    notificationsPerStream.values().forEach(n->copiedListeners.forEach(l->l.notify(n)));
+				    notificationsPerStream.values().forEach(n->listeners.forEach(l->l.notify(n)));
 
 				} catch (SQLException e) {
 					if ( !stopped ) {
@@ -620,10 +619,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 				        }
 				    }
 
-				    List<EventStoreListener> copiedListeners = new ArrayList<>(listeners);
-				    
 				    // notify all listeners - with max 1 notification per message stream (the most recent one)
-				    bookmarkPlacedsPerReader.values().forEach(n->copiedListeners.forEach(l->l.notify(n)));
+				    bookmarkPlacedsPerReader.values().forEach(n->listeners.forEach(l->l.notify(n)));
 
 				} catch (SQLException e) {
 					if ( !stopped ) {

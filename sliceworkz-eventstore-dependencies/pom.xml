@@ -190,10 +190,11 @@
 	</distributionManagement>
 	
 	<licenses>
-		<license>
-			<name>LGPL License</name>
-			<url>https://opensource.org/licenses/LGPL</url>
-		</license>
+	    <license>
+	        <name>GNU Lesser General Public License v3.0</name>
+	        <url>https://www.gnu.org/licenses/lgpl-3.0.txt</url>
+	        <distribution>repo</distribution>
+	    </license>
 	</licenses>
 
 	<developers>

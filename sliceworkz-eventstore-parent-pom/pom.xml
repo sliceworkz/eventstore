@@ -142,9 +142,36 @@
 							<passphrase>${env.GPG_PASSPHRASE}</passphrase>
 						</configuration>
 					</plugin>
+					
+			        <plugin>
+			            <groupId>com.mycila</groupId>
+			            <artifactId>license-maven-plugin</artifactId>
+			            <version>4.3</version>
+			            <configuration>
+			                <header>LICENSE_HEADER.txt</header>
+			                <properties>
+			                    <owner>Sliceworkz (brand of XTi NV)</owner>
+			                    <year>2025</year>
+			                </properties>
+			                <includes>
+			                    <include>**/*.java</include>
+			                </includes>
+			                <excludes>
+			                    <exclude>**/target/**</exclude>
+			                </excludes>
+			            </configuration>
+			            <executions>
+			                <execution>
+			                    <goals>
+			                        <goal>check</goal>
+			                    </goals>
+			                </execution>
+			            </executions>
+			        </plugin>
 		        				
 				</plugins>
 			</build>
+			
 		</profile>
 	</profiles>
 
@@ -162,10 +189,11 @@
 	</distributionManagement>
 	
 	<licenses>
-		<license>
-			<name>LGPL License</name>
-			<url>https://opensource.org/licenses/LGPL</url>
-		</license>
+	    <license>
+	        <name>GNU Lesser General Public License v3.0</name>
+	        <url>https://www.gnu.org/licenses/lgpl-3.0.txt</url>
+	        <distribution>repo</distribution>
+	    </license>
 	</licenses>
 
 	<developers>

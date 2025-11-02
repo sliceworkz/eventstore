@@ -3,25 +3,21 @@
 	<modelVersion>4.0.0</modelVersion>
 	<parent>
 		<groupId>org.sliceworkz</groupId>
-		<artifactId>sliceworkz-eventstore-dependencies</artifactId>
+		<artifactId>sliceworkz-eventstore</artifactId>
 		<version>0.2.0-SNAPSHOT</version>
-		<relativePath>../sliceworkz-eventstore-dependencies</relativePath>
+		<relativePath>../</relativePath>
 	</parent>
 	<artifactId>sliceworkz-eventstore-parent-pom</artifactId>
-	
-	<name>${project.artifactId}}</name>
-	<description>DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)</description>
-	<url>https://sliceworkz.github.io/eventstore</url>
 	
 	<packaging>pom</packaging>
 
 	<properties>
-		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-
-		<java.version>21</java.version>
-		<maven.compiler.release>21</maven.compiler.release>
-		<maven.compiler.source>21</maven.compiler.source>
-		<maven.compiler.target>21</maven.compiler.target>
+		<jackson.version>2.20.1</jackson.version>
+		<slf4j.version>2.0.17</slf4j.version>
+		<postgresql.jdbc.version>42.7.8</postgresql.jdbc.version>
+		<hikari.version>7.0.2</hikari.version>
+		<junit-jupiter.version>6.0.1</junit-jupiter.version>
+		<testcontainers.postgresql.version>1.21.3</testcontainers.postgresql.version>
 
 		<maven.maven-surefire-plugin.version>3.5.4</maven.maven-surefire-plugin.version>
 		<maven.maven-compiler-plugin.version>3.14.1</maven.maven-compiler-plugin.version>
@@ -29,14 +25,73 @@
 		<maven.maven-javadoc-plugin.version>3.12.0</maven.maven-javadoc-plugin.version>
 		<maven.maven-jar-plugin.version>3.4.2</maven.maven-jar-plugin.version>
 		<maven.maven-assembly-plugin.version>3.7.1</maven.maven-assembly-plugin.version>
-		<maven.maven-pgp-plugin.version>3.2.8</maven.maven-pgp-plugin.version>
-	
-		<!-- modules are deployed to the repo by default, ones that should not be deployed can override this to true -->		
-		<maven.deploy.skip>false</maven.deploy.skip>
 	</properties>
+
+	<dependencyManagement>
+		<dependencies>
+			<dependency>
+				<groupId>org.sliceworkz</groupId>
+				<artifactId>sliceworkz-eventstore-bom</artifactId>
+				<version>${project.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>		
+
+			<!-- SLF4J -->
+			<dependency>
+			    <groupId>org.slf4j</groupId>
+			    <artifactId>slf4j-api</artifactId>
+			    <version>${slf4j.version}</version>
+			</dependency>
+			<dependency>
+			    <groupId>org.slf4j</groupId>
+			    <artifactId>slf4j-simple</artifactId>
+			    <version>${slf4j.version}</version>
+			</dependency>
+
+			<!-- Jackson JSON processing -->
+			<dependency>
+			    <groupId>com.fasterxml.jackson.core</groupId>
+			    <artifactId>jackson-databind</artifactId>
+			    <version>${jackson.version}</version>
+			</dependency>
+			<dependency>
+			  <groupId>com.fasterxml.jackson.datatype</groupId>
+			  <artifactId>jackson-datatype-jsr310</artifactId>
+			  <version>${jackson.version}</version>
+			</dependency>
+
+			<!-- JUnit Testing -->
+			<dependency>
+				<groupId>org.junit.jupiter</groupId>
+				<artifactId>junit-jupiter-api</artifactId>
+				<version>${junit-jupiter.version}</version>
+				<scope>test</scope>
+			</dependency>
+			
+			<!-- PostgreSQL -->
+			<dependency>
+			    <groupId>org.postgresql</groupId>
+			    <artifactId>postgresql</artifactId>
+			    <version>${postgresql.jdbc.version}</version>
+			    <scope>provided</scope>
+			</dependency>
+			<dependency>
+			    <groupId>org.testcontainers</groupId>
+			    <artifactId>postgresql</artifactId>
+			    <version>${testcontainers.postgresql.version}</version>
+			    <scope>test</scope>
+			</dependency>
+			
+			<dependency>
+			    <groupId>com.zaxxer</groupId>
+			    <artifactId>HikariCP</artifactId>
+			    <version>${hikari.version}</version>
+			</dependency>
+		</dependencies>
+	</dependencyManagement>
 	
 	<dependencies>
-	
 		<dependency>
 			<groupId>com.fasterxml.jackson.core</groupId>
 			<artifactId>jackson-databind</artifactId>
@@ -61,7 +116,6 @@
 		    <artifactId>slf4j-simple</artifactId>
 		    <scope>test</scope>
 		</dependency>
-
 	</dependencies>
 
 	<build>
@@ -115,70 +169,5 @@
 		</plugins>
 
 	</build>
-	
-	<profiles>
-		<profile>
-			<id>gpg-ci</id>
-			<build>
-				<plugins>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-gpg-plugin</artifactId>
-						<version>${maven.maven-pgp-plugin.version}</version>
-						<executions>
-							<execution>
-								<id>sign-artifacts</id>
-								<phase>verify</phase>
-								<goals>
-									<goal>sign</goal>
-								</goals>
-							</execution>
-						</executions>
-						<configuration>
-							<gpgArguments>
-								<arg>--pinentry-mode</arg>
-								<arg>loopback</arg>
-							</gpgArguments>
-							<passphrase>${env.GPG_PASSPHRASE}</passphrase>
-						</configuration>
-					</plugin>
-		        				
-				</plugins>
-			</build>
-		</profile>
-	</profiles>
-
-	<distributionManagement>
-		<repository>
-			<id>io.cloudrepo.xti.opensource</id>
-			<name>CloudRepo Releases</name>
-			<url>https://xti.mycloudrepo.io/repositories/opensource</url>
-		</repository>
-		<snapshotRepository>
-			<id>io.cloudrepo.xti.opensource</id>
-			<name>CloudRepo Snapshots</name>
-			<url>https://xti.mycloudrepo.io/repositories/opensource</url>
-		</snapshotRepository>
-	</distributionManagement>
-	
-	<licenses>
-		<license>
-			<name>LGPL License</name>
-			<url>https://opensource.org/licenses/LGPL</url>
-		</license>
-	</licenses>
-
-	<developers>
-		<developer>
-			<name>Günther Van Roey</name>
-			<email>gunther.vanroey@xt-i.com</email>
-		</developer>
-	</developers>
-	
-	<scm>
-		<connection>https://github.com/sliceworkz/eventstore.git</connection>
-		<developerConnection>scm:git:git://github.com/sliceworkz/eventstore.git</developerConnection>
-		<url>https://github.com/sliceworkz/eventstore</url>
-	</scm>
 	
 </project>

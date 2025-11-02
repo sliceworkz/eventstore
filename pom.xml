@@ -102,6 +102,7 @@
 				<header>com/mycila/maven/plugin/license/templates/LGPL-3.txt</header>
 				<properties>
 				    <owner>Sliceworkz (brand of XTi NV)</owner>
+				    <email>info@sliceworkz.org</email>
 				    <year>2025</year>
 				</properties>
 				<mapping>
@@ -109,6 +110,9 @@
 				</mapping>
 				<includes>
 				    <include>**/*.java</include>
+				    <include>**/*.sql</include>
+				    <include>**/*.xml</include>
+				    <include>**/*.properties</include>
 				</includes>
 				<excludes>
 				    <exclude>**/target/**</exclude>

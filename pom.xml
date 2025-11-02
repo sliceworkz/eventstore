@@ -1,24 +1,30 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
 	<modelVersion>4.0.0</modelVersion>
-	<parent>
-		<groupId>org.sliceworkz</groupId>
-		<artifactId>sliceworkz-eventstore-parent-pom</artifactId>
-		<version>0.2.0-SNAPSHOT</version>
-		<relativePath>sliceworkz-eventstore-parent-pom</relativePath>
-	</parent>
+	<groupId>org.sliceworkz</groupId>
 	<artifactId>sliceworkz-eventstore</artifactId>
-	<!-- version must be kept here in order to be able to update it automatically, would not work if inherited -->
 	<version>0.2.0-SNAPSHOT</version>
-	<packaging>pom</packaging>
 	
+	<name>${project.artifactId}}</name>
+	<description>DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)</description>
+	<url>https://sliceworkz.github.io/eventstore</url>
+	
+	<packaging>pom</packaging>
+
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		
+		<maven.minimal-version>3.6.3</maven.minimal-version>
+		
+		<maven.maven-pgp-plugin.version>3.2.8</maven.maven-pgp-plugin.version>
+		<maven.maven-versions-plugin.version>2.19.1</maven.maven-versions-plugin.version>
+		<maven.maven-enforcer-plugin.version>3.6.2</maven.maven-enforcer-plugin.version>
+		
+		<maven.compiler.release>21</maven.compiler.release>
 	</properties>
 	
 	<modules>
 		<!-- maven build constructs -->
-		<module>sliceworkz-eventstore-dependencies</module>
 		<module>sliceworkz-eventstore-parent-pom</module>
 		<module>sliceworkz-eventstore-bom</module>
 		
@@ -36,5 +42,124 @@
 		<module>sliceworkz-eventstore-infra-inmem</module>
 		<module>sliceworkz-eventstore-infra-postgres</module>
 	</modules>
+	
+	<build>
+		<plugins>
+			<plugin>
+			    <groupId>org.codehaus.mojo</groupId>
+			    <artifactId>versions-maven-plugin</artifactId>
+			    <version>${maven.maven-versions-plugin.version}</version>
+			    
+			    <!-- make sure we get the right suggestions from 
+			    		mvn versions:display-dependency-updates
+			    	 and
+			    		mvn versions:display-plugin-updates
+			     -->
+			    <configuration>
+					<ruleSet>
+			            <ignoreVersions>
+							<!-- Don't depend on snapshots' -->
+							<ignoreVersion>
+								<type>regex</type>
+								<version>(.+-SNAPSHOT|.+-M\d)</version>
+							</ignoreVersion>
+							<!-- Don't depend on alpha or beta versions' -->
+							<ignoreVersion>
+								<type>regex</type>
+								<version>.+-(alpha|beta).+</version>
+							</ignoreVersion>
+			            </ignoreVersions>
+			    	</ruleSet>
+				</configuration>
+			</plugin>
+			
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-enforcer-plugin</artifactId>
+				<version>${maven.maven-enforcer-plugin.version}</version>
+				<executions>
+					<execution>
+						<id>enforce-maven</id>
+						<goals>
+							<goal>enforce</goal>
+						</goals>
+						<configuration>
+							<rules>
+								<requireMavenVersion>
+									<version>${maven.minimal-version}</version>
+								</requireMavenVersion>
+							</rules>    
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+      
+		</plugins>
+	</build>
+	
+	<profiles>
+		<profile>
+			<id>gpg-ci</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-gpg-plugin</artifactId>
+						<version>${maven.maven-pgp-plugin.version}</version>
+						<executions>
+							<execution>
+								<id>sign-artifacts</id>
+								<phase>verify</phase>
+								<goals>
+									<goal>sign</goal>
+								</goals>
+							</execution>
+						</executions>
+						<configuration>
+							<gpgArguments>
+								<arg>--pinentry-mode</arg>
+								<arg>loopback</arg>
+							</gpgArguments>
+							<passphrase>${env.GPG_PASSPHRASE}</passphrase>
+						</configuration>
+					</plugin>
+		        				
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
+
+	<distributionManagement>
+		<repository>
+			<id>io.cloudrepo.xti.opensource</id>
+			<name>CloudRepo Releases</name>
+			<url>https://xti.mycloudrepo.io/repositories/opensource</url>
+		</repository>
+		<snapshotRepository>
+			<id>io.cloudrepo.xti.opensource</id>
+			<name>CloudRepo Snapshots</name>
+			<url>https://xti.mycloudrepo.io/repositories/opensource</url>
+		</snapshotRepository>
+	</distributionManagement>
+	
+	<licenses>
+		<license>
+			<name>LGPL License</name>
+			<url>https://opensource.org/licenses/LGPL</url>
+		</license>
+	</licenses>
+
+	<developers>
+		<developer>
+			<name>Günther Van Roey</name>
+			<email>gunther.vanroey@xt-i.com</email>
+		</developer>
+	</developers>
+	
+	<scm>
+		<connection>https://github.com/sliceworkz/eventstore.git</connection>
+		<developerConnection>scm:git:git://github.com/sliceworkz/eventstore.git</developerConnection>
+		<url>https://github.com/sliceworkz/eventstore</url>
+	</scm>
 	
 </project>

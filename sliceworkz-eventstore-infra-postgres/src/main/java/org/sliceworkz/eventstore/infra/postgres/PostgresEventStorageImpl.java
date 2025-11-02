@@ -58,6 +58,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	public static final int WAIT_FOR_NOTIFICATIONS_TIMEOUT = ONE_MINUTE;
 
 	private static final String NO_PREFIX = "";
+	private static final int MAX_PREFIX_LENGTH = 32;
 
 	public PostgresEventStorageImpl ( String name, DataSource dataSource ){
 		this(name, dataSource, dataSource, NO_PREFIX);
@@ -72,13 +73,36 @@ public class PostgresEventStorageImpl implements EventStorage {
 	}
 	
 	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, String prefix ) {
-		this.prefix = prefix;
+		this.prefix = validatePrefix(prefix);
 		this.name = name;
 		this.dataSource = dataSource;
 		this.executorService = Executors.newVirtualThreadPerTaskExecutor();
 		
 		this.executorService.execute(new NewEventsAppendedMonitor("event-append-listener/" + name, listeners, monitoringDataSource));
 		this.executorService.execute(new BookmarkPlacedMonitor("bookmark-listener/" + name, listeners, monitoringDataSource));
+	}
+	
+	static String validatePrefix(String prefix) {
+		if (prefix == null) {
+			throw new IllegalArgumentException("Prefix cannot be null");
+		}
+		
+		// Empty is OK, otherwise more complex rules apply to keep SQL sane and to avoid SQL injection
+		if ( ! prefix.isEmpty() ) {
+			
+			if (!prefix.matches("^[a-zA-Z0-9_]+_$")) {
+				throw new IllegalArgumentException("Invalid prefix: '" + prefix + "'. "
+						+ "Prefix must contain only alphanumeric characters and underscores, "
+						+ "and must end with an underscore (e.g., 'tenant1_')");
+			}
+	
+			if (prefix.length() > MAX_PREFIX_LENGTH) {
+				throw new IllegalArgumentException(String.format("Prefix too long (max {} characters): {}", MAX_PREFIX_LENGTH, prefix));
+			}
+			
+		}
+		
+		return prefix;
 	}
 	
 	public PostgresEventStorageImpl initializeDatabase ( ) {

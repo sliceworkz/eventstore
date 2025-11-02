@@ -144,26 +144,25 @@
 					</plugin>
 					
 			        <plugin>
-			            <groupId>com.mycila</groupId>
+			            <groupId>org.codehaus.mojo</groupId>
 			            <artifactId>license-maven-plugin</artifactId>
-			            <version>4.3</version>
+			            <version>2.7.0</version>
 			            <configuration>
-			                <header>LICENSE_HEADER.txt</header>
-			                <properties>
-			                    <owner>Sliceworkz (brand of XTi NV)</owner>
-			                    <year>2025</year>
-			                </properties>
-			                <includes>
-			                    <include>**/*.java</include>
-			                </includes>
-			                <excludes>
-			                    <exclude>**/target/**</exclude>
-			                </excludes>
+			                <licenseName>lgpl_v3</licenseName>
+			                <organizationName>Sliceworkz (brand of XTi NV)</organizationName>
+			                <inceptionYear>2025</inceptionYear>
+			                <projectName>Sliceworkz Eventstore</projectName>
+			                <roots>
+			                    <root>src/main/java</root>
+			                    <root>src/test/java</root>
+			                </roots>
 			            </configuration>
 			            <executions>
 			                <execution>
+			                    <id>check-headers</id>
+			                    <phase>verify</phase>
 			                    <goals>
-			                        <goal>check</goal>
+			                        <goal>check-file-header</goal>
 			                    </goals>
 			                </execution>
 			            </executions>

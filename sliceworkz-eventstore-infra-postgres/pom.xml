@@ -84,7 +84,7 @@
 						</replacement>
 						<replacement>
 							<token>__NOTICE__</token>
-							<value>!!! GENERATE FILE - DO NOT EDIT !!!</value>
+							<value>!!! GENERATED FILE - DO NOT EDIT !!!</value>
 						</replacement>
 					</replacements>
 				</configuration>

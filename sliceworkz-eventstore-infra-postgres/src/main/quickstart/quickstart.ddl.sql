@@ -1,6 +1,5 @@
-
 ----
----- !!! GENERATE FILE - DO NOT EDIT !!!
+---- !!! GENERATED FILE - DO NOT EDIT !!!
 ----
 ---- Eventstore database schema DDL
 ----

@@ -134,64 +134,40 @@
 				<version>${maven.maven-assembly-plugin.version}</version>
 			</plugin>
 			<plugin>
-			    <groupId>org.apache.maven.plugins</groupId>
-			    <artifactId>maven-compiler-plugin</artifactId>
-			    <version>${maven.maven-compiler-plugin.version}</version>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<version>${maven.maven-compiler-plugin.version}</version>
 			</plugin>
 	        <plugin>
-	            <groupId>org.apache.maven.plugins</groupId>
-	            <artifactId>maven-source-plugin</artifactId>
-	            <version>${maven.maven-source-plugin.version}</version>
-	            <executions>
-					<execution>
-						<id>attach-javadocs</id>
-						<phase>verify</phase>
-						<goals>
-							<goal>jar-no-fork</goal>
-						</goals>
-					</execution>
-	            </executions>
+			<groupId>org.apache.maven.plugins</groupId>
+			<artifactId>maven-source-plugin</artifactId>
+			<version>${maven.maven-source-plugin.version}</version>
+			<executions>
+				<execution>
+					<id>attach-javadocs</id>
+					<phase>verify</phase>
+					<goals>
+						<goal>jar-no-fork</goal>
+					</goals>
+				</execution>
+			</executions>
 	        </plugin>	
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-javadoc-plugin</artifactId>
-				<version>${maven.maven-javadoc-plugin.version}</version>
-				<executions>
-					<execution>
-						<id>attach-javadocs</id>
-						<phase>verify</phase>
-						<goals>
-							<goal>jar</goal>
-						</goals>
-					</execution>
-				</executions>
-			</plugin>
-			
-		        <plugin>
-		            <groupId>org.codehaus.mojo</groupId>
-		            <artifactId>license-maven-plugin</artifactId>
-		            <version>2.7.0</version>
-		            <configuration>
-		                <licenseName>lgpl_v3</licenseName>
-		                <organizationName>Sliceworkz (brand of XTi NV)</organizationName>
-		                <inceptionYear>2025</inceptionYear>
-		                <projectName>Sliceworkz Eventstore</projectName>
-		                <roots>
-		                    <root>src/main/java</root>
-		                    <root>src/test/java</root>
-		                </roots>
-		            </configuration>
-		            <executions>
-		                <execution>
-		                    <id>check-headers</id>
-		                    <phase>verify</phase>
-		                    <goals>
-		                        <goal>check-file-header</goal>
-		                    </goals>
-		                </execution>
-		            </executions>
-		        </plugin>
-		</plugins>
+		<plugin>
+			<groupId>org.apache.maven.plugins</groupId>
+			<artifactId>maven-javadoc-plugin</artifactId>
+			<version>${maven.maven-javadoc-plugin.version}</version>
+			<executions>
+				<execution>
+					<id>attach-javadocs</id>
+					<phase>verify</phase>
+					<goals>
+						<goal>jar</goal>
+					</goals>
+				</execution>
+			</executions>
+		</plugin>
+
+	</plugins>
 
 	</build>
 

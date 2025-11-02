@@ -93,7 +93,32 @@
 					</execution>
 				</executions>
 			</plugin>
-      
+      		
+			<plugin>
+			    <groupId>org.codehaus.mojo</groupId>
+			    <artifactId>license-maven-plugin</artifactId>
+			    <version>2.7.0</version>
+			    <configuration>
+			        <licenseName>lgpl_v3</licenseName>
+			        <organizationName>Sliceworkz (brand of XTi NV)</organizationName>
+			        <inceptionYear>2025</inceptionYear>
+			        <projectName>Sliceworkz Eventstore</projectName>
+			        <roots>
+			            <root>src/main/java</root>
+			            <root>src/test/java</root>
+			        </roots>
+			    </configuration>
+			    <executions>
+			        <execution>
+			            <id>check-headers</id>
+			            <phase>verify</phase>
+			            <goals>
+			                <goal>check-file-header</goal>
+			            </goals>
+			        </execution>
+			    </executions>
+			</plugin>
+			
 		</plugins>
 	</build>
 	

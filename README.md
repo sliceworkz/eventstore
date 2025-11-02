@@ -123,3 +123,14 @@ public class AppendAndQueryAllExample {
 
 }
 ```
+
+
+## Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+
+## License
+
+This project is licensed under the LGPL-3.0 License - see the [LICENSE](LICENSE) file for details.
+

@@ -19,6 +19,7 @@
 		<maven.maven-pgp-plugin.version>3.2.8</maven.maven-pgp-plugin.version>
 		<maven.maven-versions-plugin.version>2.19.1</maven.maven-versions-plugin.version>
 		<maven.maven-enforcer-plugin.version>3.6.2</maven.maven-enforcer-plugin.version>
+		<maven.mycila-license-plugin.version>5.0.0</maven.mycila-license-plugin.version>
 		
 		<maven.compiler.release>21</maven.compiler.release>
 	</properties>
@@ -97,27 +98,27 @@
 			<plugin>
 			    <groupId>com.mycila</groupId>
 			    <artifactId>license-maven-plugin</artifactId>
-			    <version>4.3</version>
+			    <version>${maven.mycila-license-plugin.version}</version>
 			    <configuration>
-				<header>com/mycila/maven/plugin/license/templates/LGPL-3.txt</header>
 				<properties>
 				    <owner>Sliceworkz (brand of XTi NV)</owner>
 				    <email>info@sliceworkz.org</email>
 				    <year>2025</year>
 				</properties>
-				<mapping>
-				    <java>SLASHSTAR_STYLE</java>
-				</mapping>
-				<includes>
-				    <include>**/*.java</include>
-				    <include>**/*.sql</include>
-				    <include>**/*.xml</include>
-				    <include>**/*.properties</include>
-				</includes>
-				<excludes>
-				    <exclude>**/target/**</exclude>
-				</excludes>
-				<strictCheck>true</strictCheck>
+				<licenseSets>
+					<licenseSet>
+						<header>com/mycila/maven/plugin/license/templates/LGPL-3.txt</header>
+						<includes>
+						    <include>**/*.java</include>
+						    <include>**/*.sql</include>
+						    <include>**/*.xml</include>
+						    <include>**/*.properties</include>
+						</includes>
+						<excludes>
+						    <exclude>**/target/**</exclude>
+						</excludes>
+					</licenseSet>
+				</licenseSets>
 			    </configuration>
 			</plugin>
 

@@ -8,7 +8,11 @@
 		<relativePath>../</relativePath>
 	</parent>
 	<artifactId>sliceworkz-eventstore-parent-pom</artifactId>
-	
+
+	<name>${project.artifactId}}</name>
+	<description>DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)</description>
+	<url>https://sliceworkz.github.io/eventstore</url>
+
 	<packaging>pom</packaging>
 
 	<properties>
@@ -165,17 +169,6 @@
 						</goals>
 					</execution>
 				</executions>
-			</plugin>
-			
-						
-			<plugin>
-			    <groupId>org.sonatype.central</groupId>
-			    <artifactId>central-publishing-maven-plugin</artifactId>
-			    <version>0.6.0</version>
-			    <extensions>true</extensions>
-			    <configuration>
-			        <publishingServerId>central</publishingServerId>
-			    </configuration>
 			</plugin>
 
 		</plugins>

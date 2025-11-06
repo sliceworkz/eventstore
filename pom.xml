@@ -101,6 +101,8 @@
 			    <version>${maven.mycila-license-plugin.version}</version>
 			    <configuration>
 				<properties>
+					<project.name>Sliceworkz Eventstore</project.name>
+					<project.description>a Java/Postgres DCB Eventstore implementation</project.description>
 				    <owner>Sliceworkz (brand of XTi NV)</owner>
 				    <email>info@sliceworkz.org</email>
 				    <year>2025</year>

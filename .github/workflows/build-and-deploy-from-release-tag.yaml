@@ -39,7 +39,7 @@ jobs:
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
       - name: Build with Maven
-        run: mvn -B -DskipTests clean install -Pgpg-ci
+        run: mvn -B -DskipTests license:check clean install -Pgpg-ci
         env:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 

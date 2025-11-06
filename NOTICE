@@ -1,0 +1,30 @@
+Sliceworkz Eventstore
+
+Copyright (C) 2025 Sliceworkz (brand of XTi NV)
+
+
+This product is licensed under the GNU Lesser General Public License v3.0.
+See the LICENSE file for the full license text.
+
+This product includes software developed by third parties:
+- Jackson (https://github.com/FasterXML/jackson-core) - licensed under Apache 2.0 License
+- HikariCP (https://github.com/brettwooldridge/HikariCP) - licensed under Apache 2.0 License
+- SLF4j (Https://github.com/qos-ch/slf4j) - licensed under mIT License
+- PG/JDBC (https://github.com/pgjdbc/pgjdbc) - licensed under BSD-2 Clause license
+
+
+Trademarks:
+
+Sliceworkz is a trademark of XTi NV
+
+BE0474.267.543
+
+Veldkant 33A
+2550 Kontich
+Belgium
+
+www.xt-i.com
+info@xt-i.com
+
+
+

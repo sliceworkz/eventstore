@@ -111,7 +111,7 @@
 					<properties>
 						<project.name>Sliceworkz Eventstore</project.name>
 						<project.description>a Java/Postgres DCB Eventstore implementation</project.description>
-					    <owner>Sliceworkz (brand of XTi NV)</owner>
+					    <owner>Sliceworkz / XTi</owner>
 					    <email>info@sliceworkz.org</email>
 					    <year>2025</year>
 					</properties>

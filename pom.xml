@@ -99,28 +99,36 @@
 			    <groupId>com.mycila</groupId>
 			    <artifactId>license-maven-plugin</artifactId>
 			    <version>${maven.mycila-license-plugin.version}</version>
+				<executions>
+					<execution>
+						<phase>package</phase>
+						<goals>
+							<goal>check</goal>
+						</goals>
+					</execution>
+				</executions>
 			    <configuration>
-				<properties>
-					<project.name>Sliceworkz Eventstore</project.name>
-					<project.description>a Java/Postgres DCB Eventstore implementation</project.description>
-				    <owner>Sliceworkz (brand of XTi NV)</owner>
-				    <email>info@sliceworkz.org</email>
-				    <year>2025</year>
-				</properties>
-				<licenseSets>
-					<licenseSet>
-						<header>com/mycila/maven/plugin/license/templates/LGPL-3.txt</header>
-						<includes>
-						    <include>**/*.java</include>
-						    <include>**/*.sql</include>
-						    <include>**/*.xml</include>
-						    <include>**/*.properties</include>
-						</includes>
-						<excludes>
-						    <exclude>**/target/**</exclude>
-						</excludes>
-					</licenseSet>
-				</licenseSets>
+					<properties>
+						<project.name>Sliceworkz Eventstore</project.name>
+						<project.description>a Java/Postgres DCB Eventstore implementation</project.description>
+					    <owner>Sliceworkz (brand of XTi NV)</owner>
+					    <email>info@sliceworkz.org</email>
+					    <year>2025</year>
+					</properties>
+					<licenseSets>
+						<licenseSet>
+							<header>com/mycila/maven/plugin/license/templates/LGPL-3.txt</header>
+							<includes>
+							    <include>**/*.java</include>
+							    <include>**/*.sql</include>
+							    <include>**/*.xml</include>
+							    <include>**/*.properties</include>
+							</includes>
+							<excludes>
+							    <exclude>**/target/**</exclude>
+							</excludes>
+						</licenseSet>
+					</licenseSets>
 			    </configuration>
 			</plugin>
 

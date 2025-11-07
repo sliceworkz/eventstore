@@ -1,5 +1,8 @@
 package org.sliceworkz.eventstore.impl.serde;
 
+import java.util.Collection;
+import java.util.Set;
+
 import org.sliceworkz.eventstore.events.EventType;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -28,8 +31,19 @@ public class RawEventPayloadSerializerDeserializer extends AbstractEventPayloadS
 	}
 
 	@Override
+	public RawEventPayloadSerializerDeserializer registerLegacyEventTypes( Class<?> rootClass ) {
+		// NO-OP, raw events only
+		return this;
+	}
+
+	@Override
 	public boolean canDeserialize(String eventTypeName) {
 		return false;
+	}
+
+	@Override
+	public Set<EventType> determineLegacyTypes(Set<EventType> currentTypes) {
+		return currentTypes;
 	}
 	
 }

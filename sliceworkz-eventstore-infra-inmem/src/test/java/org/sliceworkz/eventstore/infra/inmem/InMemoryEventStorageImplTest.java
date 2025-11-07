@@ -33,7 +33,7 @@ public class InMemoryEventStorageImplTest {
 			)
 		);
 		assertEquals("Failed to deserialize event data for type 'ProblematicParsingRecord', known mappings for [ProblematicParsingRecord]", e.getMessage());
-		assertEquals("Unrecognized field \"derivedValueThatIsNotPartOfRecord\" (class org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImplTest$ProblematicParsing$ProblematicParsingRecord), not marked as ignorable (one known property: \"value\"])", e.getCause().getMessage().split("\n")[0]);
+		assertEquals("Unrecognized field \"derivedValueThatIsNotPartOfRecord\" (class org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImplTest$ProblematicParsing$ProblematicParsingRecord), not marked as ignorable (one known property: \"value\"])", e.getCause().getCause().getMessage().split("\n")[0]);
 	}
 	
 	sealed interface ProblematicParsing {

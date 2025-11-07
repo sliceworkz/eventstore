@@ -4,7 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.math.BigDecimal;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
@@ -60,7 +62,12 @@ public class EventStoreQueryTest {
 		this.otherEventStreamId = EventStreamId.forContext("otherApp").withPurpose("domain");
 		this.otherEventStream = eventStore.getEventStream(otherEventStreamId, MockDomainEvent.class);
 		
-		this.allEventsStream = eventStore.getEventStream(EventStreamId.anyContext().anyPurpose(), BankDomainEvent.class, PerformanceReportEvent.class, MockDomainEvent.class);
+		Set<Class<?>> rootEventClasses = new HashSet<>();
+		rootEventClasses.add(BankDomainEvent.class);
+		rootEventClasses.add(PerformanceReportEvent.class);
+		rootEventClasses.add(MockDomainEvent.class);
+		
+		this.allEventsStream = eventStore.getEventStream(EventStreamId.anyContext().anyPurpose(), rootEventClasses);
 
 		storeTestEvents();
 	}

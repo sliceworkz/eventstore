@@ -2,10 +2,12 @@ package org.sliceworkz.eventstore.query;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.sliceworkz.eventstore.events.EventType;
 
-public record EventTypesFilter ( List<EventType> eventTypes ) {
+public record EventTypesFilter ( Set<EventType> eventTypes ) {
 
 	public boolean matches ( EventType eventType ) {
 		// if we don't specify specific types, we accept all
@@ -21,7 +23,11 @@ public record EventTypesFilter ( List<EventType> eventTypes ) {
 	}
 	
 	public static final EventTypesFilter of ( List<Class<?>> eventClasses ) {
-		return new EventTypesFilter(eventClasses.stream().map(EventType::of).toList());
+		return new EventTypesFilter(eventClasses.stream().map(EventType::of).collect(Collectors.<EventType>toSet()));
 	}
 
+	public static final EventTypesFilter of ( Set<EventType> eventTypes ) {
+		return new EventTypesFilter(eventTypes);
+	}
+	
 }

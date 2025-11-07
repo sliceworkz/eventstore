@@ -6,21 +6,24 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.AbstractEventStoreTest;
+import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImpl;
 import org.sliceworkz.eventstore.mock.MockConsistentAppendListener;
 import org.sliceworkz.eventstore.mock.MockDomainEventWithNonSealedInterface;
 import org.sliceworkz.eventstore.mock.MockDomainEventWithNonSealedInterface.DomainEventPartOfMockDomainEventWithNonSealedInterface;
 import org.sliceworkz.eventstore.mock.MockEventuallyConsistentAppendListener;
+import org.sliceworkz.eventstore.mockdomain.MockDomainDuplicatedEvent;
 import org.sliceworkz.eventstore.mockdomain.MockDomainEvent;
 import org.sliceworkz.eventstore.mockdomain.MockDomainEvent.FirstDomainEvent;
 import org.sliceworkz.eventstore.mockdomain.MockDomainEvent.SecondDomainEvent;
@@ -58,7 +61,11 @@ public class EventStreamTest extends AbstractEventStoreTest {
 
 	@Test
 	void testRegisterDuplicateEventTypes ( ) {
-		IllegalArgumentException e =  assertThrows(IllegalArgumentException.class, ()->eventStore().getEventStream(testEventStream, MockDomainEvent.class, MockDomainEvent.class));
+		Set<Class<?>> rootEventClasses = new HashSet<>();
+		rootEventClasses.add(MockDomainEvent.class);
+		rootEventClasses.add(MockDomainDuplicatedEvent.class);
+		
+		IllegalArgumentException e =  assertThrows(IllegalArgumentException.class, ()->eventStore().getEventStream(testEventStream, rootEventClasses));
 		assertTrue(e.getMessage().startsWith("duplicate event name"));
 	}
 

@@ -33,7 +33,7 @@ public record EphemeralEvent<DOMAIN_EVENT_TYPE> ( EventType type, DOMAIN_EVENT_T
 	}
 	
 	public Event<DOMAIN_EVENT_TYPE> positionAt ( EventStreamId stream, EventReference reference, LocalDateTime timestamp ) {
-		return Event.of(stream, reference, type, data, tags, timestamp);
+		return Event.of(stream, reference, type, type, data, tags, timestamp);
 	}
 	
 }

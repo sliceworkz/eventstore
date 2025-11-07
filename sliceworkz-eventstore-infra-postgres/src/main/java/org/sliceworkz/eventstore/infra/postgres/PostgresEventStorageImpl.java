@@ -258,10 +258,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 			// Add event type filtering
 			if (item.eventTypes() != null && !item.eventTypes().eventTypes().isEmpty()) {
 				sqlBuilder.append("event_type IN (");
+				
+				Iterator<EventType> itTypes = item.eventTypes().eventTypes().iterator();
 				for (int i = 0; i < item.eventTypes().eventTypes().size(); i++) {
 					if (i > 0) sqlBuilder.append(", ");
 					sqlBuilder.append("?");
-					parameters.add(item.eventTypes().eventTypes().get(i).name());
+					parameters.add(itTypes.next().name());
 				}
 				sqlBuilder.append(")");
 				hasEventTypeFilter = true;

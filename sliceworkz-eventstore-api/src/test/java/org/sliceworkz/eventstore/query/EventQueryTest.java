@@ -1,3 +1,20 @@
+/*
+ * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
+ * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 package org.sliceworkz.eventstore.query;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -25,12 +42,12 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 
 public class EventQueryTest {
 
-	Event<MockDomainEvent> e1_event1NoTags = Event.<MockDomainEvent>of(EventStreamId.forContext("context"), EventReference.of(EventId.create(), 1), EventType.of(FirstDomainEvent.class), new FirstDomainEvent(), Tags.none(), LocalDateTime.now()); 
-	Event<MockDomainEvent> e2_event2NoTags = Event.<MockDomainEvent>of(EventStreamId.forContext("context"), EventReference.of(EventId.create(), 2), EventType.of(SecondDomainEvent.class), new SecondDomainEvent(), Tags.none(), LocalDateTime.now()); 
-	Event<MockDomainEvent> e3_event1TagsA1 = Event.<MockDomainEvent>of(EventStreamId.forContext("context"), EventReference.of(EventId.create(), 3), EventType.of(FirstDomainEvent.class), new FirstDomainEvent(), Tags.of("A", "1"), LocalDateTime.now()); 
-	Event<MockDomainEvent> e4_event2TagsA1 = Event.<MockDomainEvent>of(EventStreamId.forContext("context"), EventReference.of(EventId.create(), 4), EventType.of(SecondDomainEvent.class), new SecondDomainEvent(), Tags.of("A", "1"), LocalDateTime.now());
-	Event<MockDomainEvent> e5_event1TagsA1B1 = Event.<MockDomainEvent>of(EventStreamId.forContext("context"), EventReference.of(EventId.create(), 5), EventType.of(FirstDomainEvent.class), new FirstDomainEvent(), Tags.of(Tag.of("A", "1"),Tag.of("B","1")), LocalDateTime.now());
-	Event<MockDomainEvent> e6_event2TagsA2B1 = Event.<MockDomainEvent>of(EventStreamId.forContext("context"), EventReference.of(EventId.create(), 6), EventType.of(SecondDomainEvent.class), new SecondDomainEvent(), Tags.of(Tag.of("A", "2"),Tag.of("B","1")), LocalDateTime.now()); 
+	Event<MockDomainEvent> e1_event1NoTags = Event.<MockDomainEvent>of(EventStreamId.forContext("context"), EventReference.of(EventId.create(), 1), EventType.of(FirstDomainEvent.class), EventType.of(FirstDomainEvent.class), new FirstDomainEvent(), Tags.none(), LocalDateTime.now()); 
+	Event<MockDomainEvent> e2_event2NoTags = Event.<MockDomainEvent>of(EventStreamId.forContext("context"), EventReference.of(EventId.create(), 2), EventType.of(SecondDomainEvent.class), EventType.of(SecondDomainEvent.class), new SecondDomainEvent(), Tags.none(), LocalDateTime.now()); 
+	Event<MockDomainEvent> e3_event1TagsA1 = Event.<MockDomainEvent>of(EventStreamId.forContext("context"), EventReference.of(EventId.create(), 3), EventType.of(FirstDomainEvent.class), EventType.of(FirstDomainEvent.class), new FirstDomainEvent(), Tags.of("A", "1"), LocalDateTime.now()); 
+	Event<MockDomainEvent> e4_event2TagsA1 = Event.<MockDomainEvent>of(EventStreamId.forContext("context"), EventReference.of(EventId.create(), 4), EventType.of(SecondDomainEvent.class), EventType.of(SecondDomainEvent.class), new SecondDomainEvent(), Tags.of("A", "1"), LocalDateTime.now());
+	Event<MockDomainEvent> e5_event1TagsA1B1 = Event.<MockDomainEvent>of(EventStreamId.forContext("context"), EventReference.of(EventId.create(), 5), EventType.of(FirstDomainEvent.class), EventType.of(FirstDomainEvent.class), new FirstDomainEvent(), Tags.of(Tag.of("A", "1"),Tag.of("B","1")), LocalDateTime.now());
+	Event<MockDomainEvent> e6_event2TagsA2B1 = Event.<MockDomainEvent>of(EventStreamId.forContext("context"), EventReference.of(EventId.create(), 6), EventType.of(SecondDomainEvent.class), EventType.of(SecondDomainEvent.class), new SecondDomainEvent(), Tags.of(Tag.of("A", "2"),Tag.of("B","1")), LocalDateTime.now()); 
 	
 	@Test
 	void testMatchAll ( ) {

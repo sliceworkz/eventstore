@@ -1,8 +1,25 @@
+/*
+ * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
+ * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 package org.sliceworkz.eventstore.impl;
 
-import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -22,6 +39,8 @@ import org.sliceworkz.eventstore.impl.serde.EventPayloadSerializerDeserializer;
 import org.sliceworkz.eventstore.impl.serde.EventPayloadSerializerDeserializer.TypeAndPayload;
 import org.sliceworkz.eventstore.impl.serde.EventPayloadSerializerDeserializer.TypeAndSerializedPayload;
 import org.sliceworkz.eventstore.query.EventQuery;
+import org.sliceworkz.eventstore.query.EventQueryItem;
+import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorage.AppendsToEventStoreNotification;
@@ -56,13 +75,14 @@ public class EventStoreImpl implements EventStore {
 	}
 
 	@Override
-	public <EVENT_TYPE> EventStream<EVENT_TYPE> getEventStream(EventStreamId eventStreamId, Class<?> ... eventRootClasses ) {
+	public <EVENT_TYPE> EventStream<EVENT_TYPE> getEventStream(EventStreamId eventStreamId, Set<Class<?>> eventRootClasses, Set<Class<?>> historicalEventRootClasses ) {
 		
 		EventPayloadSerializerDeserializer serde; 
-		if ( eventRootClasses != null && eventRootClasses.length > 0 ) {
+		if ( eventRootClasses != null && eventRootClasses.size() > 0 ) {
 			// use typed event payloads, mapped to Java objects
 			serde = EventPayloadSerializerDeserializer.typed();
-			Arrays.asList(eventRootClasses).forEach(serde::registerEventTypes);
+			eventRootClasses.forEach(serde::registerEventTypes);
+			historicalEventRootClasses.forEach(serde::registerLegacyEventTypes);
 		} else {
 			// no type mappings, all events payload will be String type
 			serde = EventPayloadSerializerDeserializer.raw();
@@ -120,12 +140,12 @@ public class EventStoreImpl implements EventStore {
 
 		@Override
 		public Stream<Event<EVENT_TYPE>> query(EventQuery query, EventReference after, Limit limit ) {
-			return eventStorage.query(query,Optional.of(eventStreamId), after, limit, QueryDirection.FORWARD).map(this::enrich);
+			return eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), after, limit, QueryDirection.FORWARD).map(this::enrich);
 		}
 
 		@Override
 		public Stream<Event<EVENT_TYPE>> queryBackwards(EventQuery query, EventReference before, Limit limit) {
-			return eventStorage.query(query,Optional.of(eventStreamId), before, limit, QueryDirection.BACKWARD).map(this::enrich);
+			return eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), before, limit, QueryDirection.BACKWARD).map(this::enrich);
 		}
 		
 		@SuppressWarnings("unchecked")
@@ -136,7 +156,7 @@ public class EventStoreImpl implements EventStore {
 			EVENT_TYPE data = (EVENT_TYPE)storedEvent.data();
 			TypeAndPayload typeAndPayload = serde.deserialize(storedEvent.type().name(), storedEvent.data());
 			data = (EVENT_TYPE)typeAndPayload.eventData();
-			return new Event<>(storedEvent.stream(), storedEvent.type(), storedEvent.reference(), data, storedEvent.tags(), storedEvent.timestamp());
+			return new Event<>(storedEvent.stream(), typeAndPayload.type(), storedEvent.type(), storedEvent.reference(), data, storedEvent.tags(), storedEvent.timestamp());
 		}
 		
 		private EventToStore reduce ( EphemeralEvent<? extends EVENT_TYPE> event ) {
@@ -174,6 +194,25 @@ public class EventStoreImpl implements EventStore {
 			consistentSubscribers.forEach(s->s.eventsAppended(appendedEvents));
 			
 			return appendedEvents;
+		}
+		
+		/**
+		 * Traces back all current event types to their legacy historical ones, so a full query is done on older and newer ones
+		 */
+		private EventQuery includeLegacyEventTypes ( EventQuery query ) {
+			if ( query.items() == null ) {
+				return new EventQuery(null, query.until());
+			} else {
+				return new EventQuery(query.items().stream().map(this::includeLegacyEventTypes).toList(), query.until());
+			}
+		}
+
+		private EventQueryItem includeLegacyEventTypes ( EventQueryItem queryItem ) {
+			return new EventQueryItem(includeLegacyEventTypes(queryItem.eventTypes()), queryItem.tags());
+		}
+
+		private EventTypesFilter includeLegacyEventTypes ( EventTypesFilter typesFilter ) {
+			return EventTypesFilter.of(serde.determineLegacyTypes(typesFilter.eventTypes()));
 		}
 
 		@Override

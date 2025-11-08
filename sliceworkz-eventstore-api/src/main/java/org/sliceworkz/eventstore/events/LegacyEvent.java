@@ -15,21 +15,17 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-package org.sliceworkz.eventstore.stream;
+package org.sliceworkz.eventstore.events;
 
-import java.util.Collections;
-import java.util.List;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 
-import org.sliceworkz.eventstore.events.Event;
-import org.sliceworkz.eventstore.events.EphemeralEvent;
+@Retention(RetentionPolicy.RUNTIME)
+@Target(ElementType.TYPE)
+public @interface LegacyEvent {
 
-public interface EventSink<DOMAIN_EVENT_TYPE> {
-
-	// returns Events with filled in position in stream
-	List<Event<DOMAIN_EVENT_TYPE>> append ( AppendCriteria appendCriteria, List<EphemeralEvent<? extends DOMAIN_EVENT_TYPE>> events );
+	Class<? extends Upcast<?,?>> upcast();
 	
-	default List<Event<DOMAIN_EVENT_TYPE>> append ( AppendCriteria appendCriteria, EphemeralEvent<? extends DOMAIN_EVENT_TYPE> event ) {
-		return append(appendCriteria, Collections.singletonList(event));
-	}
-
 }

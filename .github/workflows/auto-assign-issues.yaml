@@ -1,0 +1,19 @@
+name: auto-assign-issues
+on:
+  issues:
+    types: [opened]
+  pull_request:
+    types: [opened]
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+    - name: 'Auto-assign issue'
+      uses: pozil/auto-assign-issue@d11e715efc663fe323c3d8d4d3cbbfdddd539baf #v1
+      with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          assignees: vanrogu
+          numOfAssignee: 1

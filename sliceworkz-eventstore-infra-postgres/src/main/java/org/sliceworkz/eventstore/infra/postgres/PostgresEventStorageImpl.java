@@ -1,3 +1,20 @@
+/*
+ * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
+ * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 package org.sliceworkz.eventstore.infra.postgres;
 
 import java.io.IOException;
@@ -15,6 +32,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Stream;
@@ -47,7 +65,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private String name;
 	private String prefix;
 	private DataSource dataSource;
-	private List<EventStoreListener> listeners = new ArrayList<>();
+	private List<EventStoreListener> listeners = new CopyOnWriteArrayList<>();
 	private ExecutorService executorService;
 	private boolean stopped;
 	
@@ -57,6 +75,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	public static final int WAIT_FOR_NOTIFICATIONS_TIMEOUT = ONE_MINUTE;
 
 	private static final String NO_PREFIX = "";
+	private static final int MAX_PREFIX_LENGTH = 32;
 
 	public PostgresEventStorageImpl ( String name, DataSource dataSource ){
 		this(name, dataSource, dataSource, NO_PREFIX);
@@ -71,13 +90,36 @@ public class PostgresEventStorageImpl implements EventStorage {
 	}
 	
 	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, String prefix ) {
-		this.prefix = prefix;
+		this.prefix = validatePrefix(prefix);
 		this.name = name;
 		this.dataSource = dataSource;
 		this.executorService = Executors.newVirtualThreadPerTaskExecutor();
 		
 		this.executorService.execute(new NewEventsAppendedMonitor("event-append-listener/" + name, listeners, monitoringDataSource));
 		this.executorService.execute(new BookmarkPlacedMonitor("bookmark-listener/" + name, listeners, monitoringDataSource));
+	}
+	
+	static String validatePrefix(String prefix) {
+		if (prefix == null) {
+			throw new IllegalArgumentException("Prefix cannot be null");
+		}
+		
+		// Empty is OK, otherwise more complex rules apply to keep SQL sane and to avoid SQL injection
+		if ( ! prefix.isEmpty() ) {
+			
+			if (!prefix.matches("^[a-zA-Z0-9_]+_$")) {
+				throw new IllegalArgumentException("Invalid prefix: '" + prefix + "'. "
+						+ "Prefix must contain only alphanumeric characters and underscores, "
+						+ "and must end with an underscore (e.g., 'tenant1_')");
+			}
+	
+			if (prefix.length() > MAX_PREFIX_LENGTH) {
+				throw new IllegalArgumentException(String.format("Prefix too long (max {} characters): {}", MAX_PREFIX_LENGTH, prefix));
+			}
+			
+		}
+		
+		return prefix;
 	}
 	
 	public PostgresEventStorageImpl initializeDatabase ( ) {
@@ -233,10 +275,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 			// Add event type filtering
 			if (item.eventTypes() != null && !item.eventTypes().eventTypes().isEmpty()) {
 				sqlBuilder.append("event_type IN (");
+				
+				Iterator<EventType> itTypes = item.eventTypes().eventTypes().iterator();
 				for (int i = 0; i < item.eventTypes().eventTypes().size(); i++) {
 					if (i > 0) sqlBuilder.append(", ");
 					sqlBuilder.append("?");
-					parameters.add(item.eventTypes().eventTypes().get(i).name());
+					parameters.add(itTypes.next().name());
 				}
 				sqlBuilder.append(")");
 				hasEventTypeFilter = true;
@@ -536,10 +580,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 				        }
 				    }
 
-				    List<EventStoreListener> copiedListeners = new ArrayList<>(listeners);
-				    
 				    // notify all listeners - with max 1 notification per message stream (the most recent one)
-				    notificationsPerStream.values().forEach(n->copiedListeners.forEach(l->l.notify(n)));
+				    notificationsPerStream.values().forEach(n->listeners.forEach(l->l.notify(n)));
 
 				} catch (SQLException e) {
 					if ( !stopped ) {
@@ -620,10 +662,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 				        }
 				    }
 
-				    List<EventStoreListener> copiedListeners = new ArrayList<>(listeners);
-				    
 				    // notify all listeners - with max 1 notification per message stream (the most recent one)
-				    bookmarkPlacedsPerReader.values().forEach(n->copiedListeners.forEach(l->l.notify(n)));
+				    bookmarkPlacedsPerReader.values().forEach(n->listeners.forEach(l->l.notify(n)));
 
 				} catch (SQLException e) {
 					if ( !stopped ) {

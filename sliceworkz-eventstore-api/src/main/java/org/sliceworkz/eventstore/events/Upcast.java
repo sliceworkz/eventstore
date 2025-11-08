@@ -15,21 +15,12 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-package org.sliceworkz.eventstore.stream;
+package org.sliceworkz.eventstore.events;
 
-import java.util.Collections;
-import java.util.List;
+public interface Upcast<HISTORICAL_EVENT,DOMAIN_EVENT> {
 
-import org.sliceworkz.eventstore.events.Event;
-import org.sliceworkz.eventstore.events.EphemeralEvent;
-
-public interface EventSink<DOMAIN_EVENT_TYPE> {
-
-	// returns Events with filled in position in stream
-	List<Event<DOMAIN_EVENT_TYPE>> append ( AppendCriteria appendCriteria, List<EphemeralEvent<? extends DOMAIN_EVENT_TYPE>> events );
+	DOMAIN_EVENT upcast ( HISTORICAL_EVENT historicalEvent );
 	
-	default List<Event<DOMAIN_EVENT_TYPE>> append ( AppendCriteria appendCriteria, EphemeralEvent<? extends DOMAIN_EVENT_TYPE> event ) {
-		return append(appendCriteria, Collections.singletonList(event));
-	}
-
+	Class<DOMAIN_EVENT> targetType ( );
+	
 }

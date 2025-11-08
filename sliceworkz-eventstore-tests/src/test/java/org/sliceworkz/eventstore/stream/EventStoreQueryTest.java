@@ -1,10 +1,29 @@
+/*
+ * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
+ * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 package org.sliceworkz.eventstore.stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.math.BigDecimal;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
@@ -60,7 +79,12 @@ public class EventStoreQueryTest {
 		this.otherEventStreamId = EventStreamId.forContext("otherApp").withPurpose("domain");
 		this.otherEventStream = eventStore.getEventStream(otherEventStreamId, MockDomainEvent.class);
 		
-		this.allEventsStream = eventStore.getEventStream(EventStreamId.anyContext().anyPurpose(), BankDomainEvent.class, PerformanceReportEvent.class, MockDomainEvent.class);
+		Set<Class<?>> rootEventClasses = new HashSet<>();
+		rootEventClasses.add(BankDomainEvent.class);
+		rootEventClasses.add(PerformanceReportEvent.class);
+		rootEventClasses.add(MockDomainEvent.class);
+		
+		this.allEventsStream = eventStore.getEventStream(EventStreamId.anyContext().anyPurpose(), rootEventClasses);
 
 		storeTestEvents();
 	}

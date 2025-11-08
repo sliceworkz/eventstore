@@ -23,11 +23,11 @@ import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorageImpl;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
 import org.sliceworkz.eventstore.spi.EventStorage;
 
-public class PostgresEventStreamTest extends EventStreamTest {
-
+public class PostgresUpcastTest extends UpcastTest {
+	
 	@Override
 	public EventStorage createEventStorage ( ) {
-		return new PostgresEventStorageImpl("unit-test", PostgresContainer.dataSource(), "unittest_prefix_").initializeDatabase();
+		return new PostgresEventStorageImpl("unit-test", PostgresContainer.dataSource()).initializeDatabase();
 	}
 	
 	@Override

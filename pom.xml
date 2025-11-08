@@ -195,16 +195,14 @@
 	</profiles>
 
 	<distributionManagement>
-		<repository>
-			<id>io.cloudrepo.xti.opensource</id>
-			<name>CloudRepo Releases</name>
-			<url>https://xti.mycloudrepo.io/repositories/opensource</url>
-		</repository>
-		<snapshotRepository>
-			<id>io.cloudrepo.xti.opensource</id>
-			<name>CloudRepo Snapshots</name>
-			<url>https://xti.mycloudrepo.io/repositories/opensource</url>
-		</snapshotRepository>
+	  <snapshotRepository>
+	    <id>ossrh</id>
+	    <url>https://s01.oss.sonatype.org/content/repositories/snapshots</url>
+	  </snapshotRepository>
+	  <repository>
+	    <id>ossrh</id>
+	    <url>https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/</url>
+	  </repository>
 	</distributionManagement>
 	
 	<licenses>

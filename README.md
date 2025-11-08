@@ -20,19 +20,7 @@ Fully compliant will all features described on [DCB Specification](https://dcb.e
 
 We'll assume maven as a dependency manager and provide the required snippets to pom.xml 
 
-### Add the eventstore maven repo
-
-```xml
-	<repositories> 
-	    <repository>
-	        <id>io.cloudrepo.xti.opensource</id>
-	        <name>XTi open source repo</name>
-	        <url>https://xti.mycloudrepo.io/public/repositories/opensource</url> 
-	    </repository>
-	</repositories>
-```
-
-### Add the eventstore dependencies
+### Add the Eventstore dependencies
 
 ```xml
 	...

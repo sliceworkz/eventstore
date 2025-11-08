@@ -2,46 +2,126 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
 	<modelVersion>4.0.0</modelVersion>
 	<groupId>org.sliceworkz</groupId>
-	<artifactId>sliceworkz-eventstore</artifactId>
+	<artifactId>sliceworkz-eventstore-dependencies</artifactId>
 	<version>0.2.0-SNAPSHOT</version>
 	
 	<name>${project.artifactId}}</name>
 	<description>DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)</description>
 	<url>https://sliceworkz.github.io/eventstore</url>
-	
-	<packaging>pom</packaging>
 
+	<packaging>pom</packaging>
+	
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-		
+
 		<maven.minimal-version>3.6.3</maven.minimal-version>
+
+		<jackson.version>2.20.1</jackson.version>
+		<slf4j.version>2.0.17</slf4j.version>
 		
-		<maven.maven-pgp-plugin.version>3.2.8</maven.maven-pgp-plugin.version>
+		<postgresql.jdbc.version>42.7.8</postgresql.jdbc.version>
+		<hikari.version>7.0.2</hikari.version>
+
+		<junit-jupiter.version>6.0.1</junit-jupiter.version>
+		<testcontainers.postgresql.version>1.21.3</testcontainers.postgresql.version>
+
 		<maven.maven-versions-plugin.version>2.19.1</maven.maven-versions-plugin.version>
 		<maven.maven-enforcer-plugin.version>3.6.2</maven.maven-enforcer-plugin.version>
+		<maven.maven-gpg-plugin.version>3.2.8</maven.maven-gpg-plugin.version>
 		
-		<maven.compiler.release>21</maven.compiler.release>
+		<maven.deploy.skip>false</maven.deploy.skip>
+
 	</properties>
+
 	
-	<modules>
-		<!-- maven build constructs -->
-		<module>sliceworkz-eventstore-parent-pom</module>
-		<module>sliceworkz-eventstore-bom</module>
-		
-		<!-- project modules -->
-		<module>sliceworkz-eventstore-api</module>
-		<module>sliceworkz-eventstore-impl</module>
+	<dependencyManagement>
+		<dependencies>
+			<dependency>
+				<groupId>org.sliceworkz</groupId>
+				<artifactId>sliceworkz-eventstore-api</artifactId>
+				<version>${project.version}</version>
+			</dependency>		
+			<dependency>
+				<groupId>org.sliceworkz</groupId>
+				<artifactId>sliceworkz-eventstore-impl</artifactId>
+				<version>${project.version}</version>
+			</dependency>		
+			<dependency>
+				<groupId>org.sliceworkz</groupId>
+				<artifactId>sliceworkz-eventstore-infra-inmem</artifactId>
+				<version>${project.version}</version>
+			</dependency>		
+			<dependency>
+				<groupId>org.sliceworkz</groupId>
+				<artifactId>sliceworkz-eventstore-infra-postgres</artifactId>
+				<version>${project.version}</version>
+			</dependency>	
+			<dependency>
+				<groupId>org.sliceworkz</groupId>
+				<artifactId>sliceworkz-eventstore-tests</artifactId>
+				<version>${project.version}</version>
+			</dependency>		
+			<dependency>
+				<groupId>org.sliceworkz</groupId>
+				<artifactId>sliceworkz-eventstore-tests</artifactId>
+				<type>test-jar</type>
+				<version>${project.version}</version>
+			</dependency>		
 
-		<!-- examples -->
-		<module>sliceworkz-eventstore-examples</module>
+			<!-- SLF4J -->
+			<dependency>
+			    <groupId>org.slf4j</groupId>
+			    <artifactId>slf4j-api</artifactId>
+			    <version>${slf4j.version}</version>
+			</dependency>
+			<dependency>
+			    <groupId>org.slf4j</groupId>
+			    <artifactId>slf4j-simple</artifactId>
+			    <version>${slf4j.version}</version>
+			</dependency>
 
-		<!-- tests, those same scenarios will be run inmem as wel as on postgres  -->
-		<module>sliceworkz-eventstore-tests</module>
-		
-		<!-- infra implementations -->
-		<module>sliceworkz-eventstore-infra-inmem</module>
-		<module>sliceworkz-eventstore-infra-postgres</module>
-	</modules>
+			<!-- Jackson JSON processing -->
+			<dependency>
+			    <groupId>com.fasterxml.jackson.core</groupId>
+			    <artifactId>jackson-databind</artifactId>
+			    <version>${jackson.version}</version>
+			</dependency>
+			<dependency>
+			  <groupId>com.fasterxml.jackson.datatype</groupId>
+			  <artifactId>jackson-datatype-jsr310</artifactId>
+			  <version>${jackson.version}</version>
+			</dependency>
+
+			<!-- JUnit Testing -->
+			<dependency>
+				<groupId>org.junit.jupiter</groupId>
+				<artifactId>junit-jupiter-api</artifactId>
+				<version>${junit-jupiter.version}</version>
+				<scope>test</scope>
+			</dependency>
+			
+			<!-- PostgreSQL -->
+			<dependency>
+			    <groupId>org.postgresql</groupId>
+			    <artifactId>postgresql</artifactId>
+			    <version>${postgresql.jdbc.version}</version>
+			    <scope>provided</scope>
+			</dependency>
+			<dependency>
+			    <groupId>org.testcontainers</groupId>
+			    <artifactId>postgresql</artifactId>
+			    <version>${testcontainers.postgresql.version}</version>
+			    <scope>test</scope>
+			</dependency>
+			
+			<dependency>
+			    <groupId>com.zaxxer</groupId>
+			    <artifactId>HikariCP</artifactId>
+			    <version>${hikari.version}</version>
+			</dependency>
+
+		</dependencies>
+	</dependencyManagement>
 	
 	<build>
 		<plugins>
@@ -93,17 +173,16 @@
 					</execution>
 				</executions>
 			</plugin>
-					        					
+			
 			<plugin>
 			    <groupId>org.sonatype.central</groupId>
 			    <artifactId>central-publishing-maven-plugin</artifactId>
 			    <version>0.6.0</version>
 			    <extensions>true</extensions>
 			    <configuration>
-				<publishingServerId>central</publishingServerId>
+			        <publishingServerId>central</publishingServerId>
 			    </configuration>
 			</plugin>
-		        				
       
 		</plugins>
 	</build>
@@ -116,11 +195,11 @@
 					<plugin>
 						<groupId>org.apache.maven.plugins</groupId>
 						<artifactId>maven-gpg-plugin</artifactId>
-						<version>${maven.maven-pgp-plugin.version}</version>
+						<version>${maven.maven-gpg-plugin.version}</version>
 						<executions>
 							<execution>
 								<id>sign-artifacts</id>
-								<phase>install</phase>
+								<phase>verify</phase>
 								<goals>
 									<goal>sign</goal>
 								</goals>
@@ -134,11 +213,12 @@
 							<passphrase>${env.GPG_PASSPHRASE}</passphrase>
 						</configuration>
 					</plugin>
+		        				
 				</plugins>
 			</build>
 		</profile>
 	</profiles>
-
+	
 	<distributionManagement>
 		<repository>
 			<id>io.cloudrepo.xti.opensource</id>

@@ -29,7 +29,7 @@
 		<relativePath>../sliceworkz-eventstore-parent-pom</relativePath>
 	</parent>
 	
-	<name>${project.artifactId}}</name>
+	<name>${project.artifactId}</name>
 	<description>DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)</description>
 	<url>https://sliceworkz.github.io/eventstore</url>
 

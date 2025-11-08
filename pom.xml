@@ -19,6 +19,7 @@
 		<maven.maven-pgp-plugin.version>3.2.8</maven.maven-pgp-plugin.version>
 		<maven.maven-versions-plugin.version>2.19.1</maven.maven-versions-plugin.version>
 		<maven.maven-enforcer-plugin.version>3.6.2</maven.maven-enforcer-plugin.version>
+		<maven.mycila-license-plugin.version>5.0.0</maven.mycila-license-plugin.version>
 		
 		<maven.compiler.release>21</maven.compiler.release>
 	</properties>
@@ -103,8 +104,43 @@
 				<publishingServerId>central</publishingServerId>
 			    </configuration>
 			</plugin>
-		        				
-      
+      		
+			<plugin>
+			    <groupId>com.mycila</groupId>
+			    <artifactId>license-maven-plugin</artifactId>
+			    <version>${maven.mycila-license-plugin.version}</version>
+				<executions>
+					<execution>
+						<phase>package</phase>
+						<goals>
+							<goal>check</goal>
+						</goals>
+					</execution>
+				</executions>
+			    <configuration>
+					<properties>
+						<project.name>Sliceworkz Eventstore</project.name>
+						<project.description>a Java/Postgres DCB Eventstore implementation</project.description>
+					    <owner>Sliceworkz / XTi</owner>
+					    <email>info@sliceworkz.org</email>
+					    <year>2025</year>
+					</properties>
+					<licenseSets>
+						<licenseSet>
+							<header>com/mycila/maven/plugin/license/templates/LGPL-3.txt</header>
+							<includes>
+							    <include>**/*.java</include>
+							    <include>**/*.sql</include>
+							    <include>**/*.xml</include>
+							    <include>**/*.properties</include>
+							</includes>
+							<excludes>
+							    <exclude>**/target/**</exclude>
+							</excludes>
+						</licenseSet>
+					</licenseSets>
+			    </configuration>
+			</plugin>
 		</plugins>
 	</build>
 	

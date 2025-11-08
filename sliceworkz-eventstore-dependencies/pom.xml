@@ -173,52 +173,35 @@
 					</execution>
 				</executions>
 			</plugin>
-			
-			<plugin>
-			    <groupId>org.sonatype.central</groupId>
-			    <artifactId>central-publishing-maven-plugin</artifactId>
-			    <version>0.6.0</version>
-			    <extensions>true</extensions>
-			    <configuration>
-			        <publishingServerId>central</publishingServerId>
-			    </configuration>
-			</plugin>
+		
+	        <plugin>
+	            <groupId>org.codehaus.mojo</groupId>
+	            <artifactId>license-maven-plugin</artifactId>
+	            <version>2.7.0</version>
+	            <configuration>
+	                <licenseName>lgpl_v3</licenseName>
+	                <organizationName>Sliceworkz (brand of XTi NV)</organizationName>
+	                <inceptionYear>2025</inceptionYear>
+	                <projectName>Sliceworkz Eventstore</projectName>
+	                <roots>
+	                    <root>src/main/java</root>
+	                    <root>src/test/java</root>
+	                </roots>
+        	            </configuration>
+	            <executions>
+	                <execution>
+	                    <id>check-headers</id>
+	                    <phase>verify</phase>
+	                    <goals>
+	                        <goal>check-file-header</goal>
+	                    </goals>
+	                </execution>
+	            </executions>
+	        </plugin>
       
 		</plugins>
 	</build>
-	
-	<profiles>
-		<profile>
-			<id>gpg-ci</id>
-			<build>
-				<plugins>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-gpg-plugin</artifactId>
-						<version>${maven.maven-gpg-plugin.version}</version>
-						<executions>
-							<execution>
-								<id>sign-artifacts</id>
-								<phase>verify</phase>
-								<goals>
-									<goal>sign</goal>
-								</goals>
-							</execution>
-						</executions>
-						<configuration>
-							<gpgArguments>
-								<arg>--pinentry-mode</arg>
-								<arg>loopback</arg>
-							</gpgArguments>
-							<passphrase>${env.GPG_PASSPHRASE}</passphrase>
-						</configuration>
-					</plugin>
-		        				
-				</plugins>
-			</build>
-		</profile>
-	</profiles>
-	
+
 	<distributionManagement>
 		<repository>
 			<id>io.cloudrepo.xti.opensource</id>
@@ -233,10 +216,11 @@
 	</distributionManagement>
 	
 	<licenses>
-		<license>
-			<name>LGPL License</name>
-			<url>https://opensource.org/licenses/LGPL</url>
-		</license>
+	    <license>
+	        <name>GNU Lesser General Public License v3.0</name>
+	        <url>https://www.gnu.org/licenses/lgpl-3.0.txt</url>
+	        <distribution>repo</distribution>
+	    </license>
 	</licenses>
 
 	<developers>

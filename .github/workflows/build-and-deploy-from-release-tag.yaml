@@ -43,7 +43,7 @@ jobs:
         env:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
-      - name: Deploy to CloudRepo
+      - name: Deploy to Maven Central
         run: mvn -B -DskipTests deploy -Pgpg-ci
         env:
           MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}

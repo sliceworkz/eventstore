@@ -30,11 +30,13 @@ import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 
 public class PostgresContainer {
+	
+	public static final String POSTGRES_DOCKER_CONTAINER_IMAGE = "postgres:16";
 
 	private static boolean ENABLE_DUMP_EVENTS_AFTER_TEST = false;
 	
 	@SuppressWarnings("resource")
-	public static PostgreSQLContainer<?> postgreSQLContainer = new PostgreSQLContainer<>("postgres:16")
+	public static PostgreSQLContainer<?> postgreSQLContainer = new PostgreSQLContainer<>(POSTGRES_DOCKER_CONTAINER_IMAGE)
 		      .withDatabaseName("integration-tests-db")
 		      .withUsername("sa")
 		      .withPassword("pwd");

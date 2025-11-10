@@ -17,6 +17,8 @@
  */
 package org.sliceworkz.eventstore.stream;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
 import java.lang.annotation.Annotation;
 import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Field;
@@ -76,9 +78,7 @@ public class ErasableEventDataTest {
 		findAllGdprErasableFields(CustomerRegistered.class).forEach(System.out::println);
 		findAllGdprErasableFields(Address.class).forEach(System.out::println);
 		
-		// Verify it matches the original
-		assert retrieved.data().equals(e);
-		
+		assertEquals(e, retrieved.data());
 	}
 	
 	public sealed interface CustomerEvent {

@@ -1,9 +1,16 @@
 package org.sliceworkz.eventstore.events;
 
+import java.lang.annotation.Annotation;
+import java.lang.reflect.AnnotatedElement;
+import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.List;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.events.ErasableTest.CustomerEvent.Address;
 import org.sliceworkz.eventstore.events.ErasableTest.CustomerEvent.CustomerRegistered;
+import org.sliceworkz.eventstore.events.GdprErasable.Category;
 
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.introspect.Annotated;
@@ -62,6 +69,10 @@ public class ErasableTest {
 		
 		System.out.println("Reconstructed: " + reconstructed);
 		
+		
+		findAllGdprErasableFields(CustomerRegistered.class).forEach(System.out::println);
+		findAllGdprErasableFields(Address.class).forEach(System.out::println);
+		
 		// Verify it matches the original
 		assert reconstructed.equals(e);
 		
@@ -74,7 +85,8 @@ public class ErasableTest {
 
 				String id,
 				
-				@Erasable
+				// test with a custom @GdprErasable annotation including @Erasable
+				@GdprErasable(category = Category.CONTACT, purpose = "required for personal communication")
 				String name,
 				
 				@Erasable
@@ -92,7 +104,7 @@ public class ErasableTest {
 			@Erasable
 			String street,
 			
-			@Erasable
+			@GdprErasable(category = Category.PERSONAL, purpose="sending snail mail")
 			String number,
 			
 			String zip ) {
@@ -127,8 +139,8 @@ public class ErasableTest {
 				return views;
 			}
 
-			Erasable annotatedWithErasable = member.getAnnotation(Erasable.class);
-			PartlyErasable annotatedWithPartlyErasable = member.getAnnotation(PartlyErasable.class);
+			Erasable annotatedWithErasable = findAnnotationOnMember(member, Erasable.class);
+			PartlyErasable annotatedWithPartlyErasable = findAnnotationOnMember(member, PartlyErasable.class);
 			
 			if (annotatedWithErasable == null && annotatedWithPartlyErasable == null) {
 				return new Class<?>[] { JsonViewTags.ImmutableData.class };
@@ -142,9 +154,118 @@ public class ErasableTest {
 		}
 	}
 	
+	private static <A extends Annotation> A findAnnotationOnMember(Annotated member, Class<A> annotationType) {
+	    // First check if the member has the annotation directly
+	    A annotation = member.getAnnotation(annotationType);
+	    if (annotation != null) {
+	        return annotation;
+	    }
+	    
+	    AnnotatedElement element = member.getAnnotated();
+	    if (element != null) {
+	        // For records, Jackson introspects methods but annotations are on record components
+	        if (element instanceof java.lang.reflect.Method) {
+	            java.lang.reflect.Method method = (java.lang.reflect.Method) element;
+	            Class<?> declaringClass = method.getDeclaringClass();
+	            
+	            // Check if this is a record
+	            if (declaringClass.isRecord()) {
+	                // Find the corresponding record component
+	                try {
+	                    java.lang.reflect.RecordComponent component = 
+	                        java.util.Arrays.stream(declaringClass.getRecordComponents())
+	                            .filter(rc -> rc.getName().equals(method.getName()))
+	                            .findFirst()
+	                            .orElse(null);
+	                    
+	                    if (component != null) {
+	                        // Check direct annotation on record component
+	                        annotation = component.getAnnotation(annotationType);
+	                        if (annotation != null) {
+	                            return annotation;
+	                        }
+	                        
+	                        // Check meta-annotations on record component
+	                        for (Annotation ann : component.getAnnotations()) {
+	                            A metaAnnotation = ann.annotationType().getAnnotation(annotationType);
+	                            if (metaAnnotation != null) {
+	                                return metaAnnotation;
+	                            }
+	                        }
+	                    }
+	                } catch (Exception e) {
+	                    // Fall through to regular handling
+	                }
+	            }
+	        }
+	        
+	        // Fallback: search through annotations on the element itself
+	        for (Annotation ann : element.getAnnotations()) {
+	            A metaAnnotation = ann.annotationType().getAnnotation(annotationType);
+	            if (metaAnnotation != null) {
+	                return metaAnnotation;
+	            }
+	        }
+	    }
+	    
+	    return null;
+	}
+	
 	static class JsonViewTags {
 		public static class ImmutableData {}
 		public static class ErasableData {}
 	}
 	
+	public static <A extends Annotation> A findAnnotation(AnnotatedElement element, Class<A> annotationType) {
+	    A annotation = element.getAnnotation(annotationType);
+	    if (annotation != null) return annotation;
+	    
+	    // Search meta-annotations
+	    for (Annotation ann : element.getAnnotations()) {
+	        annotation = ann.annotationType().getAnnotation(annotationType);
+	        if (annotation != null) return annotation;
+	    }
+	    return null;
+	}
+	
+	
+	
+	public static List<GdprErasableField> findAllGdprErasableFields(Class<?> clazz) {
+	    List<GdprErasableField> erasableFields = new ArrayList<>();
+	    
+	    // Process all fields in the class
+	    for (Field field : clazz.getDeclaredFields()) {
+	        GdprErasable gdprErasable = findAnnotation(field, GdprErasable.class);
+	        if (gdprErasable != null) {
+	            erasableFields.add(new GdprErasableField(
+	                clazz.getSimpleName(),
+	                field.getName(),
+	                field.getType().getName(),
+	                gdprErasable.category(),
+	                gdprErasable.purpose()
+	            ));
+	        }
+	    }
+	    
+	    // Recursively process nested classes (like your Address record)
+	    for (Class<?> nestedClass : clazz.getDeclaredClasses()) {
+	        erasableFields.addAll(findAllGdprErasableFields(nestedClass));
+	    }
+	    
+	    return erasableFields;
+	}
+
+	public record GdprErasableField(
+	    String className,
+	    String fieldName,
+	    String fieldType,
+	    Category category,
+	    String purpose
+	) {
+	    @Override
+	    public String toString() {
+	        return String.format("Class: %s, Field: %s, Type: %s, Category: %s, Purpose: %s",
+	            className, fieldName, fieldType, category, purpose);
+	    }
+	}
 }

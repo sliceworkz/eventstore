@@ -1,7 +1,25 @@
+/*
+ * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
+ * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 package org.sliceworkz.eventstore.infra.inmem;
 
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
+import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 
 public interface InMemoryEventStorage {
@@ -12,8 +30,15 @@ public interface InMemoryEventStorage {
 
 	public static class Builder {
 		
+		private Limit limit = Limit.none();
+		
 		private Builder ( ) {
 			
+		}
+		
+		public Builder resultLimit ( int absoluteLimit ) {
+			this.limit = Limit.to(absoluteLimit);
+			return this;
 		}
 
 		public static Builder newBuilder ( ) {
@@ -21,7 +46,7 @@ public interface InMemoryEventStorage {
 		}
 		
 		public EventStorage build ( ) {
-			return new InMemoryEventStorageImpl();
+			return new InMemoryEventStorageImpl(limit);
 		}
 		
 		public EventStore buildStore ( ) {

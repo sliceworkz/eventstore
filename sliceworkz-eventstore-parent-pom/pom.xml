@@ -1,14 +1,37 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+
+    Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
+    Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Lesser General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+-->
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
 	<modelVersion>4.0.0</modelVersion>
 	<parent>
 		<groupId>org.sliceworkz</groupId>
 		<artifactId>sliceworkz-eventstore</artifactId>
-		<version>0.2.0-SNAPSHOT</version>
+		<version>0.3.0-SNAPSHOT</version>
 		<relativePath>../</relativePath>
 	</parent>
 	<artifactId>sliceworkz-eventstore-parent-pom</artifactId>
-	
+
+	<name>${project.artifactId}</name>
+	<description>DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)</description>
+	<url>https://sliceworkz.github.io/eventstore</url>
+
 	<packaging>pom</packaging>
 
 	<properties>
@@ -134,15 +157,15 @@
 				<version>${maven.maven-assembly-plugin.version}</version>
 			</plugin>
 			<plugin>
-			    <groupId>org.apache.maven.plugins</groupId>
-			    <artifactId>maven-compiler-plugin</artifactId>
-			    <version>${maven.maven-compiler-plugin.version}</version>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<version>${maven.maven-compiler-plugin.version}</version>
 			</plugin>
-	        <plugin>
-	            <groupId>org.apache.maven.plugins</groupId>
-	            <artifactId>maven-source-plugin</artifactId>
-	            <version>${maven.maven-source-plugin.version}</version>
-	            <executions>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-source-plugin</artifactId>
+				<version>${maven.maven-source-plugin.version}</version>
+				<executions>
 					<execution>
 						<id>attach-javadocs</id>
 						<phase>verify</phase>
@@ -150,8 +173,8 @@
 							<goal>jar-no-fork</goal>
 						</goals>
 					</execution>
-	            </executions>
-	        </plugin>	
+				</executions>
+			</plugin>	
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-javadoc-plugin</artifactId>
@@ -167,7 +190,6 @@
 				</executions>
 			</plugin>
 		</plugins>
-
 	</build>
-	
+
 </project>

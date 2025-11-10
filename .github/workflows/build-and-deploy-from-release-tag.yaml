@@ -25,9 +25,9 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
           cache: 'maven'
-          server-id: io.cloudrepo.xti.opensource
-          server-username: CLOUDREPO_USERNAME
-          server-password: CLOUDREPO_PASSWORD
+          server-id: central
+          server-username: MAVEN_CENTRAL_USERNAME
+          server-password: MAVEN_CENTRAL_PASSWORD
 
       - name: Import GPG key
         run: |
@@ -43,11 +43,11 @@ jobs:
         env:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
-      - name: Deploy to CloudRepo
+      - name: Deploy to Maven Central
         run: mvn -B -DskipTests deploy -Pgpg-ci
         env:
-          CLOUDREPO_USERNAME: ${{ secrets.CLOUDREPO_USERNAME }}
-          CLOUDREPO_PASSWORD: ${{ secrets.CLOUDREPO_PASSWORD }}
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
       
       - name: Create GitHub Release

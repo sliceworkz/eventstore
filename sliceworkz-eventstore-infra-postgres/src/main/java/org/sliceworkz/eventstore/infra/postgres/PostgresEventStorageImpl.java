@@ -1,3 +1,20 @@
+/*
+ * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
+ * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 package org.sliceworkz.eventstore.infra.postgres;
 
 import java.io.IOException;
@@ -48,6 +65,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private String name;
 	private String prefix;
 	private DataSource dataSource;
+	private Limit absoluteLimit;
+	
 	private List<EventStoreListener> listeners = new CopyOnWriteArrayList<>();
 	private ExecutorService executorService;
 	private boolean stopped;
@@ -60,22 +79,15 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private static final String NO_PREFIX = "";
 	private static final int MAX_PREFIX_LENGTH = 32;
 
-	public PostgresEventStorageImpl ( String name, DataSource dataSource ){
-		this(name, dataSource, dataSource, NO_PREFIX);
+	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit ) {
+		this(name, dataSource, monitoringDataSource, absoluteLimit, NO_PREFIX);
 	}
 
-	public PostgresEventStorageImpl ( String name, DataSource dataSource, String prefix ){
-		this(name, dataSource, dataSource, prefix);
-	}
-
-	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource ){
-		this(name, dataSource, monitoringDataSource, NO_PREFIX);
-	}
-	
-	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, String prefix ) {
+	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix ) {
 		this.prefix = validatePrefix(prefix);
 		this.name = name;
 		this.dataSource = dataSource;
+		this.absoluteLimit = absoluteLimit;
 		this.executorService = Executors.newVirtualThreadPerTaskExecutor();
 		
 		this.executorService.execute(new NewEventsAppendedMonitor("event-append-listener/" + name, listeners, monitoringDataSource));
@@ -212,10 +224,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 			sqlBuilder.append(" DESC");
 		}
 		
+		Limit effectiveLimit = effectiveLimit(limit);
+		
 		// Add limit if specified
-		if (limit != null && limit.isSet()) {
+		if (effectiveLimit != null && effectiveLimit.isSet()) {
 			sqlBuilder.append(" LIMIT ?");
-			parameters.add(limit.value());
+			parameters.add(effectiveLimit.value());
 		}
 		
 		try ( Connection readConnection = dataSource.getConnection() ) {
@@ -229,6 +243,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 					List<StoredEvent> events = new ArrayList<>();
 					while (rs.next()) {
 						events.add(mapResultSetToEvent(rs));
+					}
+					if ( absoluteLimit != null && absoluteLimit.isSet() && events.size() > absoluteLimit.value() ) {
+						throw new EventStorageException(String.format("query returned more results than the configured absolute limit of %d", absoluteLimit.value()));
 					}
 					return events.stream();
 				}
@@ -258,10 +275,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 			// Add event type filtering
 			if (item.eventTypes() != null && !item.eventTypes().eventTypes().isEmpty()) {
 				sqlBuilder.append("event_type IN (");
+				
+				Iterator<EventType> itTypes = item.eventTypes().eventTypes().iterator();
 				for (int i = 0; i < item.eventTypes().eventTypes().size(); i++) {
 					if (i > 0) sqlBuilder.append(", ");
 					sqlBuilder.append("?");
-					parameters.add(item.eventTypes().eventTypes().get(i).name());
+					parameters.add(itTypes.next().name());
 				}
 				sqlBuilder.append(")");
 				hasEventTypeFilter = true;
@@ -761,6 +780,24 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 	}
 
+	Limit effectiveLimit ( Limit softLimit ) {
+		Limit result;
+		if ( softLimit == null || softLimit.isNotSet() ) {
+			if ( absoluteLimit != null && absoluteLimit.isSet() ) {
+				result = Limit.to(absoluteLimit.value()+1);
+			} else {
+				result = Limit.none();
+			}
+		} else if ( absoluteLimit == null || absoluteLimit.isNotSet() ) {
+			result = softLimit;
+		} else if ( softLimit.value() <= absoluteLimit.value() ){
+			result = softLimit;
+		} else {
+			throw new EventStorageException(String.format("query limit exceeds the configured absolute limit of %d", absoluteLimit.value()));
+		}
+		return result;
+	}
+	
 	@Override
 	public String name() {
 		return name;

@@ -1,3 +1,20 @@
+/*
+ * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
+ * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 package org.sliceworkz.eventstore.infra.inmem;
 
 import java.time.LocalDateTime;
@@ -17,6 +34,7 @@ import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
+import org.sliceworkz.eventstore.spi.EventStorageException;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
@@ -32,11 +50,13 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	private List<EventStoreListener> listeners = new ArrayList<>();
 	private Map<String,EventReference> bookmarks = new HashMap<>();
 	private JsonMapper jsonMapper;
+	private Limit absoluteLimit;
 	
-	public InMemoryEventStorageImpl ( ) {
+	public InMemoryEventStorageImpl ( Limit absoluteLimit ) {
 		this.name = String.format("inmem-%s", System.identityHashCode(this)); // unique name in case different objects are used
 		this.jsonMapper = new JsonMapper();
 		this.jsonMapper.findAndRegisterModules();
+		this.absoluteLimit = absoluteLimit;
 	}
 	
 	@Override
@@ -91,11 +111,18 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		
 		result = result.filter(query::matches);
 
-		if ( limit != null && limit.isSet() ) {
-			result = result.limit(limit.value());
+		Limit effectiveLimit = effectiveLimit(limit);
+		
+		if ( effectiveLimit != null && effectiveLimit.isSet() ) {
+			result = result.limit(effectiveLimit.value());
 		}
 
 		var returnValue = new ArrayList<>(result.toList()); // to list and back to avoid ConcurrentUpdateExceptions when writing next event in log (?)
+		
+		if ( absoluteLimit != null && absoluteLimit.isSet() && returnValue.size() > absoluteLimit.value() ) {
+			throw new EventStorageException(String.format("query returned more results than the configured absolute limit of %d", absoluteLimit.value()));
+		}
+		
 		return returnValue.stream();
 	}
 	
@@ -194,6 +221,24 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		bookmarks.put(reader, eventReference);
 		BookmarkPlacedNotification notification = new BookmarkPlacedNotification(reader, eventReference);
 		listeners.forEach(l->l.notify(notification));
+	}
+
+	Limit effectiveLimit ( Limit softLimit ) {
+		Limit result;
+		if ( softLimit == null || softLimit.isNotSet() ) {
+			if ( absoluteLimit != null && absoluteLimit.isSet() ) {
+				result = Limit.to(absoluteLimit.value()+1);
+			} else {
+				result = Limit.none();
+			}
+		} else if ( absoluteLimit == null || absoluteLimit.isNotSet() ) {
+			result = softLimit;
+		} else if ( softLimit.value() <= absoluteLimit.value() ){
+			result = softLimit;
+		} else {
+			throw new EventStorageException(String.format("query limit exceeds the configured absolute limit of %d", absoluteLimit.value()));
+		}
+		return result;
 	}
 
 	@Override

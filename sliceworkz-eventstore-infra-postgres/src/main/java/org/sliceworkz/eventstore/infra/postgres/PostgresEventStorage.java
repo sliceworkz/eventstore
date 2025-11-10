@@ -1,9 +1,27 @@
+/*
+ * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
+ * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 package org.sliceworkz.eventstore.infra.postgres;
 
 import javax.sql.DataSource;
 
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
+import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 
 public interface PostgresEventStorage {
@@ -19,7 +37,8 @@ public interface PostgresEventStorage {
 		private DataSource dataSource;
 		private DataSource monitoringDataSource;
 		private boolean initializeDatabase = false;
-		
+		private Limit limit = Limit.none();
+
 		private Builder ( ) {
 			
 		}
@@ -49,6 +68,11 @@ public interface PostgresEventStorage {
 			return this;
 		}
 		
+		public Builder resultLimit ( int absoluteLimit ) {
+			this.limit = Limit.to(absoluteLimit);
+			return this;
+		}
+		
 		public Builder initializeDatabase ( ) {
 			return initializeDatabase(true);
 		}
@@ -63,7 +87,7 @@ public interface PostgresEventStorage {
 				dataSource = DataSourceFactory.fromConfiguration("pooled");
 				monitoringDataSource = DataSourceFactory.fromConfiguration("nonpooled");
 			}
-			var result = new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, prefix);
+			var result = new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix);
 			if ( initializeDatabase ) {
 				result.initializeDatabase();
 			}

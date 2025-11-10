@@ -48,7 +48,6 @@ public class PostgresProjectorTest extends ProjectorTest {
 
 	@AfterAll
 	public static void tearDownAfterAll ( ) {
-		PostgresContainer.dumpEventsInTable();
 		PostgresContainer.stop();
 		PostgresContainer.cleanup();
 	}

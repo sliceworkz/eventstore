@@ -47,7 +47,6 @@ public class PostgresEventStorePerformanceTest extends EventStorePerformanceTest
 
 	@AfterAll
 	public static void tearDownAfterAll ( ) {
-		PostgresContainer.dumpEventsInTable();
 		PostgresContainer.stop();
 		PostgresContainer.cleanup();
 	}

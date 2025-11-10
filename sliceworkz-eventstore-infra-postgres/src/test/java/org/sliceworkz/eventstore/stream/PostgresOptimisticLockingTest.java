@@ -48,7 +48,6 @@ public class PostgresOptimisticLockingTest extends OptimisticLockingTest {
 
 	@AfterAll
 	public static void tearDownAfterAll ( ) {
-		PostgresContainer.dumpEventsInTable();
 		PostgresContainer.stop();
 		PostgresContainer.cleanup();
 	}

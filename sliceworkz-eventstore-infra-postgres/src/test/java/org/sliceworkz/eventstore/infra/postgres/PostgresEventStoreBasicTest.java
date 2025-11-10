@@ -47,7 +47,6 @@ public class PostgresEventStoreBasicTest extends EventStoreBasicTest {
 
 	@AfterAll
 	public static void tearDownAfterAll ( ) {
-		PostgresContainer.dumpEventsInTable();
 		PostgresContainer.stop();
 		PostgresContainer.cleanup();
 	}

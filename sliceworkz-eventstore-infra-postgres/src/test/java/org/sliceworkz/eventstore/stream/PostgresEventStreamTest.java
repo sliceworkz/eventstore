@@ -49,7 +49,6 @@ public class PostgresEventStreamTest extends EventStreamTest {
 
 	@AfterAll
 	public static void tearDownAfterAll ( ) {
-		PostgresContainer.dumpEventsInTable();
 		PostgresContainer.stop();
 		PostgresContainer.cleanup();
 	}

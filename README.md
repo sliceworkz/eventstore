@@ -2,7 +2,7 @@
 
 # About Eventstore
 
-A DCB (Dynamic Context Boundary) compliant EventStore implementation in Java
+A DCB (Dynamic Consistency Boundary) compliant EventStore implementation in Java
 
 Persistence options: Postgres and In-Memory (for dev and demo purposes)
 

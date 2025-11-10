@@ -1,3 +1,5 @@
+[![ci build - mvn package](https://github.com/sliceworkz/eventstore/actions/workflows/ci.yaml/badge.svg)](https://github.com/sliceworkz/eventstore/actions/workflows/ci.yaml)
+
 # EventStore
 
 A DCB (Dynamic Context Boundary) compliant EventStore implementation in Java

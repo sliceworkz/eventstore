@@ -32,6 +32,7 @@ import org.sliceworkz.eventstore.events.Upcast;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloadSerializerDeserializer {
 
@@ -39,19 +40,19 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 	private Map<EventType, EventType> mostRecentTypes = new HashMap<>();
 	
 	@Override
-	public TypeAndPayload deserialize ( String eventTypeName, String payload ) {
+	public TypeAndPayload deserialize ( TypeAndSerializedPayload serialized ) {
 		TypeAndPayload result;
 		try {
-			EventDeserializer deserializer = deserializers.get(eventTypeName);
+			EventDeserializer deserializer = deserializers.get(serialized.type().name());
 			if ( deserializer == null  ) {
-				throw new RuntimeException("No mapping found for event type '" + eventTypeName + "'");
+				throw new RuntimeException("No mapping found for event type '" + serialized.type().name() + "'");
 			}
-			result = new TypeAndPayload(deserializer.eventType(), deserializer.deserialize(payload)); 
+			result = new TypeAndPayload(deserializer.eventType(), deserializer.deserialize(serialized.immutablePayload(), serialized.erasablePayload())); 
 		} catch (Exception e) {
 			if ( deserializers.keySet().isEmpty() ) {
-				throw new RuntimeException(String.format("Failed to deserialize event data for type '%s', no EventType mappings configured. Pass the Event root Class when creating the EventStream", eventTypeName) , e);
+				throw new RuntimeException(String.format("Failed to deserialize event data for type '%s', no EventType mappings configured. Pass the Event root Class when creating the EventStream", serialized.type().name()) , e);
 			} else {
-				throw new RuntimeException(String.format("Failed to deserialize event data for type '%s', known mappings for %s", eventTypeName, deserializers.keySet()) , e);
+				throw new RuntimeException(String.format("Failed to deserialize event data for type '%s', known mappings for %s", serialized.type().name(), deserializers.keySet()) , e);
 			}
 		}
 		return result;
@@ -153,7 +154,7 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 	
 	
 	interface EventDeserializer {
-		Object deserialize ( String payload );
+		Object deserialize ( String immutablePayload, String erasablePayload );
 		EventType eventType ( );
 	}
 	
@@ -168,14 +169,34 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		}
 
 		@Override
-		public Object deserialize ( String payload ) {
+		public Object deserialize ( String immutablePayload, String erasablePayload ) {
+			Object object;
 			try {
-				return jsonMapper.readValue(payload, eventClass);
+				
+				if ( erasablePayload == null ) {
+					object = immutableDataMapper.readValue(immutablePayload, eventClass);
+				} else {
+					// reconstruct the full object by merging
+					ObjectNode nodeImmutableData = (ObjectNode) immutableDataMapper.readTree(immutablePayload);
+					ObjectNode nodeErasableData = (ObjectNode) erasableDataMapper.readTree(erasablePayload);
+					
+					// Merge erasable data into immutable data
+					deepMerge(nodeImmutableData, nodeErasableData);
+					
+					object = nodeImmutableData; // with erasable merged in
+					
+					// TODO can this have a speedup?  now we're doing a double roundtrip ...
+					String mergedData = immutableDataMapper.writeValueAsString(nodeImmutableData);
+					
+					return immutableDataMapper.readValue(mergedData, eventClass);
+				}
+
 			} catch (JsonMappingException e) {
 				throw new RuntimeException(e);
 			} catch (JsonProcessingException e) {
 				throw new RuntimeException(e);
 			} 
+			return object;
 		}
 
 		@Override
@@ -198,8 +219,8 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		}
 		
 		@Override
-		public Object deserialize ( String payload ) {
-			return upcaster.upcast(deser.deserialize(payload));
+		public Object deserialize ( String immutablePayload, String erasablePayload ) {
+			return upcaster.upcast(deser.deserialize(immutablePayload, erasablePayload));
 		}
 
 		@Override

@@ -24,20 +24,34 @@ import org.sliceworkz.eventstore.events.EventType;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 public class RawEventPayloadSerializerDeserializer extends AbstractEventPayloadSerializerDeserializer {
 	
 	@Override
-	public TypeAndPayload deserialize ( String eventTypeName, String payload ) {
+	public TypeAndPayload deserialize ( TypeAndSerializedPayload serialized ) {
 		JsonNode object;
 		try {
-			object = jsonMapper.readTree(payload);
+			
+			if ( serialized.erasablePayload() == null ) {
+				object = immutableDataMapper.readTree(serialized.immutablePayload());
+			} else {
+				// reconstruct the full object by merging
+				ObjectNode nodeImmutableData = (ObjectNode) immutableDataMapper.readTree(serialized.immutablePayload());
+				ObjectNode nodeErasableData = (ObjectNode) erasableDataMapper.readTree(serialized.erasablePayload());
+				
+				// Merge erasable data into immutable data
+				deepMerge(nodeImmutableData, nodeErasableData);
+				
+				object = nodeImmutableData; // with erasable merged in
+			}
+			
 		} catch (JsonMappingException e) {
 			throw new RuntimeException("Failed to deserialize event data: JsonMappingException", e);
 		} catch (JsonProcessingException e) {
 			throw new RuntimeException("Failed to deserialize event data: JsonProcessingException", e);
 		}
-		return new TypeAndPayload(EventType.ofType(eventTypeName), object);
+		return new TypeAndPayload(serialized.type(), object);
 	}
 
 	@Override

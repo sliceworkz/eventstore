@@ -87,13 +87,13 @@ public interface EventStorage {
 		void notify ( BookmarkPlacedNotification bookmarkPlaced );
 	}
 	
-	public record EventToStore ( EventStreamId stream, EventType type, String data, Tags tags ) {
+	public record EventToStore ( EventStreamId stream, EventType type, String immutableData, String erasableData, Tags tags ) {
 		public StoredEvent positionAt ( EventReference reference, LocalDateTime timestamp) {
-			return new StoredEvent(stream, type, reference, data, tags, timestamp);
+			return new StoredEvent(stream, type, reference, immutableData, erasableData, tags, timestamp);
 		}
 	}
 	
-	public record StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String data, Tags tags, LocalDateTime timestamp ) {
+	public record StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String immutableData, String erasableData, Tags tags, LocalDateTime timestamp ) {
 
 	}
 

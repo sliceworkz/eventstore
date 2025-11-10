@@ -153,16 +153,15 @@ public class EventStoreImpl implements EventStore {
 			assert storedEvent.reference().position() != null;
 			assert storedEvent.timestamp() != null;
 			
-			EVENT_TYPE data = (EVENT_TYPE)storedEvent.data();
-			TypeAndPayload typeAndPayload = serde.deserialize(storedEvent.type().name(), storedEvent.data());
-			data = (EVENT_TYPE)typeAndPayload.eventData();
+			TypeAndPayload typeAndPayload = serde.deserialize(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.immutableData(), storedEvent.erasableData()));
+			EVENT_TYPE data = (EVENT_TYPE)typeAndPayload.eventData();
 			return new Event<>(storedEvent.stream(), typeAndPayload.type(), storedEvent.type(), storedEvent.reference(), data, storedEvent.tags(), storedEvent.timestamp());
 		}
 		
 		private EventToStore reduce ( EphemeralEvent<? extends EVENT_TYPE> event ) {
 			Tags tags = event.tags(); 
 			TypeAndSerializedPayload data = serde.serialize(event.data());
-			return new EventToStore(eventStreamId, data.type(), data.serializedPayload(), tags);
+			return new EventToStore(eventStreamId, data.type(), data.immutablePayload(), data.erasablePayload(), tags);
 		}
 
 		private List<EventToStore> reduce ( List<? extends EphemeralEvent<? extends EVENT_TYPE>> events ) {

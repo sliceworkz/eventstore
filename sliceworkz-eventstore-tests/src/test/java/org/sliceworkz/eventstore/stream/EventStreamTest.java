@@ -35,7 +35,7 @@ import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImpl;
+import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.mock.MockConsistentAppendListener;
 import org.sliceworkz.eventstore.mock.MockDomainEventWithNonSealedInterface;
 import org.sliceworkz.eventstore.mock.MockDomainEventWithNonSealedInterface.DomainEventPartOfMockDomainEventWithNonSealedInterface;
@@ -276,7 +276,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 
 	@Override
 	public EventStorage createEventStorage() {
-		return new InMemoryEventStorageImpl();
+		return InMemoryEventStorage.newBuilder().build();
 	}
 	
 }

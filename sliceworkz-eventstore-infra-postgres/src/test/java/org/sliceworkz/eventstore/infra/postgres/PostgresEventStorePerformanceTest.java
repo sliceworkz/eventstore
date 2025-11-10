@@ -27,8 +27,12 @@ public class PostgresEventStorePerformanceTest extends EventStorePerformanceTest
 	
 	@Override
 	public EventStorage createEventStorage ( ) {
-		return new PostgresEventStorageImpl("unit-test", PostgresContainer.dataSource()).initializeDatabase();
-	}	
+		return PostgresEventStorage.newBuilder()
+				.name("unit-test")
+				.dataSource(PostgresContainer.dataSource())
+				.initializeDatabase()
+				.build();
+	}
 	
 	@Override
 	public void destroyEventStorage ( EventStorage storage ) {

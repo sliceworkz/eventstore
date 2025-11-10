@@ -25,10 +25,10 @@ import java.util.Collections;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.events.EphemeralEvent;
-import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImpl;
+import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.mock.MockDomainEvent;
 import org.sliceworkz.eventstore.mock.MockDomainEvent.FirstDomainEvent;
 import org.sliceworkz.eventstore.mock.MockDomainEvent.SecondDomainEvent;
@@ -56,7 +56,7 @@ public class EventStoreBasicTest {
 	}
 	
 	public EventStorage createEventStorage ( ) {
-		return new InMemoryEventStorageImpl();
+		return InMemoryEventStorage.newBuilder().build();
 	}
 	
 	public void destroyEventStorage ( EventStorage storage ) {

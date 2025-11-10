@@ -15,22 +15,22 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-package org.sliceworkz.eventstore.stream;
+package org.sliceworkz.eventstore.infra.postgres;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
-import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorageImpl;
+import org.sliceworkz.eventstore.EventStoreLimitTest;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
 import org.sliceworkz.eventstore.spi.EventStorage;
 
-public class PostgresEventStoreQueryTest extends EventStoreQueryTest {
-
+public class PostgresEventStoreLimitTest extends EventStoreLimitTest {
+	
 	@Override
 	public EventStorage createEventStorage ( ) {
 		return PostgresEventStorage.newBuilder()
 				.name("unit-test")
 				.dataSource(PostgresContainer.dataSource())
+				.resultLimit(2) // SPECIFIC FOR THIS TEST
 				.initializeDatabase()
 				.build();
 	}
@@ -52,5 +52,5 @@ public class PostgresEventStoreQueryTest extends EventStoreQueryTest {
 		PostgresContainer.stop();
 		PostgresContainer.cleanup();
 	}
-
+	
 }

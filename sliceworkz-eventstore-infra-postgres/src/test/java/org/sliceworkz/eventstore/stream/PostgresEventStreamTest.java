@@ -19,6 +19,7 @@ package org.sliceworkz.eventstore.stream;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
 import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorageImpl;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
 import org.sliceworkz.eventstore.spi.EventStorage;
@@ -27,7 +28,12 @@ public class PostgresEventStreamTest extends EventStreamTest {
 
 	@Override
 	public EventStorage createEventStorage ( ) {
-		return new PostgresEventStorageImpl("unit-test", PostgresContainer.dataSource(), "unittest_prefix_").initializeDatabase();
+		return PostgresEventStorage.newBuilder()
+				.name("unit-test")
+				.prefix("unittest_prefix_") // SPECIFIC FOR THIS TEST
+				.dataSource(PostgresContainer.dataSource())
+				.initializeDatabase()
+				.build();
 	}
 	
 	@Override

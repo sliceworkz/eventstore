@@ -40,7 +40,7 @@ public record Limit ( Long value ) {
 	public boolean isNotSet ( ) {
 		return value == null;
 	}
-
+	
 	public static Limit none ( ) {
 		return new Limit ( null );
 	}

@@ -28,7 +28,7 @@ import org.sliceworkz.eventstore.AbstractEventStoreTest;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImpl;
+import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.mockdomain.MockDomainEvent;
 import org.sliceworkz.eventstore.mockdomain.MockDomainEvent.FirstDomainEvent;
 import org.sliceworkz.eventstore.mockdomain.MockDomainEvent.SecondDomainEvent;
@@ -182,7 +182,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 
 	@Override
 	public EventStorage createEventStorage() {
-		return new InMemoryEventStorageImpl();
+		return InMemoryEventStorage.newBuilder().build();
 	}
 
 	

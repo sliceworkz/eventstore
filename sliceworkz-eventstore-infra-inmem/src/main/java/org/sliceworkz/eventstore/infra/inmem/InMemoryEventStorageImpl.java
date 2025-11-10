@@ -34,6 +34,7 @@ import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
+import org.sliceworkz.eventstore.spi.EventStorageException;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
@@ -49,11 +50,13 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	private List<EventStoreListener> listeners = new ArrayList<>();
 	private Map<String,EventReference> bookmarks = new HashMap<>();
 	private JsonMapper jsonMapper;
+	private Limit absoluteLimit;
 	
-	public InMemoryEventStorageImpl ( ) {
+	public InMemoryEventStorageImpl ( Limit absoluteLimit ) {
 		this.name = String.format("inmem-%s", System.identityHashCode(this)); // unique name in case different objects are used
 		this.jsonMapper = new JsonMapper();
 		this.jsonMapper.findAndRegisterModules();
+		this.absoluteLimit = absoluteLimit;
 	}
 	
 	@Override
@@ -108,11 +111,18 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		
 		result = result.filter(query::matches);
 
-		if ( limit != null && limit.isSet() ) {
-			result = result.limit(limit.value());
+		Limit effectiveLimit = effectiveLimit(limit);
+		
+		if ( effectiveLimit != null && effectiveLimit.isSet() ) {
+			result = result.limit(effectiveLimit.value());
 		}
 
 		var returnValue = new ArrayList<>(result.toList()); // to list and back to avoid ConcurrentUpdateExceptions when writing next event in log (?)
+		
+		if ( absoluteLimit != null && absoluteLimit.isSet() && returnValue.size() > absoluteLimit.value() ) {
+			throw new EventStorageException(String.format("query returned more results than the configured absolute limit of %d", absoluteLimit.value()));
+		}
+		
 		return returnValue.stream();
 	}
 	
@@ -211,6 +221,24 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		bookmarks.put(reader, eventReference);
 		BookmarkPlacedNotification notification = new BookmarkPlacedNotification(reader, eventReference);
 		listeners.forEach(l->l.notify(notification));
+	}
+
+	Limit effectiveLimit ( Limit softLimit ) {
+		Limit result;
+		if ( softLimit == null || softLimit.isNotSet() ) {
+			if ( absoluteLimit != null && absoluteLimit.isSet() ) {
+				result = Limit.to(absoluteLimit.value()+1);
+			} else {
+				result = Limit.none();
+			}
+		} else if ( absoluteLimit == null || absoluteLimit.isNotSet() ) {
+			result = softLimit;
+		} else if ( softLimit.value() <= absoluteLimit.value() ){
+			result = softLimit;
+		} else {
+			throw new EventStorageException(String.format("query limit exceeds the configured absolute limit of %d", absoluteLimit.value()));
+		}
+		return result;
 	}
 
 	@Override

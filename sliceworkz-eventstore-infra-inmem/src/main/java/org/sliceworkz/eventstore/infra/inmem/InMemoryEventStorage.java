@@ -19,6 +19,7 @@ package org.sliceworkz.eventstore.infra.inmem;
 
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
+import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 
 public interface InMemoryEventStorage {
@@ -29,8 +30,15 @@ public interface InMemoryEventStorage {
 
 	public static class Builder {
 		
+		private Limit limit = Limit.none();
+		
 		private Builder ( ) {
 			
+		}
+		
+		public Builder resultLimit ( int absoluteLimit ) {
+			this.limit = Limit.to(absoluteLimit);
+			return this;
 		}
 
 		public static Builder newBuilder ( ) {
@@ -38,7 +46,7 @@ public interface InMemoryEventStorage {
 		}
 		
 		public EventStorage build ( ) {
-			return new InMemoryEventStorageImpl();
+			return new InMemoryEventStorageImpl(limit);
 		}
 		
 		public EventStore buildStore ( ) {

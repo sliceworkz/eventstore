@@ -21,6 +21,7 @@ import javax.sql.DataSource;
 
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
+import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 
 public interface PostgresEventStorage {
@@ -36,7 +37,8 @@ public interface PostgresEventStorage {
 		private DataSource dataSource;
 		private DataSource monitoringDataSource;
 		private boolean initializeDatabase = false;
-		
+		private Limit limit = Limit.none();
+
 		private Builder ( ) {
 			
 		}
@@ -66,6 +68,11 @@ public interface PostgresEventStorage {
 			return this;
 		}
 		
+		public Builder resultLimit ( int absoluteLimit ) {
+			this.limit = Limit.to(absoluteLimit);
+			return this;
+		}
+		
 		public Builder initializeDatabase ( ) {
 			return initializeDatabase(true);
 		}
@@ -80,7 +87,7 @@ public interface PostgresEventStorage {
 				dataSource = DataSourceFactory.fromConfiguration("pooled");
 				monitoringDataSource = DataSourceFactory.fromConfiguration("nonpooled");
 			}
-			var result = new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, prefix);
+			var result = new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix);
 			if ( initializeDatabase ) {
 				result.initializeDatabase();
 			}

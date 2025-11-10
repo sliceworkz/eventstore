@@ -19,6 +19,7 @@ package org.sliceworkz.eventstore.stream;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
 import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorageImpl;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
 import org.sliceworkz.eventstore.spi.EventStorage;
@@ -27,7 +28,11 @@ public class PostgresOptimisticLockingTest extends OptimisticLockingTest {
 	
 	@Override
 	public EventStorage createEventStorage ( ) {
-		return new PostgresEventStorageImpl("unit-test", PostgresContainer.dataSource()).initializeDatabase();
+		return PostgresEventStorage.newBuilder()
+				.name("unit-test")
+				.dataSource(PostgresContainer.dataSource())
+				.initializeDatabase()
+				.build();
 	}
 	
 	@Override

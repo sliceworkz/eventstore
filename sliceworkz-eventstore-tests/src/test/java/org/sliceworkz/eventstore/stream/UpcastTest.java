@@ -33,14 +33,13 @@ import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.LegacyEvent;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.events.Upcast;
-import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImpl;
+import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.stream.UpcastTest.CustomerEvent.CustomerRegisteredV2;
 import org.sliceworkz.eventstore.stream.UpcastTest.CustomerEvent.CustomerRenamed;
 import org.sliceworkz.eventstore.stream.UpcastTest.CustomerEvent.Name;
-import org.sliceworkz.eventstore.stream.UpcastTest.CustomerHistoricalEvent;
 
 public class UpcastTest {
 	
@@ -60,7 +59,7 @@ public class UpcastTest {
 	}
 	
 	public EventStorage createEventStorage ( ) {
-		return new InMemoryEventStorageImpl();
+		return InMemoryEventStorage.newBuilder().build();
 	}
 	
 	public void destroyEventStorage ( EventStorage storage ) {

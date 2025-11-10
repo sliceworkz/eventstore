@@ -65,6 +65,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private String name;
 	private String prefix;
 	private DataSource dataSource;
+	private Limit absoluteLimit;
+	
 	private List<EventStoreListener> listeners = new CopyOnWriteArrayList<>();
 	private ExecutorService executorService;
 	private boolean stopped;
@@ -77,22 +79,15 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private static final String NO_PREFIX = "";
 	private static final int MAX_PREFIX_LENGTH = 32;
 
-	public PostgresEventStorageImpl ( String name, DataSource dataSource ){
-		this(name, dataSource, dataSource, NO_PREFIX);
+	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit ) {
+		this(name, dataSource, monitoringDataSource, absoluteLimit, NO_PREFIX);
 	}
 
-	public PostgresEventStorageImpl ( String name, DataSource dataSource, String prefix ){
-		this(name, dataSource, dataSource, prefix);
-	}
-
-	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource ){
-		this(name, dataSource, monitoringDataSource, NO_PREFIX);
-	}
-	
-	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, String prefix ) {
+	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix ) {
 		this.prefix = validatePrefix(prefix);
 		this.name = name;
 		this.dataSource = dataSource;
+		this.absoluteLimit = absoluteLimit;
 		this.executorService = Executors.newVirtualThreadPerTaskExecutor();
 		
 		this.executorService.execute(new NewEventsAppendedMonitor("event-append-listener/" + name, listeners, monitoringDataSource));
@@ -229,10 +224,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 			sqlBuilder.append(" DESC");
 		}
 		
+		Limit effectiveLimit = effectiveLimit(limit);
+		
 		// Add limit if specified
-		if (limit != null && limit.isSet()) {
+		if (effectiveLimit != null && effectiveLimit.isSet()) {
 			sqlBuilder.append(" LIMIT ?");
-			parameters.add(limit.value());
+			parameters.add(effectiveLimit.value());
 		}
 		
 		try ( Connection readConnection = dataSource.getConnection() ) {
@@ -246,6 +243,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 					List<StoredEvent> events = new ArrayList<>();
 					while (rs.next()) {
 						events.add(mapResultSetToEvent(rs));
+					}
+					if ( absoluteLimit != null && absoluteLimit.isSet() && events.size() > absoluteLimit.value() ) {
+						throw new EventStorageException(String.format("query returned more results than the configured absolute limit of %d", absoluteLimit.value()));
 					}
 					return events.stream();
 				}
@@ -780,6 +780,24 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 	}
 
+	Limit effectiveLimit ( Limit softLimit ) {
+		Limit result;
+		if ( softLimit == null || softLimit.isNotSet() ) {
+			if ( absoluteLimit != null && absoluteLimit.isSet() ) {
+				result = Limit.to(absoluteLimit.value()+1);
+			} else {
+				result = Limit.none();
+			}
+		} else if ( absoluteLimit == null || absoluteLimit.isNotSet() ) {
+			result = softLimit;
+		} else if ( softLimit.value() <= absoluteLimit.value() ){
+			result = softLimit;
+		} else {
+			throw new EventStorageException(String.format("query limit exceeds the configured absolute limit of %d", absoluteLimit.value()));
+		}
+		return result;
+	}
+	
 	@Override
 	public String name() {
 		return name;

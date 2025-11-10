@@ -17,7 +17,6 @@
  */
 package org.sliceworkz.eventstore.impl.serde;
 
-import java.util.Collection;
 import java.util.Set;
 
 import org.sliceworkz.eventstore.events.EventType;

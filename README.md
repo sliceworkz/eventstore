@@ -1,22 +1,22 @@
 [![ci build - mvn package](https://github.com/sliceworkz/eventstore/actions/workflows/ci.yaml/badge.svg)](https://github.com/sliceworkz/eventstore/actions/workflows/ci.yaml)
 
-# EventStore
+# About Eventstore
 
 A DCB (Dynamic Context Boundary) compliant EventStore implementation in Java
-Supports all features described on [DCB Specification](https://dcb.events/specification/):
+
+Persistence options: Postgres and In-Memory (for dev and demo purposes)
+
+Supports all features described described by the [DCB Specification](https://dcb.events/specification/):
 - Tagging of Events for dynamic retrieval
-- Optimistic locking via AppendCriteria
+- Optimistic locking / conditional append via AppendCriteria
 
 
-## Persistence
-- In-memory	(development and demo purposes only)
-- PostgreSQL
+# Getting started
+
+Step-by-step introduction with the [quickstart guide](https://sliceworkz.github.io/posts/eventstore-quickstart/)
 
 
-## Getting started
-
-Have an introduction to Eventstore in the [Quickstart guide](https://sliceworkz.github.io/posts/eventstore-quickstart/)
-
+# Other
 
 ## Contributing
 

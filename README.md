@@ -1,5 +1,5 @@
 [![ci build - mvn package](https://github.com/sliceworkz/eventstore/actions/workflows/ci.yaml/badge.svg)](https://github.com/sliceworkz/eventstore/actions/workflows/ci.yaml)
-[![Docs](https://img.shields.io/badge/Eventstore%20Quickstart%20Guide-0b5fff?style=flat-square)](https://sliceworkz.github.io/posts/eventstore-quickstart/)
+[![Docs](https://img.shields.io/badge/Eventstore%20Quickstart%20Guide-0b5fff)](https://sliceworkz.github.io/posts/eventstore-quickstart/)
 [![Status: Beta](https://img.shields.io/badge/status-beta-orange)](#)
 
 # About Eventstore

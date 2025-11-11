@@ -169,7 +169,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		
 		StringBuilder sqlBuilder = new StringBuilder();
 		sqlBuilder.append(
-			String.format("SELECT event_position, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_tags FROM %sevents WHERE 1=1", prefix)
+			String.format("SELECT event_position, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags FROM %sevents WHERE 1=1", prefix)
 			);
 		
 		List<Object> parameters = new ArrayList<>();
@@ -348,12 +348,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 	
 		// Build conditional insert with optimistic locking check
 		StringBuilder sqlBuilder = new StringBuilder();
-		sqlBuilder.append(String.format("INSERT INTO %sevents (event_id, stream_context, stream_purpose, event_type, event_data, event_tags) SELECT * FROM ( VALUES ", prefix));
+		sqlBuilder.append(String.format("INSERT INTO %sevents (event_id, stream_context, stream_purpose, event_type, event_data, event_erasable_data, event_tags) SELECT * FROM ( VALUES ", prefix));
 		for ( int i = 0; i < events.size(); i++ ) {
 			if ( i > 0 ) {
 				sqlBuilder.append(", ");
 			}
-			sqlBuilder.append("(?::uuid, ?, ?, ?, ?::jsonb, ?)");
+			sqlBuilder.append("(?::uuid, ?, ?, ?, ?::jsonb, ?::jsonb, ?)");
 		}
 		sqlBuilder.append(")");
 
@@ -372,7 +372,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 			parameters.add(event.stream().purpose());
 			parameters.add(event.type().name());
 	
-			parameters.add(event.data());
+			parameters.add(event.immutableData());
+			parameters.add(event.erasableData());
 			
 			// Convert tags to array
 			String[] tagsArray = event.tags().toStrings().toArray(new String[event.tags().tags().size()]);
@@ -468,7 +469,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	public Optional<StoredEvent> getEventById(EventId eventId) {
 		if ( eventId != null ) {
 			String sql = String.format("""
-				SELECT event_position, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_tags 
+				SELECT event_position, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags 
 				FROM %sevents 
 				WHERE event_id = ?::uuid
 			""", prefix);
@@ -500,6 +501,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		String eventTypeName = rs.getString("event_type");
 		Timestamp timestamp = rs.getTimestamp("event_timestamp");
 		String eventDataJson = rs.getString("event_data");
+		String eventErasableDataJson = rs.getString("event_erasable_data");
 		String[] tagsArray = null;
 		if (rs.getArray("event_tags") != null) {
 			tagsArray = (String[]) rs.getArray("event_tags").getArray();
@@ -516,7 +518,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		// Create Tags from tag array
 		Tags tags = Tags.parse(tagsArray);
 		
-		return new StoredEvent(streamId, EventType.ofType(eventTypeName), eventReference, eventDataJson, tags, timestamp.toLocalDateTime());
+		return new StoredEvent(streamId, EventType.ofType(eventTypeName), eventReference, eventDataJson, eventErasableDataJson, tags, timestamp.toLocalDateTime());
 	}
 
 	

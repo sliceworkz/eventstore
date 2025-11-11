@@ -43,6 +43,7 @@ import org.sliceworkz.eventstore.mock.MockEventuallyConsistentAppendListener;
 import org.sliceworkz.eventstore.mockdomain.MockDomainDuplicatedEvent;
 import org.sliceworkz.eventstore.mockdomain.MockDomainEvent;
 import org.sliceworkz.eventstore.mockdomain.MockDomainEvent.FirstDomainEvent;
+import org.sliceworkz.eventstore.mockdomain.MockDomainEvent.FourthDomainEventWithErasableParts;
 import org.sliceworkz.eventstore.mockdomain.MockDomainEvent.SecondDomainEvent;
 import org.sliceworkz.eventstore.mockdomain.OtherMockDomainEvent;
 import org.sliceworkz.eventstore.mockdomain.OtherMockDomainEvent.AnotherDomainEvent;
@@ -265,6 +266,17 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		// should be not be ok
 		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> specialEs.append(AppendCriteria.none(), Collections.singletonList(Event.of(new SecondDomainEvent("2"), Tags.none()))));
 		assertEquals("cannot append event type 'SecondDomainEvent' via this stream", e.getMessage());
+	}
+
+	@Test
+	void testAppendWithConcreteEventClassWithErasableParts ( ) {
+		
+		// this stream only contains this concrete event type (we use <Object> generic for test purposes only)
+		EventStream<Object> specialEs = eventStore().getEventStream(stream, FourthDomainEventWithErasableParts.class);
+		
+		// should be ok
+		specialEs.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FourthDomainEventWithErasableParts("1", "someName"), Tags.none())));
+
 	}
 
 	@Test

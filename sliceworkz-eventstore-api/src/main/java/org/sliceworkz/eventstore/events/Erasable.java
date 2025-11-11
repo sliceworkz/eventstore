@@ -15,18 +15,15 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-package org.sliceworkz.eventstore.mockdomain;
+package org.sliceworkz.eventstore.events;
 
-import org.sliceworkz.eventstore.events.Erasable;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 
-public sealed interface MockDomainEvent {
-
-	public record FirstDomainEvent ( String value ) implements MockDomainEvent { } 
-	
-	public record SecondDomainEvent ( String value ) implements MockDomainEvent { } 
-
-	public record ThirdDomainEvent ( String value ) implements MockDomainEvent { } 
-
-	public record FourthDomainEventWithErasableParts ( String value, @Erasable String name ) implements MockDomainEvent { } 
+@Target({ElementType.FIELD, ElementType.RECORD_COMPONENT, ElementType.ANNOTATION_TYPE})
+@Retention(RetentionPolicy.RUNTIME)
+public @interface Erasable {
 
 }

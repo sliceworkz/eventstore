@@ -167,9 +167,15 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	private void verifyPersistableJson ( List<EventToStore> newEvents ) {
 		try {
 			for ( EventToStore e: newEvents ) {
-				Class<?> clz = e.data().getClass();
-				String s = jsonMapper.writeValueAsString(e.data());
+				Class<?> clz = e.immutableData().getClass();
+				String s = jsonMapper.writeValueAsString(e.immutableData());
 				jsonMapper.readValue(s, clz);
+
+				if ( e.erasableData() != null ) {
+					clz = e.erasableData().getClass();
+					s = jsonMapper.writeValueAsString(e.erasableData());
+					jsonMapper.readValue(s, clz);
+				}
 			}
 		} catch (JsonMappingException e) {
 			throw new RuntimeException("json mapping roundtrip test failed", e);

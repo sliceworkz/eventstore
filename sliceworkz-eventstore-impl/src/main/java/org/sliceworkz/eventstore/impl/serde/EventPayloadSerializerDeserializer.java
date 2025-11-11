@@ -25,7 +25,7 @@ public interface EventPayloadSerializerDeserializer {
 
 	TypeAndSerializedPayload serialize(Object payload);
 
-	TypeAndPayload deserialize(String eventTypeName, String payload);
+	TypeAndPayload deserialize(TypeAndSerializedPayload serialized);
 
 	boolean canDeserialize(String eventTypeName);
 	
@@ -46,6 +46,6 @@ public interface EventPayloadSerializerDeserializer {
 	
 	public record TypeAndPayload ( EventType type, Object eventData ) { }
 	
-	public record TypeAndSerializedPayload ( EventType type, String serializedPayload ) { }
+	public record TypeAndSerializedPayload ( EventType type, String immutablePayload, String erasablePayload ) { }
 	
 }

@@ -15,18 +15,28 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-package org.sliceworkz.eventstore.mockdomain;
+package org.sliceworkz.eventstore.mock;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 
 import org.sliceworkz.eventstore.events.Erasable;
 
-public sealed interface MockDomainEvent {
-
-	public record FirstDomainEvent ( String value ) implements MockDomainEvent { } 
-	
-	public record SecondDomainEvent ( String value ) implements MockDomainEvent { } 
-
-	public record ThirdDomainEvent ( String value ) implements MockDomainEvent { } 
-
-	public record FourthDomainEventWithErasableParts ( String value, @Erasable String name ) implements MockDomainEvent { } 
+@Target({ElementType.FIELD, ElementType.RECORD_COMPONENT})
+@Retention(RetentionPolicy.RUNTIME)
+@Erasable
+public @interface GdprErasable {
+    String purpose() default "";
+    Category category() default Category.PERSONAL;
+    
+    enum Category {
+        PERSONAL,      // Name, address, etc.
+        CONTACT,       // Email, phone
+        FINANCIAL,     // Payment info
+        HEALTH,        // Medical data
+        BIOMETRIC      // Fingerprints, facial recognition
+    }
 
 }

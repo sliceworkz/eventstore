@@ -36,8 +36,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloadSerializerDeserializer {
 
-	private Map<String,EventDeserializer> deserializers = new HashMap<>();
-	private Map<EventType, EventType> mostRecentTypes = new HashMap<>();
+	private final Map<String,EventDeserializer> deserializers = new HashMap<>();
+	private final Map<EventType, EventType> mostRecentTypes = new HashMap<>();
 	
 	@Override
 	public TypeAndPayload deserialize ( TypeAndSerializedPayload serialized ) {
@@ -160,8 +160,8 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 	
 	class InstantiationEventDeserializer implements EventDeserializer {
 		
-		private Class<?> eventClass;
-		private EventType eventType;
+		private final Class<?> eventClass;
+		private final EventType eventType;
 		
 		public InstantiationEventDeserializer ( Class<?> eventClass, EventType eventType ) {
 			this.eventClass = eventClass;
@@ -204,9 +204,9 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 	
 	class InstantiationAndUpcastEventDeserializer implements EventDeserializer {
 
-		private Upcast<Object,Object> upcaster;
-		private EventDeserializer deser;
-		private EventType eventType;
+		private final Upcast<Object,Object> upcaster;
+		private final EventDeserializer deser;
+		private final EventType eventType;
 
 		public InstantiationAndUpcastEventDeserializer ( EventDeserializer deser, Upcast<Object,Object> upcaster ) {
 			this.deser = deser;

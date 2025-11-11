@@ -64,7 +64,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	void testProjector ( ) {
 		TestProjection projection = new TestProjection();	
 		
-		var projector = new Projector<>(es, projection);
+		var projector = Projector.from(es).towards(projection).build();
 
 		ProjectorMetrics projectorMetrics = projector.run();
 		assertEquals(4, projection.counter()); // SecondDomainEvent type is left out by the query
@@ -79,12 +79,48 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	}
 	
 	@Test
+	void testProjectorWithStepOfOne ( ) {
+		TestProjection projection = new TestProjection();	
+		
+		var projector = Projector.from(es).towards(projection).inBatchesOf(1).build();
+
+		ProjectorMetrics projectorMetrics = projector.run();
+		assertEquals(4, projection.counter()); // SecondDomainEvent type is left out by the query
+		assertEquals(5, projectorMetrics.queriesDone()); // we now need a query for each one
+		assertEquals(4,  projectorMetrics.eventsStreamed());
+		assertEquals(4,  projectorMetrics.eventsHandled());
+
+		ProjectorMetrics accumulatedMetrics = projector.accumulatedMetrics();
+		assertEquals(5, accumulatedMetrics.queriesDone());
+		assertEquals(4,  accumulatedMetrics.eventsStreamed()); 
+		assertEquals(4,  accumulatedMetrics.eventsHandled());
+	}
+
+	@Test
+	void testProjectorWithStepOfTwo ( ) {
+		TestProjection projection = new TestProjection();	
+		
+		var projector = Projector.from(es).towards(projection).inBatchesOf(2).build();
+
+		ProjectorMetrics projectorMetrics = projector.run();
+		assertEquals(4, projection.counter()); // SecondDomainEvent type is left out by the query
+		assertEquals(3, projectorMetrics.queriesDone()); // we now need 3 queries to find all 5. last round, we asked 2 and got 1, so done.
+		assertEquals(4,  projectorMetrics.eventsStreamed());
+		assertEquals(4,  projectorMetrics.eventsHandled());
+
+		ProjectorMetrics accumulatedMetrics = projector.accumulatedMetrics();
+		assertEquals(3, accumulatedMetrics.queriesDone());
+		assertEquals(4,  accumulatedMetrics.eventsStreamed()); 
+		assertEquals(4,  accumulatedMetrics.eventsHandled());
+	}
+
+	@Test
 	void testProjectorQueryUntilCertainEvent ( ) {
 		TestProjection projection = new TestProjection();
 		
 		EventReference ref = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).findFirst().get().reference();
 		
-		var projector = new Projector<>(es, projection);
+		var projector = Projector.from(es).towards(projection).build();
 		
 		ProjectorMetrics projectorMetrics = projector.runUntil(ref);
 		assertEquals(3, projection.counter()); // SecondDomainEvent type is left out by the query, until removes everything after four
@@ -107,7 +143,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		
 		append(alternativeStream, new FirstDomainEvent("1"), Tags.of("nr", "one"));
 
-		Projector<MockDomainEvent> projector = new Projector<>(alternativeStream, projection);
+		var projector = Projector.from(alternativeStream).towards(projection).build();
 		
 		ProjectorMetrics projectorMetrics = projector.run();
 		assertEquals(1, projection.counter()); 
@@ -141,7 +177,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		EventReference refAfter = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "one"))).findFirst().get().reference();
 		EventReference refUntil = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).findFirst().get().reference();
 		
-		var projector = new Projector<>(es, projection, refAfter);
+		var projector = Projector.from(es).towards(projection).startingAfter(refAfter).build();
 		
 		ProjectorMetrics projectorMetrics = projector.runUntil(refUntil);
 		assertEquals(2, projection.counter()); // SecondDomainEvent type is left out by the query, until removes everything after four

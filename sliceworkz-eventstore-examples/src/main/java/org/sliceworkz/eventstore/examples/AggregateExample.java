@@ -28,6 +28,8 @@ import org.sliceworkz.eventstore.events.EventHandler;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
+import org.sliceworkz.eventstore.projection.Projection;
+import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -66,9 +68,10 @@ public class AggregateExample {
 		try {
 			// ... an event is produced by the Aggregate, but it will never be appended to our EventStream, as ... 
 			appendEvents(outdatedJohn.changeName("OtherName"), "123", outdatedJohn.lastEventReference());
+			System.err.println("if you see this message, optimistic locking failed ...");
 		} catch (OptimisticLockingException e) {
 			// ... we got ourselves an OptimisticLockingException.
-			System.out.println("optimistic locking saved us ...: %s".formatted(e.getMessage()));
+			System.out.println("optimistic locking saved us : %s".formatted(e.getMessage()));
 		}
 
 		john = loadCustomer("123");
@@ -97,9 +100,9 @@ public class AggregateExample {
 	 *  Loads an Aggregate from the Events found in the EventStream.  All Events tagged with the specified CustomerId are retrieved.
 	 */
 	CustomerAggregate loadCustomer ( String customerId ) {
-		CustomerAggregate customer = new CustomerAggregate();
-		stream.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("customer", customerId))).forEach(e->customer.when(e.data(), e.reference()));
-		return customer;
+		CustomerAggregateProjection projection = new CustomerAggregateProjection(customerId);
+		Projector.from(stream).towards(projection).build().run();
+		return projection.customerAggregate();
 	}
 	
 	/**
@@ -203,6 +206,42 @@ public class AggregateExample {
 		
 		public String toString ( ) {
 			return "%-10s - %15s (%s)".formatted(name, registered?"REGISTERED":"NOT_REGISTERED", lastEventReference);
+		}
+		
+	}
+	
+	
+	/**
+	 *  While not strictly necessary (one could query the eventstream directly), 
+	 *  this Projection provides a clean way to get the project the Events in a CustomerAggregate 
+	 */
+	class CustomerAggregateProjection implements Projection<CustomerEvent> {
+		
+		private String customerId;
+		private CustomerAggregate customerAggregate;
+		
+		public CustomerAggregateProjection ( String customerId ) {
+			this.customerId = customerId;
+			this.customerAggregate = new CustomerAggregate();
+		}
+
+		@Override
+		public void when(CustomerEvent event, EventReference reference) {
+			customerAggregate.when(event, reference);
+		}
+
+		@Override
+		public void when(CustomerEvent event) {
+			// not needed
+		}
+
+		@Override
+		public EventQuery eventQuery() {
+			return EventQuery.forEvents(EventTypesFilter.any(), Tags.of("customer", customerId));
+		}
+
+		public CustomerAggregate customerAggregate ( ) {
+			return customerAggregate;
 		}
 		
 	}

@@ -582,7 +582,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 		@Override
 		public void run() {
 			Thread.currentThread().setName(name);
-			Statement stmt = null;
 
 			LOGGER.info("starting ...");
 			
@@ -592,11 +591,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 			
 			while ( !stopped ) {
 
-				try ( Connection monitorConnection = monitoringDataSource.getConnection() ){
+				try ( Connection monitorConnection = monitoringDataSource.getConnection(); Statement stmt = monitorConnection.createStatement() ){
 					// Ensure connection is in the right state for LISTEN
 					monitorConnection.setAutoCommit(true);
 					
-					stmt = monitorConnection.createStatement();
 					stmt.execute(listenStatement);
 
 					LOGGER.debug("... listening for bookmark updates.");
@@ -633,13 +631,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 						throw new EventStorageException(e);
 					}
 				} finally {
-					if (stmt != null) {
-						try {
-							stmt.close();
-						} catch (SQLException e) {
-							// ignore
-						}
-					}
 					LOGGER.debug("loop done.");
 				}
 			}

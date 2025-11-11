@@ -179,16 +179,12 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 					// reconstruct the full object by merging
 					ObjectNode nodeImmutableData = (ObjectNode) immutableDataMapper.readTree(immutablePayload);
 					ObjectNode nodeErasableData = (ObjectNode) erasableDataMapper.readTree(erasablePayload);
-					
+
 					// Merge erasable data into immutable data
 					deepMerge(nodeImmutableData, nodeErasableData);
-					
-					object = nodeImmutableData; // with erasable merged in
-					
-					// TODO can this have a speedup?  now we're doing a double roundtrip ...
-					String mergedData = immutableDataMapper.writeValueAsString(nodeImmutableData);
-					
-					return immutableDataMapper.readValue(mergedData, eventClass);
+
+					// Directly convert the merged JsonNode to the target class without string roundtrip
+					object = immutableDataMapper.treeToValue(nodeImmutableData, eventClass);
 				}
 
 			} catch (JsonMappingException e) {

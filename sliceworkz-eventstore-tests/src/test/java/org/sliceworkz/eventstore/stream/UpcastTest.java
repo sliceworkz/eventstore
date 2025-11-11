@@ -162,7 +162,7 @@ public class UpcastTest {
 	@Test
 	void testUpcastAnnotationNotAllowedOnCurrentEventVersions ( ) {
 		RuntimeException e = assertThrows(RuntimeException.class,()->eventStore.getEventStream(streamId, CustomerHistoricalEvent.CustomerNameChanged.class));
-		assertEquals("Event type class org.sliceworkz.eventstore.stream.UpcastTest$CustomerHistoricalEvent$CustomerNameChanged should not be annotated as a @LegacayEvent, or moved to the legacy Event types", e.getMessage());
+		assertEquals("Event type class org.sliceworkz.eventstore.stream.UpcastTest$CustomerHistoricalEvent$CustomerNameChanged should not be annotated as a @LegacyEvent, or moved to the legacy Event types", e.getMessage());
 	}
 	
 	@Test

@@ -85,7 +85,7 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		if ( clazz.isAnnotationPresent(LegacyEvent.class)) {
 			
 			if ( !assumeUpcasters ) {
-				throw new RuntimeException(String.format("Event type %s should not be annotated as a @LegcayEvent, or moved to the legacy Event types", clazz));
+				throw new RuntimeException(String.format("Event type %s should not be annotated as a @LegaayEvent, or moved to the legacy Event types", clazz));
 			}
 			
 			LegacyEvent annotation = clazz.getAnnotation(LegacyEvent.class);
@@ -109,7 +109,7 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 			
 		} else {
 			if  ( assumeUpcasters ) {
-				throw new RuntimeException(String.format("legacy Event type %s should be annotated as a @LegcayEvent and configured with an Upcaster", clazz));
+				throw new RuntimeException(String.format("legacy Event type %s should be annotated as a @LegacyEvent and configured with an Upcaster", clazz));
 			}
 			mostRecentTypes.put(eventType, eventType); // no upcasting needed
 		}

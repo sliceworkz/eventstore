@@ -29,21 +29,18 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(Projector.class);
 
-	public static final int MAX_EVENTS_PER_QUERY = 500; // quite arbitrary, make configurable?  or not?
+	private int maxEventsPerQuery;
 	
 	private EventSource<CONSUMED_EVENT_TYPE> es;
 	private Projection<CONSUMED_EVENT_TYPE> projection;
 	
 	private ProjectorMetrics accumulatedMetrics;
 	
-	public Projector ( EventSource<CONSUMED_EVENT_TYPE> es, Projection<CONSUMED_EVENT_TYPE> projection, EventReference after ) {
+	private Projector ( EventSource<CONSUMED_EVENT_TYPE> es, Projection<CONSUMED_EVENT_TYPE> projection, EventReference after, int maxEventsPerQuery ) {
 		this.es = es;
 		this.projection = projection;
 		this.accumulatedMetrics = ProjectorMetrics.skipUntil(after);
-	}
-	
-	public Projector ( EventSource<CONSUMED_EVENT_TYPE> es, Projection<CONSUMED_EVENT_TYPE> projection ) {
-		this(es, projection, null);
+		this.maxEventsPerQuery = maxEventsPerQuery;
 	}
 
 	public ProjectorMetrics run ( ) {
@@ -68,7 +65,7 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 			
 			lastEventReference = lastRead;
 			
-			Limit limit = Limit.to(MAX_EVENTS_PER_QUERY);
+			Limit limit = Limit.to(maxEventsPerQuery);
 	
 			// in order to avoid memory issues, we'll loop in batches om MAX_EVENTS_PER_QUERY, until no more events are found in the stream
 			
@@ -90,7 +87,7 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 				}
 				
 				// if we got less events than we could, we reached the end of the stream
-				if ( eventsStreamed - eventsStreamBeforeThisIteration < MAX_EVENTS_PER_QUERY ) {
+				if ( eventsStreamed - eventsStreamBeforeThisIteration < maxEventsPerQuery ) {
 					done = true;
 				}
 			}
@@ -135,6 +132,51 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 			return new ProjectorMetrics(0, 0, 0, lastEventReference);
 		}
 
+	}
+	
+	
+	
+	public static <EVENT_TYPE> Builder<EVENT_TYPE> newBuilder ( ) {
+		return new Builder<EVENT_TYPE>( );
+	}
+	
+	public static <EVENT_TYPE> Builder<EVENT_TYPE> from ( EventSource<EVENT_TYPE> eventSource ) {
+		return new Builder<EVENT_TYPE> ( ).from(eventSource);
+	}
+
+	public static class Builder<EVENT_TYPE> {
+		
+		public static final int DEFAULT_MAX_EVENTS_PER_QUERY = 500; 
+
+		private EventSource<EVENT_TYPE> eventSource;
+		private Projection<EVENT_TYPE> projection;
+		private EventReference after;
+		private int maxEventsPerQuery = DEFAULT_MAX_EVENTS_PER_QUERY;
+		
+		public Builder<EVENT_TYPE> from ( EventSource<EVENT_TYPE> eventSource ) {
+			this.eventSource = eventSource;
+			return this;
+		}
+		
+		public Builder<EVENT_TYPE> towards ( Projection<EVENT_TYPE> projection ) {
+			this.projection = projection;
+			return this;
+		}
+
+		public Builder<EVENT_TYPE> startingAfter ( EventReference after ) {
+			this.after = after;
+			return this;
+		}
+		
+		public Builder<EVENT_TYPE> inBatchesOf ( int maxEventsPerQuery ) {
+			this.maxEventsPerQuery = maxEventsPerQuery;
+			return this;
+		}
+
+		public Projector<EVENT_TYPE> build ( ) {
+			return new Projector<>(eventSource, projection, after, maxEventsPerQuery);
+		}
+		
 	}
 
 }

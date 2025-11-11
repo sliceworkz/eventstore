@@ -51,15 +51,15 @@ public class ProjectionExample {
 		stream.append(AppendCriteria.none(), Event.of(new CustomerNameChanged("Jane Doe"), Tags.of("customer","234")));
 		
 		CustomerProjection john = new CustomerProjection("123");
-		new Projector<>(stream, john).run();
+		Projector.from(stream).towards(john).build().run();
 		System.out.println("john    : " + john.getSummary());    // john    : CustomerSummary[name=John, churned=true]
 		
 		CustomerProjection jane = new CustomerProjection("234");
-		new Projector<>(stream, jane).run();
+		Projector.from(stream).towards(jane).build().run();
 		System.out.println("jane    : " + jane.getSummary());    // jane    : CustomerSummary[name=Jane Doe, churned=false]
 
 		CustomerProjection unknown = new CustomerProjection("345");
-		new Projector<>(stream, unknown).run();
+		Projector.from(stream).towards(unknown).build().run();
 		System.out.println("unknown : " + unknown.getSummary()); // unknown : null
 
 	}

@@ -65,8 +65,8 @@ public class EventStoreImpl implements EventStore {
 		Banner.printBanner();
 	}
 
-	private EventStorage eventStorage;
-	private ExecutorService executorService;
+	private final EventStorage eventStorage;
+	private final ExecutorService executorService;
 	
 	protected EventStoreImpl ( EventStorage eventStorage ) {
 		this.eventStorage = eventStorage;
@@ -95,13 +95,13 @@ public class EventStoreImpl implements EventStore {
 		
 		private final Logger LOGGER = LoggerFactory.getLogger(EventStreamImpl.class);
 		
-		private EventStorage eventStorage;
-		private EventStreamId eventStreamId;
-		private EventPayloadSerializerDeserializer serde;
+		private final EventStorage eventStorage;
+		private final EventStreamId eventStreamId;
+		private final EventPayloadSerializerDeserializer serde;
 		
-		private List<EventStreamEventuallyConsistentAppendListener> eventuallyConsistentSubscribers = new CopyOnWriteArrayList<>();
-		private List<EventStreamConsistentAppendListener<EVENT_TYPE>> consistentSubscribers = new CopyOnWriteArrayList<>();
-		private List<EventStreamEventuallyConsistentBookmarkListener> bookmarkSubscribers = new CopyOnWriteArrayList<>();
+		private final List<EventStreamEventuallyConsistentAppendListener> eventuallyConsistentSubscribers = new CopyOnWriteArrayList<>();
+		private final List<EventStreamConsistentAppendListener<EVENT_TYPE>> consistentSubscribers = new CopyOnWriteArrayList<>();
+		private final List<EventStreamEventuallyConsistentBookmarkListener> bookmarkSubscribers = new CopyOnWriteArrayList<>();
 
 		public EventStreamImpl ( EventStorage eventStorage, EventStreamId eventStreamId, EventPayloadSerializerDeserializer serde ) {
 			this.eventStorage = eventStorage;
@@ -150,9 +150,6 @@ public class EventStoreImpl implements EventStore {
 		
 		@SuppressWarnings("unchecked")
 		private Event<EVENT_TYPE> enrich ( StoredEvent storedEvent ) {
-			assert storedEvent.reference().position() != null;
-			assert storedEvent.timestamp() != null;
-			
 			TypeAndPayload typeAndPayload = serde.deserialize(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.immutableData(), storedEvent.erasableData()));
 			EVENT_TYPE data = (EVENT_TYPE)typeAndPayload.eventData();
 			return new Event<>(storedEvent.stream(), typeAndPayload.type(), storedEvent.type(), storedEvent.reference(), data, storedEvent.tags(), storedEvent.timestamp());
@@ -221,14 +218,9 @@ public class EventStoreImpl implements EventStore {
 				LOGGER.debug("Must asynchronously notify {} eventually consistent clients of stream {} about append up until at least {}", eventuallyConsistentSubscribers.size(), eventStreamId, newEventsInStore.atLeastUntil());
 				
 				// schedule for execution on different thread to notify/interrupt any waiting eventual consistent processors 
-				executorService.execute( new Runnable ( ) {
-
-					@Override
-					public void run() {
+				executorService.execute( ( ) -> {
 						LOGGER.debug("Notifying {} eventually consistent clients of stream {} about append up until at least {}", eventuallyConsistentSubscribers.size(), eventStreamId, newEventsInStore.atLeastUntil());
 						eventuallyConsistentSubscribers.stream().forEach(s->s.eventsAppended(newEventsInStore.atLeastUntil()));
-					}
-					
 				});
 			}
 		}
@@ -238,15 +230,9 @@ public class EventStoreImpl implements EventStore {
 			LOGGER.debug("Must asynchronously notify {} eventually consistent bookmark listeners on {} of update for {} to {}", eventuallyConsistentSubscribers.size(), eventStreamId, bookmarkPlaced.reader(), bookmarkPlaced.bookmark());
 			
 			// schedule for execution on different thread to notify/interrupt any waiting eventual consistent processors 
-			executorService.execute( new Runnable ( ) {
-
-				@Override
-				public void run() {
+			executorService.execute( ( ) -> {
 					LOGGER.debug("Notifying {} eventually consistent bookmark listeners on {} of update for {} to {}", eventuallyConsistentSubscribers.size(), eventStreamId, bookmarkPlaced.reader(), bookmarkPlaced.bookmark());
-					
 					bookmarkSubscribers.stream().forEach(s->s.bookmarkUpdated(bookmarkPlaced.reader(), bookmarkPlaced.bookmark()));
-				}
-				
 			});
 		}
 

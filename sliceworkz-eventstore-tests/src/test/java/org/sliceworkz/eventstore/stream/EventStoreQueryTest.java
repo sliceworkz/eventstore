@@ -249,10 +249,10 @@ public class EventStoreQueryTest {
 		assertEquals(4, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(2)).count());
 		assertEquals(3, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(3)).count());
 		assertEquals(3, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(4)).count());
-		assertEquals(3, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(5)).count()); // TODO is this OK, as this event is not in the stream.  should "after" work with an event reference on an event that is not in the stream??
+		assertEquals(3, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(5)).count()); // "after" event is not in the stream, but query is taking it into account nonetheless
 		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(6)).count());
 		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(7)).count());
-		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(8)).count()); // TODO same question
+		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(8)).count()); // "after" event is not in the stream, but query is taking it into account nonetheless
 		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(9)).count());
 		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(10)).count());
 
@@ -262,10 +262,10 @@ public class EventStoreQueryTest {
 		assertEquals(1, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(2)).count());
 		assertEquals(1, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(3)).count());
 		assertEquals(2, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(4)).count());
-		assertEquals(2, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(5)).count()); // TODO is this OK, as this event is not in the stream.  should "after" work with an event reference on an event that is not in the stream??
+		assertEquals(2, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(5)).count()); // "after" event is not in the stream, but query is taking it into account nonetheless
 		assertEquals(2, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(6)).count());
 		assertEquals(3, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(7)).count());
-		assertEquals(4, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(8)).count()); // TODO same question
+		assertEquals(4, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(8)).count()); // "after" event is not in the stream, but query is taking it into account nonetheless
 		assertEquals(4, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(9)).count());
 		assertEquals(5, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(10)).count());
 

@@ -36,8 +36,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloadSerializerDeserializer {
 
-	private Map<String,EventDeserializer> deserializers = new HashMap<>();
-	private Map<EventType, EventType> mostRecentTypes = new HashMap<>();
+	private final Map<String,EventDeserializer> deserializers = new HashMap<>();
+	private final Map<EventType, EventType> mostRecentTypes = new HashMap<>();
 	
 	@Override
 	public TypeAndPayload deserialize ( TypeAndSerializedPayload serialized ) {
@@ -85,7 +85,7 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		if ( clazz.isAnnotationPresent(LegacyEvent.class)) {
 			
 			if ( !assumeUpcasters ) {
-				throw new RuntimeException(String.format("Event type %s should not be annotated as a @LegcayEvent, or moved to the legacy Event types", clazz));
+				throw new RuntimeException(String.format("Event type %s should not be annotated as a @LegacyEvent, or moved to the legacy Event types", clazz));
 			}
 			
 			LegacyEvent annotation = clazz.getAnnotation(LegacyEvent.class);
@@ -109,7 +109,7 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 			
 		} else {
 			if  ( assumeUpcasters ) {
-				throw new RuntimeException(String.format("legacy Event type %s should be annotated as a @LegcayEvent and configured with an Upcaster", clazz));
+				throw new RuntimeException(String.format("legacy Event type %s should be annotated as a @LegacyEvent and configured with an Upcaster", clazz));
 			}
 			mostRecentTypes.put(eventType, eventType); // no upcasting needed
 		}
@@ -160,8 +160,8 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 	
 	class InstantiationEventDeserializer implements EventDeserializer {
 		
-		private Class<?> eventClass;
-		private EventType eventType;
+		private final Class<?> eventClass;
+		private final EventType eventType;
 		
 		public InstantiationEventDeserializer ( Class<?> eventClass, EventType eventType ) {
 			this.eventClass = eventClass;
@@ -179,16 +179,12 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 					// reconstruct the full object by merging
 					ObjectNode nodeImmutableData = (ObjectNode) immutableDataMapper.readTree(immutablePayload);
 					ObjectNode nodeErasableData = (ObjectNode) erasableDataMapper.readTree(erasablePayload);
-					
+
 					// Merge erasable data into immutable data
 					deepMerge(nodeImmutableData, nodeErasableData);
-					
-					object = nodeImmutableData; // with erasable merged in
-					
-					// TODO can this have a speedup?  now we're doing a double roundtrip ...
-					String mergedData = immutableDataMapper.writeValueAsString(nodeImmutableData);
-					
-					return immutableDataMapper.readValue(mergedData, eventClass);
+
+					// Directly convert the merged JsonNode to the target class without string roundtrip
+					object = immutableDataMapper.treeToValue(nodeImmutableData, eventClass);
 				}
 
 			} catch (JsonMappingException e) {
@@ -208,9 +204,9 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 	
 	class InstantiationAndUpcastEventDeserializer implements EventDeserializer {
 
-		private Upcast<Object,Object> upcaster;
-		private EventDeserializer deser;
-		private EventType eventType;
+		private final Upcast<Object,Object> upcaster;
+		private final EventDeserializer deser;
+		private final EventType eventType;
 
 		public InstantiationAndUpcastEventDeserializer ( EventDeserializer deser, Upcast<Object,Object> upcaster ) {
 			this.deser = deser;

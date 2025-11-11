@@ -71,7 +71,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private ExecutorService executorService;
 	private boolean stopped;
 	
-	private static JsonMapper JSONMAPPER = new JsonMapper();
+	private static final JsonMapper JSONMAPPER = new JsonMapper();
 	
 	private static final int ONE_MINUTE = 60*1000;
 	public static final int WAIT_FOR_NOTIFICATIONS_TIMEOUT = ONE_MINUTE;
@@ -319,33 +319,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 	
 	@Override
 	public List<StoredEvent> append(AppendCriteria appendCriteria, Optional<EventStreamId> streamId, List<EventToStore> events) {
-
-		List<StoredEvent> insertedEvents = new ArrayList<>();
-
-		try (Connection writeConnection = dataSource.getConnection() ) {
-			try {
-				writeConnection.setAutoCommit(false);
-
-				insertedEvents = insertEventsWithOptimisticLocking(events, appendCriteria, streamId);
-				
-				writeConnection.commit();
-				return insertedEvents;
-				
-			} catch (SQLException e) {
-				try {
-					writeConnection.rollback();
-				} catch (SQLException rollbackEx) {
-					e.addSuppressed(rollbackEx);
-				}
-				throw new EventStorageException("Failed to append events", e);
-			}
-		} catch (SQLException e) {
-			throw new EventStorageException("Failed to close connection", e);
-		}
-	}
-	
-	private List<StoredEvent> insertEventsWithOptimisticLocking(List<EventToStore> events, AppendCriteria appendCriteria, Optional<EventStreamId> streamId) throws SQLException {
-	
 		// Build conditional insert with optimistic locking check
 		StringBuilder sqlBuilder = new StringBuilder();
 		sqlBuilder.append(String.format("INSERT INTO %sevents (event_id, stream_context, stream_purpose, event_type, event_data, event_erasable_data, event_tags) SELECT * FROM ( VALUES ", prefix));
@@ -421,9 +394,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		sqlBuilder.append("RETURNING event_position, event_timestamp");
 		
 		
-		try ( Connection writeConnection = dataSource.getConnection() ) {
-		
-			try (PreparedStatement stmt = writeConnection.prepareStatement(sqlBuilder.toString())) {
+		try ( Connection writeConnection = dataSource.getConnection(); PreparedStatement stmt = writeConnection.prepareStatement(sqlBuilder.toString())) {
 				// Set parameters
 				for (int i = 0; i < parameters.size(); i++) {
 					Object param = parameters.get(i);
@@ -459,7 +430,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 				}
 				
 				return storedEvents;
-			}
 		} catch (SQLException e) {
 			throw new EventStorageException("SQLException during append", e);
 		}
@@ -540,7 +510,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 		@Override
 		public void run() {
 			Thread.currentThread().setName(name);
-			Statement stmt = null;
 
 			LOGGER.info("starting ...");
 			
@@ -548,11 +517,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 			
 			while ( !stopped ) {
 
-				try ( Connection monitorConnection = monitoringDataSource.getConnection() ){
+				try ( Connection monitorConnection = monitoringDataSource.getConnection(); Statement stmt = monitorConnection.createStatement() ){
 					// Ensure connection is in the right state for LISTEN
 					monitorConnection.setAutoCommit(true);
 					
-					stmt = monitorConnection.createStatement();
 					stmt.execute(listenStatement);
 
 					LOGGER.debug("... listening for event appends.");
@@ -590,13 +558,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 						throw new EventStorageException(e);
 					}
 				} finally {
-					if (stmt != null) {
-						try {
-							stmt.close();
-						} catch (SQLException e) {
-							// ignore
-						}
-					}
 					LOGGER.debug("loop done.");
 				}
 			}
@@ -621,7 +582,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 		@Override
 		public void run() {
 			Thread.currentThread().setName(name);
-			Statement stmt = null;
 
 			LOGGER.info("starting ...");
 			
@@ -631,11 +591,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 			
 			while ( !stopped ) {
 
-				try ( Connection monitorConnection = monitoringDataSource.getConnection() ){
+				try ( Connection monitorConnection = monitoringDataSource.getConnection(); Statement stmt = monitorConnection.createStatement() ){
 					// Ensure connection is in the right state for LISTEN
 					monitorConnection.setAutoCommit(true);
 					
-					stmt = monitorConnection.createStatement();
 					stmt.execute(listenStatement);
 
 					LOGGER.debug("... listening for bookmark updates.");
@@ -672,13 +631,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 						throw new EventStorageException(e);
 					}
 				} finally {
-					if (stmt != null) {
-						try {
-							stmt.close();
-						} catch (SQLException e) {
-							// ignore
-						}
-					}
 					LOGGER.debug("loop done.");
 				}
 			}

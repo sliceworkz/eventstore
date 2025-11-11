@@ -177,11 +177,6 @@ public class EventStoreImpl implements EventStore {
 				throw new IllegalArgumentException(String.format("cannot append event type '%s' via this stream", unAppendable.getFirst()));
 			}
 
-			if ( appendCriteria.expectedLastEventReference() != null && appendCriteria.expectedLastEventReference().isPresent() ) {
-				assert(appendCriteria.expectedLastEventReference().get().position() != null );
-				// this would mean a bug where a freshly created Event that hasn't received a position in the stream is passed here.  very severe...
-			}
-			
 			// append events to the eventstore (with optimistic locking)
 			List<Event<EVENT_TYPE>> appendedEvents = eventStorage.append(appendCriteria, Optional.of(eventStreamId), reduce(events)).stream().map(this::enrich).toList();
 			

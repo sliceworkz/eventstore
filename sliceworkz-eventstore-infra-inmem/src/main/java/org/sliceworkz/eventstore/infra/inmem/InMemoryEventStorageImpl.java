@@ -53,7 +53,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	private Limit absoluteLimit;
 	
 	public InMemoryEventStorageImpl ( Limit absoluteLimit ) {
-		this.name = String.format("inmem-%s", System.identityHashCode(this)); // unique name in case different objects are used
+		this.name = "inmem-%s".formatted(System.identityHashCode(this)); // unique name in case different objects are used
 		this.jsonMapper = new JsonMapper();
 		this.jsonMapper.findAndRegisterModules();
 		this.absoluteLimit = absoluteLimit;
@@ -120,7 +120,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		var returnValue = new ArrayList<>(result.toList()); // to list and back to avoid ConcurrentUpdateExceptions when writing next event in log (?)
 		
 		if ( absoluteLimit != null && absoluteLimit.isSet() && returnValue.size() > absoluteLimit.value() ) {
-			throw new EventStorageException(String.format("query returned more results than the configured absolute limit of %d", absoluteLimit.value()));
+			throw new EventStorageException("query returned more results than the configured absolute limit of %d".formatted(absoluteLimit.value()));
 		}
 		
 		return returnValue.stream();
@@ -242,7 +242,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		} else if ( softLimit.value() <= absoluteLimit.value() ){
 			result = softLimit;
 		} else {
-			throw new EventStorageException(String.format("query limit exceeds the configured absolute limit of %d", absoluteLimit.value()));
+			throw new EventStorageException("query limit exceeds the configured absolute limit of %d".formatted(absoluteLimit.value()));
 		}
 		return result;
 	}

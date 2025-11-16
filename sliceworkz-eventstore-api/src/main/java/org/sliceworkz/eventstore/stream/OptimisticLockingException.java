@@ -33,14 +33,11 @@ public class OptimisticLockingException extends RuntimeException {
     public OptimisticLockingException(EventQuery query, Optional<EventReference> expectedLastEventReference ) {
         super(
         	expectedLastEventReference.isPresent()?
-        		String.format(
-		            "Optimistic locking failed. Expected last Event with EventReference %s/%d, was not last anymore for EventQuery: %s",
+		            "Optimistic locking failed. Expected last Event with EventReference %s/%d, was not last anymore for EventQuery: %s".formatted(
 		            expectedLastEventReference != null ? expectedLastEventReference.get().id().value() : -1,
 		            expectedLastEventReference != null ? expectedLastEventReference.get().position() : -1,
 		            query):
-		        		String.format(
-		    		            "Optimistic locking failed. Empty EventStream expected and Events found for EventQuery: %s",
-		    		            query)
+	    		            "Optimistic locking failed. Empty EventStream expected and Events found for EventQuery: %s".formatted(query)
         );
         this.query = query;
         this.expectedLastEventReference = expectedLastEventReference;

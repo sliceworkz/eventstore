@@ -169,12 +169,12 @@ public class EventStoreImpl implements EventStore {
 		public List<Event<EVENT_TYPE>> append(AppendCriteria appendCriteria, List<EphemeralEvent<? extends EVENT_TYPE>> events) {
 			
 			if ( isReadOnly() ) {
-				throw new IllegalArgumentException(String.format("cannot append to non-specific eventstream %s", eventStreamId));
+				throw new IllegalArgumentException("cannot append to non-specific eventstream %s".formatted(eventStreamId));
 			}
 			
 			List<String> unAppendable = events.stream().map(e->e.type().name()).filter(t->!serde.canDeserialize(t)).toList();
 			if ( !unAppendable.isEmpty() ) {
-				throw new IllegalArgumentException(String.format("cannot append event type '%s' via this stream", unAppendable.getFirst()));
+				throw new IllegalArgumentException("cannot append event type '%s' via this stream".formatted(unAppendable.getFirst()));
 			}
 
 			// append events to the eventstore (with optimistic locking)

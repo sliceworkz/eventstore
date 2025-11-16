@@ -162,7 +162,7 @@ public class ErasableEventDataTest {
 	) {
 	    @Override
 	    public String toString() {
-	        return String.format("Class: %s, Field: %s, Type: %s, Category: %s, Purpose: %s",
+	        return "Class: %s, Field: %s, Type: %s, Category: %s, Purpose: %s".formatted(
 	            className, fieldName, fieldType, category, purpose);
 	    }
 	}

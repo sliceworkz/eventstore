@@ -26,7 +26,7 @@ public record EventReference ( EventId id, Long position ) {
 		if ( position == null ) {
 			throw new IllegalArgumentException("position in reference cannot be null");
 		} else if ( position <= 0 ) {
-			throw new IllegalArgumentException(String.format("position %d is invalid, should be larger than 0", position));
+			throw new IllegalArgumentException("position %d is invalid, should be larger than 0".formatted(position));
 		}
 		
 		this.id = id;

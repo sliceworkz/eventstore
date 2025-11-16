@@ -27,7 +27,7 @@ public record Limit ( Long value ) {
 	public Limit ( Long value ) {
 		if ( value != null ) {
 			if ( value <= 0 ) {
-				throw new IllegalArgumentException(String.format("limit %d is invalid, should be larger than 0", value));
+				throw new IllegalArgumentException("limit %d is invalid, should be larger than 0".formatted(value));
 			}
 		}
 		this.value = value;

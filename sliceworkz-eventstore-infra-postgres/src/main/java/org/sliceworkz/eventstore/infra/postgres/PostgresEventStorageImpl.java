@@ -109,7 +109,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			}
 	
 			if (prefix.length() > MAX_PREFIX_LENGTH) {
-				throw new IllegalArgumentException(String.format("Prefix too long (max {} characters): {}", MAX_PREFIX_LENGTH, prefix));
+				throw new IllegalArgumentException("Prefix too long (max {} characters): {}".formatted(MAX_PREFIX_LENGTH, prefix));
 			}
 			
 		}
@@ -169,7 +169,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		
 		StringBuilder sqlBuilder = new StringBuilder();
 		sqlBuilder.append(
-			String.format("SELECT event_position, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags FROM %sevents WHERE 1=1", prefix)
+			"SELECT event_position, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags FROM %sevents WHERE 1=1".formatted(prefix)
 			);
 		
 		List<Object> parameters = new ArrayList<>();
@@ -245,7 +245,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 						events.add(mapResultSetToEvent(rs));
 					}
 					if ( absoluteLimit != null && absoluteLimit.isSet() && events.size() > absoluteLimit.value() ) {
-						throw new EventStorageException(String.format("query returned more results than the configured absolute limit of %d", absoluteLimit.value()));
+						throw new EventStorageException("query returned more results than the configured absolute limit of %d".formatted(absoluteLimit.value()));
 					}
 					return events.stream();
 				}
@@ -321,7 +321,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	public List<StoredEvent> append(AppendCriteria appendCriteria, Optional<EventStreamId> streamId, List<EventToStore> events) {
 		// Build conditional insert with optimistic locking check
 		StringBuilder sqlBuilder = new StringBuilder();
-		sqlBuilder.append(String.format("INSERT INTO %sevents (event_id, stream_context, stream_purpose, event_type, event_data, event_erasable_data, event_tags) SELECT * FROM ( VALUES ", prefix));
+		sqlBuilder.append("INSERT INTO %sevents (event_id, stream_context, stream_purpose, event_type, event_data, event_erasable_data, event_tags) SELECT * FROM ( VALUES ".formatted(prefix));
 		for ( int i = 0; i < events.size(); i++ ) {
 			if ( i > 0 ) {
 				sqlBuilder.append(", ");
@@ -357,10 +357,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 			// Now add the optimistic locking conditions
 			sqlBuilder.append(
-					String.format("""
+					"""
 				WHERE NOT EXISTS (
 					SELECT 1 FROM %sevents 
-					WHERE 1=1 """, prefix));
+					WHERE 1=1 """.formatted(prefix));
 			
 			
 			// Add stream filtering
@@ -438,11 +438,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 	@Override
 	public Optional<StoredEvent> getEventById(EventId eventId) {
 		if ( eventId != null ) {
-			String sql = String.format("""
+			String sql = """
 				SELECT event_position, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags 
 				FROM %sevents 
 				WHERE event_id = ?::uuid
-			""", prefix);
+			""".formatted(prefix);
 			
 			try ( Connection readConnection = dataSource.getConnection() ) {
 				try (PreparedStatement stmt = readConnection.prepareStatement(sql)) {
@@ -513,7 +513,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 			LOGGER.info("starting ...");
 			
-			String listenStatement = String.format("LISTEN %sevent_appended;", prefix);
+			String listenStatement = "LISTEN %sevent_appended;".formatted(prefix);
 			
 			while ( !stopped ) {
 
@@ -585,7 +585,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 			LOGGER.info("starting ...");
 			
-			String listenStatement = String.format("LISTEN %sbookmark_placed;", prefix);
+			String listenStatement = "LISTEN %sbookmark_placed;".formatted(prefix);
 			
 			JsonMapper jsonMapper = new JsonMapper ( );
 			
@@ -660,11 +660,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	@Override
 	public Optional<EventReference> getBookmark(String reader) {
-		String sql = String.format("""
+		String sql = """
 			SELECT event_position, event_id 
 			FROM %sbookmarks 
 			WHERE reader = ?
-		""", prefix);
+		""".formatted(prefix);
 		
 		try ( Connection readConnection = dataSource.getConnection() ) {
 			try (PreparedStatement stmt = readConnection.prepareStatement(sql)) {
@@ -691,7 +691,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	
 	@Override
 	public void bookmark(String reader, EventReference eventReference, Tags tags ) {
-		String sql = String.format("""
+		String sql = """
 			INSERT INTO %sbookmarks (reader, event_position, event_id, updated_at, updated_tags) 
 			VALUES (?, ?, ?::uuid, CURRENT_TIMESTAMP, ? )
 			ON CONFLICT (reader) 
@@ -700,7 +700,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 				event_id = EXCLUDED.event_id,
 				updated_at = CURRENT_TIMESTAMP,
 				updated_tags = EXCLUDED.updated_tags
-		""", prefix); 
+		""".formatted(prefix); 
 		
 		try (Connection writeConnection = dataSource.getConnection() ) {
 			try {
@@ -747,7 +747,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		} else if ( softLimit.value() <= absoluteLimit.value() ){
 			result = softLimit;
 		} else {
-			throw new EventStorageException(String.format("query limit exceeds the configured absolute limit of %d", absoluteLimit.value()));
+			throw new EventStorageException("query limit exceeds the configured absolute limit of %d".formatted(absoluteLimit.value()));
 		}
 		return result;
 	}

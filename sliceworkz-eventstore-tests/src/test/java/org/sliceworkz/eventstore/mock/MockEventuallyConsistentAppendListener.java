@@ -26,7 +26,7 @@ public class MockEventuallyConsistentAppendListener implements EventStreamEventu
 	private int count;
 	
 	@Override
-	public void eventsAppended(EventReference atLeastUntil) {
+	public synchronized void eventsAppended(EventReference atLeastUntil) {
 		count++;
 		lastReference = atLeastUntil;
 	}

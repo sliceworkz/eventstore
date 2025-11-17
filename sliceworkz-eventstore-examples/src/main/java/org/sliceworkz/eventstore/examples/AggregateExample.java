@@ -24,8 +24,8 @@ import java.util.Optional;
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
-import org.sliceworkz.eventstore.events.EventHandler;
 import org.sliceworkz.eventstore.events.EventReference;
+import org.sliceworkz.eventstore.events.EventWithMetaHandler;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.projection.Projection;
@@ -84,7 +84,7 @@ public class AggregateExample {
 
 		final CustomerAggregate finalJohn = john;
 		// we can even "update" the aggregate with the new Events if we want, so we don't need to do a "loadCustomer" call
-		appendEvents(john.changeName("John"), "123", john.lastEventReference()).forEach(e->finalJohn.when(e.data(), e.reference()));
+		appendEvents(john.changeName("John"), "123", john.lastEventReference()).forEach(e->finalJohn.when(e));
 
 		john = loadCustomer("123");
 		
@@ -130,7 +130,7 @@ public class AggregateExample {
 	/**
 	 * A simple eventsourced Aggregate example.
 	 */
-	class CustomerAggregate implements EventHandler<CustomerEvent> {
+	class CustomerAggregate implements EventWithMetaHandler<CustomerEvent> {
 
 		private String name;
 		private boolean registered;
@@ -186,9 +186,9 @@ public class AggregateExample {
 		}
 		
 		@Override
-		public void when(CustomerEvent event, EventReference reference ) {
-			when(event);
-			lastEventReference = reference;
+		public void when(Event<CustomerEvent> event) {
+			when(event.data());
+			lastEventReference = event.reference();
 		}
 		
 		public void when ( CustomerEvent event ) {
@@ -226,13 +226,8 @@ public class AggregateExample {
 		}
 
 		@Override
-		public void when(CustomerEvent event, EventReference reference) {
-			customerAggregate.when(event, reference);
-		}
-
-		@Override
-		public void when(CustomerEvent event) {
-			// not needed
+		public void when(Event<CustomerEvent> event) {
+			customerAggregate.when(event);
 		}
 
 		@Override

@@ -15,18 +15,17 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-package org.sliceworkz.eventstore.events;
+package org.sliceworkz.eventstore.projection;
+
+import org.sliceworkz.eventstore.events.EventHandler;
+import org.sliceworkz.eventstore.events.EventWithMetaHandler;
+import org.sliceworkz.eventstore.query.EventQuery;
 
 /**
- * Utility interface stripping the metadata of the Event, in case one is only interested in the pure business event data.
+ * A Projection combines an {@link EventQuery} with an {@link EventWithMetaHandler}, 
+ * allowing all events that comply with the criteria of the query to be handled.
+ * The ProjectionWithoutMeta uses a event-data only handler, without the wrapping Event metadata
  */
-@FunctionalInterface
-public interface EventHandler<TRIGGERING_EVENT_TYPE> extends EventWithMetaHandler<TRIGGERING_EVENT_TYPE> {
+public interface ProjectionWithoutMetaData<CONSUMED_EVENT_TYPE> extends Projection<CONSUMED_EVENT_TYPE>, EventHandler<CONSUMED_EVENT_TYPE> {
 
-	default void when ( Event<TRIGGERING_EVENT_TYPE> eventWithMeta ) {
-		when(eventWithMeta.data());
-	}
-
-	void when ( TRIGGERING_EVENT_TYPE event );
-	
 }

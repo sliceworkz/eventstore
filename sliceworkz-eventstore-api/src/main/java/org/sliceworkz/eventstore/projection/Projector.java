@@ -101,7 +101,7 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 			this.eventsStreamed++;
 			if ( until == null || until.position() >= e.reference().position() ) {
 				if ( projection.eventQuery().matches(e) ) {
-					projection.when(e.data(), e.reference());
+					projection.when(e);
 					this.eventsHandled++;
 				}
 			}

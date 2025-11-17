@@ -46,7 +46,7 @@
 		<maven.maven-compiler-plugin.version>3.14.1</maven.maven-compiler-plugin.version>
 		<maven.maven-source-plugin.version>3.3.1</maven.maven-source-plugin.version>
 		<maven.maven-javadoc-plugin.version>3.12.0</maven.maven-javadoc-plugin.version>
-		<maven.maven-jar-plugin.version>3.4.2</maven.maven-jar-plugin.version>
+		<maven.maven-jar-plugin.version>3.5.0</maven.maven-jar-plugin.version>
 		<maven.maven-assembly-plugin.version>3.7.1</maven.maven-assembly-plugin.version>
 	</properties>
 

@@ -24,8 +24,8 @@ import java.util.Optional;
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
-import org.sliceworkz.eventstore.events.EventHandler;
 import org.sliceworkz.eventstore.events.EventReference;
+import org.sliceworkz.eventstore.events.EventWithMetaHandler;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.projection.Projection;
@@ -130,7 +130,7 @@ public class AggregateExample {
 	/**
 	 * A simple eventsourced Aggregate example.
 	 */
-	class CustomerAggregate implements EventHandler<CustomerEvent> {
+	class CustomerAggregate implements EventWithMetaHandler<CustomerEvent> {
 
 		private String name;
 		private boolean registered;
@@ -228,11 +228,6 @@ public class AggregateExample {
 		@Override
 		public void when(Event<CustomerEvent> event) {
 			customerAggregate.when(event);
-		}
-
-		@Override
-		public void when(CustomerEvent event) {
-			// not needed
 		}
 
 		@Override

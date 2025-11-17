@@ -196,7 +196,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		return es.append(AppendCriteria.none(), Collections.singletonList(Event.of(event, tags)));
 	}
 	
-	class TestProjection implements Projection<MockDomainEvent> {
+	class TestProjection implements ProjectionWithoutMetaData<MockDomainEvent> {
 
 		private int counter;
 		

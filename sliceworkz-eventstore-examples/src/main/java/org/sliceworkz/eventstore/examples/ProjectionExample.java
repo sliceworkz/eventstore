@@ -78,8 +78,8 @@ public class ProjectionExample {
 		}
 		
 		@Override
-		public void when(CustomerEvent event ) {
-			switch(event) {
+		public void when(Event<CustomerEvent> event ) {
+			switch(event.data()) {
 				case CustomerRegistered r -> customerSummary = new CustomerSummary(r.name(), false);
 				case CustomerNameChanged n -> customerSummary = customerSummary.name(n.name());
 				case CustomerChurned c -> customerSummary = customerSummary.churned(true);

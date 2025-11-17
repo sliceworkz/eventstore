@@ -20,8 +20,8 @@ package org.sliceworkz.eventstore.events;
 @FunctionalInterface
 public interface EventHandler<TRIGGERING_EVENT_TYPE> {
 
-	default void when ( TRIGGERING_EVENT_TYPE event, EventReference reference ) {
-		when(event);
+	default void when ( Event<TRIGGERING_EVENT_TYPE> eventWithMeta ) {
+		when(eventWithMeta.data());
 	}
 
 	// TODO what about removing this one?

@@ -84,7 +84,7 @@ public class AggregateExample {
 
 		final CustomerAggregate finalJohn = john;
 		// we can even "update" the aggregate with the new Events if we want, so we don't need to do a "loadCustomer" call
-		appendEvents(john.changeName("John"), "123", john.lastEventReference()).forEach(e->finalJohn.when(e.data(), e.reference()));
+		appendEvents(john.changeName("John"), "123", john.lastEventReference()).forEach(e->finalJohn.when(e));
 
 		john = loadCustomer("123");
 		
@@ -186,9 +186,9 @@ public class AggregateExample {
 		}
 		
 		@Override
-		public void when(CustomerEvent event, EventReference reference ) {
-			when(event);
-			lastEventReference = reference;
+		public void when(Event<CustomerEvent> event) {
+			when(event.data());
+			lastEventReference = event.reference();
 		}
 		
 		public void when ( CustomerEvent event ) {
@@ -226,8 +226,8 @@ public class AggregateExample {
 		}
 
 		@Override
-		public void when(CustomerEvent event, EventReference reference) {
-			customerAggregate.when(event, reference);
+		public void when(Event<CustomerEvent> event) {
+			customerAggregate.when(event);
 		}
 
 		@Override

@@ -536,11 +536,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 					
 				    if (notifications != null) {
 				        for (PGNotification notification : notifications) {
-				            LOGGER.debug("Received: " + notification.getParameter());
+				            LOGGER.debug("Received: {}", notification.getParameter());
 				            try {
 								EventAppendedPostgresNotification msg = JSONMAPPER.readValue(notification.getParameter(), EventAppendedPostgresNotification.class);
 								AppendsToEventStoreNotification aesn = msg.toNotification();
-								LOGGER.debug("notification: " + aesn);
 								
 								notificationsPerStream.put(aesn.stream(), aesn); // this replaces any previous ones on the same eventstream
 								

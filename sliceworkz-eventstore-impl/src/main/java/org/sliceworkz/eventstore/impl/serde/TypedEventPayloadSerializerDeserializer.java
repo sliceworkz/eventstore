@@ -50,9 +50,9 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 			result = new TypeAndPayload(deserializer.eventType(), deserializer.deserialize(serialized.immutablePayload(), serialized.erasablePayload())); 
 		} catch (Exception e) {
 			if ( deserializers.keySet().isEmpty() ) {
-				throw new RuntimeException(String.format("Failed to deserialize event data for type '%s', no EventType mappings configured. Pass the Event root Class when creating the EventStream", serialized.type().name()) , e);
+				throw new RuntimeException("Failed to deserialize event data for type '%s', no EventType mappings configured. Pass the Event root Class when creating the EventStream".formatted(serialized.type().name()) , e);
 			} else {
-				throw new RuntimeException(String.format("Failed to deserialize event data for type '%s', known mappings for %s", serialized.type().name(), deserializers.keySet()) , e);
+				throw new RuntimeException("Failed to deserialize event data for type '%s', known mappings for %s".formatted(serialized.type().name(), deserializers.keySet()) , e);
 			}
 		}
 		return result;
@@ -85,7 +85,7 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		if ( clazz.isAnnotationPresent(LegacyEvent.class)) {
 			
 			if ( !assumeUpcasters ) {
-				throw new RuntimeException(String.format("Event type %s should not be annotated as a @LegacyEvent, or moved to the legacy Event types", clazz));
+				throw new RuntimeException("Event type %s should not be annotated as a @LegacyEvent, or moved to the legacy Event types".formatted(clazz));
 			}
 			
 			LegacyEvent annotation = clazz.getAnnotation(LegacyEvent.class);
@@ -109,7 +109,7 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 			
 		} else {
 			if  ( assumeUpcasters ) {
-				throw new RuntimeException(String.format("legacy Event type %s should be annotated as a @LegacyEvent and configured with an Upcaster", clazz));
+				throw new RuntimeException("legacy Event type %s should be annotated as a @LegacyEvent and configured with an Upcaster".formatted(clazz));
 			}
 			mostRecentTypes.put(eventType, eventType); // no upcasting needed
 		}
@@ -124,7 +124,7 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 			if ( eventRootClass.isInterface() ) {
 				
 				if ( ! eventRootClass.isSealed() ) {
-					throw new IllegalArgumentException(String.format("interface %s should be sealed to allow Event Type determination", eventRootClass.getName()));
+					throw new IllegalArgumentException("interface %s should be sealed to allow Event Type determination".formatted(eventRootClass.getName()));
 				}
 				
 				Class<?>[] permittedSubclassses = eventRootClass.getPermittedSubclasses();

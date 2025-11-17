@@ -94,7 +94,7 @@ public class DataSourceFactory {
 		if (!file.exists() ) {
 			throw new RuntimeException("db.properties file not found in current or parent directory up to 2 levels up");
 		} else {
-			LOGGER.info(String.format("read properties from '%s'", file));
+			LOGGER.info("read properties from '{}'", file);
 		}
 		return file.getPath();
 	}

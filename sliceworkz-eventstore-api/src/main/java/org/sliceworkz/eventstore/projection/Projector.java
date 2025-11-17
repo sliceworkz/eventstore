@@ -92,7 +92,7 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 				}
 			}
 			
-			LOGGER.debug(String.format("readmodel %s updated until %s with %d queries", projection, lastEventReference, queriesDone));
+			LOGGER.debug("readmodel {} updated until {} with {} queries", projection, lastEventReference, queriesDone);
 			
 			return  new ProjectorMetrics ( eventsStreamed, eventsHandled, queriesDone, lastEventReference );
 		}

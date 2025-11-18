@@ -24,6 +24,6 @@ import org.sliceworkz.eventstore.events.Event;
 @FunctionalInterface
 public interface EventStreamConsistentAppendListener<DOMAIN_EVENT_TYPE> {
 
-	void eventsAppended ( List<? extends Event<? extends DOMAIN_EVENT_TYPE>> events );
+	void eventsAppended ( List<? extends Event<DOMAIN_EVENT_TYPE>> events );
 
 }

@@ -18,11 +18,11 @@
 package org.sliceworkz.eventstore.projection;
 
 import org.sliceworkz.eventstore.events.EventHandler;
-import org.sliceworkz.eventstore.events.EventWithMetaHandler;
+import org.sliceworkz.eventstore.events.EventWithMetaDataHandler;
 import org.sliceworkz.eventstore.query.EventQuery;
 
 /**
- * A Projection combines an {@link EventQuery} with an {@link EventWithMetaHandler}, 
+ * A Projection combines an {@link EventQuery} with an {@link EventWithMetaDataHandler}, 
  * allowing all events that comply with the criteria of the query to be handled.
  * The ProjectionWithoutMeta uses a event-data only handler, without the wrapping Event metadata
  */

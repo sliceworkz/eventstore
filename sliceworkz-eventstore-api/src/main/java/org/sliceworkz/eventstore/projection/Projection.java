@@ -17,14 +17,14 @@
  */
 package org.sliceworkz.eventstore.projection;
 
-import org.sliceworkz.eventstore.events.EventWithMetaHandler;
+import org.sliceworkz.eventstore.events.EventWithMetaDataHandler;
 import org.sliceworkz.eventstore.query.EventQuery;
 
 /**
- * A Projection combines an {@link EventQuery} with an {@link EventWithMetaHandler}, 
+ * A Projection combines an {@link EventQuery} with an {@link EventWithMetaDataHandler}, 
  * allowing all events that comply with the criteria of the query to be handled.
  */
-public interface Projection<CONSUMED_EVENT_TYPE> extends EventWithMetaHandler<CONSUMED_EVENT_TYPE> {
+public interface Projection<CONSUMED_EVENT_TYPE> extends EventWithMetaDataHandler<CONSUMED_EVENT_TYPE> {
 
 	/*
 	 * Returns the EventQuery for the Events the Projection depends on.  

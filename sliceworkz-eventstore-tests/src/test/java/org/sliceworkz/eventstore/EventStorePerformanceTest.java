@@ -81,7 +81,7 @@ public class EventStorePerformanceTest {
 		eventStream.subscribe(new EventStreamConsistentAppendListener<MockDomainEvent>() {
 			
 			@Override
-			public void eventsAppended(List<? extends Event<? extends MockDomainEvent>> events) {
+			public void eventsAppended(List<? extends Event<MockDomainEvent>> events) {
 				counter.incrementAndGet();
 			}
 		});

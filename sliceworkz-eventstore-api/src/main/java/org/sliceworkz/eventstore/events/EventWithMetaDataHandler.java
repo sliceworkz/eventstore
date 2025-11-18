@@ -18,8 +18,8 @@
 package org.sliceworkz.eventstore.events;
 
 @FunctionalInterface
-public interface EventWithMetaHandler<TRIGGERING_EVENT_TYPE> {
+public interface EventWithMetaDataHandler<EVENT_TYPE> {
 
-	void when ( Event<TRIGGERING_EVENT_TYPE> eventWithMeta );
+	void when ( Event<EVENT_TYPE> eventWithMeta );
 	
 }

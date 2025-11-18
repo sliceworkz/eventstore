@@ -21,7 +21,7 @@ package org.sliceworkz.eventstore.events;
  * Utility interface stripping the metadata of the Event, in case one is only interested in the pure business event data.
  */
 @FunctionalInterface
-public interface EventHandler<TRIGGERING_EVENT_TYPE> extends EventWithMetaHandler<TRIGGERING_EVENT_TYPE> {
+public interface EventHandler<TRIGGERING_EVENT_TYPE> extends EventWithMetaDataHandler<TRIGGERING_EVENT_TYPE> {
 
 	default void when ( Event<TRIGGERING_EVENT_TYPE> eventWithMeta ) {
 		when(eventWithMeta.data());

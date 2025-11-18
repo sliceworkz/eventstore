@@ -27,7 +27,7 @@ public class MockConsistentAppendListener<T> implements EventStreamConsistentApp
 	private int count;
 	
 	@Override
-	public void eventsAppended(List<? extends Event<? extends T>> events) {
+	public void eventsAppended(List<? extends Event<T>> events) {
 		count++;
 	}
 	

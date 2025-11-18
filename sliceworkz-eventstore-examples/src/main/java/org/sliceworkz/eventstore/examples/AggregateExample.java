@@ -25,7 +25,7 @@ import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
-import org.sliceworkz.eventstore.events.EventWithMetaHandler;
+import org.sliceworkz.eventstore.events.EventWithMetaDataHandler;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.projection.Projection;
@@ -130,7 +130,7 @@ public class AggregateExample {
 	/**
 	 * A simple eventsourced Aggregate example.
 	 */
-	class CustomerAggregate implements EventWithMetaHandler<CustomerEvent> {
+	class CustomerAggregate implements EventWithMetaDataHandler<CustomerEvent> {
 
 		private String name;
 		private boolean registered;

@@ -121,7 +121,8 @@
 			    <version>${maven.maven-central-publishing-plugin.version}</version>
 			    <extensions>true</extensions>
 			    <configuration>
-				<publishingServerId>central</publishingServerId>
+					<publishingServerId>central</publishingServerId>
+					<deploymentName>eventmodeling-${project.version}</deploymentName>
 			    </configuration>
 			</plugin>
       		

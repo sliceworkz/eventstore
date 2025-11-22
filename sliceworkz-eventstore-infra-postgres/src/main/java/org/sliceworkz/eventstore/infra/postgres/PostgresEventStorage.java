@@ -17,6 +17,8 @@
  */
 package org.sliceworkz.eventstore.infra.postgres;
 
+import java.util.Properties;
+
 import javax.sql.DataSource;
 
 import org.sliceworkz.eventstore.EventStore;
@@ -125,6 +127,7 @@ public interface PostgresEventStorage {
 	 *   <li><strong>dataSource</strong>: Auto-configured from db.properties if not provided</li>
 	 *   <li><strong>monitoringDataSource</strong>: Defaults to same as dataSource, or separate non-pooled from db.properties</li>
 	 *   <li><strong>initializeDatabase</strong>: false (database schema not created automatically)</li>
+	 *   <li><strong>checkDatabase</strong>: true (database schema checked upon startup, after initialization if the latter is enabled)</li>
 	 *   <li><strong>resultLimit</strong>: none (no absolute limit)</li>
 	 * </ul>
 	 * <p>
@@ -140,6 +143,7 @@ public interface PostgresEventStorage {
 		private DataSource dataSource;
 		private DataSource monitoringDataSource;
 		private boolean initializeDatabase = false;
+		private boolean checkDatabase = true;
 		private Limit limit = Limit.none();
 
 		private Builder ( ) {
@@ -281,7 +285,7 @@ public interface PostgresEventStorage {
 		public Builder initializeDatabase ( ) {
 			return initializeDatabase(true);
 		}
-
+		
 		/**
 		 * Controls automatic database schema initialization when the storage is built.
 		 * <p>
@@ -312,6 +316,73 @@ public interface PostgresEventStorage {
 		}
 
 		/**
+		 * Controls automatic database schema validation when the storage is built.
+		 * <p>
+		 * When set to {@code true} (the default), the builder will validate that all required
+		 * database objects exist and are properly formed before the storage instance is returned.
+		 * This provides early detection of schema issues and prevents runtime failures.
+		 * <p>
+		 * The validation checks include:
+		 * <ul>
+		 *   <li><strong>Tables:</strong> {@code PREFIX_events} and {@code PREFIX_bookmarks} exist</li>
+		 *   <li><strong>Columns:</strong> All required columns exist with correct types and nullability</li>
+		 *   <li><strong>Indexes:</strong> All performance-critical indexes are present</li>
+		 *   <li><strong>Functions:</strong> PostgreSQL notification functions exist</li>
+		 *   <li><strong>Triggers:</strong> Event and bookmark notification triggers are properly configured</li>
+		 *   <li><strong>Constraints:</strong> Foreign key constraints are in place</li>
+		 * </ul>
+		 * <p>
+		 * If any required database object is missing or malformed, an
+		 * {@link org.sliceworkz.eventstore.spi.EventStorageException} is thrown with a detailed
+		 * explanation of what is wrong. All validation activity is logged at DEBUG level for
+		 * troubleshooting.
+		 * <p>
+		 * <strong>When to disable:</strong><br>
+		 * Schema validation can be disabled ({@code checkDatabase(false)}) in scenarios where:
+		 * <ul>
+		 *   <li>You want to defer validation to a later time</li>
+		 *   <li>The database user lacks permissions to query information_schema tables</li>
+		 *   <li>You're using a custom schema that intentionally differs from the standard</li>
+		 *   <li>You need to minimize startup time in performance-critical scenarios</li>
+		 * </ul>
+		 * <p>
+		 * <strong>Execution order:</strong><br>
+		 * If both {@link #initializeDatabase()} and {@code checkDatabase()} are enabled, the
+		 * initialization runs first, followed immediately by validation to ensure the schema
+		 * was created correctly.
+		 * <p>
+		 * <strong>Example usage:</strong>
+		 * <pre>{@code
+		 * // Validate existing schema (default behavior)
+		 * EventStorage storage = PostgresEventStorage.newBuilder()
+		 *     .checkDatabase(true)  // explicit, but this is the default
+		 *     .build();
+		 *
+		 * // Initialize and validate in one step
+		 * EventStorage storage = PostgresEventStorage.newBuilder()
+		 *     .initializeDatabase()
+		 *     .checkDatabase(true)  // validates the newly created schema
+		 *     .build();
+		 *
+		 * // Skip validation (not recommended for production)
+		 * EventStorage storage = PostgresEventStorage.newBuilder()
+		 *     .checkDatabase(false)
+		 *     .build();
+		 * }</pre>
+		 *
+		 * @param value {@code true} to validate the database schema (default), {@code false} to skip validation
+		 * @return this Builder for method chaining
+		 * @throws org.sliceworkz.eventstore.spi.EventStorageException if validation is enabled and schema is invalid
+		 * @see #initializeDatabase(boolean)
+		 * @see PostgresEventStorageImpl#checkDatabase()
+		 */
+		public Builder checkDatabase ( boolean value ) {
+			this.checkDatabase = value;
+			return this;
+		}
+
+
+		/**
 		 * Builds and returns the configured {@link EventStorage} implementation.
 		 * <p>
 		 * This method creates a {@link PostgresEventStorageImpl} instance with all configured
@@ -331,12 +402,22 @@ public interface PostgresEventStorage {
 		 */
 		public EventStorage build ( ) {
 			if ( dataSource == null ) {
-				dataSource = DataSourceFactory.fromConfiguration("pooled");
-				monitoringDataSource = DataSourceFactory.fromConfiguration("nonpooled");
+				Properties dbProperties = DataSourceFactory.loadProperties();
+				dataSource = DataSourceFactory.fromConfiguration(dbProperties);
+				if ( dataSource == null ) {
+					dataSource = DataSourceFactory.fromConfiguration(dbProperties, "pooled");
+					monitoringDataSource = DataSourceFactory.fromConfiguration(dbProperties, "nonpooled");
+				}
+				if ( monitoringDataSource == null ) {
+					monitoringDataSource = dataSource;
+				}
 			}
 			var result = new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix);
 			if ( initializeDatabase ) {
 				result.initializeDatabase();
+			}
+			if ( checkDatabase ) {
+				result.checkDatabase();
 			}
 			return result;
 

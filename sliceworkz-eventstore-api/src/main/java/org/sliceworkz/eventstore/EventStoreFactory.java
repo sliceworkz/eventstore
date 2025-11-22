@@ -17,9 +17,11 @@
  */
 package org.sliceworkz.eventstore;
 
+import java.util.NoSuchElementException;
 import java.util.ServiceLoader;
 
 import org.sliceworkz.eventstore.spi.EventStorage;
+import org.sliceworkz.eventstore.spi.EventStorageException;
 
 /**
  * Factory for creating {@link EventStore} instances.
@@ -62,10 +64,14 @@ public interface EventStoreFactory {
 	 * the implementation module (sliceworkz-eventstore-impl) is available on the classpath.
 	 *
 	 * @return the EventStoreFactory implementation
-	 * @throws java.util.NoSuchElementException if no implementation is found
+	 * @throws org.sliceworkz.eventstore.spi.EventStorageException if no implementation is found
 	 */
 	static EventStoreFactory get ( ) {
-		return ServiceLoader.load(EventStoreFactory.class).findFirst().get();
+		try {
+			return ServiceLoader.load(EventStoreFactory.class).findFirst().get();
+		} catch (NoSuchElementException e) {
+			throw new EventStorageException("no EventStore implementation found on classpath");
+		}
 	}
 
 }

@@ -110,18 +110,20 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
  * @see org.sliceworkz.eventstore.EventStore
  */
 public class PostgresEventStorageImpl implements EventStorage {
-	
+
+	private static final Logger LOGGER = LoggerFactory.getLogger(PostgresEventStorageImpl.class);
+
 	private String name;
 	private String prefix;
 	private DataSource dataSource;
 	private Limit absoluteLimit;
-	
+
 	private List<EventStoreListener> listeners = new CopyOnWriteArrayList<>();
 	private ExecutorService executorService;
 	private boolean stopped;
-	
+
 	private static final JsonMapper JSONMAPPER = new JsonMapper();
-	
+
 	private static final int ONE_MINUTE = 60*1000;
 	public static final int WAIT_FOR_NOTIFICATIONS_TIMEOUT = ONE_MINUTE;
 
@@ -171,20 +173,269 @@ public class PostgresEventStorageImpl implements EventStorage {
 			if (inputStream == null) {
 				throw new EventStorageException("Could not find initialisation.sql in classpath");
 			}
-			
+
 			String sql = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
 			sql = sql.replaceAll("PREFIX_", prefix);
-			
+
 			try ( Connection writeConnection = dataSource.getConnection() ) {
 				try (Statement statement = writeConnection.createStatement()) {
 					statement.execute(sql);
 				}
 			}
-			
+
 		} catch (IOException | SQLException e) {
 			throw new EventStorageException("Failed to initialize database", e);
 		}
 		return this;
+	}
+
+	public PostgresEventStorageImpl checkDatabase ( ) {
+		LOGGER.info("Starting database schema validation for prefix '{}'", prefix);
+
+		try ( Connection readConnection = dataSource.getConnection() ) {
+			// Check events table
+			checkEventsTable(readConnection);
+
+			// Check bookmarks table
+			checkBookmarksTable(readConnection);
+
+			// Check functions
+			checkFunction(readConnection, prefix + "notify_event_appended");
+			checkFunction(readConnection, prefix + "notify_bookmark_placed");
+
+			// Check triggers
+			checkTrigger(readConnection, prefix + "events", "table_insert_trigger");
+			checkTrigger(readConnection, prefix + "bookmarks", "table_insert_or_update_trigger");
+
+			// Check indexes
+			checkIndex(readConnection, prefix + "idx_events_stream_type_position");
+			checkIndex(readConnection, prefix + "idx_events_tags");
+			checkIndex(readConnection, prefix + "idx_events_stream_position");
+			checkIndex(readConnection, prefix + "idx_bookmarks_updated_at");
+
+			LOGGER.info("Database schema validation completed successfully for prefix '{}'", prefix);
+
+		} catch (SQLException e) {
+			throw new EventStorageException("Failed to validate database schema", e);
+		}
+		return this;
+	}
+
+	private void checkEventsTable(Connection connection) throws SQLException {
+		String tableName = prefix + "events";
+		LOGGER.debug("Checking table: {}", tableName);
+
+		if (!tableExists(connection, tableName)) {
+			throw new EventStorageException("Required table '%s' does not exist".formatted(tableName));
+		}
+
+		// Check required columns with their types
+		checkColumn(connection, tableName, "event_position", "bigserial", false);
+		checkColumn(connection, tableName, "event_id", "uuid", false);
+		checkColumn(connection, tableName, "stream_context", "text", false);
+		checkColumn(connection, tableName, "stream_purpose", "text", false);
+		checkColumn(connection, tableName, "event_type", "text", false);
+		checkColumn(connection, tableName, "event_timestamp", "timestamp with time zone", true);
+		checkColumn(connection, tableName, "event_data", "jsonb", false);
+		checkColumn(connection, tableName, "event_erasable_data", "jsonb", true);
+		checkColumn(connection, tableName, "event_tags", "ARRAY", true);
+
+		LOGGER.debug("Table {} validated successfully", tableName);
+	}
+
+	private void checkBookmarksTable(Connection connection) throws SQLException {
+		String tableName = prefix + "bookmarks";
+		LOGGER.debug("Checking table: {}", tableName);
+
+		if (!tableExists(connection, tableName)) {
+			throw new EventStorageException("Required table '%s' does not exist".formatted(tableName));
+		}
+
+		// Check required columns with their types
+		checkColumn(connection, tableName, "reader", "character varying", false);
+		checkColumn(connection, tableName, "event_position", "bigint", false);
+		checkColumn(connection, tableName, "event_id", "uuid", false);
+		checkColumn(connection, tableName, "updated_at", "timestamp without time zone", true);
+		checkColumn(connection, tableName, "updated_tags", "ARRAY", true);
+
+		// Check foreign key constraint
+		checkForeignKey(connection, tableName, "fk_bookmarks_event_id");
+
+		LOGGER.debug("Table {} validated successfully", tableName);
+	}
+
+	private boolean tableExists(Connection connection, String tableName) throws SQLException {
+		String sql = """
+			SELECT EXISTS (
+				SELECT FROM information_schema.tables
+				WHERE table_schema = current_schema()
+				AND table_name = ?
+			)
+		""";
+
+		try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+			stmt.setString(1, tableName);
+			try (ResultSet rs = stmt.executeQuery()) {
+				return rs.next() && rs.getBoolean(1);
+			}
+		}
+	}
+
+	private void checkColumn(Connection connection, String tableName, String columnName, String expectedType, boolean nullable) throws SQLException {
+		LOGGER.debug("Checking column: {}.{} (expected type: {}, nullable: {})", tableName, columnName, expectedType, nullable);
+
+		String sql = """
+			SELECT data_type, is_nullable, udt_name
+			FROM information_schema.columns
+			WHERE table_schema = current_schema()
+			AND table_name = ?
+			AND column_name = ?
+		""";
+
+		try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+			stmt.setString(1, tableName);
+			stmt.setString(2, columnName);
+			try (ResultSet rs = stmt.executeQuery()) {
+				if (!rs.next()) {
+					throw new EventStorageException(
+						"Required column '%s.%s' does not exist".formatted(tableName, columnName)
+					);
+				}
+
+				String dataType = rs.getString("data_type");
+				String udtName = rs.getString("udt_name");
+				String isNullable = rs.getString("is_nullable");
+
+				// Handle special cases for type checking
+				boolean typeMatches = false;
+				if (expectedType.equalsIgnoreCase("bigserial")) {
+					// bigserial is stored as bigint in information_schema
+					typeMatches = dataType.equalsIgnoreCase("bigint");
+				} else if (expectedType.equalsIgnoreCase("ARRAY")) {
+					typeMatches = dataType.equalsIgnoreCase("ARRAY");
+				} else {
+					typeMatches = dataType.equalsIgnoreCase(expectedType) ||
+								 udtName.equalsIgnoreCase(expectedType.replace(" ", ""));
+				}
+
+				if (!typeMatches) {
+					throw new EventStorageException(
+						"Column '%s.%s' has incorrect type: expected '%s', found '%s' (udt: '%s')"
+							.formatted(tableName, columnName, expectedType, dataType, udtName)
+					);
+				}
+
+				boolean actuallyNullable = "YES".equalsIgnoreCase(isNullable);
+				if (nullable != actuallyNullable) {
+					throw new EventStorageException(
+						"Column '%s.%s' has incorrect nullability: expected %s, found %s"
+							.formatted(tableName, columnName,
+								nullable ? "nullable" : "not null",
+								actuallyNullable ? "nullable" : "not null")
+					);
+				}
+			}
+		}
+	}
+
+	private void checkForeignKey(Connection connection, String tableName, String constraintName) throws SQLException {
+		LOGGER.debug("Checking foreign key constraint: {} on table {}", constraintName, tableName);
+
+		String sql = """
+			SELECT EXISTS (
+				SELECT FROM information_schema.table_constraints
+				WHERE table_schema = current_schema()
+				AND table_name = ?
+				AND constraint_name = ?
+				AND constraint_type = 'FOREIGN KEY'
+			)
+		""";
+
+		try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+			stmt.setString(1, tableName);
+			stmt.setString(2, constraintName);
+			try (ResultSet rs = stmt.executeQuery()) {
+				if (!rs.next() || !rs.getBoolean(1)) {
+					throw new EventStorageException(
+						"Required foreign key constraint '%s' does not exist on table '%s'"
+							.formatted(constraintName, tableName)
+					);
+				}
+			}
+		}
+	}
+
+	private void checkFunction(Connection connection, String functionName) throws SQLException {
+		LOGGER.debug("Checking function: {}", functionName);
+
+		String sql = """
+			SELECT EXISTS (
+				SELECT FROM pg_proc p
+				JOIN pg_namespace n ON p.pronamespace = n.oid
+				WHERE n.nspname = current_schema()
+				AND p.proname = ?
+			)
+		""";
+
+		try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+			stmt.setString(1, functionName);
+			try (ResultSet rs = stmt.executeQuery()) {
+				if (!rs.next() || !rs.getBoolean(1)) {
+					throw new EventStorageException(
+						"Required function '%s' does not exist".formatted(functionName)
+					);
+				}
+			}
+		}
+	}
+
+	private void checkTrigger(Connection connection, String tableName, String triggerName) throws SQLException {
+		LOGGER.debug("Checking trigger: {} on table {}", triggerName, tableName);
+
+		String sql = """
+			SELECT EXISTS (
+				SELECT FROM information_schema.triggers
+				WHERE trigger_schema = current_schema()
+				AND event_object_table = ?
+				AND trigger_name = ?
+			)
+		""";
+
+		try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+			stmt.setString(1, tableName);
+			stmt.setString(2, triggerName);
+			try (ResultSet rs = stmt.executeQuery()) {
+				if (!rs.next() || !rs.getBoolean(1)) {
+					throw new EventStorageException(
+						"Required trigger '%s' does not exist on table '%s'"
+							.formatted(triggerName, tableName)
+					);
+				}
+			}
+		}
+	}
+
+	private void checkIndex(Connection connection, String indexName) throws SQLException {
+		LOGGER.debug("Checking index: {}", indexName);
+
+		String sql = """
+			SELECT EXISTS (
+				SELECT FROM pg_indexes
+				WHERE schemaname = current_schema()
+				AND indexname = ?
+			)
+		""";
+
+		try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+			stmt.setString(1, indexName);
+			try (ResultSet rs = stmt.executeQuery()) {
+				if (!rs.next() || !rs.getBoolean(1)) {
+					throw new EventStorageException(
+						"Required index '%s' does not exist".formatted(indexName)
+					);
+				}
+			}
+		}
 	}
 	
 	public void stop ( ) {

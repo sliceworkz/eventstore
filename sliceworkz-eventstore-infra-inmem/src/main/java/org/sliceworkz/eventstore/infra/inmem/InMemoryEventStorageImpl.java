@@ -43,6 +43,53 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 
+/**
+ * Thread-safe in-memory implementation of the {@link EventStorage} interface.
+ * <p>
+ * This implementation stores all events in a simple in-memory list, providing a lightweight
+ * and fast storage solution suitable for development, testing, and prototyping. All data is
+ * lost when the application stops, making this unsuitable for production use.
+ * <p>
+ * Key characteristics:
+ * <ul>
+ *   <li>Thread-safe: All critical operations are synchronized to ensure consistency</li>
+ *   <li>Non-persistent: Events exist only in memory and are lost on restart</li>
+ *   <li>Fast: Direct memory access without I/O overhead</li>
+ *   <li>Full feature support: Implements all EventStorage capabilities including subscriptions and bookmarks</li>
+ *   <li>JSON validation: Validates that events can be serialized and deserialized using Jackson</li>
+ * </ul>
+ * <p>
+ * This implementation uses a {@link LinkedList} for the event log to provide efficient append operations,
+ * and a {@link HashMap} for bookmark storage. All queries are performed by streaming over the event log
+ * and applying filters.
+ *
+ * <h2>Optimistic Locking:</h2>
+ * Optimistic locking is implemented by synchronizing both the query and append operations within the
+ * {@link #append(AppendCriteria, Optional, List)} method. This ensures that checking for new events
+ * and appending are atomic, preventing race conditions in concurrent scenarios.
+ *
+ * <h2>Event Validation:</h2>
+ * Before appending, all events are validated by serializing and deserializing them to JSON using Jackson.
+ * This ensures that events can be properly persisted and retrieved, catching serialization issues early.
+ * If an event cannot be serialized/deserialized, a {@link RuntimeException} is thrown.
+ *
+ * <h2>Query Limits:</h2>
+ * The implementation supports an optional absolute limit on query results to protect against unbounded
+ * queries. If configured via the builder's {@link InMemoryEventStorage.Builder#resultLimit(int)} method,
+ * queries returning more than this limit will throw an {@link EventStorageException}.
+ *
+ * <h2>Example Usage:</h2>
+ * This class is typically not instantiated directly. Instead, use {@link InMemoryEventStorage.Builder}:
+ * <pre>{@code
+ * EventStorage storage = InMemoryEventStorage.newBuilder()
+ *     .resultLimit(1000)
+ *     .build();
+ * }</pre>
+ *
+ * @see EventStorage
+ * @see InMemoryEventStorage
+ * @see InMemoryEventStorage.Builder
+ */
 public class InMemoryEventStorageImpl implements EventStorage {
 
 	private String name;
@@ -51,23 +98,93 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	private Map<String,EventReference> bookmarks = new HashMap<>();
 	private JsonMapper jsonMapper;
 	private Limit absoluteLimit;
-	
+
+	/**
+	 * Constructs a new in-memory event storage instance with the specified absolute query limit.
+	 * <p>
+	 * This constructor is package-private and should not be called directly. Instead, use the
+	 * {@link InMemoryEventStorage.Builder} to create instances.
+	 * <p>
+	 * The constructor initializes:
+	 * <ul>
+	 *   <li>A unique name based on the object's identity hash code</li>
+	 *   <li>An empty event log backed by a {@link LinkedList}</li>
+	 *   <li>An empty list of event listeners</li>
+	 *   <li>An empty bookmark map</li>
+	 *   <li>A Jackson {@link JsonMapper} with auto-discovered modules for event serialization validation</li>
+	 * </ul>
+	 *
+	 * @param absoluteLimit the absolute limit on query results, or {@link Limit#none()} for no limit
+	 * @see InMemoryEventStorage.Builder#build()
+	 */
 	public InMemoryEventStorageImpl ( Limit absoluteLimit ) {
 		this.name = "inmem-%s".formatted(System.identityHashCode(this)); // unique name in case different objects are used
 		this.jsonMapper = new JsonMapper();
 		this.jsonMapper.findAndRegisterModules();
 		this.absoluteLimit = absoluteLimit;
 	}
-	
+
+	/**
+	 * Queries the event store for events matching the specified criteria, starting after a given reference.
+	 * <p>
+	 * This method is synchronized to ensure thread-safe access to the event log, which is critical for
+	 * optimistic locking scenarios where the query result is used to determine whether to allow an append.
+	 * <p>
+	 * The query processes events in the specified direction (forward or backward) and applies:
+	 * <ul>
+	 *   <li>Stream filtering (if a stream ID is provided)</li>
+	 *   <li>Event query matching (type and tag filters)</li>
+	 *   <li>Reference-based positioning (starting after the specified reference)</li>
+	 *   <li>Optional "until" reference from the query</li>
+	 *   <li>Result limits (both soft and absolute)</li>
+	 * </ul>
+	 *
+	 * @param query the event query specifying which events to retrieve
+	 * @param stream optional stream ID to filter events; if empty, events from all streams are considered
+	 * @param after the reference to start after; events after this position are included
+	 * @param limit soft limit on the number of results; may be overridden by absolute limit
+	 * @param direction the direction to traverse the event log (FORWARD or BACKWARD)
+	 * @return a Stream of StoredEvent instances matching the criteria
+	 * @throws EventStorageException if the result exceeds the configured absolute limit
+	 * @see EventQuery
+	 * @see EventReference
+	 * @see QueryDirection
+	 */
 	@Override
 	public synchronized Stream<StoredEvent> query(EventQuery query, Optional<EventStreamId> stream, EventReference after, Limit limit, QueryDirection direction ) {
 		return queryAfter(query, stream, after, limit, direction);
 	}
 
+	/**
+	 * Queries events starting from (and including) the specified reference.
+	 * <p>
+	 * This is a convenience method that delegates to {@link #queryFromOrAfter(EventQuery, Optional, Limit, EventReference, boolean, QueryDirection)}
+	 * with includeReference set to true.
+	 *
+	 * @param query the event query specifying which events to retrieve
+	 * @param streamId optional stream ID to filter events
+	 * @param from the reference to start from (inclusive)
+	 * @param limit soft limit on the number of results
+	 * @param direction the direction to traverse the event log
+	 * @return a Stream of StoredEvent instances matching the criteria
+	 */
 	public synchronized Stream<StoredEvent> queryFrom (EventQuery query, Optional<EventStreamId> streamId, EventReference from, Limit limit, QueryDirection direction ) {
 		return queryFromOrAfter(query, streamId, limit, from, true, direction);
 	}
-	
+
+	/**
+	 * Queries events starting after (excluding) the specified reference.
+	 * <p>
+	 * This is a convenience method that delegates to {@link #queryFromOrAfter(EventQuery, Optional, Limit, EventReference, boolean, QueryDirection)}
+	 * with includeReference set to false.
+	 *
+	 * @param query the event query specifying which events to retrieve
+	 * @param streamId optional stream ID to filter events
+	 * @param after the reference to start after (exclusive)
+	 * @param limit soft limit on the number of results
+	 * @param direction the direction to traverse the event log
+	 * @return a Stream of StoredEvent instances matching the criteria
+	 */
 	public synchronized Stream<StoredEvent> queryAfter (EventQuery query, Optional<EventStreamId> streamId, EventReference after, Limit limit, QueryDirection direction ) {
 		return queryFromOrAfter(query, streamId, limit, after, false, direction);
 	}

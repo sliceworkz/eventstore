@@ -57,7 +57,45 @@ import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentBookmarkL
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
 /**
- * EventStore implementation with pluggable storage (InMemory, Postgres, ...)
+ * Concrete implementation of {@link EventStore} providing event storage with pluggable backend support.
+ * <p>
+ * This implementation serves as the core engine for the event store, coordinating between the public API
+ * and the underlying storage layer. It supports multiple storage backends (in-memory, PostgreSQL, etc.)
+ * through the {@link EventStorage} abstraction.
+ * <p>
+ * Key responsibilities include:
+ * <ul>
+ *   <li>Creating and managing {@link EventStream} instances for specific stream IDs</li>
+ *   <li>Coordinating event serialization/deserialization via {@link EventPayloadSerializerDeserializer}</li>
+ *   <li>Managing consistent and eventually consistent event notifications to subscribers</li>
+ *   <li>Supporting both typed (Java objects) and raw (JSON) event payload modes</li>
+ *   <li>Handling optimistic locking and DCB (Dynamic Consistency Boundary) compliance</li>
+ * </ul>
+ * <p>
+ * This class is instantiated via the {@link EventStoreFactoryImpl} using Java's ServiceLoader mechanism.
+ * Users should obtain EventStore instances through {@link org.sliceworkz.eventstore.EventStoreFactory#get()}.
+ * <p>
+ * The implementation uses virtual threads for asynchronous notification of eventually consistent subscribers,
+ * ensuring efficient handling of concurrent event processing without blocking the main append operations.
+ *
+ * <h2>Event Payload Modes:</h2>
+ * <ul>
+ *   <li><b>Typed Mode:</b> Events are serialized to/from Java objects using Jackson. Requires event root classes
+ *       to be registered with the stream. Supports sealed interfaces, upcasting via {@link org.sliceworkz.eventstore.events.LegacyEvent},
+ *       and GDPR compliance through {@link org.sliceworkz.eventstore.events.Erasable} annotations.</li>
+ *   <li><b>Raw Mode:</b> Events are stored and retrieved as JSON strings without type mapping. Useful for
+ *       schema-less event processing or when event types are not statically known.</li>
+ * </ul>
+ *
+ * <h2>Thread Safety:</h2>
+ * This implementation is thread-safe. Multiple threads can safely obtain event streams and perform concurrent
+ * append and query operations. Event notifications to subscribers are dispatched asynchronously using a dedicated
+ * executor service per EventStore instance.
+ *
+ * @see EventStore
+ * @see EventStoreFactoryImpl
+ * @see EventStorage
+ * @see EventPayloadSerializerDeserializer
  */
 public class EventStoreImpl implements EventStore {
 	
@@ -65,9 +103,26 @@ public class EventStoreImpl implements EventStore {
 		Banner.printBanner();
 	}
 
+	/**
+	 * The underlying storage backend for persisting and retrieving events.
+	 */
 	private final EventStorage eventStorage;
+
+	/**
+	 * Executor service using virtual threads for asynchronously notifying eventually consistent subscribers.
+	 * Named threads help with debugging and monitoring.
+	 */
 	private final ExecutorService executorService;
-	
+
+	/**
+	 * Constructs a new EventStoreImpl instance backed by the specified storage.
+	 * <p>
+	 * This constructor is invoked by {@link EventStoreFactoryImpl} and should not be called directly.
+	 * The constructor initializes a single-threaded executor using virtual threads for handling
+	 * eventually consistent event notifications without blocking append operations.
+	 *
+	 * @param eventStorage the storage backend implementation (in-memory, PostgreSQL, etc.)
+	 */
 	protected EventStoreImpl ( EventStorage eventStorage ) {
 		this.eventStorage = eventStorage;
 		ThreadFactory threadFactory = Thread.ofVirtual().name("eventually-consistent-listener-notifier/" + eventStorage.name()).factory();

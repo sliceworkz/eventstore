@@ -21,8 +21,42 @@ import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.spi.EventStorage;
 
+/**
+ * ServiceLoader-discoverable implementation of {@link EventStoreFactory}.
+ * <p>
+ * This factory is automatically discovered at runtime via Java's {@link java.util.ServiceLoader} mechanism.
+ * It creates {@link EventStoreImpl} instances backed by the provided {@link EventStorage} implementation.
+ * <p>
+ * The factory registration is configured in the {@code META-INF/services/org.sliceworkz.eventstore.EventStoreFactory}
+ * file, allowing the API module to remain decoupled from the implementation module.
+ *
+ * <h2>Usage:</h2>
+ * This class is not intended to be instantiated directly. Instead, obtain EventStore instances via:
+ * <pre>{@code
+ * // Obtain factory via ServiceLoader
+ * EventStoreFactory factory = EventStoreFactory.get();
+ *
+ * // Create EventStore with desired storage backend
+ * EventStorage storage = InMemoryEventStorage.newBuilder().build();
+ * EventStore eventStore = factory.eventStore(storage);
+ * }</pre>
+ *
+ * @see EventStoreFactory
+ * @see EventStoreImpl
+ * @see EventStorage
+ */
 public class EventStoreFactoryImpl implements EventStoreFactory {
 
+	/**
+	 * Creates a new EventStore instance backed by the specified storage implementation.
+	 * <p>
+	 * This method instantiates an {@link EventStoreImpl} with the provided storage backend,
+	 * which can be any implementation of {@link EventStorage} (in-memory, PostgreSQL, etc.).
+	 *
+	 * @param eventStorage the storage backend for persisting and retrieving events
+	 * @return a new EventStore instance using the provided storage
+	 * @see EventStoreImpl
+	 */
 	@Override
 	public EventStore eventStore(EventStorage eventStorage) {
 		return new EventStoreImpl(eventStorage);

@@ -30,6 +30,39 @@ import com.fasterxml.jackson.databind.introspect.JacksonAnnotationIntrospector;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+/**
+ * Abstract base class for event payload serializers/deserializers providing common Jackson-based functionality.
+ * <p>
+ * This class implements the core serialization logic that splits event data into immutable and erasable parts
+ * to support GDPR compliance. It uses Jackson's JSON view mechanism combined with custom annotation introspection
+ * to automatically categorize fields based on {@link Erasable} and {@link PartlyErasable} annotations.
+ * <p>
+ * Two Jackson {@link JsonMapper} instances are maintained:
+ * <ul>
+ *   <li><b>immutableDataMapper:</b> Serializes fields marked for the {@code ImmutableData} view</li>
+ *   <li><b>erasableDataMapper:</b> Serializes only fields marked for the {@code ErasableData} view,
+ *       excluding immutable fields via {@code DEFAULT_VIEW_INCLUSION} configuration</li>
+ * </ul>
+ * <p>
+ * The automatic field categorization works as follows:
+ * <ul>
+ *   <li>Fields without annotations: included in immutable data only</li>
+ *   <li>Fields with {@code @Erasable}: included in erasable data only</li>
+ *   <li>Fields with {@code @PartlyErasable}: included in both immutable and erasable data</li>
+ * </ul>
+ * <p>
+ * This implementation properly handles Java records by inspecting record components rather than just methods,
+ * ensuring annotations on record component declarations are correctly detected.
+ *
+ * <h2>GDPR Compliance:</h2>
+ * The split between immutable and erasable data enables the "right to be forgotten" by allowing
+ * selective deletion of personal data while retaining the event structure for audit trails.
+ *
+ * @see TypedEventPayloadSerializerDeserializer
+ * @see RawEventPayloadSerializerDeserializer
+ * @see Erasable
+ * @see PartlyErasable
+ */
 public abstract class AbstractEventPayloadSerializerDeserializer implements EventPayloadSerializerDeserializer {
 	
 	protected JsonMapper immutableDataMapper;

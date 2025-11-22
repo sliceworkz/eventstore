@@ -64,8 +64,10 @@ public class HikariConfigurationUtil {
      */
     public static HikariConfig createConfig(String connectionName, Properties props) {
         HikariConfig config = new HikariConfig();
-        String prefix = "db." + connectionName + ".";
+        String prefix = "db." + (connectionName==null?"":(connectionName + "."));
         String datasourcePrefix = prefix + "datasource.";
+        
+        LOGGER.info("loading db properties with prefix '{}'", prefix);
         
         for (String key : props.stringPropertyNames()) {
             if (!key.startsWith(prefix)) {

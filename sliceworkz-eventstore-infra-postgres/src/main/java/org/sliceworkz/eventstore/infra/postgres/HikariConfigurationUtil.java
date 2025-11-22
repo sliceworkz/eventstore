@@ -69,6 +69,8 @@ public class HikariConfigurationUtil {
         
         LOGGER.info("loading db properties with prefix '{}'", prefix);
         
+        boolean propertiesFound = false;
+        
         for (String key : props.stringPropertyNames()) {
             if (!key.startsWith(prefix)) {
                 continue;
@@ -80,6 +82,8 @@ public class HikariConfigurationUtil {
                 // Handle datasource properties
                 String dsPropertyName = key.substring(datasourcePrefix.length());
                 config.addDataSourceProperty(dsPropertyName, value);
+                
+                propertiesFound = true;
             } else {
                 // Handle HikariConfig properties
                 String propertyName = key.substring(prefix.length());
@@ -87,7 +91,14 @@ public class HikariConfigurationUtil {
             }
         }
         
-        return config;
+        HikariConfig result = null;
+        if ( propertiesFound ) {
+        	result = config; 
+        } else {
+            LOGGER.info("no configuration found in db properties with prefix '{}'", prefix);
+        }
+        
+        return result;
     }
     
     /**

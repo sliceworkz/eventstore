@@ -19,6 +19,7 @@ package org.sliceworkz.eventstore.infra.postgres;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Properties;
@@ -44,25 +45,28 @@ public class DataSourceFactory {
 	}
 
 	public static DataSource fromConfiguration ( ) {
-		return fromConfiguration(null);
+		return fromConfiguration((Properties)null);
 	}
 	
+	public static DataSource fromConfiguration ( Properties properties ) {
+		return fromConfiguration(properties, null);
+	}
+
 	public static DataSource fromConfiguration ( String datasourceConfigurationName ) {
-		
-		Properties dbProperties;
-		try {
-			dbProperties = loadProperties();
-		} catch (IOException e) {
-			throw new RuntimeException(e);
-		}
-		
+		return fromConfiguration(loadProperties(), datasourceConfigurationName);
+	}
+	
+	public static DataSource fromConfiguration ( Properties dbProperties, String datasourceConfigurationName ) {
 		HikariConfig config = HikariConfigurationUtil.createConfig(datasourceConfigurationName, dbProperties);
-        
-		return new HikariDataSource(config);
+		if ( config != null ) {
+			return new HikariDataSource(config);
+		} else {
+			return null;
+		}
 	}
 
 	// looks for file in current working directory of process, and few levels up
-	static Properties loadProperties ( ) throws IOException {
+	public static Properties loadProperties ( ) {
 
 		String configPath = System.getProperty("eventstore.db.config");
 		if ( configPath != null ) {
@@ -92,8 +96,14 @@ public class DataSourceFactory {
 		}
 
 		Properties result = new Properties();
-		try ( InputStream is = new FileInputStream(configPath)) {
-			result.load(is);
+		try {
+			try ( InputStream is = new FileInputStream(configPath)) {
+				result.load(is);
+			}
+		} catch (FileNotFoundException e) {
+			throw new RuntimeException(e);
+		} catch (IOException e) {
+			throw new RuntimeException(e);
 		}
 		return result;
 	}

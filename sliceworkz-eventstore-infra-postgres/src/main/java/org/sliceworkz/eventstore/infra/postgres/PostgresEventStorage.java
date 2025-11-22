@@ -17,6 +17,8 @@
  */
 package org.sliceworkz.eventstore.infra.postgres;
 
+import java.util.Properties;
+
 import javax.sql.DataSource;
 
 import org.sliceworkz.eventstore.EventStore;
@@ -331,8 +333,15 @@ public interface PostgresEventStorage {
 		 */
 		public EventStorage build ( ) {
 			if ( dataSource == null ) {
-				dataSource = DataSourceFactory.fromConfiguration("pooled");
-				monitoringDataSource = DataSourceFactory.fromConfiguration("nonpooled");
+				Properties dbProperties = DataSourceFactory.loadProperties();
+				dataSource = DataSourceFactory.fromConfiguration(dbProperties);
+				if ( dataSource == null ) {
+					dataSource = DataSourceFactory.fromConfiguration(dbProperties, "pooled");
+					monitoringDataSource = DataSourceFactory.fromConfiguration(dbProperties, "nonpooled");
+				}
+				if ( monitoringDataSource == null ) {
+					monitoringDataSource = dataSource;
+				}
 			}
 			var result = new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix);
 			if ( initializeDatabase ) {

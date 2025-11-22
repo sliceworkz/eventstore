@@ -60,6 +60,55 @@ import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 
+/**
+ * PostgreSQL-backed implementation of the {@link EventStorage} interface.
+ * <p>
+ * This is the internal implementation class used by {@link PostgresEventStorage}. It provides
+ * a production-ready event storage backend with the following characteristics:
+ * <ul>
+ *   <li><strong>JDBC-based persistence</strong>: Events are stored in PostgreSQL tables with optimized indexing</li>
+ *   <li><strong>Optimistic locking</strong>: DCB-compliant concurrency control via conditional inserts</li>
+ *   <li><strong>Real-time notifications</strong>: PostgreSQL LISTEN/NOTIFY for event-driven architectures</li>
+ *   <li><strong>Virtual thread support</strong>: Uses Java 21+ virtual threads for efficient monitoring</li>
+ *   <li><strong>Connection pooling</strong>: Leverages HikariCP for high-performance connection management</li>
+ *   <li><strong>Table prefixing</strong>: Supports multi-tenancy via configurable table name prefixes</li>
+ * </ul>
+ * <p>
+ * This implementation is thread-safe and designed for high-concurrency environments. Multiple
+ * event streams can be accessed concurrently without coordination.
+ * <p>
+ * <strong>Internal Architecture:</strong><br>
+ * The implementation uses two background virtual threads for monitoring PostgreSQL notifications:
+ * <ul>
+ *   <li>{@code NewEventsAppendedMonitor}: Listens for event append notifications on the
+ *       {@code PREFIX_event_appended} channel</li>
+ *   <li>{@code BookmarkPlacedMonitor}: Listens for bookmark update notifications on the
+ *       {@code PREFIX_bookmark_placed} channel</li>
+ * </ul>
+ * These monitors enable eventually-consistent event processing without polling.
+ * <p>
+ * <strong>Database Schema:</strong><br>
+ * The implementation expects the following tables (where PREFIX_ is the configured prefix):
+ * <ul>
+ *   <li>{@code PREFIX_events}: Main event storage with columns for stream context, purpose, type,
+ *       timestamp, data, and tags</li>
+ *   <li>{@code PREFIX_bookmarks}: Consumer position tracking with reader name and event reference</li>
+ * </ul>
+ * <p>
+ * <strong>Performance Characteristics:</strong>
+ * <ul>
+ *   <li>Event appends: O(1) with optimistic locking check, single roundtrip</li>
+ *   <li>Event queries: O(log n) for indexed columns (position, stream, type), O(n) for tag filters</li>
+ *   <li>Bookmark operations: O(1) upsert with unique constraint</li>
+ * </ul>
+ * <p>
+ * This class is not intended to be instantiated directly. Use {@link PostgresEventStorage.Builder}
+ * to create instances.
+ *
+ * @see PostgresEventStorage
+ * @see EventStorage
+ * @see org.sliceworkz.eventstore.EventStore
+ */
 public class PostgresEventStorageImpl implements EventStorage {
 	
 	private String name;

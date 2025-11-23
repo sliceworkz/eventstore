@@ -59,6 +59,7 @@ import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 
 /**
  * Concrete implementation of {@link EventStore} providing event storage with pluggable backend support.
@@ -189,6 +190,8 @@ public class EventStoreImpl implements EventStore {
 		private Counter meterGetEvent;
 		private Counter meterBookmarkPlace;
 		private Counter meterBookmarkGet;
+		private Timer timerQuery;
+		private Timer timerAppend;
 
 		private final List<EventStreamEventuallyConsistentAppendListener> eventuallyConsistentSubscribers = new CopyOnWriteArrayList<>();
 		private final List<EventStreamConsistentAppendListener<EVENT_TYPE>> consistentSubscribers = new CopyOnWriteArrayList<>();
@@ -205,7 +208,7 @@ public class EventStoreImpl implements EventStore {
 			String tagTypedValue = String.valueOf(serde.isTyped());
 			
 			io.micrometer.core.instrument.Tags tags = io.micrometer.core.instrument.Tags
-					.of("context", tagContextValue, "purpose", tagPurposeValue, "typed", tagTypedValue);
+					.of("context", tagContextValue, "purpose", tagPurposeValue, "typed", tagTypedValue, "storage", eventStorage.name());
 			
 			// prepare counters for metering
 			this.meterAppend = meterRegistry.counter("sliceworkz.eventstore.append", tags);
@@ -217,6 +220,9 @@ public class EventStoreImpl implements EventStore {
 			this.meterBookmarkPlace = meterRegistry.counter("sliceworkz.eventstore.bookmark.place", tags);
 			this.meterBookmarkGet= meterRegistry.counter("sliceworkz.eventstore.bookmark.get", tags);
 
+			this.timerQuery = meterRegistry.timer("sliceworkz.eventstore.query.duration", tags);			
+			this.timerAppend = meterRegistry.timer("sliceworkz.eventstore.append.duration", tags);
+			
 			// increment number of stream objects created
 			meterRegistry.counter("sliceworkz.eventstore.stream.create", tags).increment();
 		}
@@ -252,22 +258,20 @@ public class EventStoreImpl implements EventStore {
 		@Override
 		public Stream<Event<EVENT_TYPE>> query(EventQuery query, EventReference after, Limit limit ) {
 			meterQuery.increment(); // one query done
-			return eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), after, limit, QueryDirection.FORWARD).map(this::enrichAfterQuery);
+			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), after, limit, QueryDirection.FORWARD).map(this::enrichAfterQuery));
 		}
 
 		@Override
 		public Stream<Event<EVENT_TYPE>> queryBackwards(EventQuery query, EventReference before, Limit limit) {
 			meterQuery.increment(); // one query done
-			return eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), before, limit, QueryDirection.BACKWARD).map(this::enrichAfterQuery);
+			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), before, limit, QueryDirection.BACKWARD).map(this::enrichAfterQuery));
 		}
 		
-		@SuppressWarnings("unchecked")
 		private Event<EVENT_TYPE> enrichAfterQuery ( StoredEvent storedEvent ) {
 			meterQueryEvent.increment(); // one event more seen coming from storage
 			return enrich(storedEvent);
 		}
 
-		@SuppressWarnings("unchecked")
 		private Event<EVENT_TYPE> enrichAfterAppend ( StoredEvent storedEvent ) {
 			// not metered, as this is used for appended events
 			return enrich(storedEvent);
@@ -308,7 +312,7 @@ public class EventStoreImpl implements EventStore {
 			List<Event<EVENT_TYPE>> appendedEvents;
 			try {
 				meterAppend.increment();
-				appendedEvents = eventStorage.append(appendCriteria, Optional.of(eventStreamId), reduce(events)).stream().map(this::enrichAfterAppend).toList();
+				appendedEvents = timerAppend.record(()->eventStorage.append(appendCriteria, Optional.of(eventStreamId), reduce(events)).stream().map(this::enrichAfterAppend).toList());
 				
 				// ... and dispatch events directly back to the kernel for update of consistent readmodels etc...
 				LOGGER.debug("Notifying {} consistent clients of stream {} about append of {} events", consistentSubscribers.size(), eventStreamId, appendedEvents.size());

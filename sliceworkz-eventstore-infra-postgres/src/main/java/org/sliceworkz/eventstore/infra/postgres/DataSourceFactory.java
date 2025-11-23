@@ -24,8 +24,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Properties;
 
-import javax.sql.DataSource;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,19 +42,19 @@ public class DataSourceFactory {
 		
 	}
 
-	public static DataSource fromConfiguration ( ) {
+	public static HikariDataSource fromConfiguration ( ) {
 		return fromConfiguration((Properties)null);
 	}
 	
-	public static DataSource fromConfiguration ( Properties properties ) {
+	public static HikariDataSource fromConfiguration ( Properties properties ) {
 		return fromConfiguration(properties, null);
 	}
 
-	public static DataSource fromConfiguration ( String datasourceConfigurationName ) {
+	public static HikariDataSource fromConfiguration ( String datasourceConfigurationName ) {
 		return fromConfiguration(loadProperties(), datasourceConfigurationName);
 	}
 	
-	public static DataSource fromConfiguration ( Properties dbProperties, String datasourceConfigurationName ) {
+	public static HikariDataSource fromConfiguration ( Properties dbProperties, String datasourceConfigurationName ) {
 		HikariConfig config = HikariConfigurationUtil.createConfig(datasourceConfigurationName, dbProperties);
 		if ( config != null ) {
 			return new HikariDataSource(config);

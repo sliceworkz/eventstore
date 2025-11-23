@@ -60,6 +60,8 @@ import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 
+import io.micrometer.core.instrument.MeterRegistry;
+
 /**
  * PostgreSQL-backed implementation of the {@link EventStorage} interface.
  * <p>
@@ -113,13 +115,14 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(PostgresEventStorageImpl.class);
 
-	private String name;
-	private String prefix;
-	private DataSource dataSource;
-	private Limit absoluteLimit;
-
-	private List<EventStoreListener> listeners = new CopyOnWriteArrayList<>();
-	private ExecutorService executorService;
+	private final String name;
+	private final String prefix;
+	private final DataSource dataSource;
+	private final Limit absoluteLimit;
+	private final MeterRegistry meterRegistry;
+	
+	private final List<EventStoreListener> listeners = new CopyOnWriteArrayList<>();
+	private final ExecutorService executorService;
 	private boolean stopped;
 
 	private static final JsonMapper JSONMAPPER = new JsonMapper();
@@ -130,15 +133,13 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private static final String NO_PREFIX = "";
 	private static final int MAX_PREFIX_LENGTH = 32;
 
-	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit ) {
-		this(name, dataSource, monitoringDataSource, absoluteLimit, NO_PREFIX);
-	}
-
-	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix ) {
+	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, MeterRegistry meterRegistry ) {
 		this.prefix = validatePrefix(prefix);
 		this.name = name;
 		this.dataSource = dataSource;
 		this.absoluteLimit = absoluteLimit;
+		this.meterRegistry = meterRegistry;
+		
 		this.executorService = Executors.newVirtualThreadPerTaskExecutor();
 		
 		this.executorService.execute(new NewEventsAppendedMonitor("event-append-listener/" + name, listeners, monitoringDataSource));

@@ -35,4 +35,8 @@
 
 	<artifactId>sliceworkz-eventstore-api</artifactId>
 	<packaging>jar</packaging>
+	
+	<dependencies>
+	
+	</dependencies>
 </project>

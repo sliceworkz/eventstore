@@ -56,6 +56,8 @@ import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendLis
 import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentBookmarkListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
+import io.micrometer.core.instrument.MeterRegistry;
+
 /**
  * Concrete implementation of {@link EventStore} providing event storage with pluggable backend support.
  * <p>
@@ -114,6 +116,8 @@ public class EventStoreImpl implements EventStore {
 	 */
 	private final ExecutorService executorService;
 
+	private final MeterRegistry meterRegistry;
+	
 	/**
 	 * Constructs a new EventStoreImpl instance backed by the specified storage.
 	 * <p>
@@ -123,8 +127,15 @@ public class EventStoreImpl implements EventStore {
 	 *
 	 * @param eventStorage the storage backend implementation (in-memory, PostgreSQL, etc.)
 	 */
-	protected EventStoreImpl ( EventStorage eventStorage ) {
+	protected EventStoreImpl ( EventStorage eventStorage, MeterRegistry meterRegistry ) {
+		if ( eventStorage == null ) {
+			throw new IllegalArgumentException("eventStorage cannot be null");
+		}
+		if ( meterRegistry == null ) {
+			throw new IllegalArgumentException("meterRegistry cannot be null.  Consider using Metrics.globalRegistry as a no-op fallback");
+		}
 		this.eventStorage = eventStorage;
+		this.meterRegistry = meterRegistry;
 		ThreadFactory threadFactory = Thread.ofVirtual().name("eventually-consistent-listener-notifier/" + eventStorage.name()).factory();
 		this.executorService = Executors.newSingleThreadExecutor(threadFactory);
 	}
@@ -163,6 +174,13 @@ public class EventStoreImpl implements EventStore {
 			this.eventStreamId = eventStreamId;
 			this.eventStorage.subscribe(this);
 			this.serde = serde;
+			
+			// observability on number of streams created
+			meterRegistry.counter("sliceworkz.eventstore.stream.create", 
+					"context", Optional.ofNullable(eventStreamId.context()).orElse(""),
+					"purpose", Optional.ofNullable(eventStreamId.purpose()).orElse(""),
+					"typed", String.valueOf(serde.isTyped()))
+				.increment();
 		}
 		
 		public boolean isReadOnly ( ) {

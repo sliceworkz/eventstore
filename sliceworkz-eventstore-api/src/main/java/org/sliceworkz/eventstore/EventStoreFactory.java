@@ -23,6 +23,9 @@ import java.util.ServiceLoader;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageException;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Metrics;
+
 /**
  * Factory for creating {@link EventStore} instances.
  * <p>
@@ -55,8 +58,12 @@ public interface EventStoreFactory {
 	 * @return a new EventStore instance using the provided storage
 	 * @see org.sliceworkz.eventstore.spi.EventStorage
 	 */
-	EventStore eventStore ( EventStorage eventStorage );
+	EventStore eventStore ( EventStorage eventStorage, MeterRegistry meterRegistry );
 
+	default EventStore eventStore ( EventStorage eventStorage ) {
+		return eventStore ( eventStorage, Metrics.globalRegistry );
+	}
+	
 	/**
 	 * Obtains the EventStoreFactory implementation using Java's ServiceLoader mechanism.
 	 * <p>

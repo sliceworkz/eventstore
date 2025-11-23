@@ -75,5 +75,10 @@ public class RawEventPayloadSerializerDeserializer extends AbstractEventPayloadS
 	public Set<EventType> determineLegacyTypes(Set<EventType> currentTypes) {
 		return currentTypes;
 	}
+
+	@Override
+	public boolean isTyped() {
+		return false;
+	}
 	
 }

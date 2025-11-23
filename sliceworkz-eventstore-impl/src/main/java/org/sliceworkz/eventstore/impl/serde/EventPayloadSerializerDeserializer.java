@@ -139,6 +139,10 @@ public interface EventPayloadSerializerDeserializer {
 	 * @return the set containing both current types and all legacy types that upcast to them
 	 */
 	Set<EventType> determineLegacyTypes ( Set<EventType> currentTypes );
+	
+	
+	boolean isTyped ( );
+	
 
 	/**
 	 * Creates a typed serializer/deserializer that maps events to/from Java objects.

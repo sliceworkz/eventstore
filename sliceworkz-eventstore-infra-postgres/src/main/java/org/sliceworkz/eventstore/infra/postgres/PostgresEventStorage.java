@@ -26,6 +26,10 @@ import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 
+import com.zaxxer.hikari.HikariDataSource;
+
+import io.micrometer.core.instrument.MeterRegistry;
+
 /**
  * Factory interface for creating production-ready PostgreSQL-backed event storage implementations.
  * <p>
@@ -145,6 +149,7 @@ public interface PostgresEventStorage {
 		private boolean initializeDatabase = false;
 		private boolean checkDatabase = true;
 		private Limit limit = Limit.none();
+		private MeterRegistry meterRegistry;
 
 		private Builder ( ) {
 			
@@ -380,6 +385,12 @@ public interface PostgresEventStorage {
 			this.checkDatabase = value;
 			return this;
 		}
+		
+		
+		public Builder meterRegistry ( MeterRegistry meterRegistry ) {
+			this.meterRegistry = meterRegistry;
+			return this;
+		}
 
 
 		/**
@@ -412,7 +423,15 @@ public interface PostgresEventStorage {
 					monitoringDataSource = dataSource;
 				}
 			}
-			var result = new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix);
+			
+			if ( dataSource != null && dataSource instanceof HikariDataSource hds ) {
+				hds.setMetricRegistry(meterRegistry);
+			}
+			if ( monitoringDataSource != null && monitoringDataSource instanceof HikariDataSource hds ) {
+				hds.setMetricRegistry(meterRegistry);
+			}
+			
+			var result = new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, meterRegistry);
 			if ( initializeDatabase ) {
 				result.initializeDatabase();
 			}
@@ -442,7 +461,7 @@ public interface PostgresEventStorage {
 		 * @see EventStoreFactory#eventStore(EventStorage)
 		 */
 		public EventStore buildStore ( ) {
-			return EventStoreFactory.get().eventStore(build());
+			return EventStoreFactory.get().eventStore(build(), meterRegistry);
 		}
 		
 	}

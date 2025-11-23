@@ -233,5 +233,10 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		result.addAll(mostRecentTypes.entrySet().stream().filter(e->currentTypes.contains(e.getValue())).map(e->e.getKey()).collect(Collectors.toSet()));
 		return result;
 	}
-	
+
+	@Override
+	public boolean isTyped() {
+		return true;
+	}
+
 }

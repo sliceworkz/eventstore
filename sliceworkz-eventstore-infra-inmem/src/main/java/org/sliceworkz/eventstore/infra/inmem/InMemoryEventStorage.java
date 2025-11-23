@@ -22,6 +22,9 @@ import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Metrics;
+
 /**
  * Factory interface for creating in-memory event storage instances for development and testing purposes.
  * <p>
@@ -139,6 +142,7 @@ public interface InMemoryEventStorage {
 	public static class Builder {
 		
 		private Limit limit = Limit.none();
+		private MeterRegistry meterRegistry = Metrics.globalRegistry;
 		
 		private Builder ( ) {
 
@@ -164,6 +168,11 @@ public interface InMemoryEventStorage {
 			return this;
 		}
 
+		public Builder meterRegistry ( MeterRegistry meterRegistry ) {
+			this.meterRegistry = meterRegistry;
+			return this;
+		}
+		
 		/**
 		 * Creates a new builder instance for configuring an in-memory event storage.
 		 * <p>
@@ -193,7 +202,7 @@ public interface InMemoryEventStorage {
 		 * @see InMemoryEventStorageImpl
 		 */
 		public EventStorage build ( ) {
-			return new InMemoryEventStorageImpl(limit);
+			return new InMemoryEventStorageImpl(limit, meterRegistry);
 		}
 
 		/**
@@ -222,7 +231,7 @@ public interface InMemoryEventStorage {
 		 * @see EventStoreFactory#eventStore(EventStorage)
 		 */
 		public EventStore buildStore ( ) {
-			return EventStoreFactory.get().eventStore(build());
+			return EventStoreFactory.get().eventStore(build(), meterRegistry);
 		}
 	}
 	

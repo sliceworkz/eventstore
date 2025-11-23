@@ -21,6 +21,8 @@ import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.spi.EventStorage;
 
+import io.micrometer.core.instrument.MeterRegistry;
+
 /**
  * ServiceLoader-discoverable implementation of {@link EventStoreFactory}.
  * <p>
@@ -58,8 +60,8 @@ public class EventStoreFactoryImpl implements EventStoreFactory {
 	 * @see EventStoreImpl
 	 */
 	@Override
-	public EventStore eventStore(EventStorage eventStorage) {
-		return new EventStoreImpl(eventStorage);
+	public EventStore eventStore(EventStorage eventStorage, MeterRegistry meterRegistry) {
+		return new EventStoreImpl(eventStorage, meterRegistry);
 	}
 
 }

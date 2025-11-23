@@ -50,14 +50,17 @@ import io.micrometer.core.instrument.MeterRegistry;
 public class EventStoreFactoryImpl implements EventStoreFactory {
 
 	/**
-	 * Creates a new EventStore instance backed by the specified storage implementation.
+	 * Creates a new EventStore instance backed by the specified storage implementation with observability support.
 	 * <p>
 	 * This method instantiates an {@link EventStoreImpl} with the provided storage backend,
 	 * which can be any implementation of {@link EventStorage} (in-memory, PostgreSQL, etc.).
+	 * The meter registry enables collection of metrics for monitoring event store operations.
 	 *
 	 * @param eventStorage the storage backend for persisting and retrieving events
+	 * @param meterRegistry the Micrometer meter registry for collecting metrics and observability data
 	 * @return a new EventStore instance using the provided storage
 	 * @see EventStoreImpl
+	 * @see io.micrometer.core.instrument.MeterRegistry
 	 */
 	@Override
 	public EventStore eventStore(EventStorage eventStorage, MeterRegistry meterRegistry) {

@@ -26,6 +26,16 @@ import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+/**
+ * Raw mode implementation of {@link EventPayloadSerializerDeserializer} that works with JSON strings directly.
+ * <p>
+ * This implementation does not map events to Java classes. Events are deserialized as Jackson {@link JsonNode}
+ * objects, allowing for schema-less event processing without requiring static type definitions.
+ * <p>
+ * Use this mode when event types are not statically known or when you need flexible JSON handling.
+ *
+ * @see EventPayloadSerializerDeserializer#raw()
+ */
 public class RawEventPayloadSerializerDeserializer extends AbstractEventPayloadSerializerDeserializer {
 	
 	@Override
@@ -76,6 +86,13 @@ public class RawEventPayloadSerializerDeserializer extends AbstractEventPayloadS
 		return currentTypes;
 	}
 
+	/**
+	 * Returns false to indicate this is a raw (untyped) serializer/deserializer.
+	 * <p>
+	 * This information is used for observability and metrics tagging.
+	 *
+	 * @return false (raw mode)
+	 */
 	@Override
 	public boolean isTyped() {
 		return false;

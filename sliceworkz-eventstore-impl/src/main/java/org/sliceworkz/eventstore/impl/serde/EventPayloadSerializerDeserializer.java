@@ -139,8 +139,19 @@ public interface EventPayloadSerializerDeserializer {
 	 * @return the set containing both current types and all legacy types that upcast to them
 	 */
 	Set<EventType> determineLegacyTypes ( Set<EventType> currentTypes );
-	
-	
+
+	/**
+	 * Indicates whether this serializer/deserializer operates in typed mode.
+	 * <p>
+	 * Typed mode means events are mapped to/from Java objects using Jackson, providing type safety
+	 * and supporting features like sealed interfaces, upcasting, and GDPR compliance. Raw mode
+	 * works with JSON strings directly without type mapping.
+	 * <p>
+	 * This information is used for observability and metrics tagging to distinguish between
+	 * typed and raw event streams.
+	 *
+	 * @return true if this is a typed serializer/deserializer, false if raw
+	 */
 	boolean isTyped ( );
 	
 

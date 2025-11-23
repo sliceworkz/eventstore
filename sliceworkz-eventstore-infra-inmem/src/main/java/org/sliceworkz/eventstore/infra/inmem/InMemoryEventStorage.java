@@ -168,6 +168,17 @@ public interface InMemoryEventStorage {
 			return this;
 		}
 
+		/**
+		 * Configures the Micrometer meter registry for collecting observability metrics.
+		 * <p>
+		 * The meter registry is used to track event store operations including event stream creation,
+		 * append operations, and query performance. If not specified, defaults to {@link Metrics#globalRegistry}.
+		 *
+		 * @param meterRegistry the Micrometer meter registry to use for metrics collection
+		 * @return this Builder instance for method chaining
+		 * @see io.micrometer.core.instrument.MeterRegistry
+		 * @see io.micrometer.core.instrument.Metrics#globalRegistry
+		 */
 		public Builder meterRegistry ( MeterRegistry meterRegistry ) {
 			this.meterRegistry = meterRegistry;
 			return this;

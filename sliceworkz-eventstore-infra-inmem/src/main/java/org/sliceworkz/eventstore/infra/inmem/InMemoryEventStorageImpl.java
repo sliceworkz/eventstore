@@ -103,7 +103,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	private MeterRegistry meterRegistry;
 
 	/**
-	 * Constructs a new in-memory event storage instance with the specified absolute query limit.
+	 * Constructs a new in-memory event storage instance with the specified absolute query limit and observability support.
 	 * <p>
 	 * This constructor is package-private and should not be called directly. Instead, use the
 	 * {@link InMemoryEventStorage.Builder} to create instances.
@@ -115,9 +115,11 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	 *   <li>An empty list of event listeners</li>
 	 *   <li>An empty bookmark map</li>
 	 *   <li>A Jackson {@link JsonMapper} with auto-discovered modules for event serialization validation</li>
+	 *   <li>A Micrometer meter registry for collecting metrics about storage operations</li>
 	 * </ul>
 	 *
 	 * @param absoluteLimit the absolute limit on query results, or {@link Limit#none()} for no limit
+	 * @param meterRegistry the Micrometer meter registry for collecting observability metrics
 	 * @see InMemoryEventStorage.Builder#build()
 	 */
 	public InMemoryEventStorageImpl ( Limit absoluteLimit, MeterRegistry meterRegistry ) {

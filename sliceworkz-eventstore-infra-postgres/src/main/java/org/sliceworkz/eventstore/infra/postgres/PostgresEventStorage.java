@@ -385,8 +385,21 @@ public interface PostgresEventStorage {
 			this.checkDatabase = value;
 			return this;
 		}
-		
-		
+
+		/**
+		 * Configures the Micrometer meter registry for collecting observability metrics.
+		 * <p>
+		 * The meter registry is used to track event store operations including event stream creation,
+		 * append operations, and query performance. Additionally, if HikariCP datasources are used,
+		 * they will be configured to publish connection pool metrics to this registry.
+		 * <p>
+		 * If not specified, defaults to {@code Metrics.globalRegistry}.
+		 *
+		 * @param meterRegistry the Micrometer meter registry to use for metrics collection
+		 * @return this Builder instance for method chaining
+		 * @see io.micrometer.core.instrument.MeterRegistry
+		 * @see io.micrometer.core.instrument.Metrics#globalRegistry
+		 */
 		public Builder meterRegistry ( MeterRegistry meterRegistry ) {
 			this.meterRegistry = meterRegistry;
 			return this;

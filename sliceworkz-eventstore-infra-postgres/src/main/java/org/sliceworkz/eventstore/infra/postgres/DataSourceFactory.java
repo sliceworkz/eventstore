@@ -31,29 +31,56 @@ import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 
 /**
- * Utility class that can be used to create a DataSource to use.
- * Only useful when passing a DataSource to the PostgresEventStorage.Builder. 
+ * Utility class that can be used to create a HikariCP DataSource.
+ * <p>
+ * This factory creates {@link HikariDataSource} instances instead of generic DataSource,
+ * allowing for configuration of Micrometer metrics on the returned HikariDataSource instances.
+ * Only useful when passing a DataSource to the PostgresEventStorage.Builder.
  */
 public class DataSourceFactory {
-	
+
 	private static final Logger LOGGER = LoggerFactory.getLogger(DataSourceFactory.class);
-	
+
 	private DataSourceFactory ( ) {
-		
+
 	}
 
+	/**
+	 * Creates a HikariDataSource using properties loaded from the default location.
+	 *
+	 * @return a configured HikariDataSource instance
+	 */
 	public static HikariDataSource fromConfiguration ( ) {
 		return fromConfiguration((Properties)null);
 	}
-	
+
+	/**
+	 * Creates a HikariDataSource using the provided properties.
+	 *
+	 * @param properties the database connection properties
+	 * @return a configured HikariDataSource instance
+	 */
 	public static HikariDataSource fromConfiguration ( Properties properties ) {
 		return fromConfiguration(properties, null);
 	}
 
+	/**
+	 * Creates a HikariDataSource using the specified named datasource configuration.
+	 *
+	 * @param datasourceConfigurationName the name of the datasource configuration to use
+	 * @return a configured HikariDataSource instance
+	 */
 	public static HikariDataSource fromConfiguration ( String datasourceConfigurationName ) {
 		return fromConfiguration(loadProperties(), datasourceConfigurationName);
 	}
-	
+
+	/**
+	 * Creates a HikariDataSource using the provided properties and named configuration.
+	 *
+	 * @param dbProperties the database connection properties
+	 * @param datasourceConfigurationName the name of the datasource configuration to use
+	 * @return a configured HikariDataSource instance, or null if no configuration is found
+	 */
 	public static HikariDataSource fromConfiguration ( Properties dbProperties, String datasourceConfigurationName ) {
 		HikariConfig config = HikariConfigurationUtil.createConfig(datasourceConfigurationName, dbProperties);
 		if ( config != null ) {

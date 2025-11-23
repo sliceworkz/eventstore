@@ -119,29 +119,54 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private final String prefix;
 	private final DataSource dataSource;
 	private final Limit absoluteLimit;
+	/**
+	 * The Micrometer meter registry for collecting metrics and observability data.
+	 * Used to track event store operations such as appends, queries, and connection pool metrics.
+	 */
 	private final MeterRegistry meterRegistry;
-	
+
 	private final List<EventStoreListener> listeners = new CopyOnWriteArrayList<>();
 	private final ExecutorService executorService;
 	private boolean stopped;
 
 	private static final JsonMapper JSONMAPPER = new JsonMapper();
 
-	private static final int ONE_MINUTE = 60*1000;
-	public static final int WAIT_FOR_NOTIFICATIONS_TIMEOUT = ONE_MINUTE;
+	private static final int THIRTY_SECONDS = 30*1000;
+	public static final int WAIT_FOR_NOTIFICATIONS_TIMEOUT = THIRTY_SECONDS;
 
 	private static final String NO_PREFIX = "";
 	private static final int MAX_PREFIX_LENGTH = 32;
 
+	/**
+	 * Constructs a new PostgreSQL-backed event storage instance with observability support.
+	 * <p>
+	 * This constructor is package-private and should not be called directly. Use
+	 * {@link PostgresEventStorage.Builder} to create instances.
+	 * <p>
+	 * The constructor initializes:
+	 * <ul>
+	 *   <li>Virtual thread executors for PostgreSQL LISTEN/NOTIFY monitoring</li>
+	 *   <li>Background monitors for event append and bookmark notifications</li>
+	 *   <li>Micrometer metrics collection for observability</li>
+	 * </ul>
+	 *
+	 * @param name the logical name for this storage instance (used in logging and monitoring)
+	 * @param dataSource the main JDBC DataSource for event operations
+	 * @param monitoringDataSource the JDBC DataSource for LISTEN/NOTIFY operations
+	 * @param absoluteLimit the absolute limit on query results, or {@link Limit#none()} for no limit
+	 * @param prefix the table name prefix (validated, or empty string for no prefix)
+	 * @param meterRegistry the Micrometer meter registry for collecting observability metrics
+	 * @see PostgresEventStorage.Builder#build()
+	 */
 	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, MeterRegistry meterRegistry ) {
 		this.prefix = validatePrefix(prefix);
 		this.name = name;
 		this.dataSource = dataSource;
 		this.absoluteLimit = absoluteLimit;
 		this.meterRegistry = meterRegistry;
-		
+
 		this.executorService = Executors.newVirtualThreadPerTaskExecutor();
-		
+
 		this.executorService.execute(new NewEventsAppendedMonitor("event-append-listener/" + name, listeners, monitoringDataSource));
 		this.executorService.execute(new BookmarkPlacedMonitor("bookmark-listener/" + name, listeners, monitoringDataSource));
 	}
@@ -855,7 +880,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 				} catch (SQLException e) {
 					if ( !stopped ) {
-						throw new EventStorageException(e);
+						LOGGER.error(e.getMessage(), e);
 					}
 				} finally {
 					LOGGER.debug("loop done.");
@@ -928,7 +953,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 				} catch (SQLException e) {
 					if ( !stopped ) {
-						throw new EventStorageException(e);
+						LOGGER.error(e.getMessage(), e);
 					}
 				} finally {
 					LOGGER.debug("loop done.");

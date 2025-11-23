@@ -50,16 +50,31 @@ import io.micrometer.core.instrument.Metrics;
 public interface EventStoreFactory {
 
 	/**
-	 * Creates an EventStore instance backed by the provided storage implementation.
+	 * Creates an EventStore instance backed by the provided storage implementation with observability support.
 	 * <p>
 	 * The storage backend determines where and how events are persisted (in-memory, PostgreSQL, etc.).
+	 * The meter registry enables metrics collection for monitoring event store operations such as
+	 * event stream creation, append operations, and query performance.
 	 *
 	 * @param eventStorage the storage backend implementation
+	 * @param meterRegistry the Micrometer meter registry for collecting metrics and observability data
 	 * @return a new EventStore instance using the provided storage
 	 * @see org.sliceworkz.eventstore.spi.EventStorage
+	 * @see io.micrometer.core.instrument.MeterRegistry
 	 */
 	EventStore eventStore ( EventStorage eventStorage, MeterRegistry meterRegistry );
 
+	/**
+	 * Creates an EventStore instance backed by the provided storage implementation using the global meter registry.
+	 * <p>
+	 * This convenience method uses {@link Metrics#globalRegistry} for observability, which provides
+	 * a no-op fallback if no registry has been configured globally.
+	 *
+	 * @param eventStorage the storage backend implementation
+	 * @return a new EventStore instance using the provided storage
+	 * @see #eventStore(EventStorage, MeterRegistry)
+	 * @see io.micrometer.core.instrument.Metrics#globalRegistry
+	 */
 	default EventStore eventStore ( EventStorage eventStorage ) {
 		return eventStore ( eventStorage, Metrics.globalRegistry );
 	}

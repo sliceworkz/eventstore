@@ -34,6 +34,20 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+/**
+ * Typed mode implementation of {@link EventPayloadSerializerDeserializer} that maps events to/from Java objects.
+ * <p>
+ * This implementation provides type-safe event handling with full support for:
+ * <ul>
+ *   <li>Sealed interfaces for discovering event types automatically</li>
+ *   <li>Event upcasting from historical/legacy events using {@link LegacyEvent} annotations</li>
+ *   <li>GDPR compliance via separate storage of erasable fields</li>
+ * </ul>
+ * <p>
+ * Event types must be registered via {@link #registerEventTypes(Class)} before they can be serialized or deserialized.
+ *
+ * @see EventPayloadSerializerDeserializer#typed()
+ */
 public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloadSerializerDeserializer {
 
 	private final Map<String,EventDeserializer> deserializers = new HashMap<>();
@@ -234,6 +248,13 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		return result;
 	}
 
+	/**
+	 * Returns true to indicate this is a typed serializer/deserializer.
+	 * <p>
+	 * This information is used for observability and metrics tagging.
+	 *
+	 * @return true (typed mode)
+	 */
 	@Override
 	public boolean isTyped() {
 		return true;

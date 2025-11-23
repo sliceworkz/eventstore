@@ -55,7 +55,9 @@ import org.sliceworkz.eventstore.stream.EventStreamConsistentAppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentBookmarkListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
+import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 
 /**
@@ -116,16 +118,29 @@ public class EventStoreImpl implements EventStore {
 	 */
 	private final ExecutorService executorService;
 
+	/**
+	 * The Micrometer meter registry for collecting metrics and observability data.
+	 * Used to track event store operations such as event stream creation, appends, and queries.
+	 */
 	private final MeterRegistry meterRegistry;
 	
 	/**
-	 * Constructs a new EventStoreImpl instance backed by the specified storage.
+	 * Constructs a new EventStoreImpl instance backed by the specified storage with observability support.
 	 * <p>
 	 * This constructor is invoked by {@link EventStoreFactoryImpl} and should not be called directly.
 	 * The constructor initializes a single-threaded executor using virtual threads for handling
 	 * eventually consistent event notifications without blocking append operations.
+	 * <p>
+	 * The meter registry is used to collect metrics about event store operations including:
+	 * <ul>
+	 *   <li>Event stream creation counts (tagged by context, purpose, and whether typed or raw)</li>
+	 *   <li>Event append operations</li>
+	 *   <li>Query performance</li>
+	 * </ul>
 	 *
 	 * @param eventStorage the storage backend implementation (in-memory, PostgreSQL, etc.)
+	 * @param meterRegistry the Micrometer meter registry for collecting metrics; use {@link io.micrometer.core.instrument.Metrics#globalRegistry} if unsure
+	 * @throws IllegalArgumentException if eventStorage or meterRegistry is null
 	 */
 	protected EventStoreImpl ( EventStorage eventStorage, MeterRegistry meterRegistry ) {
 		if ( eventStorage == null ) {
@@ -136,6 +151,7 @@ public class EventStoreImpl implements EventStore {
 		}
 		this.eventStorage = eventStorage;
 		this.meterRegistry = meterRegistry;
+		
 		ThreadFactory threadFactory = Thread.ofVirtual().name("eventually-consistent-listener-notifier/" + eventStorage.name()).factory();
 		this.executorService = Executors.newSingleThreadExecutor(threadFactory);
 	}
@@ -165,6 +181,15 @@ public class EventStoreImpl implements EventStore {
 		private final EventStreamId eventStreamId;
 		private final EventPayloadSerializerDeserializer serde;
 		
+		private Counter meterAppend;
+		private Counter meterAppendEvent;
+		private Counter meterAppendOptimisticLock;
+		private Counter meterQuery;
+		private Counter meterQueryEvent;
+		private Counter meterGetEvent;
+		private Counter meterBookmarkPlace;
+		private Counter meterBookmarkGet;
+
 		private final List<EventStreamEventuallyConsistentAppendListener> eventuallyConsistentSubscribers = new CopyOnWriteArrayList<>();
 		private final List<EventStreamConsistentAppendListener<EVENT_TYPE>> consistentSubscribers = new CopyOnWriteArrayList<>();
 		private final List<EventStreamEventuallyConsistentBookmarkListener> bookmarkSubscribers = new CopyOnWriteArrayList<>();
@@ -175,12 +200,25 @@ public class EventStoreImpl implements EventStore {
 			this.eventStorage.subscribe(this);
 			this.serde = serde;
 			
-			// observability on number of streams created
-			meterRegistry.counter("sliceworkz.eventstore.stream.create", 
-					"context", Optional.ofNullable(eventStreamId.context()).orElse(""),
-					"purpose", Optional.ofNullable(eventStreamId.purpose()).orElse(""),
-					"typed", String.valueOf(serde.isTyped()))
-				.increment();
+			String tagContextValue = Optional.ofNullable(eventStreamId.context()).orElse(""); // null is not allowed
+			String tagPurposeValue = Optional.ofNullable(eventStreamId.purpose()).orElse(""); // null is not allowed
+			String tagTypedValue = String.valueOf(serde.isTyped());
+			
+			io.micrometer.core.instrument.Tags tags = io.micrometer.core.instrument.Tags
+					.of("context", tagContextValue, "purpose", tagPurposeValue, "typed", tagTypedValue);
+			
+			// prepare counters for metering
+			this.meterAppend = meterRegistry.counter("sliceworkz.eventstore.append", tags);
+			this.meterAppendEvent = meterRegistry.counter("sliceworkz.eventstore.append.event", tags);
+			this.meterQuery = meterRegistry.counter("sliceworkz.eventstore.query", tags);
+			this.meterQueryEvent = meterRegistry.counter("sliceworkz.eventstore.query.event", tags);
+			this.meterAppendOptimisticLock = meterRegistry.counter("sliceworkz.eventstore.append.optimisticlock", tags);
+			this.meterGetEvent = meterRegistry.counter("sliceworkz.eventstore.get.event", tags);
+			this.meterBookmarkPlace = meterRegistry.counter("sliceworkz.eventstore.bookmark.place", tags);
+			this.meterBookmarkGet= meterRegistry.counter("sliceworkz.eventstore.bookmark.get", tags);
+
+			// increment number of stream objects created
+			meterRegistry.counter("sliceworkz.eventstore.stream.create", tags).increment();
 		}
 		
 		public boolean isReadOnly ( ) {
@@ -213,22 +251,38 @@ public class EventStoreImpl implements EventStore {
 
 		@Override
 		public Stream<Event<EVENT_TYPE>> query(EventQuery query, EventReference after, Limit limit ) {
-			return eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), after, limit, QueryDirection.FORWARD).map(this::enrich);
+			meterQuery.increment(); // one query done
+			return eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), after, limit, QueryDirection.FORWARD).map(this::enrichAfterQuery);
 		}
 
 		@Override
 		public Stream<Event<EVENT_TYPE>> queryBackwards(EventQuery query, EventReference before, Limit limit) {
-			return eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), before, limit, QueryDirection.BACKWARD).map(this::enrich);
+			meterQuery.increment(); // one query done
+			return eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), before, limit, QueryDirection.BACKWARD).map(this::enrichAfterQuery);
+		}
+		
+		@SuppressWarnings("unchecked")
+		private Event<EVENT_TYPE> enrichAfterQuery ( StoredEvent storedEvent ) {
+			meterQueryEvent.increment(); // one event more seen coming from storage
+			return enrich(storedEvent);
+		}
+
+		@SuppressWarnings("unchecked")
+		private Event<EVENT_TYPE> enrichAfterAppend ( StoredEvent storedEvent ) {
+			// not metered, as this is used for appended events
+			return enrich(storedEvent);
 		}
 		
 		@SuppressWarnings("unchecked")
 		private Event<EVENT_TYPE> enrich ( StoredEvent storedEvent ) {
+			// not metered, depends on the usage
 			TypeAndPayload typeAndPayload = serde.deserialize(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.immutableData(), storedEvent.erasableData()));
 			EVENT_TYPE data = (EVENT_TYPE)typeAndPayload.eventData();
 			return new Event<>(storedEvent.stream(), typeAndPayload.type(), storedEvent.type(), storedEvent.reference(), data, storedEvent.tags(), storedEvent.timestamp());
 		}
-		
+
 		private EventToStore reduce ( EphemeralEvent<? extends EVENT_TYPE> event ) {
+			meterAppendEvent.increment(); // one event more sent ot storage for appending
 			Tags tags = event.tags(); 
 			TypeAndSerializedPayload data = serde.serialize(event.data());
 			return new EventToStore(eventStreamId, data.type(), data.immutablePayload(), data.erasablePayload(), tags);
@@ -251,11 +305,18 @@ public class EventStoreImpl implements EventStore {
 			}
 
 			// append events to the eventstore (with optimistic locking)
-			List<Event<EVENT_TYPE>> appendedEvents = eventStorage.append(appendCriteria, Optional.of(eventStreamId), reduce(events)).stream().map(this::enrich).toList();
-			
-			// ... and dispatch events directly back to the kernel for update of consistent readmodels etc...
-			LOGGER.debug("Notifying {} consistent clients of stream {} about append of {} events", consistentSubscribers.size(), eventStreamId, appendedEvents.size());
-			consistentSubscribers.forEach(s->s.eventsAppended(appendedEvents));
+			List<Event<EVENT_TYPE>> appendedEvents;
+			try {
+				meterAppend.increment();
+				appendedEvents = eventStorage.append(appendCriteria, Optional.of(eventStreamId), reduce(events)).stream().map(this::enrichAfterAppend).toList();
+				
+				// ... and dispatch events directly back to the kernel for update of consistent readmodels etc...
+				LOGGER.debug("Notifying {} consistent clients of stream {} about append of {} events", consistentSubscribers.size(), eventStreamId, appendedEvents.size());
+				consistentSubscribers.forEach(s->s.eventsAppended(appendedEvents));
+			} catch (OptimisticLockingException optimisticLockingException) {
+				meterAppendOptimisticLock.increment();
+				throw optimisticLockingException;
+			}
 			
 			return appendedEvents;
 		}
@@ -306,24 +367,27 @@ public class EventStoreImpl implements EventStore {
 
 		@Override
 		public void placeBookmark(String reader, EventReference reference, Tags tags) {
+			meterBookmarkPlace.increment();
 			eventStorage.bookmark(reader, reference, tags);
 		}
 
 		@Override
 		public Optional<EventReference> getBookmark(String reader) {
+			meterBookmarkGet.increment();
 			return eventStorage.getBookmark(reader.toString());
 		}
 
 		@Override
 		public Optional<EventReference> queryReference(EventId id) {
-			return eventStorage.getEventById(id).map(this::enrich).map(Event::reference);
+			meterGetEvent.increment();
+			return eventStorage.getEventById(id).map(this::enrichAfterQuery).map(Event::reference);
 		}
 		
 		@Override
 		public Optional<Event<EVENT_TYPE>> getEventById(EventId eventId) {
+			meterGetEvent.increment();
 			// filters out events that can not be read by this stream
-			return eventStorage.getEventById(eventId).filter(e->eventStreamId.canRead(e.stream())).map(this::enrich);
-					
+			return eventStorage.getEventById(eventId).filter(e->eventStreamId.canRead(e.stream())).map(this::enrichAfterQuery);
 		}
 
 	}

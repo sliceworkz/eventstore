@@ -29,6 +29,7 @@ import org.sliceworkz.eventstore.spi.EventStorage;
 import com.zaxxer.hikari.HikariDataSource;
 
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Metrics;
 
 /**
  * Factory interface for creating production-ready PostgreSQL-backed event storage implementations.
@@ -149,7 +150,7 @@ public interface PostgresEventStorage {
 		private boolean initializeDatabase = false;
 		private boolean checkDatabase = true;
 		private Limit limit = Limit.none();
-		private MeterRegistry meterRegistry;
+		private MeterRegistry meterRegistry = Metrics.globalRegistry;
 
 		private Builder ( ) {
 			

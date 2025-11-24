@@ -439,10 +439,18 @@ public interface PostgresEventStorage {
 			}
 			
 			if ( dataSource != null && dataSource instanceof HikariDataSource hds ) {
-				hds.setMetricRegistry(meterRegistry);
+				try {
+					hds.setMetricRegistry(meterRegistry);
+				} catch (IllegalStateException e) {
+					// already set
+				}
 			}
 			if ( monitoringDataSource != null && monitoringDataSource instanceof HikariDataSource hds ) {
-				hds.setMetricRegistry(meterRegistry);
+				try {
+					hds.setMetricRegistry(meterRegistry);
+				} catch (IllegalStateException e) {
+					// already set
+				}
 			}
 			
 			var result = new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, meterRegistry);

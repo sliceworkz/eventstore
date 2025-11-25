@@ -1,6 +1,6 @@
 name: build-and-deploy-snapshot
 
-run-name: "build-and-deploy-snapshot"
+run-name: "build-and-deploy-snapshot [${{ github.ref_name }}]"
 
 on:
   workflow_dispatch:
@@ -14,10 +14,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout develop branch
+      - name: Checkout branch
         uses: actions/checkout@v4
         with:
-          ref: develop
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
       

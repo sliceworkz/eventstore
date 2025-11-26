@@ -24,6 +24,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 import org.slf4j.Logger;
@@ -175,13 +176,13 @@ public class EventStoreImpl implements EventStore {
 	}
 
 	class EventStreamImpl<EVENT_TYPE> implements EventStream<EVENT_TYPE>, EventStoreListener {
-		
+
 		private final Logger LOGGER = LoggerFactory.getLogger(EventStreamImpl.class);
-		
+
 		private final EventStorage eventStorage;
 		private final EventStreamId eventStreamId;
 		private final EventPayloadSerializerDeserializer serde;
-		
+
 		private Counter meterAppend;
 		private Counter meterAppendEvent;
 		private Counter meterAppendOptimisticLock;
@@ -192,6 +193,8 @@ public class EventStoreImpl implements EventStore {
 		private Counter meterBookmarkGet;
 		private Timer timerQuery;
 		private Timer timerAppend;
+
+		private final AtomicReference<Long> gaugeHighestEventPosition = new AtomicReference<>();
 
 		private final List<EventStreamEventuallyConsistentAppendListener> eventuallyConsistentSubscribers = new CopyOnWriteArrayList<>();
 		private final List<EventStreamConsistentAppendListener<EVENT_TYPE>> consistentSubscribers = new CopyOnWriteArrayList<>();
@@ -220,9 +223,12 @@ public class EventStoreImpl implements EventStore {
 			this.meterBookmarkPlace = meterRegistry.counter("sliceworkz.eventstore.bookmark.place", tags);
 			this.meterBookmarkGet= meterRegistry.counter("sliceworkz.eventstore.bookmark.get", tags);
 
-			this.timerQuery = meterRegistry.timer("sliceworkz.eventstore.query.duration", tags);			
+			this.timerQuery = meterRegistry.timer("sliceworkz.eventstore.query.duration", tags);
 			this.timerAppend = meterRegistry.timer("sliceworkz.eventstore.append.duration", tags);
-			
+
+			// register gauge for highest event position
+			meterRegistry.gauge("sliceworkz.eventstore.append.position", tags, gaugeHighestEventPosition, ref->{Long val = ref.get(); return val != null ? val.doubleValue() : Double.NaN;});
+
 			// increment number of stream objects created
 			meterRegistry.counter("sliceworkz.eventstore.stream.create", tags).increment();
 		}
@@ -313,7 +319,14 @@ public class EventStoreImpl implements EventStore {
 			try {
 				meterAppend.increment();
 				appendedEvents = timerAppend.record(()->eventStorage.append(appendCriteria, Optional.of(eventStreamId), reduce(events)).stream().map(this::enrichAfterAppend).toList());
-				
+
+				// update highest event position gauge
+				appendedEvents.stream()
+					.map(Event::reference)
+					.mapToLong(EventReference::position)
+					.max()
+					.ifPresent(maxPosition -> gaugeHighestEventPosition.updateAndGet(current -> current==null?maxPosition:Math.max(current, maxPosition)));
+
 				// ... and dispatch events directly back to the kernel for update of consistent readmodels etc...
 				LOGGER.debug("Notifying {} consistent clients of stream {} about append of {} events", consistentSubscribers.size(), eventStreamId, appendedEvents.size());
 				consistentSubscribers.forEach(s->s.eventsAppended(appendedEvents));
@@ -321,7 +334,7 @@ public class EventStoreImpl implements EventStore {
 				meterAppendOptimisticLock.increment();
 				throw optimisticLockingException;
 			}
-			
+
 			return appendedEvents;
 		}
 		

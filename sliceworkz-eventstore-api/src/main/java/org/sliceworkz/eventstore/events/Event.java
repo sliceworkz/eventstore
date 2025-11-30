@@ -121,6 +121,40 @@ public record Event<DOMAIN_EVENT_TYPE> ( EventStreamId stream, EventType type, E
 	}
 
 	/**
+	 * Casts this event to a more specific domain event type.
+	 * <p>
+	 * This method enables widening the type parameter when working with event hierarchies,
+	 * particularly useful when querying events from streams with multiple event type hierarchies.
+	 * For example, when a stream contains {@code LearningDomainEvent} but you need to process
+	 * it as a more specific type like {@code StudentDomainEvent} or {@code CourseDomainEvent}.
+	 * <p>
+	 * The cast is safe because {@code OTHER_DOMAIN_EVENT_TYPE} is constrained to extend
+	 * {@code DOMAIN_EVENT_TYPE}, ensuring type compatibility at compile time.
+	 *
+	 * <h2>Example Usage:</h2>
+	 * <pre>{@code
+	 * // Stream contains LearningDomainEvent
+	 * EventStream<LearningDomainEvent> stream = eventStore.getEventStream(...);
+	 *
+	 * // Query returns Event<LearningDomainEvent>
+	 * stream.query(EventQuery.matchAll())
+	 *     .forEach(event -> {
+	 *         // Cast to more specific type for processing
+	 *         Event<StudentDomainEvent> studentEvent = event.cast();
+	 *         student.when(studentEvent);
+	 *     });
+	 * }</pre>
+	 *
+	 * @param <OTHER_DOMAIN_EVENT_TYPE> the more specific domain event type to cast to,
+	 *                                  must extend DOMAIN_EVENT_TYPE
+	 * @return this event with the type parameter cast to OTHER_DOMAIN_EVENT_TYPE
+	 */
+	@SuppressWarnings("unchecked")
+	public <OTHER_DOMAIN_EVENT_TYPE extends DOMAIN_EVENT_TYPE> Event<OTHER_DOMAIN_EVENT_TYPE> cast ( ) {
+		return (Event<OTHER_DOMAIN_EVENT_TYPE>) this;
+	}
+
+	/**
 	 * Static factory method for creating a fully-specified Event.
 	 * <p>
 	 * This method is primarily used internally when retrieving events from storage.

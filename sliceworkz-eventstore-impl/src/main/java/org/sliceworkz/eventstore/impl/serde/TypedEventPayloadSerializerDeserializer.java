@@ -143,7 +143,17 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 				
 				Class<?>[] permittedSubclassses = eventRootClass.getPermittedSubclasses();
 				if ( permittedSubclassses != null && permittedSubclassses.length > 0 ) {
-					result =Stream.of(permittedSubclassses).map(EventNameAndEventClass::of).collect(Collectors.toSet()) ;
+					
+					result = new HashSet<>();
+					
+					for ( Class<?> psc: permittedSubclassses ) {
+						if ( psc.isInterface() ) {
+							result.addAll(deserializersFor(psc));
+						} else {
+							result.add(EventNameAndEventClass.of(psc));
+						}
+					}
+					
 				} else {
 					result = Collections.emptySet();
 				}

@@ -131,7 +131,7 @@ public record Event<DOMAIN_EVENT_TYPE> ( EventStreamId stream, EventType type, E
 	 * The cast is safe because {@code OTHER_DOMAIN_EVENT_TYPE} is constrained to extend
 	 * {@code DOMAIN_EVENT_TYPE}, ensuring type compatibility at compile time.
 	 *
-	 * <h2>Example Usage:</h2>
+	 * Example Usage:
 	 * <pre>{@code
 	 * // Stream contains LearningDomainEvent
 	 * EventStream<LearningDomainEvent> stream = eventStore.getEventStream(...);

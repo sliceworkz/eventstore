@@ -1,6 +1,7 @@
 [![ci build - mvn package](https://github.com/sliceworkz/eventstore/actions/workflows/ci.yaml/badge.svg)](https://github.com/sliceworkz/eventstore/actions/workflows/ci.yaml)
 [![Status: Beta](https://img.shields.io/badge/status-beta-orange)](#)
-[![Docs](https://img.shields.io/badge/Eventstore%20Quickstart%20Guide-0b5fff)](https://sliceworkz.github.io/posts/eventstore-quickstart/)
+[![Quickstart](https://img.shields.io/badge/Quickstart%20Guide-blue)](https://sliceworkz.github.io/posts/eventstore-quickstart/)
+[![Docs](https://img.shields.io/badge/Documentation-purple)](https://sliceworkz.github.io/categories/eventstore-documentation/)
 
 # About Eventstore
 
@@ -15,7 +16,7 @@ Supports all features described described by the [DCB Specification](https://dcb
 
 # Getting started
 
-Step-by-step introduction with the [quickstart guide](https://sliceworkz.github.io/posts/eventstore-quickstart/)
+Step-by-step introduction with the [quickstart guide](https://sliceworkz.github.io/posts/eventstore-quickstart/) or the [documentation](https://sliceworkz.github.io/categories/eventstore-documentation/)
 
 
 # Other

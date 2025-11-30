@@ -317,8 +317,8 @@ public class EventStoreImpl implements EventStore {
 			// append events to the eventstore (with optimistic locking)
 			List<Event<EVENT_TYPE>> appendedEvents;
 			try {
-				meterAppend.increment();
 				appendedEvents = timerAppend.record(()->eventStorage.append(appendCriteria, Optional.of(eventStreamId), reduce(events)).stream().map(this::enrichAfterAppend).toList());
+				meterAppend.increment();
 
 				// update highest event position gauge
 				appendedEvents.stream()

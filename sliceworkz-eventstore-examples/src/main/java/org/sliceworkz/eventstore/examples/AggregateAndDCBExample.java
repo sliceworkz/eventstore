@@ -71,13 +71,15 @@ public class AggregateAndDCBExample {
 		
 		System.out.println("1st subscription attempt: %b".formatted(subscribeStudentToCourse("123", "abc001"))); // returns true as subscription succeeds
 		System.out.println("2nd subscription attempt: %b".formatted(subscribeStudentToCourse("123", "abc001"))); // returns false as subscription fails, since this student is already subscribed to this course
+		
+		s = loadStudent("123");
 	}
 	
 	// Load aggregate from events
 	Student loadStudent(String studentId) {
 	    Student student = new Student(studentId);
 	    EventQuery query = EventQuery.forEvents(
-	        EventTypesFilter.any(),
+	        EventTypesFilter.of(StudentDomainEvent.class),
 	        Tags.of("student", studentId)
 	    );
 	    stream.query(query)
@@ -90,7 +92,7 @@ public class AggregateAndDCBExample {
 	    stream.append(
 	        AppendCriteria.of(
 	            EventQuery.forEvents(
-	                EventTypesFilter.any(),
+        	        EventTypesFilter.of(StudentDomainEvent.class),
 	                Tags.of("student", student.studentId)
 	            ),
 	            Optional.ofNullable(student.lastEventReference())
@@ -105,7 +107,7 @@ public class AggregateAndDCBExample {
 	Course loadCourse(String courseId) {
 	    Course course = new Course(courseId);
 	    EventQuery query = EventQuery.forEvents(
-	        EventTypesFilter.any(),
+	        EventTypesFilter.of(CourseDomainEvent.class),
 	        Tags.of("course", courseId)
 	    );
 	    stream.query(query)
@@ -118,7 +120,7 @@ public class AggregateAndDCBExample {
 	    stream.append(
 	        AppendCriteria.of(
 	            EventQuery.forEvents(
-	                EventTypesFilter.any(),
+	                EventTypesFilter.of(CourseDomainEvent.class),
 	                Tags.of("course", course.courseId)
 	            ),
 	            Optional.ofNullable(course.lastEventReference())

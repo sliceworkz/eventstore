@@ -52,6 +52,7 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 
 	private final Map<String,EventDeserializer> deserializers = new HashMap<>();
 	private final Map<EventType, EventType> mostRecentTypes = new HashMap<>();
+	private final Map<EventType, Set<EventType>> mostRecentMultiTypes = new HashMap<>(); // for interface hierarchies, this maps interface->set of interface-implementing event types
 	
 	@Override
 	public TypeAndPayload deserialize ( TypeAndSerializedPayload serialized ) {
@@ -74,14 +75,14 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 	
 	@Override
 	public TypedEventPayloadSerializerDeserializer registerEventTypes(Class<?> rootClass) {
-		deserializersFor(rootClass).forEach(m->registerEventType(m.name(), m.clazz(), false));
+		deserializersFor(rootClass, Collections.emptySet()).forEach(m->registerEventType(m.name(), m.clazz(), false));
 		
 		return this;
 	}
 	
 	@Override
 	public TypedEventPayloadSerializerDeserializer registerLegacyEventTypes(Class<?> rootClass) {
-		deserializersFor(rootClass).forEach(m->registerEventType(m.name(), m.clazz(), true));
+		deserializersFor(rootClass, Collections.emptySet()).forEach(m->registerEventType(m.name(), m.clazz(), true));
 		
 		return this;
 	}
@@ -132,7 +133,7 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		deserializers.put(key, eventDeserializer);
 	}
 	
-	private Set<EventNameAndEventClass> deserializersFor ( Class<?> eventRootClass ) {
+	private Set<EventNameAndEventClass> deserializersFor ( Class<?> eventRootClass, Set<EventType> implementedInterfaces ) {
 		Set<EventNameAndEventClass> result = Collections.emptySet();
 		if ( eventRootClass != null && !eventRootClass.equals(Object.class)) {
 			if ( eventRootClass.isInterface() ) {
@@ -148,9 +149,16 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 					
 					for ( Class<?> psc: permittedSubclassses ) {
 						if ( psc.isInterface() ) {
-							result.addAll(deserializersFor(psc));
+							
+							Set<EventType> newImplementedInterfaces = new HashSet<>(implementedInterfaces);
+							newImplementedInterfaces.add(EventType.of(psc));
+							result.addAll(deserializersFor(psc, newImplementedInterfaces));
 						} else {
 							result.add(EventNameAndEventClass.of(psc));
+
+							registerEventTypeWithParentInterfaceType(implementedInterfaces, EventType.of(psc)); 
+							// add eg a CustomerRegistered record with a CustomerDomainEvent interface (to allow querying with typefilter CustomerDomainEvent.class, etc... 
+							
 						}
 					}
 					
@@ -159,9 +167,20 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 				}
 			} else {
 				result = Stream.of(eventRootClass).map(EventNameAndEventClass::of).collect(Collectors.toSet()) ;
+				registerEventTypeWithParentInterfaceType(implementedInterfaces, EventType.of(eventRootClass)); 
 			}
 		}
 		return result;
+	}
+
+	private void registerEventTypeWithParentInterfaceType(Set<EventType> implementedInterfaces, EventType eventType) {
+		// register this event class as a descendent of each of its implemented interfaces
+		implementedInterfaces.forEach(parentTypeInterface->{
+			if ( !mostRecentMultiTypes.containsKey(parentTypeInterface)) {
+				mostRecentMultiTypes.put(parentTypeInterface, new HashSet<>());
+			}
+			mostRecentMultiTypes.get(parentTypeInterface).add(eventType);	
+		});
 	}
 	
 	record EventNameAndEventClass (String name, Class<?> clazz) { 
@@ -253,8 +272,21 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 	@Override
 	public Set<EventType> determineLegacyTypes(Set<EventType> currentTypes) {
 		// return all types that are upcasted to the currentType, and include the currentType itself as well
-		Set<EventType> result = new HashSet<>(currentTypes); // in case no mapping is found (no match), keep them
-		result.addAll(mostRecentTypes.entrySet().stream().filter(e->currentTypes.contains(e.getValue())).map(e->e.getKey()).collect(Collectors.toSet()));
+		Set<EventType> currentConcreteEventTypes = concreteEventTypesFor(currentTypes); // explode to concrete implementations if interfaces are passed
+		Set<EventType> result = new HashSet<>(currentConcreteEventTypes); // we always include "current types", legacy types are optional - only if they are present
+		result.addAll(mostRecentTypes.entrySet().stream().filter(e->currentConcreteEventTypes.contains(e.getValue())).map(e->e.getKey()).collect(Collectors.toSet()));
+		return result;
+	}
+	
+	private Set<EventType> concreteEventTypesFor ( Set<EventType> types ) {
+		Set<EventType> result = new HashSet<>();
+		for ( EventType e: types ) {
+			if ( mostRecentMultiTypes.containsKey(e)) { // if type is an interface
+				result.addAll(mostRecentMultiTypes.get(e));
+			} else { // if type is a concrete event class
+				result.add(e);
+			}
+		}
 		return result;
 	}
 

@@ -326,6 +326,40 @@ public interface EventStorage {
 	 */
 	void bookmark ( String reader, EventReference eventReference, Tags tags );
 
+	/**
+	 * Removes a previously placed bookmark for a specific reader.
+	 * <p>
+	 * This method permanently deletes the stored position for the given reader, effectively
+	 * resetting its progress tracking. After removal, subsequent calls to {@link #getBookmark(String)}
+	 * for this reader will return {@code Optional.empty()}.
+	 * <p>
+	 * Common use cases include:
+	 * <ul>
+	 *   <li>Resetting a projection to reprocess all events from the beginning</li>
+	 *   <li>Cleaning up bookmarks for discontinued readers or projections</li>
+	 *   <li>Handling errors that require complete reprocessing</li>
+	 *   <li>Removing bookmarks as part of administrative maintenance</li>
+	 * </ul>
+	 * <p>
+	 * If no bookmark exists for the specified reader, this method should complete successfully
+	 * without error (idempotent behavior).
+	 * <p>
+	 * Typical Usage:
+	 * <pre>{@code
+	 * // Reset a projection to start from the beginning
+	 * storage.removeBookmark("customer-summary-projection");
+	 *
+	 * // Next query will start from the beginning
+	 * Optional<EventReference> bookmark = storage.getBookmark("customer-summary-projection");
+	 * // bookmark.isEmpty() == true
+	 * }</pre>
+	 *
+	 * @param reader the unique identifier of the reader whose bookmark should be removed
+	 * @throws EventStorageException if an error occurs during bookmark removal
+	 * @see #bookmark(String, EventReference, Tags)
+	 * @see #getBookmark(String)
+	 */
+	void removeBookmark ( String reader );
 
 	/**
 	 * Notification sent when new events are appended to the event store.

@@ -346,6 +346,11 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	}
 
 	@Override
+	public synchronized void removeBookmark(String reader) {
+		bookmarks.remove(reader);
+	}
+
+	@Override
 	public synchronized void bookmark(String reader, EventReference eventReference, Tags tags ) {
 		bookmarks.put(reader, eventReference);
 		BookmarkPlacedNotification notification = new BookmarkPlacedNotification(reader, eventReference);

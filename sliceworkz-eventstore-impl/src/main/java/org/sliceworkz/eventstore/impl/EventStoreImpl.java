@@ -389,6 +389,15 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		@Override
+		public Optional<EventReference> removeBookmark(String reader) {
+			Optional<EventReference> result = getBookmark(reader);
+			if ( result.isPresent() ) {
+				eventStorage.removeBookmark(reader);
+			}
+			return result;
+		}
+
+		@Override
 		public Optional<EventReference> getBookmark(String reader) {
 			meterBookmarkGet.increment();
 			return eventStorage.getBookmark(reader.toString());

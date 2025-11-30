@@ -18,6 +18,7 @@
 package org.sliceworkz.eventstore.projection;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.Collections;
 import java.util.List;
@@ -77,7 +78,263 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		assertEquals(4,  accumulatedMetrics.eventsStreamed()); 
 		assertEquals(4,  accumulatedMetrics.eventsHandled());
 	}
+
+	@Test
+	void testProjectorWithBookmarkingWithoutReaderName ( ) {
+		TestProjection projection = new TestProjection();	
+		
+		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, ()->Projector.from(es).towards(projection).bookmarkProgress().done().build());
+		assertEquals("bookmarking requires a reader name", e.getMessage());
+	}
+
+	@Test
+	void testProjectorWithBookmarkAtCreation( ) {
+		TestProjection projection = new TestProjection();	
+		
+		EventReference refTwo = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "two"))).findFirst().get().reference();
+		EventReference refThree = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "three"))).findFirst().get().reference();
+		EventReference refFour = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).findFirst().get().reference();
+
+		// set a bookmark for the Projector to find
+		es.placeBookmark("someReader", refTwo, Tags.none()); 
+		
+		var projector = Projector.from(es).towards(projection).bookmarkProgress().withReader("someReader").readAtCreationOnly().done().inBatchesOf(1).build();
+		
+		// setting the bookmark again after construction shouldn't be picked up as our projector is configured to only read the bookmark at creation
+		es.placeBookmark("someReader", refFour, Tags.none()); 
+
+
+		// run a batch of size 1
+
+		ProjectorMetrics projectorMetrics = projector.runSingleBatch();
+		assertEquals(1, projection.counter()); 
+		// according to the query and the start situation, event 3 should be read if the bookmark is properly read
+		assertEquals(1, projectorMetrics.queriesDone()); 
+		assertEquals(1,  projectorMetrics.eventsStreamed());
+		assertEquals(1,  projectorMetrics.eventsHandled());
+		assertEquals(refThree, projectorMetrics.lastEventReference());
+
+		ProjectorMetrics accumulatedMetrics = projector.accumulatedMetrics();
+		assertEquals(1, accumulatedMetrics.queriesDone());
+		assertEquals(1,  accumulatedMetrics.eventsStreamed()); 
+		assertEquals(1,  accumulatedMetrics.eventsHandled());
+		assertEquals(refThree, accumulatedMetrics.lastEventReference());
+		
+		// run another batch of size 1
+		
+		projectorMetrics = projector.runSingleBatch();
+		assertEquals(2, projection.counter()); 
+		assertEquals(1, projectorMetrics.queriesDone()); 
+		// according to the query and the start situation, event 4 should be read if the bookmark is properly read
+		assertEquals(1,  projectorMetrics.eventsStreamed());
+		assertEquals(1,  projectorMetrics.eventsHandled());
+		assertEquals(refFour, projectorMetrics.lastEventReference());
+
+		accumulatedMetrics = projector.accumulatedMetrics();
+		assertEquals(2, accumulatedMetrics.queriesDone());
+		assertEquals(2,  accumulatedMetrics.eventsStreamed()); 
+		assertEquals(2,  accumulatedMetrics.eventsHandled());
+		assertEquals(refFour, accumulatedMetrics.lastEventReference());
+	}
 	
+	@Test
+	void testProjectorWithBookmarkOnFirstExecution( ) {
+		TestProjection projection = new TestProjection();	
+		
+		EventReference refTwo = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "two"))).findFirst().get().reference();
+		EventReference refThree = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "three"))).findFirst().get().reference();
+		EventReference refFour = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).findFirst().get().reference();
+
+		// set a bookmark for the Projector to find
+		es.placeBookmark("someReader", refFour, Tags.none()); 
+		
+		var projector = Projector.from(es).towards(projection).bookmarkProgress().withReader("someReader").readBeforeFirstExecution().done().inBatchesOf(1).build();
+		
+		// setting the bookmark again after construction should be picked up as our projector is configured to only read the bookmark at first execution
+		es.placeBookmark("someReader", refTwo, Tags.none()); 
+
+
+		// run a batch of size 1
+
+		ProjectorMetrics projectorMetrics = projector.runSingleBatch();
+		assertEquals(1, projection.counter()); 
+		// according to the query and the start situation, event 3 should be read if the bookmark is properly read
+		assertEquals(1, projectorMetrics.queriesDone()); 
+		assertEquals(1,  projectorMetrics.eventsStreamed());
+		assertEquals(1,  projectorMetrics.eventsHandled());
+		assertEquals(refThree, projectorMetrics.lastEventReference());
+
+		ProjectorMetrics accumulatedMetrics = projector.accumulatedMetrics();
+		assertEquals(1, accumulatedMetrics.queriesDone());
+		assertEquals(1,  accumulatedMetrics.eventsStreamed()); 
+		assertEquals(1,  accumulatedMetrics.eventsHandled());
+		assertEquals(refThree, accumulatedMetrics.lastEventReference());
+
+		// setting the bookmark again after first run shouldn't be picked up as our projector is configured to only read the bookmark at first execution
+		es.placeBookmark("someReader", refTwo, Tags.none()); 
+
+		// run another batch of size 1
+		
+		projectorMetrics = projector.runSingleBatch();
+		assertEquals(2, projection.counter()); 
+		assertEquals(1, projectorMetrics.queriesDone()); 
+		// according to the query and the start situation, event 4 should be read if the bookmark is properly read
+		assertEquals(1,  projectorMetrics.eventsStreamed());
+		assertEquals(1,  projectorMetrics.eventsHandled());
+		assertEquals(refFour, projectorMetrics.lastEventReference());
+
+		accumulatedMetrics = projector.accumulatedMetrics();
+		assertEquals(2, accumulatedMetrics.queriesDone());
+		assertEquals(2,  accumulatedMetrics.eventsStreamed()); 
+		assertEquals(2,  accumulatedMetrics.eventsHandled());
+		assertEquals(refFour, accumulatedMetrics.lastEventReference());
+	}
+	
+	
+	@Test
+	void testProjectorWithBookmarkOnEachExecution( ) {
+		TestProjection projection = new TestProjection();	
+		
+		EventReference refTwo = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "two"))).findFirst().get().reference();
+		EventReference refThree = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "three"))).findFirst().get().reference();
+		EventReference refFour = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).findFirst().get().reference();
+
+		// set a bookmark for the Projector to find
+		es.placeBookmark("someReader", refFour, Tags.none()); 
+		
+		var projector = Projector.from(es).towards(projection).bookmarkProgress().withReader("someReader").readBeforeEachExecution().done().inBatchesOf(1).build();
+		
+		// setting the bookmark again after construction should be picked up as our projector is configured to read the bookmark before each execution
+		es.placeBookmark("someReader", refTwo, Tags.none()); 
+
+
+		// run a batch of size 1
+
+		ProjectorMetrics projectorMetrics = projector.runSingleBatch();
+		assertEquals(1, projection.counter()); 
+		// according to the query and the start situation, event 3 should be read if the bookmark is properly read
+		assertEquals(1, projectorMetrics.queriesDone()); 
+		assertEquals(1,  projectorMetrics.eventsStreamed());
+		assertEquals(1,  projectorMetrics.eventsHandled());
+		assertEquals(refThree, projectorMetrics.lastEventReference());
+
+		ProjectorMetrics accumulatedMetrics = projector.accumulatedMetrics();
+		assertEquals(1, accumulatedMetrics.queriesDone());
+		assertEquals(1,  accumulatedMetrics.eventsStreamed()); 
+		assertEquals(1,  accumulatedMetrics.eventsHandled());
+		assertEquals(refThree, accumulatedMetrics.lastEventReference());
+
+		// setting the bookmark again after first run should picked up as our projector is configured to read the bookmark before each execution
+		es.placeBookmark("someReader", refTwo, Tags.none()); 
+
+		// run another batch of size 1
+		
+		projectorMetrics = projector.runSingleBatch();
+		assertEquals(2, projection.counter()); 
+		assertEquals(1, projectorMetrics.queriesDone()); 
+		// according to the query and the start situation, event 4 should be read if the bookmark is properly read
+		assertEquals(1,  projectorMetrics.eventsStreamed());
+		assertEquals(1,  projectorMetrics.eventsHandled());
+		assertEquals(refThree, projectorMetrics.lastEventReference());
+
+		accumulatedMetrics = projector.accumulatedMetrics();
+		assertEquals(2, accumulatedMetrics.queriesDone());
+		assertEquals(2,  accumulatedMetrics.eventsStreamed()); 
+		assertEquals(2,  accumulatedMetrics.eventsHandled());
+		assertEquals(refThree, accumulatedMetrics.lastEventReference());
+	}
+	
+	@Test
+	void testProjectorWithBookmarkManualTrigger ( ) {
+		TestProjection projection = new TestProjection();	
+		
+		EventReference refOne = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "one"))).findFirst().get().reference();
+		EventReference refTwo = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "two"))).findFirst().get().reference();
+		EventReference refThree = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "three"))).findFirst().get().reference();
+		EventReference refFour = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).findFirst().get().reference();
+
+		// set a bookmark for the Projector to find
+		es.placeBookmark("someReader", refFour, Tags.none()); 
+		
+		var projector = Projector.from(es).towards(projection).bookmarkProgress().withReader("someReader").readOnManualTriggerOnly().done().inBatchesOf(1).build();
+		
+		// setting the bookmark again after construction should be picked up as our projector is configured to read the bookmark before each execution
+		es.placeBookmark("someReader", refTwo, Tags.none()); 
+
+
+		// run a batch of size 1
+
+		ProjectorMetrics projectorMetrics = projector.runSingleBatch();
+		assertEquals(1, projection.counter()); 
+		// according to the query and the start situation, event 3 should be read if the bookmark is properly read
+		assertEquals(1, projectorMetrics.queriesDone()); 
+		assertEquals(1,  projectorMetrics.eventsStreamed());
+		assertEquals(1,  projectorMetrics.eventsHandled());
+		assertEquals(refOne, projectorMetrics.lastEventReference());
+
+		ProjectorMetrics accumulatedMetrics = projector.accumulatedMetrics();
+		assertEquals(1, accumulatedMetrics.queriesDone());
+		assertEquals(1,  accumulatedMetrics.eventsStreamed()); 
+		assertEquals(1,  accumulatedMetrics.eventsHandled());
+		assertEquals(refOne, accumulatedMetrics.lastEventReference());
+
+		// run another batch of size 1
+		
+		projectorMetrics = projector.runSingleBatch();
+		assertEquals(2, projection.counter()); 
+		assertEquals(1, projectorMetrics.queriesDone()); 
+		// according to the query and the start situation, event 4 should be read if the bookmark is properly read
+		assertEquals(1,  projectorMetrics.eventsStreamed());
+		assertEquals(1,  projectorMetrics.eventsHandled());
+		assertEquals(refThree, projectorMetrics.lastEventReference());
+
+		accumulatedMetrics = projector.accumulatedMetrics();
+		assertEquals(2, accumulatedMetrics.queriesDone());
+		assertEquals(2,  accumulatedMetrics.eventsStreamed()); 
+		assertEquals(2,  accumulatedMetrics.eventsHandled());
+		assertEquals(refThree, accumulatedMetrics.lastEventReference());
+
+		// setting the bookmark again should picked up as our projector is configured to read the bookmark before each execution
+		es.placeBookmark("someReader", refTwo, Tags.none());
+		
+		projector.readBookmark(); // now we should read event three again ...
+
+		projectorMetrics = projector.runSingleBatch();
+		assertEquals(3, projection.counter()); 
+		// according to the query and the start situation, event 3 should be read if the bookmark is properly read
+		assertEquals(1, projectorMetrics.queriesDone()); 
+		assertEquals(1,  projectorMetrics.eventsStreamed());
+		assertEquals(1,  projectorMetrics.eventsHandled());
+		assertEquals(refThree, projectorMetrics.lastEventReference());
+
+		accumulatedMetrics = projector.accumulatedMetrics();
+		assertEquals(3, accumulatedMetrics.queriesDone());
+		assertEquals(3,  accumulatedMetrics.eventsStreamed()); 
+		assertEquals(3,  accumulatedMetrics.eventsHandled());
+		assertEquals(refThree, accumulatedMetrics.lastEventReference());
+
+	
+		// setting the bookmark back at start should picked up as our projector is configured to read the bookmark before each execution
+		es.removeBookmark("someReader");
+		
+		projector.readBookmark(); // now we should read event three again ...
+
+		projectorMetrics = projector.runSingleBatch();
+		assertEquals(4, projection.counter()); 
+		// according to the query and the start situation, event 3 should be read if the bookmark is properly read
+		assertEquals(1, projectorMetrics.queriesDone()); 
+		assertEquals(1,  projectorMetrics.eventsStreamed());
+		assertEquals(1,  projectorMetrics.eventsHandled());
+		assertEquals(refOne, projectorMetrics.lastEventReference());
+
+		accumulatedMetrics = projector.accumulatedMetrics();
+		assertEquals(4, accumulatedMetrics.queriesDone());
+		assertEquals(4,  accumulatedMetrics.eventsStreamed()); 
+		assertEquals(4,  accumulatedMetrics.eventsHandled());
+		assertEquals(refOne, accumulatedMetrics.lastEventReference());
+	}
+
+
 	@Test
 	void testProjectorWithStepOfOne ( ) {
 		TestProjection projection = new TestProjection();	

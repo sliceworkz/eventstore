@@ -1016,15 +1016,62 @@ public class PostgresEventStorageImpl implements EventStorage {
 	
 	@Override
 	public void bookmark(String reader, EventReference eventReference, Tags tags ) {
+		if ( eventReference == null ) {
+			removeBookmark(reader);
+		} else {
+			String sql = """
+				INSERT INTO %sbookmarks (reader, event_position, event_id, updated_at, updated_tags) 
+				VALUES (?, ?, ?::uuid, CURRENT_TIMESTAMP, ? )
+				ON CONFLICT (reader) 
+				DO UPDATE SET 
+					event_position = EXCLUDED.event_position,
+					event_id = EXCLUDED.event_id,
+					updated_at = CURRENT_TIMESTAMP,
+					updated_tags = EXCLUDED.updated_tags
+			""".formatted(prefix); 
+			
+			try (Connection writeConnection = dataSource.getConnection() ) {
+				try {
+					writeConnection.setAutoCommit(false);
+					
+					if ( tags == null ) {
+						tags = Tags.none();
+					}
+					
+					try ( PreparedStatement stmt = writeConnection.prepareStatement(sql) ) {
+						stmt.setString(1, reader.toString());
+						stmt.setLong(2, eventReference == null?0:eventReference.position());
+						stmt.setString(3, eventReference==null?null:eventReference.id().value());
+						
+						// Convert tags to array
+						String[] tagsArray = tags.toStrings().toArray(new String[tags.tags().size()]);
+						stmt.setArray(4, writeConnection.createArrayOf("text", (String[]) tagsArray));
+						
+						int rowsAffected = stmt.executeUpdate();
+						if (rowsAffected == 0) {
+							throw new EventStorageException("Failed to update bookmark for reader: " + reader);
+						}
+						writeConnection.commit();
+					}
+				} catch (SQLException e) {
+					try {
+						writeConnection.rollback();
+					} catch (SQLException rollbackEx) {
+						e.addSuppressed(rollbackEx);
+					}
+					throw new EventStorageException("Failed to bookmark event for reader: " + reader, e);
+				}
+			} catch (SQLException e) {
+				throw new EventStorageException("Failed to close connection", e);
+			}
+		}
+	}
+	
+	@Override
+	public void removeBookmark(String reader ) {
 		String sql = """
-			INSERT INTO %sbookmarks (reader, event_position, event_id, updated_at, updated_tags) 
-			VALUES (?, ?, ?::uuid, CURRENT_TIMESTAMP, ? )
-			ON CONFLICT (reader) 
-			DO UPDATE SET 
-				event_position = EXCLUDED.event_position,
-				event_id = EXCLUDED.event_id,
-				updated_at = CURRENT_TIMESTAMP,
-				updated_tags = EXCLUDED.updated_tags
+			DELETE FROM %sbookmarks  
+			WHERE reader = ?
 		""".formatted(prefix); 
 		
 		try (Connection writeConnection = dataSource.getConnection() ) {
@@ -1033,16 +1080,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 				
 				try ( PreparedStatement stmt = writeConnection.prepareStatement(sql) ) {
 					stmt.setString(1, reader.toString());
-					stmt.setLong(2, eventReference.position());
-					stmt.setString(3, eventReference.id().value());
-					
-					// Convert tags to array
-					String[] tagsArray = tags.toStrings().toArray(new String[tags.tags().size()]);
-					stmt.setArray(4, writeConnection.createArrayOf("text", (String[]) tagsArray));
 					
 					int rowsAffected = stmt.executeUpdate();
 					if (rowsAffected == 0) {
-						throw new EventStorageException("Failed to update bookmark for reader: " + reader);
+						throw new EventStorageException("Failed to remove bookmark for reader: " + reader);
 					}
 					writeConnection.commit();
 				}
@@ -1052,7 +1093,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 				} catch (SQLException rollbackEx) {
 					e.addSuppressed(rollbackEx);
 				}
-				throw new EventStorageException("Failed to bookmark event for reader: " + reader, e);
+				throw new EventStorageException("Failed to remove bookmark for reader: " + reader, e);
 			}
 		} catch (SQLException e) {
 			throw new EventStorageException("Failed to close connection", e);

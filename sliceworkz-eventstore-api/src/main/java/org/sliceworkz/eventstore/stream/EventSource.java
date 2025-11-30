@@ -271,4 +271,39 @@ public interface EventSource<DOMAIN_EVENT_TYPE> {
 	 */
 	Optional<EventReference> getBookmark ( String reader );
 
+	/**
+	 * Removes the bookmark for a named reader and returns its previous value.
+	 * <p>
+	 * This method atomically removes the reader's bookmark and returns the last bookmarked
+	 * position if one existed. This is useful when you need to both retrieve and clear a
+	 * bookmark in a single operation, or when resetting a reader's progress tracking.
+	 * <p>
+	 * Common use cases include:
+	 * <ul>
+	 *   <li>Resetting a projection to reprocess all events from the beginning</li>
+	 *   <li>Migrating bookmark data to a new storage mechanism</li>
+	 *   <li>Cleaning up bookmarks for discontinued readers</li>
+	 *   <li>Implementing bookmark expiration or rotation logic</li>
+	 * </ul>
+	 * <p>
+	 * After this method completes, subsequent calls to {@link #getBookmark(String)} for
+	 * this reader will return {@code Optional.empty()} until a new bookmark is placed.
+	 * <p>
+	 * Typical Usage:
+	 * <pre>{@code
+	 * // Reset a projection and get its last position
+	 * Optional<EventReference> lastPosition = stream.removeBookmark("my-projection");
+	 * if (lastPosition.isPresent()) {
+	 *     System.out.println("Removed bookmark at: " + lastPosition.get());
+	 * }
+	 *
+	 * // Now start processing from the beginning
+	 * stream.query(EventQuery.matchAll()).forEach(this::processEvent);
+	 * }</pre>
+	 *
+	 * @param reader the unique name/identifier of the reader whose bookmark should be removed
+	 * @return an Optional containing the previous bookmarked EventReference if one existed, empty otherwise
+	 */
+	Optional<EventReference> removeBookmark ( String reader );
+
 }

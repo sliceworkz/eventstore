@@ -17,6 +17,9 @@
  */
 package org.sliceworkz.eventstore.events;
 
+import java.util.List;
+import java.util.stream.Stream;
+
 /**
  * Handles domain events in projections, processing only the business event data without metadata.
  * <p>
@@ -158,30 +161,14 @@ package org.sliceworkz.eventstore.events;
  * This allows projections to implement only the business-focused method while remaining
  * compatible with the event store framework's metadata-aware processing pipeline.
  *
- * @param <TRIGGERING_EVENT_TYPE> the sealed interface type defining the domain events to handle
+ * @param <EVENT_TYPE> the sealed interface type defining the domain events to handle
  * @see EventWithMetaDataHandler
  * @see Event
  * @see org.sliceworkz.eventstore.projection.Projection
  * @see org.sliceworkz.eventstore.projection.Projector
  */
 @FunctionalInterface
-public interface EventHandler<TRIGGERING_EVENT_TYPE> extends EventWithMetaDataHandler<TRIGGERING_EVENT_TYPE> {
-
-	/**
-	 * Default implementation that extracts business data from the event wrapper.
-	 * <p>
-	 * This method is called by the event store framework when processing events. It automatically
-	 * extracts the domain event data using {@code event.data()} and delegates to the simpler
-	 * {@link #when(Object)} method, hiding metadata concerns from the implementation.
-	 * <p>
-	 * Implementations should not override this method; instead, implement {@link #when(Object)}
-	 * to define business logic.
-	 *
-	 * @param eventWithMeta the complete event including metadata (never null)
-	 */
-	default void when ( Event<TRIGGERING_EVENT_TYPE> eventWithMeta ) {
-		when(eventWithMeta.data());
-	}
+public interface EventHandler<EVENT_TYPE> extends EventWithMetaDataHandler<EVENT_TYPE> {
 
 	/**
 	 * Processes a domain event for business logic purposes.
@@ -199,6 +186,114 @@ public interface EventHandler<TRIGGERING_EVENT_TYPE> extends EventWithMetaDataHa
 	 *
 	 * @param event the domain event data to process (never null)
 	 */
-	void when ( TRIGGERING_EVENT_TYPE event );
+	void when ( EVENT_TYPE event );
+
+	
+	/**
+	 * Default implementation that extracts business data from the event wrapper.
+	 * <p>
+	 * This method is called by the event store framework when processing events. It automatically
+	 * extracts the domain event data using {@code event.data()} and delegates to the simpler
+	 * {@link #when(Object)} method, hiding metadata concerns from the implementation.
+	 * <p>
+	 * Implementations should not override this method; instead, implement {@link #when(Object)}
+	 * to define business logic.
+	 *
+	 * @param eventWithMeta the complete event including metadata (never null)
+	 */
+	default void when ( Event<EVENT_TYPE> eventWithMeta ) {
+		when(eventWithMeta.data());
+	}
+
+	/**
+	 * Processes a batch of events, extracting business data from each.
+	 * <p>
+	 * This default method provides a convenient way to process multiple events at once. The default
+	 * implementation extracts the business data from each event and delegates to the single-event
+	 * {@link #when(Object)} method for each event in the list, processing them sequentially in order.
+	 * <p>
+	 * Implementations may override this method to provide batch-optimized processing of business events,
+	 * such as:
+	 * <ul>
+	 *   <li>Bulk database operations for better performance</li>
+	 *   <li>Aggregated calculations across multiple events</li>
+	 *   <li>Batch updates to read models or projections</li>
+	 *   <li>Transactional processing of event batches</li>
+	 * </ul>
+	 * <p>
+	 * Example of custom batch processing:
+	 * <pre>{@code
+	 * @Override
+	 * public void when(List<Event<CustomerEvent>> eventsWithMeta) {
+	 *     // Extract all domain events
+	 *     List<CustomerEvent> events = eventsWithMeta.stream()
+	 *         .map(Event::data)
+	 *         .toList();
+	 *
+	 *     // Batch process registrations
+	 *     List<CustomerRegistered> registrations = events.stream()
+	 *         .filter(e -> e instanceof CustomerRegistered)
+	 *         .map(e -> (CustomerRegistered) e)
+	 *         .toList();
+	 *
+	 *     if (!registrations.isEmpty()) {
+	 *         customerRepository.batchInsert(registrations);
+	 *     }
+	 * }
+	 * }</pre>
+	 * <p>
+	 * Note: If you need access to event metadata (timestamps, tags, references) during batch processing,
+	 * override {@link EventWithMetaDataHandler#when(List)} instead.
+	 *
+	 * @param eventsWithMeta the list of events to process, business data will be extracted from each (never null)
+	 */
+	default void when ( List<Event<EVENT_TYPE>> eventsWithMeta ) {
+		eventsWithMeta.forEach(this::when); // don't delegate to the stream-version to avoid stream creation overhead
+	}
+
+	/**
+	 * Processes a stream of events, extracting business data from each.
+	 * <p>
+	 * This default method provides a convenient way to process a stream of events by extracting
+	 * the business data from each event and delegating to the single-event {@link #when(Object)} method.
+	 * The default implementation processes events sequentially as they are consumed from the stream.
+	 * <p>
+	 * This method is particularly useful when working with query results from {@link org.sliceworkz.eventstore.stream.EventStream#query(org.sliceworkz.eventstore.query.EventQuery)},
+	 * which returns a {@link java.util.stream.Stream} of events. It allows event handlers to process query results directly
+	 * without manually iterating or collecting the stream, while focusing only on business data.
+	 * <p>
+	 * Implementations may override this method to provide stream-optimized processing of business events,
+	 * such as:
+	 * <ul>
+	 *   <li>Streaming aggregations without materializing the full event list</li>
+	 *   <li>Lazy evaluation and processing of large event sets</li>
+	 *   <li>Memory-efficient handling of unbounded event streams</li>
+	 *   <li>Parallel stream processing for performance</li>
+	 * </ul>
+	 * <p>
+	 * Example usage with query results:
+	 * <pre>{@code
+	 * EventStream<CustomerEvent> stream = eventStore.getEventStream(streamId, CustomerEvent.class);
+	 * Stream<Event<CustomerEvent>> events = stream.query(EventQuery.matchAll());
+	 *
+	 * EventHandler<CustomerEvent> handler = new EventHandler<>() {
+	 *     @Override
+	 *     public void when(CustomerEvent event) {
+	 *         System.out.println("Event: " + event);
+	 *     }
+	 * };
+	 *
+	 * // Process the stream directly - business data will be extracted automatically
+	 * handler.when(events);
+	 * }</pre>
+	 * <p>
+	 * Note: Streams are consumed during processing. If you need to process the same events multiple times,
+	 * consider collecting to a list first or querying again.
+	 *
+	 * @param eventsWithMeta the stream of events to process, business data will be extracted from each (never null)
+	 */
+	default void when ( Stream<Event<EVENT_TYPE>> eventsWithMeta ) {
+		eventsWithMeta.forEach(this::when);
+	}
 
 }

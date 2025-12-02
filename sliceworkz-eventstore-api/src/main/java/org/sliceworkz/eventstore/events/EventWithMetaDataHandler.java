@@ -17,6 +17,9 @@
  */
 package org.sliceworkz.eventstore.events;
 
+import java.util.List;
+import java.util.stream.Stream;
+
 /**
  * Handles events in projections with full access to event metadata including timestamps, tags, and references.
  * <p>
@@ -249,5 +252,87 @@ public interface EventWithMetaDataHandler<EVENT_TYPE> {
 	 * @param eventWithMeta the complete event including metadata (never null)
 	 */
 	void when ( Event<EVENT_TYPE> eventWithMeta );
+
+	/**
+	 * Processes a batch of events with full access to metadata.
+	 * <p>
+	 * This default method provides a convenient way to process multiple events at once by delegating
+	 * to the single-event {@link #when(Event)} method for each event in the list. The default implementation
+	 * processes events sequentially in the order they appear in the list.
+	 * <p>
+	 * Implementations may override this method to provide batch-optimized processing, such as:
+	 * <ul>
+	 *   <li>Batch database updates or writes</li>
+	 *   <li>Aggregated computations across multiple events</li>
+	 *   <li>Transactional processing of event groups</li>
+	 *   <li>Performance optimizations for bulk operations</li>
+	 * </ul>
+	 * <p>
+	 * Example of custom batch processing:
+	 * <pre>{@code
+	 * @Override
+	 * public void when(List<Event<CustomerEvent>> eventsWithMeta) {
+	 *     // Batch process all registration events
+	 *     List<CustomerRegistered> registrations = eventsWithMeta.stream()
+	 *         .map(Event::data)
+	 *         .filter(data -> data instanceof CustomerRegistered)
+	 *         .map(data -> (CustomerRegistered) data)
+	 *         .toList();
+	 *
+	 *     if (!registrations.isEmpty()) {
+	 *         batchInsertCustomers(registrations);
+	 *     }
+	 * }
+	 * }</pre>
+	 *
+	 * @param eventsWithMeta the list of events to process, each including full metadata (never null)
+	 */
+	default void when ( List<Event<EVENT_TYPE>> eventsWithMeta ) {
+		eventsWithMeta.forEach(this::when); // don't delegate to the stream-version to avoid stream creation overhead
+	}
+
+	/**
+	 * Processes a stream of events with full access to metadata.
+	 * <p>
+	 * This default method provides a convenient way to process a stream of events by delegating
+	 * to the single-event {@link #when(Event)} method for each event. The default implementation
+	 * processes events sequentially as they are consumed from the stream.
+	 * <p>
+	 * This method is particularly useful when working with query results from {@link org.sliceworkz.eventstore.stream.EventStream#query(org.sliceworkz.eventstore.query.EventQuery)},
+	 * which returns a {@link Stream} of events. It allows event handlers to process query results directly
+	 * without manually iterating or collecting the stream.
+	 * <p>
+	 * Implementations may override this method to provide stream-optimized processing, such as:
+	 * <ul>
+	 *   <li>Streaming aggregations without materializing the full event list</li>
+	 *   <li>Lazy evaluation and processing of large event sets</li>
+	 *   <li>Memory-efficient handling of unbounded event streams</li>
+	 *   <li>Parallel stream processing for performance</li>
+	 * </ul>
+	 * <p>
+	 * Example usage with query results:
+	 * <pre>{@code
+	 * EventStream<CustomerEvent> stream = eventStore.getEventStream(streamId, CustomerEvent.class);
+	 * Stream<Event<CustomerEvent>> events = stream.query(EventQuery.matchAll());
+	 *
+	 * EventWithMetaDataHandler<CustomerEvent> handler = new EventWithMetaDataHandler<>() {
+	 *     @Override
+	 *     public void when(Event<CustomerEvent> event) {
+	 *         System.out.println(event.timestamp() + ": " + event.data());
+	 *     }
+	 * };
+	 *
+	 * // Process the stream directly
+	 * handler.when(events);
+	 * }</pre>
+	 * <p>
+	 * Note: Streams are consumed during processing. If you need to process the same events multiple times,
+	 * consider collecting to a list first or querying again.
+	 *
+	 * @param eventsWithMeta the stream of events to process, each including full metadata (never null)
+	 */
+	default void when ( Stream<Event<EVENT_TYPE>> eventsWithMeta ) {
+		eventsWithMeta.forEach(this::when);
+	}
 
 }

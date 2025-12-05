@@ -18,6 +18,7 @@
 package org.sliceworkz.eventstore.projection;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.Collections;
@@ -109,8 +110,70 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		assertEquals(1, accumulatedMetrics.queriesDone());
 		assertEquals(3,  accumulatedMetrics.eventsStreamed()); 
 		assertEquals(2,  accumulatedMetrics.eventsHandled());
+		assertNull(accumulatedMetrics.lastEventReference());
+
+		// new re-run to check whether we start over from last batch
+		
+		e = assertThrows (ProjectorException.class, ()->{
+			ProjectorMetrics projectorMetrics = batchAwareProjector.run();
+		});
+		assertEquals("UNIT TEST FAKED PROBLEM WITH EVENT PROCESSING", e.getCause().getMessage());
+		
+		assertEquals(4, batchAwareProjection.counter()); // SecondDomainEvent type is left out by the query, so 2 processed, third failed each time
+		assertEquals(2, batchAwareProjection.beforeTriggered()); // single batch
+		assertEquals(2, batchAwareProjection.afterTriggered());  // equal amount expected
+		assertEquals(2, batchAwareProjection.cancelTriggered()); // should be called because of exception  
+		
+		accumulatedMetrics = batchAwareProjector.accumulatedMetrics();
+		assertEquals(2, accumulatedMetrics.queriesDone());
+		assertEquals(6,  accumulatedMetrics.eventsStreamed());
+		assertEquals(4,  accumulatedMetrics.eventsHandled());  // handled but not committed
+		assertNull(accumulatedMetrics.lastEventReference());
+
 	}
 
+
+	@Test
+	void testFailingProjectorInBatchesOf2 ( ) {
+		FailingBatchAwareTestProjection batchAwareProjection = new FailingBatchAwareTestProjection();	
+		var batchAwareProjector = Projector.from(es).towards(batchAwareProjection).inBatchesOf(2).build();
+
+		ProjectorException e = assertThrows (ProjectorException.class, ()->{
+			ProjectorMetrics projectorMetrics = batchAwareProjector.run();
+		});
+		assertEquals("UNIT TEST FAKED PROBLEM WITH EVENT PROCESSING", e.getCause().getMessage());
+		
+		assertEquals(2, batchAwareProjection.counter()); // SecondDomainEvent type is left out by the query, so 2 processed, third failed
+		assertEquals(2, batchAwareProjection.beforeTriggered()); // single batch
+		assertEquals(2, batchAwareProjection.afterTriggered());  // equal amount expected
+		assertEquals(1, batchAwareProjection.cancelTriggered()); // should be called because of exception  
+		
+		ProjectorMetrics accumulatedMetrics = batchAwareProjector.accumulatedMetrics();
+		assertEquals(2, accumulatedMetrics.queriesDone());
+		assertEquals(3,  accumulatedMetrics.eventsStreamed()); 
+		assertEquals(2,  accumulatedMetrics.eventsHandled());
+		assertEquals(3, accumulatedMetrics.lastEventReference().position());
+
+		// new re-run to check whether we start over from last batch
+		
+		e = assertThrows (ProjectorException.class, ()->{
+			ProjectorMetrics projectorMetrics = batchAwareProjector.run();
+		});
+		assertEquals("UNIT TEST FAKED PROBLEM WITH EVENT PROCESSING", e.getCause().getMessage());
+		
+		assertEquals(2, batchAwareProjection.counter()); // SecondDomainEvent type is left out by the query, so 2 processed
+		assertEquals(3, batchAwareProjection.beforeTriggered()); // single batch
+		assertEquals(3, batchAwareProjection.afterTriggered());  // equal amount expected
+		assertEquals(2, batchAwareProjection.cancelTriggered()); // should be called because of exception  
+		
+		accumulatedMetrics = batchAwareProjector.accumulatedMetrics();
+		assertEquals(3, accumulatedMetrics.queriesDone());
+		assertEquals(4,  accumulatedMetrics.eventsStreamed()); // last run: one skipped, one error
+		assertEquals(2,  accumulatedMetrics.eventsHandled());  // no new handled successfully (one skipped, one error in last run)
+		assertEquals(3, accumulatedMetrics.lastEventReference().position());
+
+	}
+	
 	@Test
 	void testProjectorWithBookmarkingWithoutReaderName ( ) {
 		TestProjection projection = new TestProjection();	

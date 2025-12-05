@@ -59,6 +59,7 @@ CREATE TABLE PREFIX_events (
 	-- Allows efficient filtering on multiple dimensions
 	-- Primary index for your most common query pattern
 	-- B-tree handles equality (=) and IN clauses efficiently
+	DROP INDEX IF EXISTS PREFIX_idx_events_stream_type_position;
 	CREATE INDEX PREFIX_idx_events_stream_type_position ON PREFIX_events (
 	    stream_context, 
 	    stream_purpose, 
@@ -67,9 +68,11 @@ CREATE TABLE PREFIX_events (
 	);
 	
 	-- Separate GIN index ONLY for tag filtering
+	DROP INDEX IF EXISTS PREFIX_idx_events_tags;
 	CREATE INDEX PREFIX_idx_events_tags ON PREFIX_events USING GIN (event_tags);
 	
 	-- Keep stream position index for stream reads
+	DROP INDEX IF EXISTS PREFIX_idx_events_stream_position;
 	CREATE INDEX PREFIX_idx_events_stream_position ON PREFIX_events (
 	    stream_context, 
 	    stream_purpose, 

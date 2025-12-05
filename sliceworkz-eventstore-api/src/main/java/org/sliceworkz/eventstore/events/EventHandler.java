@@ -157,7 +157,7 @@ import java.util.stream.Stream;
  * <p>
  * The {@code EventHandler} interface provides a default implementation of
  * {@link EventWithMetaDataHandler#when(Event)} that extracts the business data using
- * {@code event.data()} and delegates to the simpler {@code when(TRIGGERING_EVENT_TYPE)} method.
+ * {@code event.data()} and delegates to the simpler {@code when(EVENT_TYPE)} method.
  * This allows projections to implement only the business-focused method while remaining
  * compatible with the event store framework's metadata-aware processing pipeline.
  *

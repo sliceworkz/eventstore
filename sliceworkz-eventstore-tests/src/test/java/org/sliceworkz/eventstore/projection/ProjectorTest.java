@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -77,6 +78,37 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		assertEquals(1, accumulatedMetrics.queriesDone());
 		assertEquals(4,  accumulatedMetrics.eventsStreamed()); 
 		assertEquals(4,  accumulatedMetrics.eventsHandled());
+		
+		
+		BatchAwareTestProjection batchAwareProjection = new BatchAwareTestProjection();	
+		var batchAwareProjector = Projector.from(es).towards(batchAwareProjection).build();
+
+		projectorMetrics = batchAwareProjector.run();
+		assertEquals(4, batchAwareProjection.counter()); // SecondDomainEvent type is left out by the query
+		assertEquals(1, batchAwareProjection.beforeTriggered()); // single batch
+		assertEquals(1, batchAwareProjection.afterTriggered());  // equal amount expected
+		assertEquals(0, batchAwareProjection.cancelTriggered());  
+	}
+	
+	@Test
+	void testFailingProjector ( ) {
+		FailingBatchAwareTestProjection batchAwareProjection = new FailingBatchAwareTestProjection();	
+		var batchAwareProjector = Projector.from(es).towards(batchAwareProjection).build();
+
+		ProjectorException e = assertThrows (ProjectorException.class, ()->{
+			ProjectorMetrics projectorMetrics = batchAwareProjector.run();
+		});
+		assertEquals("UNIT TEST FAKED PROBLEM WITH EVENT PROCESSING", e.getCause().getMessage());
+		
+		assertEquals(2, batchAwareProjection.counter()); // SecondDomainEvent type is left out by the query, so 2 processed, third failed
+		assertEquals(1, batchAwareProjection.beforeTriggered()); // single batch
+		assertEquals(1, batchAwareProjection.afterTriggered());  // equal amount expected
+		assertEquals(1, batchAwareProjection.cancelTriggered()); // should be called because of exception  
+		
+		ProjectorMetrics accumulatedMetrics = batchAwareProjector.accumulatedMetrics();
+		assertEquals(1, accumulatedMetrics.queriesDone());
+		assertEquals(3,  accumulatedMetrics.eventsStreamed()); 
+		assertEquals(2,  accumulatedMetrics.eventsHandled());
 	}
 
 	@Test
@@ -351,6 +383,23 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		assertEquals(5, accumulatedMetrics.queriesDone());
 		assertEquals(4,  accumulatedMetrics.eventsStreamed()); 
 		assertEquals(4,  accumulatedMetrics.eventsHandled());
+
+		BatchAwareTestProjection batchAwareProjection = new BatchAwareTestProjection();	
+		var batchAwareProjector = Projector.from(es).towards(batchAwareProjection).inBatchesOf(1).build();
+
+		projectorMetrics = batchAwareProjector.run();
+		assertEquals(4, batchAwareProjection.counter()); // SecondDomainEvent type is left out by the query
+		assertEquals(4, batchAwareProjection.beforeTriggered()); // no batch started when no events
+		assertEquals(4, batchAwareProjection.afterTriggered());  // equal amount expected
+		assertEquals(0, batchAwareProjection.cancelTriggered());  
+		assertEquals(5, projectorMetrics.queriesDone()); // we now need a query for each one
+		assertEquals(4,  projectorMetrics.eventsStreamed());
+		assertEquals(4,  projectorMetrics.eventsHandled());
+
+		accumulatedMetrics = batchAwareProjector.accumulatedMetrics();
+		assertEquals(5, accumulatedMetrics.queriesDone());
+		assertEquals(4,  accumulatedMetrics.eventsStreamed()); 
+		assertEquals(4,  accumulatedMetrics.eventsHandled());
 	}
 
 	@Test
@@ -369,6 +418,24 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		assertEquals(3, accumulatedMetrics.queriesDone());
 		assertEquals(4,  accumulatedMetrics.eventsStreamed()); 
 		assertEquals(4,  accumulatedMetrics.eventsHandled());
+
+		BatchAwareTestProjection batchAwareProjection = new BatchAwareTestProjection();	
+		var batchAwareProjector = Projector.from(es).towards(batchAwareProjection).inBatchesOf(2).build();
+
+		projectorMetrics = batchAwareProjector.run();
+		assertEquals(4, batchAwareProjection.counter()); // SecondDomainEvent type is left out by the query
+		assertEquals(2, batchAwareProjection.beforeTriggered()); // no batch started when no events
+		assertEquals(2, batchAwareProjection.afterTriggered());  // equal amount expected
+		assertEquals(0, batchAwareProjection.cancelTriggered());  
+		assertEquals(3, projectorMetrics.queriesDone()); // we now need 3 queries to find all 5. last round, we asked 2 and got 1, so done.
+		assertEquals(4,  projectorMetrics.eventsStreamed());
+		assertEquals(4,  projectorMetrics.eventsHandled());
+
+		accumulatedMetrics = batchAwareProjector.accumulatedMetrics();
+		assertEquals(3, accumulatedMetrics.queriesDone());
+		assertEquals(4,  accumulatedMetrics.eventsStreamed()); 
+		assertEquals(4,  accumulatedMetrics.eventsHandled());
+
 	}
 
 	@Test
@@ -471,6 +538,109 @@ public class ProjectorTest extends AbstractEventStoreTest {
 			return counter;
 		}
 			
+	}
+
+	class BatchAwareTestProjection implements BatchAwareProjection<MockDomainEvent> {
+
+		private int counter;
+		private int beforeTriggered;
+		private int afterTriggered;
+		private int cancelTriggered;
+
+		@Override
+		public void when(Event<MockDomainEvent> event) {
+			counter++;
+		}
+
+		@Override
+		public EventQuery eventQuery() {
+			return EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class, ThirdDomainEvent.class), Tags.none());
+		}
+
+		@Override
+		public void beforeBatch() {
+			beforeTriggered++;
+		}
+
+		@Override
+		public void afterBatch(Optional<EventReference> lastEventReference) {
+			afterTriggered++;
+		}
+
+		@Override
+		public void cancelBatch() {
+			this.cancelTriggered++;
+		}
+		
+		public int counter ( ) {
+			return counter;
+		}
+		
+		public int beforeTriggered ( ) {
+			return beforeTriggered;
+		}
+		
+		public int afterTriggered ( ) {
+			return afterTriggered;
+		}
+		
+		public int cancelTriggered ( ) {
+			return cancelTriggered;
+		}
+			
+	}
+
+	class FailingBatchAwareTestProjection implements BatchAwareProjection<MockDomainEvent> {
+
+		private int counter;
+		private int beforeTriggered;
+		private int afterTriggered;
+		private int cancelTriggered;
+		
+		@Override
+		public void when(Event<MockDomainEvent> event) {
+			if ( event.data().equals(new FirstDomainEvent("4"))) {
+				throw new RuntimeException("UNIT TEST FAKED PROBLEM WITH EVENT PROCESSING");
+			}
+			counter++;
+		}
+
+		@Override
+		public EventQuery eventQuery() {
+			return EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class, ThirdDomainEvent.class), Tags.none());
+		}
+
+		@Override
+		public void beforeBatch() {
+			beforeTriggered++;
+		}
+
+		@Override
+		public void afterBatch(Optional<EventReference> lastEventReference) {
+			afterTriggered++;
+		}
+
+		@Override
+		public void cancelBatch() {
+			this.cancelTriggered++;
+		}
+
+		public int counter ( ) {
+			return counter;
+		}
+		
+		public int beforeTriggered ( ) {
+			return beforeTriggered;
+		}
+		
+		public int afterTriggered ( ) {
+			return afterTriggered;
+		}
+			
+		public int cancelTriggered ( ) {
+			return cancelTriggered;
+		}
+		
 	}
 
 	@Override

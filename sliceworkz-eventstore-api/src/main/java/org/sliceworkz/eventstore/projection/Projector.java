@@ -226,6 +226,12 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 	private ProjectorMetrics runUntilInternal ( EventReference until, boolean singleBatch ) {
 		ProjectorMetrics metrics = new ProjectorRun().execute(until, singleBatch);
 		accumulatedMetrics = accumulatedMetrics.add(metrics);
+		
+		
+		if ( metrics.throwable() != null ) {
+			throw new ProjectorException(metrics.throwable());
+		}
+		
 		return metrics;
 	}
 
@@ -277,6 +283,8 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 				readBookmark();
 			}
 			
+			Throwable throwable = null;
+			
 			Optional<EventReference> lastReadAtStart = lastEventReference;
 			
 			// in order to avoid memory issues, we'll loop in batches om MAX_EVENTS_PER_QUERY, until no more events are found in the stream
@@ -288,30 +296,41 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 			EventReference lastRead = lastEventReference==null?null:lastEventReference.orElse(null);
 			
 			while ( !done ) {
-			
-				queriesDone++;
-				long eventsStreamBeforeThisIteration = eventsStreamed;
-				
-				lastRead = es.query(effectiveQuery, lastRead, limit).map(e->offerEventToProjection(e, projection, until)).map(e->e.reference()).reduce((first, second) -> second).orElse(null);
-				
-				// if we still read data, keep the reference
-				if ( lastRead != null ) {
-					lastEventReference = Optional.of(lastRead); 
-				} else {
-					// otherwise, we were at the end of the stream
-					done = true;
-				}
-				
-				// if we got less events than we could, we reached the end of the stream
-				if ( eventsStreamed - eventsStreamBeforeThisIteration < maxEventsPerQuery ) {
-					done = true;
+
+				Batch batch = new Batch(projection);
+				try {
+					
+					queriesDone++;
+					long eventsStreamBeforeThisIteration = eventsStreamed;
+					
+					lastRead = es.query(effectiveQuery, lastRead, limit).map(e->offerEventToProjection(e, projection, until, batch)).map(e->e.reference()).reduce((first, second) -> second).orElse(null);
+					
+					// if we still read data, keep the reference
+					if ( lastRead != null ) {
+						lastEventReference = Optional.of(lastRead); 
+					} else {
+						// otherwise, we were at the end of the stream
+						done = true;
+					}
+					
+					// if we got less events than we could, we reached the end of the stream
+					if ( eventsStreamed - eventsStreamBeforeThisIteration < maxEventsPerQuery ) {
+						done = true;
+					}
+				} catch ( Throwable t ) {
+					batch.failBatchIfNeeded();
+					throwable = t;
+					break;
+				} finally {
+					batch.stopBatchIfNeeded(lastEventReference);
 				}
 				
 				if ( singleBatch ) {
 					break;
 				}
 			}
-			
+
+
 			// if we have something new to put in the bookmark
 			if ( bookmarkReader != null && lastEventReference != null && lastEventReference.isPresent() ) {
 				if ( !lastEventReference.equals(lastReadAtStart)) {
@@ -321,13 +340,14 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 			
 			LOGGER.debug("readmodel {} updated until {} with {} queries", projection, lastEventReference, queriesDone);
 			
-			return  new ProjectorMetrics ( eventsStreamed, eventsHandled, queriesDone, lastEventReference.orElse(null) );
+			return new ProjectorMetrics ( eventsStreamed, eventsHandled, queriesDone, lastEventReference==null?null:lastEventReference.orElse(null), throwable );
 		}
 	
-		private Event<CONSUMED_EVENT_TYPE> offerEventToProjection ( Event<CONSUMED_EVENT_TYPE> e, Projection<CONSUMED_EVENT_TYPE> projection, EventReference until ) {
+		private Event<CONSUMED_EVENT_TYPE> offerEventToProjection ( Event<CONSUMED_EVENT_TYPE> e, Projection<CONSUMED_EVENT_TYPE> projection, EventReference until, Batch batch ) {
 			this.eventsStreamed++;
 			if ( until == null || until.position() >= e.reference().position() ) {
 				if ( projection.eventQuery().matches(e) ) {
+					batch.startBatchIfNeeded(e);
 					projection.when(e);
 					this.eventsHandled++;
 				}
@@ -380,7 +400,7 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 	 * @param queriesDone the number of batch queries executed against the event source
 	 * @param lastEventReference the reference to the last event processed, or null if no events were processed
 	 */
-	public record ProjectorMetrics ( long eventsStreamed, long eventsHandled, long queriesDone, EventReference lastEventReference ) {
+	public record ProjectorMetrics ( long eventsStreamed, long eventsHandled, long queriesDone, EventReference lastEventReference, Throwable throwable ) {
 
 		/**
 		 * Combines these metrics with another set of metrics.
@@ -392,7 +412,7 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 		 * @return a new ProjectorMetrics with combined values
 		 */
 		public ProjectorMetrics add ( ProjectorMetrics other) {
-			return new ProjectorMetrics(this.eventsStreamed+other.eventsStreamed, this.eventsHandled + other.eventsHandled, this.queriesDone + other.queriesDone, other.lastEventReference);
+			return new ProjectorMetrics(this.eventsStreamed+other.eventsStreamed, this.eventsHandled + other.eventsHandled, this.queriesDone + other.queriesDone, other.lastEventReference, throwable);
 		}
 
 		/**
@@ -401,7 +421,7 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 		 * @return empty ProjectorMetrics
 		 */
 		public static ProjectorMetrics empty ( ) {
-			return new ProjectorMetrics(0, 0, 0, null);
+			return new ProjectorMetrics(0, 0, 0, null, null);
 		}
 
 		/**
@@ -413,7 +433,7 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 		 * @return ProjectorMetrics with zero counts and the specified reference
 		 */
 		public static ProjectorMetrics skipUntil ( EventReference lastEventReference ) {
-			return new ProjectorMetrics(0, 0, 0, lastEventReference);
+			return new ProjectorMetrics(0, 0, 0, lastEventReference, null);
 		}
 
 	}
@@ -852,5 +872,83 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 		 */
 		BEFORE_EACH_EXECUTION
 	}
+	
+	/**
+	 * Internal helper class that manages batch lifecycle callbacks for {@link BatchAwareProjection}s.
+	 * <p>
+	 * This class is responsible for detecting if a projection implements {@link BatchAwareProjection}
+	 * and invoking the appropriate lifecycle methods at the correct times:
+	 * <ul>
+	 *   <li>{@link #startBatchIfNeeded(Event)} - Calls {@link BatchAwareProjection#beforeBatch()} before the first event</li>
+	 *   <li>{@link #failBatchIfNeeded()} - Calls {@link BatchAwareProjection#cancelBatch()} on error</li>
+	 *   <li>{@link #stopBatchIfNeeded(Optional)} - Calls {@link BatchAwareProjection#afterBatch(Optional)} after the batch</li>
+	 * </ul>
+	 * <p>
+	 * If the projection does not implement {@link BatchAwareProjection}, all methods are no-ops.
+	 */
+	class Batch {
 
+		private BatchAwareProjection<CONSUMED_EVENT_TYPE> batchAwareProjection;
+		private boolean started;
+
+		/**
+		 * Creates a new Batch instance for the given projection.
+		 * <p>
+		 * If the projection implements {@link BatchAwareProjection}, batch lifecycle callbacks
+		 * will be invoked. Otherwise, this class acts as a no-op.
+		 *
+		 * @param projection the projection being processed
+		 */
+		public Batch ( Projection<CONSUMED_EVENT_TYPE> projection ) {
+			if ( projection instanceof BatchAwareProjection<CONSUMED_EVENT_TYPE> bap ) {
+				this.batchAwareProjection = bap;
+
+			}
+		}
+
+		/**
+		 * Starts the batch if needed by calling {@link BatchAwareProjection#beforeBatch()}.
+		 * <p>
+		 * This method is called before processing the first event in a batch. It will only
+		 * invoke the callback once, even if called multiple times.
+		 *
+		 * @param e the first event to be processed
+		 * @return the same event (for method chaining)
+		 */
+		Event<CONSUMED_EVENT_TYPE> startBatchIfNeeded ( Event<CONSUMED_EVENT_TYPE> e ) {
+			if ( batchAwareProjection != null && !started ) {
+				batchAwareProjection.beforeBatch();
+				started = true;
+			}
+			return e;
+		}
+
+		/**
+		 * Cancels the batch if needed by calling {@link BatchAwareProjection#cancelBatch()}.
+		 * <p>
+		 * This method is called when an exception occurs during batch processing.
+		 * It will only invoke the callback if the batch was actually started.
+		 */
+		void failBatchIfNeeded ( ) {
+			if ( batchAwareProjection != null && started ) {
+				batchAwareProjection.cancelBatch();
+			}
+		}
+
+		/**
+		 * Stops the batch if needed by calling {@link BatchAwareProjection#afterBatch(Optional)}.
+		 * <p>
+		 * This method is called after successfully processing all events in a batch.
+		 * It will only invoke the callback if the batch was actually started.
+		 *
+		 * @param lastEventReference the reference of the last event processed, or empty if none
+		 */
+		void stopBatchIfNeeded ( Optional<EventReference> lastEventReference ) {
+			if ( batchAwareProjection != null && started ) {
+				batchAwareProjection.afterBatch(lastEventReference);
+			}
+		}
+
+	}
+	
 }

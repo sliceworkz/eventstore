@@ -17,6 +17,8 @@
  */
 package org.sliceworkz.eventstore.projection;
 
+import org.sliceworkz.eventstore.events.EventReference;
+
 /**
  * Thrown when an error occurs during projection execution.
  * <p>
@@ -38,15 +40,38 @@ package org.sliceworkz.eventstore.projection;
  */
 public class ProjectorException extends RuntimeException {
 
+	private EventReference eventReference;
+	
 	/**
 	 * Creates a new ProjectorException wrapping the given throwable.
 	 * <p>
 	 * The wrapped throwable will be set as the cause and can be retrieved via {@link #getCause()}.
+	 * The event reference identifies which event was being processed when the failure occurred,
+	 * enabling precise error tracking and recovery strategies.
 	 *
 	 * @param wrapped the underlying exception that caused the projection to fail
+	 * @param eventReference the reference to the event that was being processed when the exception occurred, or null if not applicable
 	 */
-	public ProjectorException( Throwable wrapped ) {
+	public ProjectorException( Throwable wrapped, EventReference eventReference ) {
 		super(wrapped);
+		this.eventReference = eventReference;
+	}
+
+	/**
+	 * Returns the reference to the event that was being processed when this exception occurred.
+	 * <p>
+	 * This reference can be used to:
+	 * <ul>
+	 *   <li>Identify the exact event that caused the projection failure</li>
+	 *   <li>Log detailed error information for troubleshooting</li>
+	 *   <li>Implement retry strategies starting from a known position</li>
+	 *   <li>Skip problematic events in error handling logic</li>
+	 * </ul>
+	 *
+	 * @return the event reference of the event being processed, or null if the exception occurred outside event processing
+	 */
+	public EventReference getEventReference ( ) {
+		return eventReference;
 	}
 
 }

@@ -142,6 +142,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 			ProjectorMetrics projectorMetrics = batchAwareProjector.run();
 		});
 		assertEquals("UNIT TEST FAKED PROBLEM WITH EVENT PROCESSING", e.getCause().getMessage());
+		assertEquals(4, e.getEventReference().position());
 		
 		assertEquals(2, batchAwareProjection.counter()); // SecondDomainEvent type is left out by the query, so 2 processed, third failed
 		assertEquals(2, batchAwareProjection.beforeTriggered()); // single batch
@@ -160,6 +161,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 			ProjectorMetrics projectorMetrics = batchAwareProjector.run();
 		});
 		assertEquals("UNIT TEST FAKED PROBLEM WITH EVENT PROCESSING", e.getCause().getMessage());
+		assertEquals(4, e.getEventReference().position());
 		
 		assertEquals(2, batchAwareProjection.counter()); // SecondDomainEvent type is left out by the query, so 2 processed
 		assertEquals(3, batchAwareProjection.beforeTriggered()); // single batch

@@ -224,15 +224,15 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 	}
 
 	private ProjectorMetrics runUntilInternal ( EventReference until, boolean singleBatch ) {
-		ProjectorMetrics metrics = new ProjectorRun().execute(until, singleBatch);
-		accumulatedMetrics = accumulatedMetrics.add(metrics);
+		ProjectorRunResult result = new ProjectorRun().execute(until, singleBatch);
+		accumulatedMetrics = accumulatedMetrics.add(result.metrics());
 		
 		
-		if ( metrics.throwable() != null ) {
-			throw new ProjectorException(metrics.throwable());
+		if ( result.throwable() != null ) {
+			throw result.throwable();
 		}
 		
-		return metrics;
+		return result.metrics();
 	}
 
 	/**
@@ -273,8 +273,9 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 		private long eventsStreamed = 0;
 		private long eventsHandled = 0;
 		private long queriesDone = 0;
+		private EventReference currentEventReference; // required for identifying a poison event
 
-		protected ProjectorMetrics execute ( EventReference until, boolean singleBatch ) {
+		protected ProjectorRunResult execute ( EventReference until, boolean singleBatch ) {
 			boolean done = false;
 			
 			if ( ( bookmarkReadFrequency == BookmarkReadFrequency.BEFORE_EACH_EXECUTION) || 
@@ -283,7 +284,7 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 				readBookmark();
 			}
 			
-			Throwable throwable = null;
+			ProjectorException exception = null;
 			
 			Optional<EventReference> lastReadAtStart = lastEventReference;
 			
@@ -319,7 +320,7 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 					}
 				} catch ( Throwable t ) {
 					batch.failBatchIfNeeded();
-					throwable = t;
+					exception = new ProjectorException(t, currentEventReference);
 					break;
 				} finally {
 					batch.stopBatchIfNeeded(lastEventReference);
@@ -340,7 +341,7 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 			
 			LOGGER.debug("readmodel {} updated until {} with {} queries", projection, lastEventReference, queriesDone);
 			
-			return new ProjectorMetrics ( eventsStreamed, eventsHandled, queriesDone, lastEventReference==null?null:lastEventReference.orElse(null), throwable );
+			return new ProjectorRunResult ( new ProjectorMetrics ( eventsStreamed, eventsHandled, queriesDone, lastEventReference==null?null:lastEventReference.orElse(null)), exception );
 		}
 	
 		private Event<CONSUMED_EVENT_TYPE> offerEventToProjection ( Event<CONSUMED_EVENT_TYPE> e, Projection<CONSUMED_EVENT_TYPE> projection, EventReference until, Batch batch ) {
@@ -348,13 +349,32 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 			if ( until == null || until.position() >= e.reference().position() ) {
 				if ( projection.eventQuery().matches(e) ) {
 					batch.startBatchIfNeeded(e);
+					currentEventReference = e.reference();
 					projection.when(e);
 					this.eventsHandled++;
 				}
 			}
 			return e;
 		}
-		
+
+	}
+
+	/**
+	 * Internal result holder for projection run execution.
+	 * <p>
+	 * This record encapsulates the outcome of a projection run, including both success metrics
+	 * and any exception that may have occurred during processing. It is used internally by the
+	 * projector to separate exception handling from metrics accumulation.
+	 * <p>
+	 * When a projection run completes successfully, the throwable will be null. When an exception
+	 * occurs during processing, both the metrics (representing partial progress) and the exception
+	 * are captured.
+	 *
+	 * @param metrics the metrics collected during the projection run, including events streamed and handled
+	 * @param throwable the exception that occurred during processing, or null if the run completed successfully
+	 */
+	public record ProjectorRunResult ( ProjectorMetrics metrics, ProjectorException throwable ) {
+
 	}
 
 	/**
@@ -400,7 +420,7 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 	 * @param queriesDone the number of batch queries executed against the event source
 	 * @param lastEventReference the reference to the last event processed, or null if no events were processed
 	 */
-	public record ProjectorMetrics ( long eventsStreamed, long eventsHandled, long queriesDone, EventReference lastEventReference, Throwable throwable ) {
+	public record ProjectorMetrics ( long eventsStreamed, long eventsHandled, long queriesDone, EventReference lastEventReference) {
 
 		/**
 		 * Combines these metrics with another set of metrics.
@@ -412,7 +432,7 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 		 * @return a new ProjectorMetrics with combined values
 		 */
 		public ProjectorMetrics add ( ProjectorMetrics other) {
-			return new ProjectorMetrics(this.eventsStreamed+other.eventsStreamed, this.eventsHandled + other.eventsHandled, this.queriesDone + other.queriesDone, other.lastEventReference, throwable);
+			return new ProjectorMetrics(this.eventsStreamed+other.eventsStreamed, this.eventsHandled + other.eventsHandled, this.queriesDone + other.queriesDone, other.lastEventReference );
 		}
 
 		/**
@@ -421,7 +441,7 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 		 * @return empty ProjectorMetrics
 		 */
 		public static ProjectorMetrics empty ( ) {
-			return new ProjectorMetrics(0, 0, 0, null, null);
+			return new ProjectorMetrics(0, 0, 0, null);
 		}
 
 		/**
@@ -433,7 +453,7 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 		 * @return ProjectorMetrics with zero counts and the specified reference
 		 */
 		public static ProjectorMetrics skipUntil ( EventReference lastEventReference ) {
-			return new ProjectorMetrics(0, 0, 0, lastEventReference, null);
+			return new ProjectorMetrics(0, 0, 0, lastEventReference);
 		}
 
 	}

@@ -59,6 +59,7 @@ CREATE TABLE events (
 	-- Allows efficient filtering on multiple dimensions
 	-- Primary index for your most common query pattern
 	-- B-tree handles equality (=) and IN clauses efficiently
+	DROP INDEX IF EXISTS idx_events_stream_type_position;
 	CREATE INDEX idx_events_stream_type_position ON events (
 	    stream_context, 
 	    stream_purpose, 
@@ -67,9 +68,11 @@ CREATE TABLE events (
 	);
 	
 	-- Separate GIN index ONLY for tag filtering
+	DROP INDEX IF EXISTS idx_events_tags;
 	CREATE INDEX idx_events_tags ON events USING GIN (event_tags);
 	
 	-- Keep stream position index for stream reads
+	DROP INDEX IF EXISTS idx_events_stream_position;
 	CREATE INDEX idx_events_stream_position ON events (
 	    stream_context, 
 	    stream_purpose, 

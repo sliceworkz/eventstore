@@ -118,6 +118,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private final String name;
 	private final String prefix;
 	private final DataSource dataSource;
+	private final DataSource monitoringDataSource;
 	private final Limit absoluteLimit;
 	/**
 	 * The Micrometer meter registry for collecting metrics and observability data.
@@ -162,13 +163,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 		this.prefix = validatePrefix(prefix);
 		this.name = name;
 		this.dataSource = dataSource;
+		this.monitoringDataSource = monitoringDataSource;
 		this.absoluteLimit = absoluteLimit;
 		this.meterRegistry = meterRegistry;
 
 		this.executorService = Executors.newVirtualThreadPerTaskExecutor();
-
-		this.executorService.execute(new NewEventsAppendedMonitor("event-append-listener/" + name, listeners, monitoringDataSource));
-		this.executorService.execute(new BookmarkPlacedMonitor("bookmark-listener/" + name, listeners, monitoringDataSource));
 	}
 	
 	static String validatePrefix(String prefix) {
@@ -462,6 +461,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 				}
 			}
 		}
+	}
+	
+	public void start ( ) {
+		this.executorService.execute(new NewEventsAppendedMonitor("event-append-listener/" + name, listeners, monitoringDataSource));
+		this.executorService.execute(new BookmarkPlacedMonitor("bookmark-listener/" + name, listeners, monitoringDataSource));
 	}
 	
 	public void stop ( ) {

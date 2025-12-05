@@ -460,6 +460,8 @@ public interface PostgresEventStorage {
 			if ( checkDatabase ) {
 				result.checkDatabase();
 			}
+			// if we didn't fail until here, then we can start the executor threads
+			result.start();
 			return result;
 
 		}

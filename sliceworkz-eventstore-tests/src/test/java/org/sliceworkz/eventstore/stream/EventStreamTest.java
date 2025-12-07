@@ -103,21 +103,18 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		
 		MockConsistentAppendListener<MockDomainEvent> s1cal = new MockConsistentAppendListener<>();
 		MockEventuallyConsistentAppendListener s1ecal = new MockEventuallyConsistentAppendListener();
-		waitBecauseOfEventualConsistency();
 		
 		s1.subscribe(s1cal);
 		s1.subscribe(s1ecal);
 
 		MockConsistentAppendListener<MockDomainEvent> s2cal = new MockConsistentAppendListener<>();
 		MockEventuallyConsistentAppendListener s2ecal = new MockEventuallyConsistentAppendListener();
-		waitBecauseOfEventualConsistency();
 
 		s2.subscribe(s2cal);
 		s2.subscribe(s2ecal);
 
 		MockConsistentAppendListener<OtherMockDomainEvent> s3cal = new MockConsistentAppendListener<>();
 		MockEventuallyConsistentAppendListener s3ecal = new MockEventuallyConsistentAppendListener();
-		waitBecauseOfEventualConsistency();
 
 		s3.subscribe(s3cal);
 		s3.subscribe(s3ecal);

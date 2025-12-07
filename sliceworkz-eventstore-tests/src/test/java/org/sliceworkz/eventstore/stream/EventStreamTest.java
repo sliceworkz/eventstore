@@ -413,7 +413,6 @@ class SlowMockListener implements EventStreamEventuallyConsistentAppendListener 
 	public void mockLastQueried ( EventReference lastQueried ) {
 		this.lastQueried = lastQueried;
 		if ( lastReference.get() == null || ( lastQueried.position() > lastReference.get().position() ) ) {
-			System.out.println("lr = " + lastQueried);
 			lastReference.set(lastQueried);
 		}
 	}

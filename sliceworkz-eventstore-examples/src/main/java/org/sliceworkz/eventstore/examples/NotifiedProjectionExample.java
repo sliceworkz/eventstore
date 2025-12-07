@@ -51,7 +51,15 @@ public class NotifiedProjectionExample implements EventStreamEventuallyConsisten
 		this.eventStream = eventStore.getEventStream(EventStreamId.forContext("customer").withPurpose("domain"), CustomerDomainEvent.class);
 		eventStream.subscribe(this);
 		this.customerProjection = new SomeCustomerProjection();
-		this.projector = Projector.<CustomerDomainEvent>newBuilder().from(eventStream).towards(customerProjection).inBatchesOf(10).build();
+		this.projector = Projector.<CustomerDomainEvent>newBuilder()
+				.from(eventStream)
+				.towards(customerProjection)
+				.inBatchesOf(10)
+				.bookmarkProgress()
+					.withReader("demo-reader")
+					.readOnManualTriggerOnly()
+					.done()
+				.build();
 	}
 	
 	public void scenario ( ) throws InterruptedException {
@@ -61,10 +69,12 @@ public class NotifiedProjectionExample implements EventStreamEventuallyConsisten
 		}
 		
 		while ( customerProjection.counter() < CUSTOMER_COUNT ) {
-			System.err.println("all events appended, projection is at: %d/%d".formatted(customerProjection.counter(), CUSTOMER_COUNT));
+			System.err.println("all events appended, projection is at  : %d/%d".formatted(customerProjection.counter(), CUSTOMER_COUNT));
+			System.err.println("bookmark is at                           : " + eventStream.getBookmark("demo-reader"));
 			Thread.sleep(100);
 		}
-		System.err.println("process at and, projection is at     : %d/%d".formatted(customerProjection.counter(), CUSTOMER_COUNT));
+		System.err.println("process at and, projection is at       : %d/%d".formatted(customerProjection.counter(), CUSTOMER_COUNT));
+		System.err.println("bookmark is at                         : " + eventStream.getBookmark("demo-reader"));
 	}
 
 	/**
@@ -78,6 +88,7 @@ public class NotifiedProjectionExample implements EventStreamEventuallyConsisten
 			System.err.println("must retry after projector enountered a problem: %s".formatted(e.getMessage()));
 			System.err.println("projector metrics reports last updated : " + projector.accumulatedMetrics().lastEventReference());
 			System.err.println("exception reports problem event        : " + e.getEventReference());
+			System.err.println("bookmark is at                         : " + eventStream.getBookmark("demo-reader"));
 			return null; // report no new events processed correctly (as batch is completely rollbacked) 
 		}
 	}

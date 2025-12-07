@@ -17,6 +17,7 @@
  */
 package org.sliceworkz.eventstore.infra.inmem;
 
+import java.lang.ref.WeakReference;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -97,7 +98,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 
 	private String name;
 	private List<StoredEvent> eventlog = new LinkedList<>();
-	private List<EventStoreListener> listeners = new CopyOnWriteArrayList<>();
+	private List<WeakReference<EventStoreListener>> listeners = new CopyOnWriteArrayList<>();
 	private Map<String,EventReference> bookmarks = new HashMap<>();
 	private JsonMapper jsonMapper;
 	private Limit absoluteLimit;
@@ -346,7 +347,11 @@ public class InMemoryEventStorageImpl implements EventStorage {
 			        (existing, replacement) -> replacement // in sequence, only useful to notify about the last one
 			    ))
 			    .values()
-			    .forEach(notification->listeners.forEach(listener->listener.notify(notification)));
+			    .forEach(notification->listeners.forEach(listener->{
+			    	if (listener.get()!=null){
+			    		listener.get().notify(notification);
+			    	};
+			    }));
 		
 		return addedEvents;
 	}
@@ -365,7 +370,8 @@ public class InMemoryEventStorageImpl implements EventStorage {
 
 	@Override
 	public void subscribe(EventStoreListener listener) {
-		listeners.add(listener);
+		listeners.add(new WeakReference<>(listener));
+		listeners.removeIf(ref -> ref.get() == null);
 	}
 
 	@Override
@@ -382,7 +388,11 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	public synchronized void bookmark(String reader, EventReference eventReference, Tags tags ) {
 		bookmarks.put(reader, eventReference);
 		BookmarkPlacedNotification notification = new BookmarkPlacedNotification(reader, eventReference);
-		listeners.forEach(l->l.notify(notification));
+		listeners.forEach(l->{
+			if ( l.get() != null ) {
+				l.get().notify(notification);				
+			}
+		});
 	}
 
 	/**

@@ -19,6 +19,7 @@ package org.sliceworkz.eventstore.infra.postgres;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -126,7 +127,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 */
 	private final MeterRegistry meterRegistry;
 
-	private final List<EventStoreListener> listeners = new CopyOnWriteArrayList<>();
+	private final List<WeakReference<EventStoreListener>> listeners = new CopyOnWriteArrayList<>();
 	private final ExecutorService executorService;
 	private boolean stopped;
 
@@ -828,10 +829,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 		private static final Logger LOGGER = LoggerFactory.getLogger(NewEventsAppendedMonitor.class);
 		
 		private String name;
-		private List<EventStoreListener> listeners;
+		private List<WeakReference<EventStoreListener>> listeners;
 		private DataSource monitoringDataSource;
 		
-		public NewEventsAppendedMonitor ( String name, List<EventStoreListener> listeners, DataSource monitoringDataSource ) {
+		public NewEventsAppendedMonitor ( String name, List<WeakReference<EventStoreListener>> listeners, DataSource monitoringDataSource ) {
 			this.name = name;
 			this.listeners = listeners;
 			this.monitoringDataSource = monitoringDataSource;
@@ -880,7 +881,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 				    }
 
 				    // notify all listeners - with max 1 notification per message stream (the most recent one)
-				    notificationsPerStream.values().forEach(n->listeners.forEach(l->l.notify(n)));
+				    notificationsPerStream.values().forEach(n->listeners.forEach(l->{
+				    	if ( l.get() != null ) {
+				    		l.get().notify(n);
+				    	}
+				    }));
 
 				} catch (SQLException e) {
 					if ( !stopped ) {
@@ -899,10 +904,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 		private static final Logger LOGGER = LoggerFactory.getLogger(BookmarkPlacedMonitor.class);
 		
 		private String name;
-		private List<EventStoreListener> listeners;
+		private List<WeakReference<EventStoreListener>> listeners;
 		private DataSource monitoringDataSource;
 		
-		public BookmarkPlacedMonitor ( String name, List<EventStoreListener> listeners, DataSource monitoringDataSource ) {
+		public BookmarkPlacedMonitor ( String name, List<WeakReference<EventStoreListener>> listeners, DataSource monitoringDataSource ) {
 			this.name = name;
 			this.listeners = listeners;
 			this.monitoringDataSource = monitoringDataSource;
@@ -953,7 +958,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 				    }
 
 				    // notify all listeners - with max 1 notification per message stream (the most recent one)
-				    bookmarkPlacedsPerReader.values().forEach(n->listeners.forEach(l->l.notify(n)));
+				    bookmarkPlacedsPerReader.values().forEach(n->listeners.forEach(l->{
+				    	if ( l.get() != null  ) {
+				    		l.get().notify(n);
+				    	}
+				    }));
 
 				} catch (SQLException e) {
 					if ( !stopped ) {
@@ -984,7 +993,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	@Override
 	public void subscribe(EventStoreListener listener) {
-		listeners.add(listener);
+		listeners.add(new WeakReference<>(listener));
+		listeners.removeIf(ref -> ref.get() == null);
 	}
 
 	@Override

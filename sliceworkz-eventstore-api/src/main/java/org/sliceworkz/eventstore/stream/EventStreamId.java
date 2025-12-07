@@ -114,6 +114,16 @@ public record EventStreamId ( String context, String purpose ) {
 	}
 
 	/**
+	 * Returns a new EventStreamId with the same context but default purpose.
+	 * <p>
+	 *
+	 * @return a new EventStreamId that references default purpose within the current context
+	 */
+	public EventStreamId defaultPurpose (  ) {
+		return new EventStreamId(context, DEFAULT_PURPOSE);
+	}
+
+	/**
 	 * Checks if this stream ID represents a wildcard for any context.
 	 *
 	 * @return true if context is null (wildcard), false otherwise

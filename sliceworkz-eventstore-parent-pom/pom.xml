@@ -42,7 +42,7 @@
 		<micrometer.version>1.16.0</micrometer.version>
 		<junit-jupiter.version>6.0.1</junit-jupiter.version>
 		<testcontainers.postgresql.version>1.21.3</testcontainers.postgresql.version>
-		
+	    <awaitility.version>4.3.0</awaitility.version>
 
 		<maven.maven-surefire-plugin.version>3.5.4</maven.maven-surefire-plugin.version>
 		<maven.maven-compiler-plugin.version>3.14.1</maven.maven-compiler-plugin.version>
@@ -93,7 +93,13 @@
 				<version>${junit-jupiter.version}</version>
 				<scope>test</scope>
 			</dependency>
-			
+			<dependency>
+			    <groupId>org.awaitility</groupId>
+			    <artifactId>awaitility</artifactId>
+			    <version>${awaitility.version}</version>
+			    <scope>test</scope>
+			</dependency>
+
 			<!-- PostgreSQL -->
 			<dependency>
 			    <groupId>org.postgresql</groupId>

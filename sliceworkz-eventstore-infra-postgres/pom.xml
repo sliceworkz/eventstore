@@ -55,6 +55,11 @@
 			<scope>test</scope>
 		</dependency>
 		<dependency>
+		    <groupId>org.awaitility</groupId>
+		    <artifactId>awaitility</artifactId>
+		    <scope>test</scope>
+		</dependency>
+		<dependency>
 			<groupId>org.sliceworkz</groupId>
 			<artifactId>sliceworkz-eventstore-impl</artifactId>
 			<scope>runtime</scope>

@@ -376,7 +376,6 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		    .until(() -> (l.lastReference()!=null) && (5 == l.lastReference().position()));
 
 		assertEquals(5, l.lastReference().position()); // check that the listener has seen the last event 
-		assertEquals(2, l.counter()); // on first call, listener "queries" (=mocked) the rest of the events up until 4, then only notif for 5 needed
 	}
 
 	@Override

@@ -116,7 +116,7 @@ public interface BatchAwareProjection<EVENT_TYPE> extends Projection<EVENT_TYPE>
 	 * Use this to clean up resources, rollback transactions, or perform error handling.
 	 * <p>
 	 * After this method is called, the exception will be wrapped in a {@link ProjectorException}
-	 * and propagated to the caller.  No call to {@link #afterBatch()} will follow after this one.
+	 * and propagated to the caller.  No call to {@link #afterBatch(Optional)} will follow after this one.
 	 * <p>
 	 * This method should handle exceptions gracefully and should not throw exceptions itself.
 	 * Any exceptions thrown from this method will be logged but otherwise ignored.

@@ -17,6 +17,10 @@
  */
 package org.sliceworkz.eventstore;
 
+import java.time.Duration;
+import java.util.function.BooleanSupplier;
+import static org.awaitility.Awaitility.*;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.sliceworkz.eventstore.spi.EventStorage;
@@ -45,6 +49,15 @@ public abstract class AbstractEventStoreTest {
 		return eventStore;
 	}
 	
+	public void waitBecauseOfEventualConsistency ( BooleanSupplier waitForCriterion ) {
+		await()
+    	.atMost(Duration.ofMillis(1000))
+    		.with()
+    		.pollInterval(Duration.ofMillis(100))
+    	.until(waitForCriterion::getAsBoolean);
+	}
+	
+
 	public void waitBecauseOfEventualConsistency ( ) {
 		try {
 			Thread.sleep(500);

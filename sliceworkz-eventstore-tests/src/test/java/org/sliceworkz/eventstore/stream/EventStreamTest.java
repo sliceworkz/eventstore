@@ -21,13 +21,16 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.awaitility.Awaitility.*;
 
+import java.time.Duration;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -171,7 +174,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		List<Event<MockDomainEvent>> events = es.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FirstDomainEvent("1"), Tags.none())));
 		assertEquals(1, events.size());
 
-		waitBecauseOfEventualConsistency();
+		waitBecauseOfEventualConsistency(()->appendListener.count()>=1);
 		
 		assertEquals(1, appendListener.count()); // we expect one notification on our appendlistener
 		assertEquals(events.getLast().reference(), appendListener.lastReference());
@@ -301,11 +304,13 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("4"), Tags.none()));
 		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("5"), Tags.none()));
 		
-		try {
-			Thread.sleep(1000);
-		} catch (InterruptedException e) {
-		}
+		await()
+		    .atMost(Duration.ofMillis(5000))
+		    	.with()
+		    	.pollInterval(Duration.ofMillis(100))
+		    .until(() -> 5 == l.lastReference().position());
 		
+		assertEquals(5, l.lastReference().position()); // check that the listener has seen the last event 
 		assertEquals(2, l.counter()); // initial one and last one
 	}
 	
@@ -321,19 +326,24 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("2"), Tags.none()));
 		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("3"), Tags.none()));
 		
-		try {
-			Thread.sleep(1000);
-		} catch (InterruptedException e) {
-		}
+		await()
+	    	.atMost(Duration.ofMillis(5000))
+	    		.with()
+	    		.pollInterval(Duration.ofMillis(100))
+	    	.until(() -> 3 == l.lastReference().position()); // wait until 3 has been seen by listener
+
+		// then append some extra events, this will force extra notification update calls
 
 		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("4"), Tags.none()));
 		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("5"), Tags.none()));
 		
-		try {
-			Thread.sleep(1000);
-		} catch (InterruptedException e) {
-		}
-		
+		await()
+			.atMost(Duration.ofMillis(5000))
+				.with()
+		    	.pollInterval(Duration.ofMillis(100))
+		    .until(() -> 5 == l.lastReference().position());
+
+		assertEquals(5, l.lastReference().position()); // check that the listener has seen the last event 
 		assertEquals(4, l.counter()); // initial one (calling thread), third (first thread second loop), fourth and fifth
 	}
 
@@ -347,6 +357,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 class SlowMockListener implements EventStreamEventuallyConsistentAppendListener {
 	
 	private AtomicInteger counter = new AtomicInteger();
+	private AtomicReference<EventReference> lastReference = new AtomicReference<>();
 	private int delayMs;
 	
 	public SlowMockListener ( int delayMs ) {
@@ -360,10 +371,15 @@ class SlowMockListener implements EventStreamEventuallyConsistentAppendListener 
 			Thread.sleep(delayMs);
 		} catch (InterruptedException e) {
 		}
+		lastReference.set(atLeastUntil);
 		counter.incrementAndGet();
 	}
 	
 	public int counter ( ) {
 		return counter.get();
+	}
+	
+	public EventReference lastReference ( ) {
+		return lastReference.get();
 	}
 }

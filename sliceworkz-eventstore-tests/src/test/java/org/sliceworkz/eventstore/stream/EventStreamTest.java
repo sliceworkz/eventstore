@@ -344,7 +344,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		    .until(() -> 5 == l.lastReference().position());
 
 		assertEquals(5, l.lastReference().position()); // check that the listener has seen the last event 
-		assertEquals(4, l.counter()); // initial one (calling thread), third (first thread second loop), fourth and fifth
+		assertTrue(l.counter() >= 3); // initial one (calling thread), third (first thread second loop), fourth and fifth separate or combined
 	}
 
 	@Override

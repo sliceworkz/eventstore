@@ -109,6 +109,11 @@ public interface EventStreamEventuallyConsistentAppendListener {
 	 * To process the actual events, query the stream from your last processed position up to
 	 * the provided reference. Use bookmarks to track your processing position across restarts.
 	 * <p>
+	 * The returned {@link EventReference} allows the listener to inform the caller about the actual
+	 * last event it has processed or queried. This enables optimization strategies where listeners
+	 * may proactively query ahead and report their actual position, allowing subsequent notifications
+	 * to be skipped if they would be redundant.
+	 * <p>
 	 * Implementation notes:
 	 * <ul>
 	 *   <li>This method is called asynchronously, outside the append transaction</li>
@@ -119,7 +124,10 @@ public interface EventStreamEventuallyConsistentAppendListener {
 	 * </ul>
 	 *
 	 * @param atLeastUntil reference to at least the last appended event, never null
+	 * @return the reference to the last event actually processed or queried by this listener,
+	 *         which may be equal to or ahead of the {@code atLeastUntil} parameter if the
+	 *         listener proactively queried further events; never null
 	 */
-	void eventsAppended ( EventReference atLeastUntil );
+	EventReference eventsAppended ( EventReference atLeastUntil );
 
 }

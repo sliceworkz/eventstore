@@ -338,10 +338,45 @@ public class EventStreamTest extends AbstractEventStoreTest {
 			.atMost(Duration.ofMillis(5000))
 				.with()
 		    	.pollInterval(Duration.ofMillis(100))
-		    .until(() -> 5 == l.lastReference().position());
+		    .until(() -> l.lastReference()!=null && (5 == l.lastReference().position()));
 
 		assertEquals(5, l.lastReference().position()); // check that the listener has seen the last event 
 		assertTrue(l.counter() >= 3); // initial one (calling thread), third (first thread second loop), fourth and fifth separate or combined
+	}
+
+	
+	@Test
+	void testNotificationsToProactivelyQueryingListener ( ) {
+		// when a listener is notified and already queries further events proactively
+		
+		SlowMockListener l = new SlowMockListener(100);
+		
+		// make sure we're synchronously updated with the latest events
+		es.subscribe(new EventStreamConsistentAppendListener<MockDomainEvent>() {
+			@Override
+			public void eventsAppended(List<? extends Event<MockDomainEvent>> events) {
+				if ( events.getLast().reference().position() <= 4 ) { // assume we won't "query" the last one ...
+					l.mockLastQueried(events.getLast().reference());
+				}
+			}
+		});
+		
+		es.subscribe(l);
+		
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none()));
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("2"), Tags.none()));
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("3"), Tags.none()));
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("4"), Tags.none()));
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("5"), Tags.none()));
+		
+		await()
+			.atMost(Duration.ofMillis(5000))
+				.with()
+		    	.pollInterval(Duration.ofMillis(100))
+		    .until(() -> (l.lastReference()!=null) && (5 == l.lastReference().position()));
+
+		assertEquals(5, l.lastReference().position()); // check that the listener has seen the last event 
+		assertEquals(2, l.counter()); // on first call, listener "queries" (=mocked) the rest of the events up until 4, then only notif for 5 needed
 	}
 
 	@Override
@@ -355,6 +390,7 @@ class SlowMockListener implements EventStreamEventuallyConsistentAppendListener 
 	
 	private AtomicInteger counter = new AtomicInteger();
 	private AtomicReference<EventReference> lastReference = new AtomicReference<>();
+	private EventReference lastQueried;
 	private int delayMs;
 	
 	public SlowMockListener ( int delayMs ) {
@@ -362,14 +398,25 @@ class SlowMockListener implements EventStreamEventuallyConsistentAppendListener 
 	}
 	
 	@Override
-	public void eventsAppended(EventReference atLeastUntil) {
+	public EventReference eventsAppended(EventReference atLeastUntil) {
 //		System.out.println("notified by %s until %d".formatted(Thread.currentThread().threadId(), atLeastUntil.position()));
 		try {
 			Thread.sleep(delayMs);
 		} catch (InterruptedException e) {
 		}
-		lastReference.set(atLeastUntil);
+		if ( lastReference.get() == null || (atLeastUntil.position() > lastReference.get().position()) ) {
+			lastReference.set(atLeastUntil);
+		}
 		counter.incrementAndGet();
+		return lastQueried==null?atLeastUntil:lastQueried;
+	}
+	
+	public void mockLastQueried ( EventReference lastQueried ) {
+		this.lastQueried = lastQueried;
+		if ( lastReference.get() == null || ( lastQueried.position() > lastReference.get().position() ) ) {
+			System.out.println("lr = " + lastQueried);
+			lastReference.set(lastQueried);
+		}
 	}
 	
 	public int counter ( ) {

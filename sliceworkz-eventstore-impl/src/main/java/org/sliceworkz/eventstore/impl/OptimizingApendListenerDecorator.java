@@ -23,6 +23,29 @@ import java.util.concurrent.locks.ReentrantLock;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
 
+/**
+ * Decorator that optimizes event append notifications by batching and deduplicating them.
+ * <p>
+ * This decorator wraps an {@link EventStreamEventuallyConsistentAppendListener} and optimizes
+ * notification delivery by:
+ * <ul>
+ *   <li>Batching multiple rapid notifications into a single call to the delegate listener</li>
+ *   <li>Skipping redundant notifications when events have already been processed</li>
+ *   <li>Ensuring only one notification is in progress at a time</li>
+ *   <li>Tracking the maximum event position seen and notifying with the highest position</li>
+ *   <li>Respecting the listener's reported actual processing position to avoid redundant work</li>
+ * </ul>
+ * <p>
+ * The decorator maintains thread-safe state tracking to handle concurrent append operations
+ * efficiently. When multiple threads trigger notifications simultaneously, only one proceeds
+ * while others register their target positions for batch processing.
+ * <p>
+ * The optimization leverages the return value of {@link EventStreamEventuallyConsistentAppendListener#eventsAppended(EventReference)}
+ * to track what the delegate listener has actually processed, allowing it to skip notifications
+ * for positions already handled.
+ *
+ * @see EventStreamEventuallyConsistentAppendListener
+ */
 public class OptimizingApendListenerDecorator implements EventStreamEventuallyConsistentAppendListener {
     private final EventStreamEventuallyConsistentAppendListener delegate;
     private final ReentrantLock lock;
@@ -30,6 +53,11 @@ public class OptimizingApendListenerDecorator implements EventStreamEventuallyCo
     private final AtomicReference<EventReference> nextEventReference;
     private volatile boolean updateInProgress;
     
+    /**
+     * Creates a new optimizing decorator for the given delegate listener.
+     *
+     * @param delegate the listener to decorate with optimization logic; must not be null
+     */
     public OptimizingApendListenerDecorator(EventStreamEventuallyConsistentAppendListener delegate) {
         this.delegate = delegate;
         this.lock = new ReentrantLock();
@@ -37,23 +65,39 @@ public class OptimizingApendListenerDecorator implements EventStreamEventuallyCo
         this.nextEventReference = new AtomicReference<>();
         this.updateInProgress = false;
     }
-    
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * This implementation optimizes notification delivery by:
+     * <ul>
+     *   <li>Skipping notifications for positions already processed by the delegate</li>
+     *   <li>Batching concurrent notifications into a single delegate call with the highest position</li>
+     *   <li>Ensuring only one notification to the delegate is in progress at any time</li>
+     * </ul>
+     * <p>
+     * The method returns the {@code atLeastUntil} parameter, as the actual processing position
+     * is tracked from the delegate's return value and used internally for optimization.
+     *
+     * @param atLeastUntil reference to at least the last appended event
+     * @return the {@code atLeastUntil} parameter
+     */
     @Override
-    public void eventsAppended ( EventReference atLeastUntil ) {
+    public EventReference eventsAppended ( EventReference atLeastUntil ) {
         if ((lastNotifiedReference.get() != null) && ( atLeastUntil.position() <= lastNotifiedReference.get().position()) ) {
-            return;
+            return atLeastUntil;
         }
         
         // Update target to maximum position seen
         nextEventReference.updateAndGet(current -> (current == null || (current.position() < atLeastUntil.position()))? atLeastUntil:current);
         
         if (!lock.tryLock()) {
-            return; // Someone else is handling it
+            return atLeastUntil; // Someone else is handling it
         }
         
         try {
             if (updateInProgress) {
-                return; // Update in progress, target already registered
+                return atLeastUntil; // Update in progress, target already registered
             }
             
             notifyDecoratedListener();
@@ -61,6 +105,8 @@ public class OptimizingApendListenerDecorator implements EventStreamEventuallyCo
         } finally {
             lock.unlock();
         }
+        
+        return atLeastUntil;
     }
     
     private void notifyDecoratedListener() {
@@ -75,8 +121,9 @@ public class OptimizingApendListenerDecorator implements EventStreamEventuallyCo
             lock.unlock();
             
             try {
-                delegate.eventsAppended(target);
-                lastNotifiedReference.set(target);
+                EventReference lastSeenByDelegate = delegate.eventsAppended(target);
+                // fail-safe: in case a listener return null, we ignore this value and just assume "seen until target"
+                lastNotifiedReference.set(lastSeenByDelegate==null||target.position()>lastSeenByDelegate.position()?target:lastSeenByDelegate);
             } finally {
                 lock.lock();
                 updateInProgress = false;

@@ -122,6 +122,29 @@ public interface EventSink<DOMAIN_EVENT_TYPE> {
 	List<Event<DOMAIN_EVENT_TYPE>> append ( AppendCriteria appendCriteria, List<EphemeralEvent<? extends DOMAIN_EVENT_TYPE>> events );
 
 	/**
+	 * Appends a list of events to a specific stream with conditional logic based on append criteria.
+	 * <p>
+	 * This method allows appending events to a different stream than the one this EventSink is bound to,
+	 * provided the target stream is compatible (either the same stream or a concretization of an anyPurpose stream).
+	 * This is useful when working with wildcard streams that need to append to specific stream instances.
+	 * <p>
+	 * The target stream must be compatible with this EventSink's stream ID, meaning either:
+	 * <ul>
+	 *   <li>The streams are exactly the same</li>
+	 *   <li>This EventSink is bound to an anyPurpose stream and the target stream concretizes it with a specific purpose</li>
+	 * </ul>
+	 *
+	 * @param appendCriteria the criteria determining whether the append should proceed
+	 * @param events the list of ephemeral events to append
+	 * @param streamToAppendTo the specific stream ID to append the events to
+	 * @return a list of fully-formed Events with assigned references and metadata
+	 * @throws OptimisticLockingException if append criteria are violated (new relevant facts detected)
+	 * @throws IllegalArgumentException if the target stream is not compatible with this EventSink's stream ID, or if the target stream is read-only
+	 * @see #append(AppendCriteria, List)
+	 */
+	List<Event<DOMAIN_EVENT_TYPE>> append ( AppendCriteria appendCriteria, List<EphemeralEvent<? extends DOMAIN_EVENT_TYPE>> events, EventStreamId streamToAppendTo );
+
+	/**
 	 * Appends a single event to the stream with conditional logic based on append criteria.
 	 * <p>
 	 * Convenience method for appending a single event. Delegates to {@link #append(AppendCriteria, List)}

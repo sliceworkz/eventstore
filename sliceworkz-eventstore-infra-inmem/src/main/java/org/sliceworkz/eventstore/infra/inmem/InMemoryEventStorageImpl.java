@@ -25,6 +25,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -96,7 +97,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 
 	private String name;
 	private List<StoredEvent> eventlog = new LinkedList<>();
-	private List<EventStoreListener> listeners = new ArrayList<>();
+	private List<EventStoreListener> listeners = new CopyOnWriteArrayList<>();
 	private Map<String,EventReference> bookmarks = new HashMap<>();
 	private JsonMapper jsonMapper;
 	private Limit absoluteLimit;
@@ -194,7 +195,34 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	public synchronized Stream<StoredEvent> queryAfter (EventQuery query, Optional<EventStreamId> streamId, EventReference after, Limit limit, QueryDirection direction ) {
 		return queryFromOrAfter(query, streamId, limit, after, false, direction);
 	}
-	
+
+	/**
+	 * Core query method supporting both inclusive and exclusive reference-based queries.
+	 * <p>
+	 * This method provides the underlying implementation for both {@link #queryFrom(EventQuery, Optional, EventReference, Limit, QueryDirection)}
+	 * and {@link #queryAfter(EventQuery, Optional, EventReference, Limit, QueryDirection)} by allowing control over whether
+	 * the reference event itself is included in the results.
+	 * <p>
+	 * The method handles:
+	 * <ul>
+	 *   <li>Bidirectional traversal (forward/backward) of the event log</li>
+	 *   <li>Position-based skipping to start from the correct event</li>
+	 *   <li>Stream filtering based on the provided stream ID</li>
+	 *   <li>Event matching based on the query criteria</li>
+	 *   <li>Enforcement of both soft and absolute limits</li>
+	 * </ul>
+	 *
+	 * @param query the event query specifying which events to retrieve
+	 * @param streamId optional stream ID to filter events
+	 * @param limit soft limit on the number of results
+	 * @param reference the reference event to position from, or null to start from the beginning
+	 * @param includeReference true to include the reference event in results, false to start after it
+	 * @param direction the direction to traverse the event log (FORWARD or BACKWARD)
+	 * @return a Stream of StoredEvent instances matching the criteria
+	 * @throws EventStorageException if the result exceeds the configured absolute limit
+	 * @see #queryFrom(EventQuery, Optional, EventReference, Limit, QueryDirection)
+	 * @see #queryAfter(EventQuery, Optional, EventReference, Limit, QueryDirection)
+	 */
 	public synchronized Stream<StoredEvent> queryFromOrAfter (EventQuery query, Optional<EventStreamId> streamId, Limit limit, EventReference reference, boolean includeReference, QueryDirection direction ) {
 		Stream<StoredEvent> on;
 		
@@ -357,6 +385,22 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		listeners.forEach(l->l.notify(notification));
 	}
 
+	/**
+	 * Determines the effective limit to apply to a query based on both soft and absolute limits.
+	 * <p>
+	 * This method reconciles the soft limit (requested by the query) with the absolute limit
+	 * (configured at storage level) to determine the actual limit to enforce. The logic is:
+	 * <ul>
+	 *   <li>If no soft limit is set, use absolute limit + 1 (to detect violations), or no limit if absolute limit is also unset</li>
+	 *   <li>If no absolute limit is set, use the soft limit as-is</li>
+	 *   <li>If both are set and soft limit is within absolute limit, use the soft limit</li>
+	 *   <li>If soft limit exceeds absolute limit, throw an exception</li>
+	 * </ul>
+	 *
+	 * @param softLimit the limit requested by the query, or null/Limit.none() for no soft limit
+	 * @return the effective limit to apply, or Limit.none() if no limit should be enforced
+	 * @throws EventStorageException if the soft limit exceeds the configured absolute limit
+	 */
 	Limit effectiveLimit ( Limit softLimit ) {
 		Limit result;
 		if ( softLimit == null || softLimit.isNotSet() ) {
@@ -375,6 +419,15 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		return result;
 	}
 
+	/**
+	 * Returns the unique name identifier for this in-memory event storage instance.
+	 * <p>
+	 * The name is automatically generated based on the object's identity hash code in the format
+	 * "inmem-{hashcode}". This ensures each instance has a unique identifier for logging,
+	 * metrics tagging, and debugging purposes.
+	 *
+	 * @return the unique name of this storage instance
+	 */
 	@Override
 	public String name() {
 		return name;

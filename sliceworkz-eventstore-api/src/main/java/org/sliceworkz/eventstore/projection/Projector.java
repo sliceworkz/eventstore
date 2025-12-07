@@ -910,6 +910,7 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 
 		private BatchAwareProjection<CONSUMED_EVENT_TYPE> batchAwareProjection;
 		private boolean started;
+		private boolean failed;
 
 		/**
 		 * Creates a new Batch instance for the given projection.
@@ -952,6 +953,7 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 		void failBatchIfNeeded ( ) {
 			if ( batchAwareProjection != null && started ) {
 				batchAwareProjection.cancelBatch();
+				failed = true;
 			}
 		}
 
@@ -964,7 +966,7 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 		 * @param lastEventReference the reference of the last event processed, or empty if none
 		 */
 		void stopBatchIfNeeded ( Optional<EventReference> lastEventReference ) {
-			if ( batchAwareProjection != null && started ) {
+			if ( batchAwareProjection != null && started && !failed ) {
 				batchAwareProjection.afterBatch(lastEventReference);
 			}
 		}

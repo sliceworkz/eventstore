@@ -103,7 +103,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		
 		assertEquals(2, batchAwareProjection.counter()); // SecondDomainEvent type is left out by the query, so 2 processed, third failed
 		assertEquals(1, batchAwareProjection.beforeTriggered()); // single batch
-		assertEquals(1, batchAwareProjection.afterTriggered());  // equal amount expected
+		assertEquals(0, batchAwareProjection.afterTriggered());  // failed batches don't call after
 		assertEquals(1, batchAwareProjection.cancelTriggered()); // should be called because of exception  
 		
 		ProjectorMetrics accumulatedMetrics = batchAwareProjector.accumulatedMetrics();
@@ -120,8 +120,8 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		assertEquals("UNIT TEST FAKED PROBLEM WITH EVENT PROCESSING", e.getCause().getMessage());
 		
 		assertEquals(4, batchAwareProjection.counter()); // SecondDomainEvent type is left out by the query, so 2 processed, third failed each time
-		assertEquals(2, batchAwareProjection.beforeTriggered()); // single batch
-		assertEquals(2, batchAwareProjection.afterTriggered());  // equal amount expected
+		assertEquals(2, batchAwareProjection.beforeTriggered()); // second run
+		assertEquals(0, batchAwareProjection.afterTriggered());  // failed again
 		assertEquals(2, batchAwareProjection.cancelTriggered()); // should be called because of exception  
 		
 		accumulatedMetrics = batchAwareProjector.accumulatedMetrics();
@@ -146,7 +146,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		
 		assertEquals(2, batchAwareProjection.counter()); // SecondDomainEvent type is left out by the query, so 2 processed, third failed
 		assertEquals(2, batchAwareProjection.beforeTriggered()); // single batch
-		assertEquals(2, batchAwareProjection.afterTriggered());  // equal amount expected
+		assertEquals(1, batchAwareProjection.afterTriggered());  // one failed, doesn't call after then
 		assertEquals(1, batchAwareProjection.cancelTriggered()); // should be called because of exception  
 		
 		ProjectorMetrics accumulatedMetrics = batchAwareProjector.accumulatedMetrics();
@@ -165,7 +165,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		
 		assertEquals(2, batchAwareProjection.counter()); // SecondDomainEvent type is left out by the query, so 2 processed
 		assertEquals(3, batchAwareProjection.beforeTriggered()); // single batch
-		assertEquals(3, batchAwareProjection.afterTriggered());  // equal amount expected
+		assertEquals(1, batchAwareProjection.afterTriggered());  // second failed
 		assertEquals(2, batchAwareProjection.cancelTriggered()); // should be called because of exception  
 		
 		accumulatedMetrics = batchAwareProjector.accumulatedMetrics();

@@ -17,11 +17,11 @@
  */
 package org.sliceworkz.eventstore.stream;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.awaitility.Awaitility.*;
 
 import java.time.Duration;
 import java.util.Collections;
@@ -305,7 +305,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		    .atMost(Duration.ofMillis(5000))
 		    	.with()
 		    	.pollInterval(Duration.ofMillis(100))
-		    .until(() -> 5 == l.lastReference().position());
+		    .until(() -> l.lastReference() != null && ( 5 == l.lastReference().position() ));
 		
 		assertEquals(5, l.lastReference().position()); // check that the listener has seen the last event 
 		assertEquals(2, l.counter()); // initial one and last one
@@ -327,7 +327,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 	    	.atMost(Duration.ofMillis(5000))
 	    		.with()
 	    		.pollInterval(Duration.ofMillis(100))
-	    	.until(() -> 3 == l.lastReference().position()); // wait until 3 has been seen by listener
+	    	.until(() -> l.lastReference() != null && ( 3 == l.lastReference().position())); // wait until 3 has been seen by listener
 
 		// then append some extra events, this will force extra notification update calls
 

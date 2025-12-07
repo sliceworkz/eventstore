@@ -122,8 +122,9 @@ public class OptimizingApendListenerDecorator implements EventStreamEventuallyCo
             
             try {
                 EventReference lastSeenByDelegate = delegate.eventsAppended(target);
-                // fail-safe: in case a listener return null, we ignore this value and just assume "seen until target"
-                lastNotifiedReference.set(lastSeenByDelegate==null||target.position()>lastSeenByDelegate.position()?target:lastSeenByDelegate);
+                if ( lastSeenByDelegate != null ) {
+                	lastNotifiedReference.set(target.position()>lastSeenByDelegate.position()?target:lastSeenByDelegate);
+                }
             } finally {
                 lock.lock();
                 updateInProgress = false;

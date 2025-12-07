@@ -165,19 +165,16 @@ sealed interface RegistrationDomainEvent extends LearningDomainEvent {
         implements RegistrationDomainEvent {}
 }
 
-// Extend hierarchies to include registration events
 sealed interface StudentDomainEvent extends LearningDomainEvent {
     record StudentRegistered(String name) implements StudentDomainEvent {}
     record StudentNameChanged(String name) implements StudentDomainEvent {}
     record StudentUnsubscribed() implements StudentDomainEvent {}
-    // Inherits StudentSubscribedToCourse from RegistrationEvents
 }
 
 sealed interface CourseDomainEvent extends LearningDomainEvent {
     record CourseDefined(String name, int capacity) implements CourseDomainEvent {}
     record CourseCapacityUpdated(int newCapacity) implements CourseDomainEvent {}
     record CourseCancelled() implements CourseDomainEvent {}
-    // Inherits StudentSubscribedToCourse from RegistrationEvents
 }
 
 class Course implements EventWithMetaDataHandler<CourseDomainEvent> {

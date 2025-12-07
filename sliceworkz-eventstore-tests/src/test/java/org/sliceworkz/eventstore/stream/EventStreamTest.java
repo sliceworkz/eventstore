@@ -27,6 +27,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,6 +35,7 @@ import org.sliceworkz.eventstore.AbstractEventStoreTest;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventId;
+import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.mock.MockConsistentAppendListener;
@@ -285,10 +287,83 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		IllegalArgumentException e = assertThrows(IllegalArgumentException.class,()->otherStream.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FirstDomainEvent("1"), Tags.none()))));
 		assertEquals("cannot append to non-specific eventstream ", e.getMessage());
 	}
+	
+	@Test
+	void testNotificationsToSlowListener ( ) {
+		
+		SlowMockListener l = new SlowMockListener(100);
+		
+		es.subscribe(l);
+		
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none()));
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("2"), Tags.none()));
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("3"), Tags.none()));
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("4"), Tags.none()));
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("5"), Tags.none()));
+		
+		try {
+			Thread.sleep(1000);
+		} catch (InterruptedException e) {
+		}
+		
+		assertEquals(2, l.counter()); // initial one and last one
+	}
+	
+
+	@Test
+	void testNotificationsToSlowListenerInTwoPhases ( ) {
+		
+		SlowMockListener l = new SlowMockListener(100);
+		
+		es.subscribe(l);
+		
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none()));
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("2"), Tags.none()));
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("3"), Tags.none()));
+		
+		try {
+			Thread.sleep(1000);
+		} catch (InterruptedException e) {
+		}
+
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("4"), Tags.none()));
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("5"), Tags.none()));
+		
+		try {
+			Thread.sleep(1000);
+		} catch (InterruptedException e) {
+		}
+		
+		assertEquals(4, l.counter()); // initial one (calling thread), third (first thread second loop), fourth and fifth
+	}
 
 	@Override
 	public EventStorage createEventStorage() {
 		return InMemoryEventStorage.newBuilder().build();
 	}
 	
+}
+
+class SlowMockListener implements EventStreamEventuallyConsistentAppendListener {
+	
+	private AtomicInteger counter = new AtomicInteger();
+	private int delayMs;
+	
+	public SlowMockListener ( int delayMs ) {
+		this.delayMs = delayMs;
+	}
+	
+	@Override
+	public void eventsAppended(EventReference atLeastUntil) {
+//		System.out.println("notified by %s until %d".formatted(Thread.currentThread().threadId(), atLeastUntil.position()));
+		try {
+			Thread.sleep(delayMs);
+		} catch (InterruptedException e) {
+		}
+		counter.incrementAndGet();
+	}
+	
+	public int counter ( ) {
+		return counter.get();
+	}
 }

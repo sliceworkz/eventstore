@@ -118,7 +118,13 @@ public class EventStoreImpl implements EventStore {
 	 * Executor service using virtual threads for asynchronously notifying eventually consistent subscribers.
 	 * Named threads help with debugging and monitoring.
 	 */
-	private final ExecutorService executorService;
+	private final ExecutorService executorServiceForEventAppends;
+
+	/**
+	 * Executor service using virtual threads for asynchronously notifying eventually consistent subscribers.
+	 * Named threads help with debugging and monitoring.
+	 */
+	private final ExecutorService executorServiceForBookmarkUpdates;
 
 	/**
 	 * The Micrometer meter registry for collecting metrics and observability data.
@@ -155,7 +161,9 @@ public class EventStoreImpl implements EventStore {
 		this.meterRegistry = meterRegistry;
 		
 		ThreadFactory threadFactory = Thread.ofVirtual().name("eventually-consistent-listener-notifier/" + eventStorage.name()).factory();
-		this.executorService = Executors.newSingleThreadExecutor(threadFactory);
+		this.executorServiceForEventAppends = Executors.newThreadPerTaskExecutor(threadFactory);
+
+		this.executorServiceForBookmarkUpdates = Executors.newSingleThreadExecutor(threadFactory);
 	}
 
 	@Override
@@ -248,7 +256,7 @@ public class EventStoreImpl implements EventStore {
 
 		@Override
 		public void subscribe(EventStreamEventuallyConsistentAppendListener eventuallyConsistentSubscriber) {
-			this.eventuallyConsistentSubscribers.add(eventuallyConsistentSubscriber);
+			this.eventuallyConsistentSubscribers.add(new OptimizingApendListenerDecorator(eventuallyConsistentSubscriber));
 		}
 
 		@Override
@@ -364,7 +372,7 @@ public class EventStoreImpl implements EventStore {
 				LOGGER.debug("Must asynchronously notify {} eventually consistent clients of stream {} about append up until at least {}", eventuallyConsistentSubscribers.size(), eventStreamId, newEventsInStore.atLeastUntil());
 				
 				// schedule for execution on different thread to notify/interrupt any waiting eventual consistent processors 
-				executorService.execute( ( ) -> {
+				executorServiceForEventAppends.execute( ( ) -> {
 						LOGGER.debug("Notifying {} eventually consistent clients of stream {} about append up until at least {}", eventuallyConsistentSubscribers.size(), eventStreamId, newEventsInStore.atLeastUntil());
 						eventuallyConsistentSubscribers.stream().forEach(s->s.eventsAppended(newEventsInStore.atLeastUntil()));
 				});
@@ -376,7 +384,7 @@ public class EventStoreImpl implements EventStore {
 			LOGGER.debug("Must asynchronously notify {} eventually consistent bookmark listeners on {} of update for {} to {}", eventuallyConsistentSubscribers.size(), eventStreamId, bookmarkPlaced.reader(), bookmarkPlaced.bookmark());
 			
 			// schedule for execution on different thread to notify/interrupt any waiting eventual consistent processors 
-			executorService.execute( ( ) -> {
+			executorServiceForBookmarkUpdates.execute( ( ) -> {
 					LOGGER.debug("Notifying {} eventually consistent bookmark listeners on {} of update for {} to {}", eventuallyConsistentSubscribers.size(), eventStreamId, bookmarkPlaced.reader(), bookmarkPlaced.bookmark());
 					bookmarkSubscribers.stream().forEach(s->s.bookmarkUpdated(bookmarkPlaced.reader(), bookmarkPlaced.bookmark()));
 			});

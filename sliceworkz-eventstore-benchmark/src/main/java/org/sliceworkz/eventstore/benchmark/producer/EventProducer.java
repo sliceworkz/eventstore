@@ -19,6 +19,7 @@ package org.sliceworkz.eventstore.benchmark.producer;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Tags;
@@ -39,7 +40,7 @@ public abstract class EventProducer<EventType> implements Runnable {
 		int numberOfEventsInTransaction = 1;
 		List<EphemeralEvent<? extends EventType>> events = new ArrayList<>(numberOfEventsInTransaction);
 
-		String transaction = String.valueOf(System.currentTimeMillis());
+		String transaction = UUID.randomUUID().toString();
 		Tags tags = Tags.of("transaction", transaction);
 		
 		for ( int i = 0; i < numberOfEventsInTransaction; i++ ) {

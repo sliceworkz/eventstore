@@ -17,7 +17,7 @@
  */
 package org.sliceworkz.eventstore.benchmark.producer;
 
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.sliceworkz.eventstore.benchmark.BenchmarkEvent.SupplierEvent;
 import org.sliceworkz.eventstore.benchmark.BenchmarkEvent.SupplierEvent.SupplierRegistered;
@@ -30,7 +30,7 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
 public class SupplierEventProducer extends EventProducer<SupplierEvent> {
 
 	private EventStream<SupplierEvent> stream;
-	private AtomicInteger counter = new AtomicInteger();
+	private AtomicLong counter = new AtomicLong();
 
 	public SupplierEventProducer(EventStream<SupplierEvent> stream) {
 		this.stream = stream;
@@ -38,7 +38,8 @@ public class SupplierEventProducer extends EventProducer<SupplierEvent> {
 	
 	@Override
 	public EphemeralEvent<SupplierEvent> createEvent( Tags tags ) {
-		return Event.of(new SupplierRegistered("Supplier %d".formatted(counter.incrementAndGet())), tags);
+		long id = counter.incrementAndGet();
+		return Event.of(new SupplierRegistered("Supplier %d".formatted(id)), tags.merge(Tags.of("supplier",id)));
 	}
 
 	@Override

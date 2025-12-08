@@ -223,10 +223,9 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 		return runUntilInternal(until, false);
 	}
 
-	private ProjectorMetrics runUntilInternal ( EventReference until, boolean singleBatch ) {
+	private synchronized ProjectorMetrics runUntilInternal ( EventReference until, boolean singleBatch ) {
 		ProjectorRunResult result = new ProjectorRun().execute(until, singleBatch);
 		accumulatedMetrics = accumulatedMetrics.add(result.metrics());
-		
 		
 		if ( result.throwable() != null ) {
 			throw result.throwable();
@@ -337,9 +336,9 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 				if ( !lastEventReference.equals(lastReadAtStart)) {
 					es.placeBookmark(bookmarkReader, lastEventReference.get(), bookmarkTags);
 				}
+				LOGGER.debug("readmodel {} updated until {} with {} queries", projection, lastEventReference, queriesDone);
 			}
 			
-			LOGGER.debug("readmodel {} updated until {} with {} queries", projection, lastEventReference, queriesDone);
 			
 			return new ProjectorRunResult ( new ProjectorMetrics ( eventsStreamed, eventsHandled, queriesDone, lastEventReference==null?null:lastEventReference.orElse(null)), exception );
 		}

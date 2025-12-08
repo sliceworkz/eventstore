@@ -453,7 +453,7 @@ public interface PostgresEventStorage {
 				}
 			}
 			
-			var result = new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, meterRegistry);
+			var result = new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix);
 			if ( initializeDatabase ) {
 				result.initializeDatabase();
 			}

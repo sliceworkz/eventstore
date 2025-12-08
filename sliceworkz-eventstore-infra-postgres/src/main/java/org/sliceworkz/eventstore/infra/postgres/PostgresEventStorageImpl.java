@@ -61,8 +61,6 @@ import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 
-import io.micrometer.core.instrument.MeterRegistry;
-
 /**
  * PostgreSQL-backed implementation of the {@link EventStorage} interface.
  * <p>
@@ -121,11 +119,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private final DataSource dataSource;
 	private final DataSource monitoringDataSource;
 	private final Limit absoluteLimit;
-	/**
-	 * The Micrometer meter registry for collecting metrics and observability data.
-	 * Used to track event store operations such as appends, queries, and connection pool metrics.
-	 */
-	private final MeterRegistry meterRegistry;
 
 	private final List<WeakReference<EventStoreListener>> listeners = new CopyOnWriteArrayList<>();
 	private final ExecutorService executorService;
@@ -160,13 +153,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * @param meterRegistry the Micrometer meter registry for collecting observability metrics
 	 * @see PostgresEventStorage.Builder#build()
 	 */
-	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, MeterRegistry meterRegistry ) {
+	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix ) {
 		this.prefix = validatePrefix(prefix);
 		this.name = name;
 		this.dataSource = dataSource;
 		this.monitoringDataSource = monitoringDataSource;
 		this.absoluteLimit = absoluteLimit;
-		this.meterRegistry = meterRegistry;
 
 		this.executorService = Executors.newVirtualThreadPerTaskExecutor();
 	}

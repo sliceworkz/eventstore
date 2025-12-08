@@ -41,6 +41,7 @@
 		
 		<logback.version>1.5.21</logback.version>
 		<loki-logback.version>2.0.1</loki-logback.version>
+		
 	</properties>
 	
 	<dependencies>
@@ -72,6 +73,12 @@
 	        <artifactId>loki-logback-appender</artifactId>
 	        <version>${loki-logback.version}</version>
 	    </dependency>
+	    
+		<dependency>
+		    <groupId>org.postgresql</groupId>
+		    <artifactId>postgresql</artifactId>
+		    <scope>compile</scope>
+		</dependency>
 	</dependencies>
 	
 	<build>

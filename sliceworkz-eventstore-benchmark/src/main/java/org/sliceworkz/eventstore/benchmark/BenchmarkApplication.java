@@ -18,16 +18,23 @@
 package org.sliceworkz.eventstore.benchmark;
 
 import java.time.Instant;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.benchmark.BenchmarkEvent.CustomerEvent;
 import org.sliceworkz.eventstore.benchmark.BenchmarkEvent.SupplierEvent;
+import org.sliceworkz.eventstore.benchmark.consumer.CustomerConsumer;
 import org.sliceworkz.eventstore.benchmark.producer.CustomerEventProducer;
+import org.sliceworkz.eventstore.benchmark.producer.EventProducer;
 import org.sliceworkz.eventstore.benchmark.producer.SupplierEventProducer;
 import org.sliceworkz.eventstore.events.EventReference;
-import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
+import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.stream.EventStream;
@@ -41,7 +48,8 @@ public class BenchmarkApplication {
 	public static void main ( String[] args ) throws InterruptedException {
 		LOGGER.info("starting...");
 		
-		EventStore eventStore = InMemoryEventStorage.newBuilder().buildStore();
+		//EventStore eventStore = InMemoryEventStorage.newBuilder().buildStore();
+		EventStore eventStore = PostgresEventStorage.newBuilder().prefix("benchmark_").initializeDatabase().buildStore();
 		
 		// stream-design: one single stream "customer", tags to differentiate
 		EventStream<CustomerEvent> customerStream = eventStore.getEventStream(EventStreamId.forContext("customer").defaultPurpose(), CustomerEvent.class);
@@ -59,44 +67,75 @@ public class BenchmarkApplication {
 			}
 		});
 
+		CustomerConsumer cc = new CustomerConsumer(customerStream);
+
 		CustomerEventProducer cep = new CustomerEventProducer(customerStream);
 		SupplierEventProducer sep = new SupplierEventProducer(supplierStream);
 		
+		
 		Instant start = Instant.now();
 		
-		new Thread(cep).start();
-		new Thread(cep).start();
-		new Thread(cep).start();
-		new Thread(cep).start();
-		new Thread(sep).start();
-		new Thread(sep).start();
-		new Thread(sep).start();
-		new Thread(sep).start();
+		ExecutorService executor = Executors.newFixedThreadPool(20);
+
+		int PARALLEL_WORKERS = 2;
+		long TOTAL_CONSUMER_EVENTS = PARALLEL_WORKERS * EventProducer.EVENTS_PER_PRODUCER; 
+
+		for ( int i = 0; i < PARALLEL_WORKERS; i++ ) {
+		    executor.submit(cep);
+		    executor.submit(sep);
+		}
+
+		executor.shutdown();
+		executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
 		
-		Runtime.getRuntime().addShutdownHook(new Thread() {
-			@Override
-			public void run ( ) {
-				Instant stop = Instant.now();
-
-				long durationMs = stop.toEpochMilli() - start.toEpochMilli();
-
-				
-				EventStream<Object> allStream = eventStore.getEventStream(EventStreamId.anyContext().anyPurpose());
-				allStream.queryBackwards(EventQuery.matchAll(),Limit.to(10)).forEach(System.out::println);
-				
-				long position = allStream.queryBackwards(EventQuery.matchAll(),Limit.to(1)).findFirst().get().reference().position();
-				
-				System.err.println("duration: %d".formatted(durationMs));
-				System.err.println("last pos: %d".formatted(position));
-
-				double eventsPerSecond = ((1000*position)/(double)durationMs);
-				
-				System.err.println("events/sec: %f".formatted(eventsPerSecond));
-
-				LOGGER.info("done.");
-			}
-		});
+		for ( int i = 0; i < 10; i++ ) {
+			System.err.println("====================================================================================================");
+		}
 		
+		System.out.println("CUSTOMER EVENTS PROCESSED #1: %d (%d batches)".formatted(cc.getProjection().eventsProcessed(), cc.getProjection().batchesProcessed()));
+
+		Instant stopProduce = Instant.now();
+
+		long produceDurationMs = stopProduce.toEpochMilli() - start.toEpochMilli();
+
+		
+		EventStream<Object> allStream = eventStore.getEventStream(EventStreamId.anyContext().anyPurpose());
+		allStream.queryBackwards(EventQuery.matchAll(),Limit.to(10)).forEach(System.out::println);
+		
+		long position = allStream.queryBackwards(EventQuery.matchAll(),Limit.to(1)).findFirst().get().reference().position();
+		
+		System.err.println("duration: %d".formatted(produceDurationMs));
+		System.err.println("last pos: %d".formatted(position));
+
+		double producedEventsPerSec = ((1000*position)/(double)produceDurationMs);
+		
+		System.err.println("events/sec produced: %f".formatted(producedEventsPerSec));
+
+		System.out.println("CUSTOMER EVENTS PROCESSED #2: %d (%d batches)".formatted(cc.getProjection().eventsProcessed(), cc.getProjection().batchesProcessed()));
+		
+		// while read side hasn't kept up
+		if ( cc.getProjection().eventsProcessed() < TOTAL_CONSUMER_EVENTS ) {
+			cc.runProjector(); // TODO how to better do this?
+			System.out.println("CUSTOMER EVENTS PROCESSED #3: %d (%d batches)".formatted(cc.getProjection().eventsProcessed(), cc.getProjection().batchesProcessed()));
+		}
+
+		if ( cc.getProjection().eventsProcessed() < TOTAL_CONSUMER_EVENTS ) {
+			System.err.println("== COUNT NOT OK ! ==================================================================================");
+			System.err.println("== COUNT NOT OK ! ==================================================================================");
+			System.err.println("== COUNT NOT OK ! ==================================================================================");
+		}
+		
+		Instant stopConsume = Instant.now();
+
+		long consumeDurationMs = stopConsume.toEpochMilli() - start.toEpochMilli();
+
+		double consumedEventsPerSec = ((1000*position)/(double)consumeDurationMs);
+		
+		System.err.println("events/sec consumed: %f".formatted(consumedEventsPerSec));
+
+		System.out.println("received notifications: %d".formatted(cc.recievedAppendNotifications()));
+
+		LOGGER.info("done.");
 	}
 	
 }

@@ -28,7 +28,7 @@ import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
 public class CustomerEventProducer extends EventProducer<CustomerEvent> {
-
+	
 	private EventStream<CustomerEvent> stream;
 	
 	private AtomicLong counter = new AtomicLong();

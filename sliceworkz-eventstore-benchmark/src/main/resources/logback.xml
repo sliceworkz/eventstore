@@ -45,17 +45,19 @@
             <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
-<!--
+
 	<appender name="FILE" class="ch.qos.logback.core.FileAppender">
-		<file>standaloneApp.log</file>
+		<file>readmodel.log</file>
 		<encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
 	    	<pattern>%d{HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n</pattern>
 		</encoder>
 	</appender>  
--->
+
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>
-        <appender-ref ref="LOKI"/>
-    </root>
+        <!--<appender-ref ref="LOKI"/>-->
+    </root>  
+    
+    <logger name="com.github.loki4j" level="WARN"/>
 
 </configuration>

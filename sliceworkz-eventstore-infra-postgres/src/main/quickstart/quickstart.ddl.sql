@@ -90,8 +90,7 @@ BEGIN
             'streamContext', NEW.stream_context,
             'streamPurpose', NEW.stream_purpose,
             'eventPosition', NEW.event_position,
-            'eventId', NEW.event_id,
-            'eventType', NEW.event_type
+            'eventId', NEW.event_id
         )::text
     );
     RETURN NEW;

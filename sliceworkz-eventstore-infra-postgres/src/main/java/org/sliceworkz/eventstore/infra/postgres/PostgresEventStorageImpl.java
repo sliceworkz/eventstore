@@ -967,7 +967,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 	}
 	
-	record EventAppendedPostgresNotification ( String streamContext, String streamPurpose, long eventPosition, String eventId, String eventType ) { 
+	record EventAppendedPostgresNotification ( String streamContext, String streamPurpose, long eventPosition, String eventId ) { 
 		public AppendsToEventStoreNotification toNotification ( ) {
 			return new AppendsToEventStoreNotification ( 
 					EventStreamId.forContext(streamContext).withPurpose(streamPurpose),

@@ -18,8 +18,6 @@
 package org.sliceworkz.eventstore.benchmark;
 
 import java.time.Instant;
-import java.util.Arrays;
-import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -30,8 +28,8 @@ import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.benchmark.BenchmarkEvent.CustomerEvent;
 import org.sliceworkz.eventstore.benchmark.BenchmarkEvent.SupplierEvent;
 import org.sliceworkz.eventstore.benchmark.consumer.CustomerConsumer;
+import org.sliceworkz.eventstore.benchmark.consumer.SupplierConsumer;
 import org.sliceworkz.eventstore.benchmark.producer.CustomerEventProducer;
-import org.sliceworkz.eventstore.benchmark.producer.EventProducer;
 import org.sliceworkz.eventstore.benchmark.producer.SupplierEventProducer;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
@@ -42,6 +40,11 @@ import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendLis
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
 public class BenchmarkApplication {
+
+	public static final int EVENTS_PER_PRODUCER_INSTANCE = 1000;
+	public static final int PARALLEL_WORKERS = 2;
+	public static final int TOTAL_CONSUMER_EVENTS = PARALLEL_WORKERS * EVENTS_PER_PRODUCER_INSTANCE; 
+	public static final int TOTAL_SUPPLIER_EVENTS = PARALLEL_WORKERS * EVENTS_PER_PRODUCER_INSTANCE; 
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(BenchmarkApplication.class);
 	
@@ -68,17 +71,15 @@ public class BenchmarkApplication {
 		});
 
 		CustomerConsumer cc = new CustomerConsumer(customerStream);
+		SupplierConsumer sc = new SupplierConsumer(supplierStream);
 
-		CustomerEventProducer cep = new CustomerEventProducer(customerStream);
-		SupplierEventProducer sep = new SupplierEventProducer(supplierStream);
+		CustomerEventProducer cep = new CustomerEventProducer(customerStream, EVENTS_PER_PRODUCER_INSTANCE);
+		SupplierEventProducer sep = new SupplierEventProducer(supplierStream, EVENTS_PER_PRODUCER_INSTANCE);
 		
 		
 		Instant start = Instant.now();
 		
 		ExecutorService executor = Executors.newFixedThreadPool(20);
-
-		int PARALLEL_WORKERS = 2;
-		long TOTAL_CONSUMER_EVENTS = PARALLEL_WORKERS * EventProducer.EVENTS_PER_PRODUCER; 
 
 		for ( int i = 0; i < PARALLEL_WORKERS; i++ ) {
 		    executor.submit(cep);
@@ -93,6 +94,7 @@ public class BenchmarkApplication {
 		}
 		
 		System.out.println("CUSTOMER EVENTS PROCESSED #1: %d (%d batches)".formatted(cc.getProjection().eventsProcessed(), cc.getProjection().batchesProcessed()));
+		System.out.println("SUPPLIER EVENTS PROCESSED #1: %d (%d batches)".formatted(sc.getProjection().eventsProcessed(), sc.getProjection().batchesProcessed()));
 
 		Instant stopProduce = Instant.now();
 
@@ -112,17 +114,23 @@ public class BenchmarkApplication {
 		System.err.println("events/sec produced: %f".formatted(producedEventsPerSec));
 
 		System.out.println("CUSTOMER EVENTS PROCESSED #2: %d (%d batches)".formatted(cc.getProjection().eventsProcessed(), cc.getProjection().batchesProcessed()));
+		System.out.println("SUPPLIER EVENTS PROCESSED #2 %d (%d batches)".formatted(sc.getProjection().eventsProcessed(), sc.getProjection().batchesProcessed()));
 		
 		// while read side hasn't kept up
 		if ( cc.getProjection().eventsProcessed() < TOTAL_CONSUMER_EVENTS ) {
 			cc.runProjector(); // TODO how to better do this?
 			System.out.println("CUSTOMER EVENTS PROCESSED #3: %d (%d batches)".formatted(cc.getProjection().eventsProcessed(), cc.getProjection().batchesProcessed()));
 		}
+		if ( sc.getProjection().eventsProcessed() < TOTAL_SUPPLIER_EVENTS ) {
+			sc.runProjector(); // TODO how to better do this?
+			System.out.println("SUPPLIER EVENTS PROCESSED #3 %d (%d batches)".formatted(sc.getProjection().eventsProcessed(), sc.getProjection().batchesProcessed()));
+		}
 
 		if ( cc.getProjection().eventsProcessed() < TOTAL_CONSUMER_EVENTS ) {
-			System.err.println("== COUNT NOT OK ! ==================================================================================");
-			System.err.println("== COUNT NOT OK ! ==================================================================================");
-			System.err.println("== COUNT NOT OK ! ==================================================================================");
+			System.err.println("== Customer Event COUNT NOT OK ! ==================================================================================");
+		}
+		if ( sc.getProjection().eventsProcessed() < TOTAL_SUPPLIER_EVENTS ) {
+			System.err.println("== Supplier Event COUNT NOT OK ! ==================================================================================");
 		}
 		
 		Instant stopConsume = Instant.now();

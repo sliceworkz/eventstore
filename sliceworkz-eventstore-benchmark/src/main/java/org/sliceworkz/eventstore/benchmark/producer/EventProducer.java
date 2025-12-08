@@ -29,11 +29,15 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
 
 public abstract class EventProducer<EventType> implements Runnable {
 	
-	public static final int EVENTS_PER_PRODUCER = 1000;
+	private int eventsToGenerate;
+	
+	public EventProducer ( int eventsToGenerate ) {
+		this.eventsToGenerate = eventsToGenerate;
+	}
 	
 	@Override
 	public void run() {
-		for ( int i = 0; i < EVENTS_PER_PRODUCER; i++ ) {
+		for ( int i = 0; i < eventsToGenerate; i++ ) {
 			appendEvents();
 		}
 	}

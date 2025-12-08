@@ -21,33 +21,33 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.sliceworkz.eventstore.benchmark.BenchmarkEvent.CustomerEvent;
+import org.sliceworkz.eventstore.benchmark.BenchmarkEvent.SupplierEvent;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
 
-public class CustomerConsumer implements EventStreamEventuallyConsistentAppendListener {
+public class SupplierConsumer implements EventStreamEventuallyConsistentAppendListener {
 
-	private static final Logger LOGGER = LoggerFactory.getLogger(CustomerConsumer.class);
+	private static final Logger LOGGER = LoggerFactory.getLogger(SupplierConsumer.class);
 	
-	private CustomerEventProjection projection = new CustomerEventProjection();
-	private Projector<CustomerEvent> projector;
+	private SupplierEventProjection projection = new SupplierEventProjection();
+	private Projector<SupplierEvent> projector;
 	private AtomicLong recievedAppendNotifications = new AtomicLong();
 	
-	public CustomerConsumer ( EventStream<CustomerEvent> stream ) {
-		this.projector = Projector.<CustomerEvent>newBuilder()
+	public SupplierConsumer ( EventStream<SupplierEvent> stream ) {
+		this.projector = Projector.<SupplierEvent>newBuilder()
 			.from(stream)
 			.towards(projection)
 			.bookmarkProgress()
-				.withReader("customer-projector")
+				.withReader("supplier-projector")
 				.readBeforeFirstExecution()
 				.done()
 			.build();
 		stream.subscribe(this);
 	}
 	
-	public CustomerEventProjection getProjection ( ) {
+	public SupplierEventProjection getProjection ( ) {
 		return projection;
 	}
 
@@ -60,7 +60,7 @@ public class CustomerConsumer implements EventStreamEventuallyConsistentAppendLi
 	public EventReference runProjector ( ) {
 		EventReference from = projector.accumulatedMetrics().lastEventReference();
 		EventReference to = projector.run().lastEventReference();
-		LOGGER.info("C\t" + (from==null?"-":from.position()) + "\t" + to.position());
+		LOGGER.info("S\t" + (from==null?"-":from.position()) + "\t" + to.position());
 		return to;
 	}
 	

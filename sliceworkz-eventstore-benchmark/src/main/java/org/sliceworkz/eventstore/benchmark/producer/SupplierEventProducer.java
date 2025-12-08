@@ -32,7 +32,8 @@ public class SupplierEventProducer extends EventProducer<SupplierEvent> {
 	private EventStream<SupplierEvent> stream;
 	private AtomicLong counter = new AtomicLong();
 
-	public SupplierEventProducer(EventStream<SupplierEvent> stream) {
+	public SupplierEventProducer(EventStream<SupplierEvent> stream, int eventsToGenerate ) {
+		super(eventsToGenerate);
 		this.stream = stream;
 	}
 	

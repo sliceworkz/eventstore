@@ -36,7 +36,7 @@
 		<maven.minimal-version>3.6.3</maven.minimal-version>
 		
 		<maven.maven-pgp-plugin.version>3.2.8</maven.maven-pgp-plugin.version>
-		<maven.maven-versions-plugin.version>2.20.0</maven.maven-versions-plugin.version>
+		<maven.maven-versions-plugin.version>2.20.1</maven.maven-versions-plugin.version>
 		<maven.maven-enforcer-plugin.version>3.6.2</maven.maven-enforcer-plugin.version>
 		<maven.mycila-license-plugin.version>5.0.0</maven.mycila-license-plugin.version>
 		<maven.maven-central-publishing-plugin.version>0.9.0</maven.maven-central-publishing-plugin.version>

@@ -118,6 +118,34 @@ public record Tag ( String key, String value ) {
 	}
 
 	/**
+	 * Creates a tag with a key and an integer value.
+	 * <p>
+	 * This is a convenience method that converts the integer value to its string representation.
+	 * Useful for numeric identifiers such as customer IDs, order numbers, or counters.
+	 *
+	 * @param key the tag key
+	 * @param value the integer value to be converted to string
+	 * @return a new Tag with the specified key and the string representation of the value
+	 */
+	public static Tag of ( String key, int value ) {
+		return of(key,String.valueOf(value));
+	}
+
+	/**
+	 * Creates a tag with a key and a long value.
+	 * <p>
+	 * This is a convenience method that converts the long value to its string representation.
+	 * Useful for numeric identifiers such as timestamps, large IDs, or sequence numbers.
+	 *
+	 * @param key the tag key
+	 * @param value the long value to be converted to string
+	 * @return a new Tag with the specified key and the string representation of the value
+	 */
+	public static Tag of ( String key, long value ) {
+		return of(key,String.valueOf(value));
+	}
+
+	/**
 	 * Parses a tag from a string representation.
 	 * <p>
 	 * The string format is expected to be either:

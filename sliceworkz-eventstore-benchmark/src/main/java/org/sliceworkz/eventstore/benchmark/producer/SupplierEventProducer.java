@@ -33,13 +33,17 @@ public class SupplierEventProducer extends EventProducer<SupplierEvent> {
 	private AtomicInteger counter = new AtomicInteger();
 
 	public SupplierEventProducer(EventStream<SupplierEvent> stream) {
-		super(stream);
 		this.stream = stream;
 	}
 	
 	@Override
 	public EphemeralEvent<SupplierEvent> createEvent( Tags tags ) {
 		return Event.of(new SupplierRegistered("Supplier %d".formatted(counter.incrementAndGet())), tags);
+	}
+
+	@Override
+	public EventStream<SupplierEvent> getEventStream() {
+		return stream.withPurpose("" + counter.get());
 	}
 
 	@Override

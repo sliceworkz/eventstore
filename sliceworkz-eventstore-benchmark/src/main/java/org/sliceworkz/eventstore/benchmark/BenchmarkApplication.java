@@ -26,10 +26,12 @@ import org.sliceworkz.eventstore.benchmark.BenchmarkEvent.CustomerEvent;
 import org.sliceworkz.eventstore.benchmark.BenchmarkEvent.SupplierEvent;
 import org.sliceworkz.eventstore.benchmark.producer.CustomerEventProducer;
 import org.sliceworkz.eventstore.benchmark.producer.SupplierEventProducer;
+import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.stream.EventStream;
+import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
 public class BenchmarkApplication {
@@ -46,6 +48,16 @@ public class BenchmarkApplication {
 		
 		// stream-design: stream per supplier "supplier/<id>"
 		EventStream<SupplierEvent> supplierStream = eventStore.getEventStream(EventStreamId.forContext("supplier").anyPurpose(), SupplierEvent.class);
+
+		EventStream<SupplierEvent> supplier42Stream = eventStore.getEventStream(EventStreamId.forContext("supplier").withPurpose("42"), SupplierEvent.class);
+		supplier42Stream.subscribe(new EventStreamEventuallyConsistentAppendListener() {
+			@Override
+			public EventReference eventsAppended(EventReference atLeastUntil) {
+				System.err.println("-------> " + atLeastUntil);
+				System.err.println(supplier42Stream.getEventById(atLeastUntil.id()).get());
+				return atLeastUntil;
+			}
+		});
 
 		CustomerEventProducer cep = new CustomerEventProducer(customerStream);
 		SupplierEventProducer sep = new SupplierEventProducer(supplierStream);

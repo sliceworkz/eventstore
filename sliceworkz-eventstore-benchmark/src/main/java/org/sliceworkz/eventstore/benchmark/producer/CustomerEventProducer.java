@@ -34,7 +34,6 @@ public class CustomerEventProducer extends EventProducer<CustomerEvent> {
 	private AtomicInteger counter = new AtomicInteger();
 
 	public CustomerEventProducer(EventStream<CustomerEvent> stream) {
-		super(stream);
 		this.stream = stream;
 	}
 	
@@ -44,8 +43,13 @@ public class CustomerEventProducer extends EventProducer<CustomerEvent> {
 	}
 
 	@Override
+	public EventStream<CustomerEvent> getEventStream() {
+		return stream;
+	}
+
+	@Override
 	public EventStreamId getEventStreamId() {
 		return stream.id();
 	}
-
+	
 }

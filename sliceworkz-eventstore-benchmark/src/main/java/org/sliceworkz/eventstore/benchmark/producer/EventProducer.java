@@ -28,12 +28,6 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
 
 public abstract class EventProducer<EventType> implements Runnable {
 	
-	private EventStream<EventType> stream;
-	
-	public EventProducer ( EventStream<EventType> stream ) {
-		this.stream = stream;
-	}
-	
 	@Override
 	public void run() {
 		for ( int i = 0; i < 10000; i++ ) {
@@ -52,11 +46,14 @@ public abstract class EventProducer<EventType> implements Runnable {
 			events.add(createEvent(tags));
 		}
 		
-		stream.append(AppendCriteria.none(), events, getEventStreamId()); //.forEach(System.out::println);
+		getEventStream().append(AppendCriteria.none(), events); //.forEach(System.out::println);
+		//stream.append(AppendCriteria.none(), events, getEventStreamId()); //.forEach(System.out::println);
 	}
 	
 	public abstract EphemeralEvent<EventType> createEvent ( Tags tags );
 
-	public abstract EventStreamId getEventStreamId ( );
+	public abstract EventStream<EventType> getEventStream ( );
 	
+	public abstract EventStreamId getEventStreamId ( );
+
 }

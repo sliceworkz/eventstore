@@ -97,7 +97,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 public class InMemoryEventStorageImpl implements EventStorage {
 
 	private String name;
-	private List<StoredEvent> eventlog = new LinkedList<>();
+	private List<StoredEvent> eventlog = new CopyOnWriteArrayList<>();
 	private List<WeakReference<EventStoreListener>> listeners = new CopyOnWriteArrayList<>();
 	private Map<String,EventReference> bookmarks = new HashMap<>();
 	private JsonMapper jsonMapper;

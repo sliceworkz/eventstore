@@ -17,10 +17,21 @@
  */
 package org.sliceworkz.eventstore.benchmark;
 
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.Statement;
 import java.time.Instant;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+
+import javax.sql.DataSource;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,6 +43,7 @@ import org.sliceworkz.eventstore.benchmark.consumer.SupplierConsumer;
 import org.sliceworkz.eventstore.benchmark.producer.CustomerEventProducer;
 import org.sliceworkz.eventstore.benchmark.producer.SupplierEventProducer;
 import org.sliceworkz.eventstore.events.EventReference;
+import org.sliceworkz.eventstore.infra.postgres.DataSourceFactory;
 import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
@@ -70,7 +82,10 @@ public class BenchmarkApplication {
 			}
 		});
 
-		CustomerConsumer cc = new CustomerConsumer(customerStream);
+		DataSource dataSource = DataSourceFactory.fromConfiguration(DataSourceFactory.loadProperties());
+		initializeBenchmarkReadModel(dataSource);
+
+		CustomerConsumer cc = new CustomerConsumer(customerStream, dataSource);
 		SupplierConsumer sc = new SupplierConsumer(supplierStream);
 
 		CustomerEventProducer cep = new CustomerEventProducer(customerStream, EVENTS_PER_PRODUCER_INSTANCE);
@@ -89,21 +104,23 @@ public class BenchmarkApplication {
 		executor.shutdown();
 		executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
 		
+		Instant stopProduce = Instant.now();
+
+		cc.runProjector();
+		sc.runProjector();
+		
 		for ( int i = 0; i < 10; i++ ) {
 			System.err.println("====================================================================================================");
 		}
 		
-		System.out.println("CUSTOMER EVENTS PROCESSED #1: %d (%d batches)".formatted(cc.getProjection().eventsProcessed(), cc.getProjection().batchesProcessed()));
-		System.out.println("SUPPLIER EVENTS PROCESSED #1: %d (%d batches)".formatted(sc.getProjection().eventsProcessed(), sc.getProjection().batchesProcessed()));
-
-		Instant stopProduce = Instant.now();
+		System.out.println("CUSTOMER EVENTS PROCESSED : %d (%d batches)".formatted(cc.getProjection().eventsProcessed(), cc.getProjection().batchesProcessed()));
+		System.out.println("SUPPLIER EVENTS PROCESSED : %d (%d batches)".formatted(sc.getProjection().eventsProcessed(), sc.getProjection().batchesProcessed()));
 
 		long produceDurationMs = stopProduce.toEpochMilli() - start.toEpochMilli();
-
 		
 		EventStream<Object> allStream = eventStore.getEventStream(EventStreamId.anyContext().anyPurpose());
 		allStream.queryBackwards(EventQuery.matchAll(),Limit.to(10)).forEach(System.out::println);
-		
+
 		long position = allStream.queryBackwards(EventQuery.matchAll(),Limit.to(1)).findFirst().get().reference().position();
 		
 		System.err.println("duration: %d".formatted(produceDurationMs));
@@ -112,19 +129,6 @@ public class BenchmarkApplication {
 		double producedEventsPerSec = ((1000*position)/(double)produceDurationMs);
 		
 		System.err.println("events/sec produced: %f".formatted(producedEventsPerSec));
-
-		System.out.println("CUSTOMER EVENTS PROCESSED #2: %d (%d batches)".formatted(cc.getProjection().eventsProcessed(), cc.getProjection().batchesProcessed()));
-		System.out.println("SUPPLIER EVENTS PROCESSED #2 %d (%d batches)".formatted(sc.getProjection().eventsProcessed(), sc.getProjection().batchesProcessed()));
-		
-		// while read side hasn't kept up
-		if ( cc.getProjection().eventsProcessed() < TOTAL_CONSUMER_EVENTS ) {
-			cc.runProjector(); // TODO how to better do this?
-			System.out.println("CUSTOMER EVENTS PROCESSED #3: %d (%d batches)".formatted(cc.getProjection().eventsProcessed(), cc.getProjection().batchesProcessed()));
-		}
-		if ( sc.getProjection().eventsProcessed() < TOTAL_SUPPLIER_EVENTS ) {
-			sc.runProjector(); // TODO how to better do this?
-			System.out.println("SUPPLIER EVENTS PROCESSED #3 %d (%d batches)".formatted(sc.getProjection().eventsProcessed(), sc.getProjection().batchesProcessed()));
-		}
 
 		if ( cc.getProjection().eventsProcessed() < TOTAL_CONSUMER_EVENTS ) {
 			System.err.println("== Customer Event COUNT NOT OK ! ==================================================================================");
@@ -143,7 +147,129 @@ public class BenchmarkApplication {
 
 		System.out.println("received notifications: %d".formatted(cc.recievedAppendNotifications()));
 
+		report(dataSource);
+		
 		LOGGER.info("done.");
 	}
-	
+
+	private static void initializeBenchmarkReadModel(DataSource dataSource) {
+		LOGGER.info("Initializing benchmark_readmodel table...");
+		try (InputStream is = BenchmarkApplication.class.getClassLoader().getResourceAsStream("benchmark_readmodel.sql")) {
+			if (is == null) {
+				throw new RuntimeException("Could not find benchmark_readmodel.sql in classpath");
+			}
+
+			// Filter out comment lines before splitting by semicolon
+			String sql = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))
+				.lines()
+				.filter(line -> {
+					String trimmed = line.trim();
+					return !trimmed.isEmpty() && !trimmed.startsWith("--");
+				})
+				.collect(Collectors.joining("\n"));
+
+			try (Connection conn = dataSource.getConnection();
+			     Statement stmt = conn.createStatement()) {
+
+				// Execute the SQL (may contain multiple statements separated by semicolons)
+				for (String statement : sql.split(";")) {
+					String trimmed = statement.trim();
+					if (!trimmed.isEmpty()) {
+						stmt.execute(trimmed);
+					}
+				}
+
+				LOGGER.info("benchmark_readmodel table initialized successfully");
+			}
+		} catch (Exception e) {
+			LOGGER.error("Failed to initialize benchmark_readmodel table", e);
+			throw new RuntimeException("Failed to initialize benchmark_readmodel table", e);
+		}
+	}
+
+	public static void report (DataSource dataSource) {
+		LOGGER.info("reporting ...");
+
+		String query = """
+			SELECT
+			    COUNT(*) as total_events,
+			    AVG(EXTRACT(EPOCH FROM (r.processed_at - e.event_timestamp)) * 1000) as avg_latency_ms,
+			    MIN(EXTRACT(EPOCH FROM (r.processed_at - e.event_timestamp)) * 1000) as min_latency_ms,
+			    MAX(EXTRACT(EPOCH FROM (r.processed_at - e.event_timestamp)) * 1000) as max_latency_ms,
+			    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (r.processed_at - e.event_timestamp)) * 1000) as median_latency_ms,
+			    PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (r.processed_at - e.event_timestamp)) * 1000) as p90_latency_ms,
+			    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (r.processed_at - e.event_timestamp)) * 1000) as p95_latency_ms
+			FROM benchmark_events e
+			INNER JOIN benchmark_readmodel r ON e.event_position = r.event_position
+			""";
+
+		try (Connection conn = dataSource.getConnection();
+		     Statement stmt = conn.createStatement();
+		     ResultSet rs = stmt.executeQuery(query)) {
+
+			ResultSetMetaData metaData = rs.getMetaData();
+			int columnCount = metaData.getColumnCount();
+
+			// Calculate column widths
+			int[] columnWidths = new int[columnCount];
+			String[] columnNames = new String[columnCount];
+			String[][] values = new String[1][columnCount]; // Assuming single row result
+
+			// Get column names and initialize widths
+			for (int i = 0; i < columnCount; i++) {
+				columnNames[i] = metaData.getColumnName(i + 1);
+				columnWidths[i] = columnNames[i].length();
+			}
+
+			// Get values and update column widths
+			if (rs.next()) {
+				for (int i = 0; i < columnCount; i++) {
+					Object value = rs.getObject(i + 1);
+					String valueStr;
+					if (value == null) {
+						valueStr = "NULL";
+					} else if (value instanceof Number && !(value instanceof Long || value instanceof Integer)) {
+						valueStr = String.format("%.4f", ((Number) value).doubleValue());
+					} else {
+						valueStr = value.toString();
+					}
+					values[0][i] = valueStr;
+					columnWidths[i] = Math.max(columnWidths[i], valueStr.length());
+				}
+			}
+
+			// Print column headers
+			for (int i = 0; i < columnCount; i++) {
+				System.out.print(String.format("%-" + columnWidths[i] + "s", columnNames[i]));
+				if (i < columnCount - 1) {
+					System.out.print(" | ");
+				}
+			}
+			System.out.println();
+
+			// Print separator
+			for (int i = 0; i < columnCount; i++) {
+				System.out.print("-".repeat(columnWidths[i]));
+				if (i < columnCount - 1) {
+					System.out.print("-+-");
+				}
+			}
+			System.out.println();
+
+			// Print values
+			for (int i = 0; i < columnCount; i++) {
+				System.out.print(String.format("%-" + columnWidths[i] + "s", values[0][i]));
+				if (i < columnCount - 1) {
+					System.out.print(" | ");
+				}
+			}
+			System.out.println();
+
+			LOGGER.info("Report completed.");
+
+		} catch (Exception e) {
+			LOGGER.error("Failed to execute report query", e);
+			throw new RuntimeException("Failed to execute report query", e);
+		}
+	}
 }

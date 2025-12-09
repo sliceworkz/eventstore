@@ -19,6 +19,8 @@ package org.sliceworkz.eventstore.benchmark.consumer;
 
 import java.util.concurrent.atomic.AtomicLong;
 
+import javax.sql.DataSource;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.sliceworkz.eventstore.benchmark.BenchmarkEvent.CustomerEvent;
@@ -31,11 +33,12 @@ public class CustomerConsumer implements EventStreamEventuallyConsistentAppendLi
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(CustomerConsumer.class);
 	
-	private CustomerEventProjection projection = new CustomerEventProjection();
+	private CustomerEventProjection projection;
 	private Projector<CustomerEvent> projector;
 	private AtomicLong recievedAppendNotifications = new AtomicLong();
 	
-	public CustomerConsumer ( EventStream<CustomerEvent> stream ) {
+	public CustomerConsumer ( EventStream<CustomerEvent> stream, DataSource dataSource ) {
+		this.projection = new CustomerEventProjection(dataSource);
 		this.projector = Projector.<CustomerEvent>newBuilder()
 			.from(stream)
 			.towards(projection)

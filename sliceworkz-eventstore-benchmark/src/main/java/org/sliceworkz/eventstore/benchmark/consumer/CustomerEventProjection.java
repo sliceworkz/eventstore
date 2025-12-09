@@ -17,8 +17,13 @@
  */
 package org.sliceworkz.eventstore.benchmark.consumer;
 
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
+
+import javax.sql.DataSource;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,11 +34,20 @@ import org.sliceworkz.eventstore.projection.BatchAwareProjection;
 import org.sliceworkz.eventstore.query.EventQuery;
 
 public class CustomerEventProjection implements BatchAwareProjection<CustomerEvent> {
-	
+
 	private static final Logger LOGGER = LoggerFactory.getLogger(CustomerEventProjection.class);
+	private static final String INSERT_SQL = "INSERT INTO benchmark_readmodel (event_id, event_position) VALUES (?, ?)";
+
+	private final DataSource dataSource;
+	private Connection connection;
+	private PreparedStatement insertStatement;
 
 	private AtomicLong eventsProcessed = new AtomicLong();
 	private AtomicLong batchesProcessed = new AtomicLong();
+
+	public CustomerEventProjection(DataSource dataSource) {
+		this.dataSource = dataSource;
+	}
 	
 	public long eventsProcessed ( ) {
 		return eventsProcessed.get();
@@ -50,23 +64,67 @@ public class CustomerEventProjection implements BatchAwareProjection<CustomerEve
 
 	@Override
 	public void when(Event<CustomerEvent> eventWithMeta) {
-		long idx = eventsProcessed.incrementAndGet();
-//		LOGGER.info(""+idx + "\t" + eventWithMeta.reference().position() + "\t" + eventWithMeta.tags().tag("customer").get().value());
+		try {
+			insertStatement.setString(1, eventWithMeta.reference().id().value());
+			insertStatement.setLong(2, eventWithMeta.reference().position());
+			insertStatement.addBatch();
+			long idx = eventsProcessed.incrementAndGet();
+		} catch (SQLException e) {
+			LOGGER.error("Failed to insert event", e);
+			throw new RuntimeException("Failed to insert event", e);
+		}
 	}
 
 	@Override
 	public void beforeBatch() {
+		try {
+			connection = dataSource.getConnection();
+			connection.setAutoCommit(false);
+			insertStatement = connection.prepareStatement(INSERT_SQL);
+		} catch (SQLException e) {
+			LOGGER.error("Failed to start transaction", e);
+			throw new RuntimeException("Failed to start transaction", e);
+		}
 	}
 
 	@Override
 	public void cancelBatch() {
-		
+		try {
+			if (insertStatement != null) {
+				insertStatement.close();
+			}
+			if (connection != null) {
+				connection.rollback();
+				connection.close();
+			}
+		} catch (SQLException e) {
+			LOGGER.error("Failed to rollback transaction", e);
+			throw new RuntimeException("Failed to rollback transaction", e);
+		} finally {
+			insertStatement = null;
+			connection = null;
+		}
 	}
 
 	@Override
 	public void afterBatch(Optional<EventReference> lastEventReference) {
-//		System.out.println("processed: " + eventsProcessed());
-		batchesProcessed.incrementAndGet();
+		try {
+			if (insertStatement != null) {
+				insertStatement.executeBatch();
+				insertStatement.close();
+			}
+			if (connection != null) {
+				connection.commit();
+				connection.close();
+			}
+			batchesProcessed.incrementAndGet();
+		} catch (SQLException e) {
+			LOGGER.error("Failed to commit transaction", e);
+			throw new RuntimeException("Failed to commit transaction", e);
+		} finally {
+			insertStatement = null;
+			connection = null;
+		}
 	}
 	
 }

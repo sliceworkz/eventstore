@@ -142,7 +142,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * <ul>
 	 *   <li>Virtual thread executors for PostgreSQL LISTEN/NOTIFY monitoring</li>
 	 *   <li>Background monitors for event append and bookmark notifications</li>
-	 *   <li>Micrometer metrics collection for observability</li>
 	 * </ul>
 	 *
 	 * @param name the logical name for this storage instance (used in logging and monitoring)
@@ -150,7 +149,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * @param monitoringDataSource the JDBC DataSource for LISTEN/NOTIFY operations
 	 * @param absoluteLimit the absolute limit on query results, or {@link Limit#none()} for no limit
 	 * @param prefix the table name prefix (validated, or empty string for no prefix)
-	 * @param meterRegistry the Micrometer meter registry for collecting observability metrics
 	 * @see PostgresEventStorage.Builder#build()
 	 */
 	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix ) {

@@ -27,6 +27,7 @@ import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.stream.EventSource;
+import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
 
 /**
  * Processes a {@link Projection} by efficiently streaming events from an {@link EventSource} and applying them to the projection handler.
@@ -133,7 +134,7 @@ import org.sliceworkz.eventstore.stream.EventSource;
  * @see ProjectorMetrics
  * @see EventSource
  */
-public class Projector<CONSUMED_EVENT_TYPE> {
+public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyConsistentAppendListener {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(Projector.class);
 
@@ -970,6 +971,11 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 			}
 		}
 
+	}
+
+	@Override
+	public EventReference eventsAppended(EventReference atLeastUntil) {
+		return run().lastEventReference();
 	}
 	
 }

@@ -22,7 +22,7 @@
 ---- Eventstore database schema DDL
 ----
 ---- 
----- "" can be removed or replaced to allow multiple eventstores next to each other in one database schema
+---- "PREFIX" can be removed or replaced to allow multiple eventstores next to each other in one database schema
 ---- 
 
 
@@ -78,6 +78,22 @@ CREATE TABLE events (
 	    stream_purpose, 
 	    event_position
 	);
+
+
+---- LOCK BEFORE INSERT TO ENSURE POSITION AND COMMIT SEQUENCES ARE ALIGNED
+
+CREATE OR REPLACE FUNCTION lock_before_insert()
+RETURNS TRIGGER AS $$
+BEGIN
+  PERFORM pg_advisory_xact_lock(TG_RELID::int);
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER lock_trigger
+  BEFORE INSERT ON events
+  FOR EACH ROW
+  EXECUTE FUNCTION lock_before_insert();
 
 
 ---- EVENT APPEND NOTIFICATIONS

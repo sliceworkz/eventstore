@@ -715,7 +715,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 		sqlBuilder.append("RETURNING event_position, event_timestamp");
 		
 		
-		try ( Connection writeConnection = dataSource.getConnection(); PreparedStatement stmt = writeConnection.prepareStatement(sqlBuilder.toString())) {
+		try ( Connection writeConnection = dataSource.getConnection()) {
+			writeConnection.setAutoCommit(false);
+			
+			try ( PreparedStatement stmt = writeConnection.prepareStatement(sqlBuilder.toString()) ) {
 				// Set parameters
 				for (int i = 0; i < parameters.size(); i++) {
 					Object param = parameters.get(i);
@@ -749,11 +752,18 @@ public class PostgresEventStorageImpl implements EventStorage {
 						throw new OptimisticLockingException(appendCriteria.eventQuery(), appendCriteria.expectedLastEventReference());
 					}
 				}
+				writeConnection.commit();
 				
 				return storedEvents;
+			} catch (SQLException e) {
+				writeConnection.rollback();
+				throw new EventStorageException("SQLException during append", e);
+			}
+			
 		} catch (SQLException e) {
 			throw new EventStorageException("SQLException during append", e);
 		}
+			
 	}
 
 	@Override
@@ -835,6 +845,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			LOGGER.info("starting ...");
 			
 			String listenStatement = "LISTEN %sevent_appended;".formatted(prefix);
+			String unListenStatement = "UNLISTEN %sevent_appended;".formatted(prefix);
 			
 			while ( !stopped ) {
 
@@ -877,6 +888,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 				    	}
 				    }));
 
+					stmt.execute(unListenStatement);
+
 				} catch (SQLException e) {
 					if ( !stopped ) {
 						LOGGER.error(e.getMessage(), e);
@@ -910,6 +923,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			LOGGER.info("starting ...");
 			
 			String listenStatement = "LISTEN %sbookmark_placed;".formatted(prefix);
+			String unListenStatement = "UNLISTEN %sbookmark_placed;".formatted(prefix);
 			
 			JsonMapper jsonMapper = new JsonMapper ( );
 			
@@ -953,6 +967,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 				    		l.get().notify(n);
 				    	}
 				    }));
+				    
+					stmt.execute(unListenStatement);
 
 				} catch (SQLException e) {
 					if ( !stopped ) {

@@ -32,8 +32,8 @@ public class SupplierEventProducer extends EventProducer<SupplierEvent> {
 	private EventStream<SupplierEvent> stream;
 	private AtomicLong counter = new AtomicLong();
 
-	public SupplierEventProducer(EventStream<SupplierEvent> stream, int eventsToGenerate ) {
-		super(eventsToGenerate);
+	public SupplierEventProducer(EventStream<SupplierEvent> stream, int eventsToGenerate, int msWaitBetweenEvents ) {
+		super(eventsToGenerate, msWaitBetweenEvents);
 		this.stream = stream;
 	}
 	
@@ -45,7 +45,7 @@ public class SupplierEventProducer extends EventProducer<SupplierEvent> {
 
 	@Override
 	public EventStream<SupplierEvent> getEventStream() {
-		return stream.withPurpose("" + counter.get());
+		return stream; //.withPurpose("" + counter.get());
 	}
 
 	@Override

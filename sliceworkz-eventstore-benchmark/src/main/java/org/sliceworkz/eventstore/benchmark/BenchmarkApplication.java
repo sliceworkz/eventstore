@@ -53,10 +53,12 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
 
 public class BenchmarkApplication {
 
-	public static final int EVENTS_PER_PRODUCER_INSTANCE = 1000;
-	public static final int PARALLEL_WORKERS = 2;
-	public static final int TOTAL_CONSUMER_EVENTS = PARALLEL_WORKERS * EVENTS_PER_PRODUCER_INSTANCE; 
-	public static final int TOTAL_SUPPLIER_EVENTS = PARALLEL_WORKERS * EVENTS_PER_PRODUCER_INSTANCE; 
+	public static final int EVENTS_PER_PRODUCER_INSTANCE = 10000;
+	public static final int PARALLEL_WORKERS_CUSTOMER = 2;
+	public static final int PARALLEL_WORKERS_SUPPLIER = 2;
+	public static final int TOTAL_CONSUMER_EVENTS = PARALLEL_WORKERS_CUSTOMER * EVENTS_PER_PRODUCER_INSTANCE; 
+	public static final int TOTAL_SUPPLIER_EVENTS = PARALLEL_WORKERS_SUPPLIER * EVENTS_PER_PRODUCER_INSTANCE; 
+	public static final int MS_WAIT_BETWEEN_EVENTS = 5;
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(BenchmarkApplication.class);
 	
@@ -70,7 +72,7 @@ public class BenchmarkApplication {
 		EventStream<CustomerEvent> customerStream = eventStore.getEventStream(EventStreamId.forContext("customer").defaultPurpose(), CustomerEvent.class);
 		
 		// stream-design: stream per supplier "supplier/<id>"
-		EventStream<SupplierEvent> supplierStream = eventStore.getEventStream(EventStreamId.forContext("supplier").anyPurpose(), SupplierEvent.class);
+		EventStream<SupplierEvent> supplierStream = eventStore.getEventStream(EventStreamId.forContext("supplier").defaultPurpose(), SupplierEvent.class);
 
 		EventStream<SupplierEvent> supplier42Stream = eventStore.getEventStream(EventStreamId.forContext("supplier").withPurpose("42"), SupplierEvent.class);
 		supplier42Stream.subscribe(new EventStreamEventuallyConsistentAppendListener() {
@@ -85,24 +87,33 @@ public class BenchmarkApplication {
 		DataSource dataSource = DataSourceFactory.fromConfiguration(DataSourceFactory.loadProperties());
 		initializeBenchmarkReadModel(dataSource);
 
-		CustomerConsumer cc = new CustomerConsumer(customerStream, dataSource);
-		SupplierConsumer sc = new SupplierConsumer(supplierStream);
 
-		CustomerEventProducer cep = new CustomerEventProducer(customerStream, EVENTS_PER_PRODUCER_INSTANCE);
-		SupplierEventProducer sep = new SupplierEventProducer(supplierStream, EVENTS_PER_PRODUCER_INSTANCE);
+		CustomerConsumer cc = new CustomerConsumer(customerStream, dataSource);
+		SupplierConsumer sc = new SupplierConsumer(supplierStream, dataSource);
+
+		CustomerEventProducer cep = new CustomerEventProducer(customerStream, EVENTS_PER_PRODUCER_INSTANCE, MS_WAIT_BETWEEN_EVENTS);
+		SupplierEventProducer sep = new SupplierEventProducer(supplierStream, EVENTS_PER_PRODUCER_INSTANCE, MS_WAIT_BETWEEN_EVENTS);
 		
 		
 		Instant start = Instant.now();
 		
 		ExecutorService executor = Executors.newFixedThreadPool(20);
 
-		for ( int i = 0; i < PARALLEL_WORKERS; i++ ) {
+		for ( int i = 0; i < PARALLEL_WORKERS_CUSTOMER; i++ ) {
 		    executor.submit(cep);
+		}
+		for ( int i = 0; i < PARALLEL_WORKERS_SUPPLIER; i++ ) {
 		    executor.submit(sep);
 		}
 
 		executor.shutdown();
-		executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
+		
+		while ( !executor.isTerminated() ) {
+			long done = cc.getProjection().eventsProcessed() + sc.getProjection().eventsProcessed();
+			long total = TOTAL_CONSUMER_EVENTS + TOTAL_SUPPLIER_EVENTS;
+			System.out.print("Events: %d / %d \r".formatted(done, total));
+			executor.awaitTermination(1, TimeUnit.SECONDS);
+		}
 		
 		Instant stopProduce = Instant.now();
 
@@ -148,7 +159,8 @@ public class BenchmarkApplication {
 		System.out.println("received notifications: %d".formatted(cc.recievedAppendNotifications()));
 
 		report(dataSource);
-		
+		reportByTimeBucket(dataSource);
+
 		LOGGER.info("done.");
 	}
 
@@ -270,6 +282,109 @@ public class BenchmarkApplication {
 		} catch (Exception e) {
 			LOGGER.error("Failed to execute report query", e);
 			throw new RuntimeException("Failed to execute report query", e);
+		}
+	}
+
+	public static void reportByTimeBucket (DataSource dataSource) {
+		LOGGER.info("reporting by time bucket ...");
+
+		String query = """
+			SELECT
+			    DATE_TRUNC('second', e.event_timestamp) as time_bucket,
+			    COUNT(*) as total_events,
+			    AVG(EXTRACT(EPOCH FROM (r.processed_at - e.event_timestamp)) * 1000) as avg_latency_ms,
+			    MIN(EXTRACT(EPOCH FROM (r.processed_at - e.event_timestamp)) * 1000) as min_latency_ms,
+			    MAX(EXTRACT(EPOCH FROM (r.processed_at - e.event_timestamp)) * 1000) as max_latency_ms,
+			    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (r.processed_at - e.event_timestamp)) * 1000) as median_latency_ms,
+			    PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (r.processed_at - e.event_timestamp)) * 1000) as p90_latency_ms,
+			    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (r.processed_at - e.event_timestamp)) * 1000) as p95_latency_ms
+			FROM benchmark_events e
+			INNER JOIN benchmark_readmodel r ON e.event_position = r.event_position
+			GROUP BY DATE_TRUNC('second', e.event_timestamp)
+			ORDER BY time_bucket
+			""";
+
+		try (Connection conn = dataSource.getConnection();
+		     Statement stmt = conn.createStatement();
+		     ResultSet rs = stmt.executeQuery(query)) {
+
+			ResultSetMetaData metaData = rs.getMetaData();
+			int columnCount = metaData.getColumnCount();
+
+			// Calculate column widths - scan all rows first
+			int[] columnWidths = new int[columnCount];
+			String[] columnNames = new String[columnCount];
+			java.util.List<String[]> rows = new java.util.ArrayList<>();
+
+			// Get column names and initialize widths
+			for (int i = 0; i < columnCount; i++) {
+				columnNames[i] = metaData.getColumnName(i + 1);
+				columnWidths[i] = columnNames[i].length();
+			}
+
+			// Collect all rows and calculate column widths
+			while (rs.next()) {
+				String[] row = new String[columnCount];
+				for (int i = 0; i < columnCount; i++) {
+					Object value = rs.getObject(i + 1);
+					String valueStr;
+					if (value == null) {
+						valueStr = "NULL";
+					} else if (value instanceof Number && !(value instanceof Long || value instanceof Integer)) {
+						valueStr = String.format("%.4f", ((Number) value).doubleValue());
+					} else {
+						valueStr = value.toString();
+					}
+					row[i] = valueStr;
+					columnWidths[i] = Math.max(columnWidths[i], valueStr.length());
+				}
+				rows.add(row);
+			}
+
+			// Print separator before table
+			System.out.println();
+			System.out.println("=".repeat(120));
+			System.out.println("LATENCY REPORT BY TIME BUCKET");
+			System.out.println("=".repeat(120));
+
+			// Print column headers
+			for (int i = 0; i < columnCount; i++) {
+				System.out.print(String.format("%-" + columnWidths[i] + "s", columnNames[i]));
+				if (i < columnCount - 1) {
+					System.out.print(" | ");
+				}
+			}
+			System.out.println();
+
+			// Print separator
+			for (int i = 0; i < columnCount; i++) {
+				System.out.print("-".repeat(columnWidths[i]));
+				if (i < columnCount - 1) {
+					System.out.print("-+-");
+				}
+			}
+			System.out.println();
+
+			// Print all rows
+			for (String[] row : rows) {
+				for (int i = 0; i < columnCount; i++) {
+					System.out.print(String.format("%-" + columnWidths[i] + "s", row[i]));
+					if (i < columnCount - 1) {
+						System.out.print(" | ");
+					}
+				}
+				System.out.println();
+			}
+
+			System.out.println("=".repeat(120));
+			System.out.println("Total time buckets: " + rows.size());
+			System.out.println();
+
+			LOGGER.info("Time bucket report completed.");
+
+		} catch (Exception e) {
+			LOGGER.error("Failed to execute time bucket report query", e);
+			throw new RuntimeException("Failed to execute time bucket report query", e);
 		}
 	}
 }

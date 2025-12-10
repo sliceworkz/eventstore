@@ -63,7 +63,7 @@ public class CustomerConsumer implements EventStreamEventuallyConsistentAppendLi
 	public EventReference runProjector ( ) {
 		EventReference from = projector.accumulatedMetrics().lastEventReference();
 		EventReference to = projector.run().lastEventReference();
-		LOGGER.info("C\t" + (from==null?"-":from.position()) + "\t" + to.position());
+//		LOGGER.info("C\t" + (from==null?"-":from.position()) + "\t" + to.position());
 		return to;
 	}
 	

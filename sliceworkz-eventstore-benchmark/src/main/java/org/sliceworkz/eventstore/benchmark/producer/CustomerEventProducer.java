@@ -33,8 +33,8 @@ public class CustomerEventProducer extends EventProducer<CustomerEvent> {
 	
 	private AtomicLong counter = new AtomicLong();
 
-	public CustomerEventProducer(EventStream<CustomerEvent> stream, int eventsToGenerate ) {
-		super(eventsToGenerate);
+	public CustomerEventProducer(EventStream<CustomerEvent> stream, int eventsToGenerate, int msWaitBetweenEvents ) {
+		super(eventsToGenerate, msWaitBetweenEvents);
 		this.stream = stream;
 	}
 	

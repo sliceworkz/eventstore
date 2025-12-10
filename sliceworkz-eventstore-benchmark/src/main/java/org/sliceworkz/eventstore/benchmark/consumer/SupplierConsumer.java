@@ -19,6 +19,8 @@ package org.sliceworkz.eventstore.benchmark.consumer;
 
 import java.util.concurrent.atomic.AtomicLong;
 
+import javax.sql.DataSource;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.sliceworkz.eventstore.benchmark.BenchmarkEvent.SupplierEvent;
@@ -31,11 +33,12 @@ public class SupplierConsumer implements EventStreamEventuallyConsistentAppendLi
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(SupplierConsumer.class);
 	
-	private SupplierEventProjection projection = new SupplierEventProjection();
+	private SupplierEventProjection projection;
 	private Projector<SupplierEvent> projector;
 	private AtomicLong recievedAppendNotifications = new AtomicLong();
 	
-	public SupplierConsumer ( EventStream<SupplierEvent> stream ) {
+	public SupplierConsumer ( EventStream<SupplierEvent> stream, DataSource dataSource ) {
+		this.projection = new SupplierEventProjection(dataSource);
 		this.projector = Projector.<SupplierEvent>newBuilder()
 			.from(stream)
 			.towards(projection)
@@ -60,7 +63,8 @@ public class SupplierConsumer implements EventStreamEventuallyConsistentAppendLi
 	public EventReference runProjector ( ) {
 		EventReference from = projector.accumulatedMetrics().lastEventReference();
 		EventReference to = projector.run().lastEventReference();
-		LOGGER.info("S\t" + (from==null?"-":from.position()) + "\t" + to.position());
+//		LOGGER.info("S\t" + (from==null?"-":from.position()) + "\t" + (to==null?"-":to.position()));
+		
 		return to;
 	}
 	

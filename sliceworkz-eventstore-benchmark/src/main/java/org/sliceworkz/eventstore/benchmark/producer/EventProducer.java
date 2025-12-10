@@ -30,15 +30,23 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
 public abstract class EventProducer<EventType> implements Runnable {
 	
 	private int eventsToGenerate;
+	private int msWaitBetweenEvents;
 	
-	public EventProducer ( int eventsToGenerate ) {
+	public EventProducer ( int eventsToGenerate, int msWaitBetweenEvents ) {
 		this.eventsToGenerate = eventsToGenerate;
+		this.msWaitBetweenEvents = msWaitBetweenEvents;
 	}
 	
 	@Override
 	public void run() {
 		for ( int i = 0; i < eventsToGenerate; i++ ) {
 			appendEvents();
+			if ( msWaitBetweenEvents > 0 ) {
+				try {
+					Thread.sleep(msWaitBetweenEvents);
+				} catch (InterruptedException e) {
+				}
+			}
 		}
 	}
 	

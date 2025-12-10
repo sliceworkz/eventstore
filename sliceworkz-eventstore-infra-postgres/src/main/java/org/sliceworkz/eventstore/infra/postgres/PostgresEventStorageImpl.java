@@ -129,7 +129,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private static final int THIRTY_SECONDS = 30*1000;
 	public static final int WAIT_FOR_NOTIFICATIONS_TIMEOUT = THIRTY_SECONDS;
 
-	private static final String NO_PREFIX = "";
 	private static final int MAX_PREFIX_LENGTH = 32;
 
 	/**
@@ -845,7 +844,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 			LOGGER.info("starting ...");
 			
 			String listenStatement = "LISTEN %sevent_appended;".formatted(prefix);
-			String unListenStatement = "UNLISTEN %sevent_appended;".formatted(prefix);
 			
 			while ( !stopped ) {
 
@@ -888,8 +886,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 				    	}
 				    }));
 
-					stmt.execute(unListenStatement);
-
 				} catch (SQLException e) {
 					if ( !stopped ) {
 						LOGGER.error(e.getMessage(), e);
@@ -923,7 +919,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 			LOGGER.info("starting ...");
 			
 			String listenStatement = "LISTEN %sbookmark_placed;".formatted(prefix);
-			String unListenStatement = "UNLISTEN %sbookmark_placed;".formatted(prefix);
 			
 			JsonMapper jsonMapper = new JsonMapper ( );
 			
@@ -967,8 +962,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 				    		l.get().notify(n);
 				    	}
 				    }));
-				    
-					stmt.execute(unListenStatement);
 
 				} catch (SQLException e) {
 					if ( !stopped ) {

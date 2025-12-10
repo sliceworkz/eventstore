@@ -38,13 +38,14 @@ import org.slf4j.LoggerFactory;
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.benchmark.BenchmarkEvent.CustomerEvent;
 import org.sliceworkz.eventstore.benchmark.BenchmarkEvent.SupplierEvent;
-import org.sliceworkz.eventstore.benchmark.consumer.CustomerConsumer;
-import org.sliceworkz.eventstore.benchmark.consumer.SupplierConsumer;
+import org.sliceworkz.eventstore.benchmark.consumer.CustomerEventProjection;
+import org.sliceworkz.eventstore.benchmark.consumer.SupplierEventProjection;
 import org.sliceworkz.eventstore.benchmark.producer.CustomerEventProducer;
 import org.sliceworkz.eventstore.benchmark.producer.SupplierEventProducer;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.infra.postgres.DataSourceFactory;
 import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
+import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.stream.EventStream;
@@ -88,9 +89,31 @@ public class BenchmarkApplication {
 		initializeBenchmarkReadModel(dataSource);
 
 
-		CustomerConsumer cc = new CustomerConsumer(customerStream, dataSource);
-		SupplierConsumer sc = new SupplierConsumer(supplierStream, dataSource);
+		CustomerEventProjection customerProjection = new CustomerEventProjection(dataSource);
+		Projector<CustomerEvent> customerProjector = Projector.<CustomerEvent>newBuilder()
+			.from(customerStream)
+			.towards(customerProjection)
+			.bookmarkProgress()
+				.withReader("customer-projector")
+				.readBeforeFirstExecution()
+				.done()
+			.build();
+		customerStream.subscribe(customerProjector);
 
+		
+
+		SupplierEventProjection supplierProjection = new SupplierEventProjection(dataSource);
+		Projector<SupplierEvent> supplierProjector = Projector.<SupplierEvent>newBuilder()
+			.from(supplierStream)
+			.towards(supplierProjection)
+			.bookmarkProgress()
+				.withReader("supplier-projector")
+				.readBeforeFirstExecution()
+				.done()
+			.build();
+		customerStream.subscribe(supplierProjector);
+		
+		
 		CustomerEventProducer cep = new CustomerEventProducer(customerStream, EVENTS_PER_PRODUCER_INSTANCE, MS_WAIT_BETWEEN_EVENTS);
 		SupplierEventProducer sep = new SupplierEventProducer(supplierStream, EVENTS_PER_PRODUCER_INSTANCE, MS_WAIT_BETWEEN_EVENTS);
 		
@@ -109,7 +132,7 @@ public class BenchmarkApplication {
 		executor.shutdown();
 		
 		while ( !executor.isTerminated() ) {
-			long done = cc.getProjection().eventsProcessed() + sc.getProjection().eventsProcessed();
+			long done = customerProjector.accumulatedMetrics().eventsHandled() + supplierProjection.eventsProcessed();
 			long total = TOTAL_CONSUMER_EVENTS + TOTAL_SUPPLIER_EVENTS;
 			System.out.print("Events: %d / %d \r".formatted(done, total));
 			executor.awaitTermination(1, TimeUnit.SECONDS);
@@ -117,15 +140,15 @@ public class BenchmarkApplication {
 		
 		Instant stopProduce = Instant.now();
 
-		cc.runProjector();
-		sc.runProjector();
+		customerProjector.run(); // to process the last events (as producing events has stopped now, still will run to the last one) 
+		supplierProjector.run();
 		
 		for ( int i = 0; i < 10; i++ ) {
 			System.err.println("====================================================================================================");
 		}
 		
-		System.out.println("CUSTOMER EVENTS PROCESSED : %d (%d batches)".formatted(cc.getProjection().eventsProcessed(), cc.getProjection().batchesProcessed()));
-		System.out.println("SUPPLIER EVENTS PROCESSED : %d (%d batches)".formatted(sc.getProjection().eventsProcessed(), sc.getProjection().batchesProcessed()));
+		System.out.println("CUSTOMER EVENTS PROCESSED : %d (%d batches)".formatted(customerProjection.eventsProcessed(), customerProjection.batchesProcessed()));
+		System.out.println("SUPPLIER EVENTS PROCESSED : %d (%d batches)".formatted(supplierProjection.eventsProcessed(), supplierProjection.batchesProcessed()));
 
 		long produceDurationMs = stopProduce.toEpochMilli() - start.toEpochMilli();
 		
@@ -141,10 +164,10 @@ public class BenchmarkApplication {
 		
 		System.err.println("events/sec produced: %f".formatted(producedEventsPerSec));
 
-		if ( cc.getProjection().eventsProcessed() < TOTAL_CONSUMER_EVENTS ) {
+		if ( customerProjection.eventsProcessed() < TOTAL_CONSUMER_EVENTS ) {
 			System.err.println("== Customer Event COUNT NOT OK ! ==================================================================================");
 		}
-		if ( sc.getProjection().eventsProcessed() < TOTAL_SUPPLIER_EVENTS ) {
+		if ( supplierProjection.eventsProcessed() < TOTAL_SUPPLIER_EVENTS ) {
 			System.err.println("== Supplier Event COUNT NOT OK ! ==================================================================================");
 		}
 		
@@ -156,7 +179,7 @@ public class BenchmarkApplication {
 		
 		System.err.println("events/sec consumed: %f".formatted(consumedEventsPerSec));
 
-		System.out.println("received notifications: %d".formatted(cc.recievedAppendNotifications()));
+//		System.out.println("received notifications: %d".formatted(cc.recievedAppendNotifications()));
 
 		report(dataSource);
 		reportByTimeBucket(dataSource);

@@ -73,7 +73,7 @@ public class BenchmarkApplication {
 		EventStream<CustomerEvent> customerStream = eventStore.getEventStream(EventStreamId.forContext("customer").defaultPurpose(), CustomerEvent.class);
 		
 		// stream-design: stream per supplier "supplier/<id>"
-		EventStream<SupplierEvent> supplierStream = eventStore.getEventStream(EventStreamId.forContext("supplier").defaultPurpose(), SupplierEvent.class);
+		EventStream<SupplierEvent> supplierStream = eventStore.getEventStream(EventStreamId.forContext("supplier").anyPurpose(), SupplierEvent.class);
 
 		EventStream<SupplierEvent> supplier42Stream = eventStore.getEventStream(EventStreamId.forContext("supplier").withPurpose("42"), SupplierEvent.class);
 		supplier42Stream.subscribe(new EventStreamEventuallyConsistentAppendListener() {

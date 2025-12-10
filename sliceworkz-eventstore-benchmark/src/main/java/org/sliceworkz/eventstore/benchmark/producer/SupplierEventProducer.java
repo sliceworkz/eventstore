@@ -45,7 +45,7 @@ public class SupplierEventProducer extends EventProducer<SupplierEvent> {
 
 	@Override
 	public EventStream<SupplierEvent> getEventStream() {
-		return stream; //.withPurpose("" + counter.get());
+		return stream.withPurpose("" + counter.get());
 	}
 
 	@Override

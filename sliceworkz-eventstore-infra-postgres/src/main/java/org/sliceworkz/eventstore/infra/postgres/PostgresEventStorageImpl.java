@@ -878,7 +878,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 							}
 				        }
 				    }
-
 				    // notify all listeners - with max 1 notification per message stream (the most recent one)
 				    notificationsPerStream.values().forEach(n->listeners.forEach(l->{
 				    	if ( l.get() != null ) {

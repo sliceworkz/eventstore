@@ -242,33 +242,6 @@ public class EventStoreImpl implements EventStore {
 		}
 		
 		@Override
-		public EventStreamImpl<EVENT_TYPE> withPurpose ( String purpose ) {
-			EventStreamId newStreamId = eventStreamId.withPurpose(purpose);
-			if ( newStreamId.equals(eventStreamId)) {
-				return this;
-			} else {
-				if ( ! newStreamId.concretizes(eventStreamId)) {
-					throw new IllegalArgumentException("stream %s is not a concretization of %s".formatted(newStreamId, eventStreamId));
-				}
-				EventStreamImpl<EVENT_TYPE> result = new EventStreamImpl<>(eventStorage, newStreamId, serde);
-	
-				// copy all needed data (not the listeners)
-				result.meterAppend = meterAppend;
-				result.meterAppendEvent = meterAppendEvent;
-				result.meterAppendOptimisticLock = meterAppendOptimisticLock;
-				result.meterQuery = meterQuery;
-				result.meterQueryEvent = meterQueryEvent;
-				result.meterGetEvent = meterGetEvent;
-				result.meterBookmarkPlace = meterBookmarkPlace;
-				result.meterBookmarkGet = meterBookmarkGet;
-				result.timerQuery = this.timerQuery;
-				result.timerAppend = this.timerAppend;
-				
-				return result;
-			}
-		}
-		
-		@Override
 		public EventStreamId id() {
 			return eventStreamId;
 		}

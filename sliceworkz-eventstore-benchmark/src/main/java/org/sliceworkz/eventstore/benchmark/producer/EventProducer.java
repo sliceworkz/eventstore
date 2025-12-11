@@ -29,10 +29,12 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
 
 public abstract class EventProducer<EventType> implements Runnable {
 	
+	private EventStream<EventType> eventStream;
 	private int eventsToGenerate;
 	private int msWaitBetweenEvents;
 	
-	public EventProducer ( int eventsToGenerate, int msWaitBetweenEvents ) {
+	public EventProducer ( EventStream<EventType> eventStream, int eventsToGenerate, int msWaitBetweenEvents ) {
+		this.eventStream = eventStream;
 		this.eventsToGenerate = eventsToGenerate;
 		this.msWaitBetweenEvents = msWaitBetweenEvents;
 	}
@@ -61,14 +63,11 @@ public abstract class EventProducer<EventType> implements Runnable {
 			events.add(createEvent(tags));
 		}
 		
-		getEventStream().append(AppendCriteria.none(), events); //.forEach(System.out::println);
-		//stream.append(AppendCriteria.none(), events, getEventStreamId()); //.forEach(System.out::println);
+		eventStream.append(AppendCriteria.none(), events, getEventStreamId());
 	}
 	
 	public abstract EphemeralEvent<EventType> createEvent ( Tags tags );
 
-	public abstract EventStream<EventType> getEventStream ( );
-	
 	public abstract EventStreamId getEventStreamId ( );
 
 }

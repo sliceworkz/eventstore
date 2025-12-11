@@ -42,6 +42,7 @@ import org.sliceworkz.eventstore.benchmark.consumer.CustomerEventProjection;
 import org.sliceworkz.eventstore.benchmark.consumer.SupplierEventProjection;
 import org.sliceworkz.eventstore.benchmark.producer.CustomerEventProducer;
 import org.sliceworkz.eventstore.benchmark.producer.SupplierEventProducer;
+import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.infra.postgres.DataSourceFactory;
 import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
@@ -85,7 +86,7 @@ public class BenchmarkApplication {
 			}
 		});
 
-		DataSource dataSource = DataSourceFactory.fromConfiguration(DataSourceFactory.loadProperties());
+		DataSource dataSource = DataSourceFactory.fromConfiguration("pooled");
 		initializeBenchmarkReadModel(dataSource);
 
 
@@ -155,7 +156,11 @@ public class BenchmarkApplication {
 		EventStream<Object> allStream = eventStore.getEventStream(EventStreamId.anyContext().anyPurpose());
 		allStream.queryBackwards(EventQuery.matchAll(),Limit.to(10)).forEach(System.out::println);
 
-		long position = allStream.queryBackwards(EventQuery.matchAll(),Limit.to(1)).findFirst().get().reference().position();
+		long position = 0;
+		EventReference at = allStream.queryBackwards(EventQuery.matchAll(),Limit.to(1)).map(Event::reference).findFirst().orElse(null);
+		if(at != null ) {
+			position = at.position();
+		}
 		
 		System.err.println("duration: %d".formatted(produceDurationMs));
 		System.err.println("last pos: %d".formatted(position));

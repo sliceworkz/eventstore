@@ -29,12 +29,11 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
 
 public class SupplierEventProducer extends EventProducer<SupplierEvent> {
 
-	private EventStream<SupplierEvent> stream;
+	private EventStreamId eventStreamId;
 	private AtomicLong counter = new AtomicLong();
 
-	public SupplierEventProducer(EventStream<SupplierEvent> stream, int eventsToGenerate, int msWaitBetweenEvents ) {
-		super(eventsToGenerate, msWaitBetweenEvents);
-		this.stream = stream;
+	public SupplierEventProducer(EventStream<SupplierEvent> eventStream, int eventsToGenerate, int msWaitBetweenEvents ) {
+		super(eventStream, eventsToGenerate, msWaitBetweenEvents);
 	}
 	
 	@Override
@@ -44,12 +43,7 @@ public class SupplierEventProducer extends EventProducer<SupplierEvent> {
 	}
 
 	@Override
-	public EventStream<SupplierEvent> getEventStream() {
-		return stream.withPurpose("" + counter.get());
-	}
-
-	@Override
 	public EventStreamId getEventStreamId() {
-		return stream.id().withPurpose("" + counter.get());
+		return eventStreamId.withPurpose("" + counter.get());
 	}
 }

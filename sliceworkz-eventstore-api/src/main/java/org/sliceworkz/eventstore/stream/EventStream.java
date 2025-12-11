@@ -87,7 +87,5 @@ public interface EventStream<DOMAIN_EVENT_TYPE> extends EventSource<DOMAIN_EVENT
 	 * @return the EventStreamId for this stream
 	 */
 	EventStreamId id ( );
-	
-	EventStream<DOMAIN_EVENT_TYPE> withPurpose ( String purpose );
 
 }

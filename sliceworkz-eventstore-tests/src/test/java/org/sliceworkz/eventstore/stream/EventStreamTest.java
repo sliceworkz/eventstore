@@ -222,7 +222,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		
 		waitBecauseOfEventualConsistency();
 		
-		assertEquals(1, appendListener.count()); // we want only one notification for both events (about the last one)
+		// could be one or two events, depending whether the second gets processed before the first was offered to the appendListener or not. 
 		assertEquals(events.getLast().reference(), appendListener.lastReference());
 		
 		

@@ -28,10 +28,8 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
@@ -863,9 +861,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 	
 						PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // wait at max so long for new notifications, then ask new connection and start waiting again
 						
-						// we'll only keep one notification (the last one) per eventstream to notify our listeners - avoids duplicate activity
-						Map<EventStreamId,AppendsToEventStoreNotification> notificationsPerStream = new HashMap<>();
-						
 					    if (notifications != null) {
 					        for (PGNotification notification : notifications) {
 					            LOGGER.debug("Received: {}", notification.getParameter());
@@ -873,20 +868,17 @@ public class PostgresEventStorageImpl implements EventStorage {
 									EventAppendedPostgresNotification msg = JSONMAPPER.readValue(notification.getParameter(), EventAppendedPostgresNotification.class);
 									AppendsToEventStoreNotification aesn = msg.toNotification();
 									
-									notificationsPerStream.put(aesn.stream(), aesn); // this replaces any previous ones on the same eventstream
+									listeners.forEach(l->{
+								    	if ( l.get() != null ) {
+								    		l.get().notify(aesn);
+								    	}
+									});
 									
 								} catch (JsonProcessingException e) {
 									LOGGER.error("Failed to parse notification: " + e.getMessage());
 								}
 					        }
 					    }
-					    // notify all listeners - with max 1 notification per message stream (the most recent one)
-					    notificationsPerStream.values().forEach(n->listeners.forEach(l->{
-					    	if ( l.get() != null ) {
-					    		l.get().notify(n);
-					    	}
-					    }));
-				    
 					}
 					
 				} catch (SQLException e) {
@@ -941,9 +933,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 					
 						LOGGER.debug("checking for notifications...");
 	
-						// we'll only keep one notification (the last one) per reader to notify our listeners - avoids duplicate activity
-						Map<String,BookmarkPlacedNotification> bookmarkPlacedsPerReader = new HashMap<>();
-	
 						PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // wait at for new notifications, then ask new connection and start waiting again 
 					    if (notifications != null) {
 					        for (PGNotification notification : notifications) {
@@ -953,21 +942,17 @@ public class PostgresEventStorageImpl implements EventStorage {
 									BookmarkPlacedNotification bpn = msg.toNotification();
 									LOGGER.debug("notification: " + bpn);
 									
-									bookmarkPlacedsPerReader.put(bpn.reader(), bpn);
+									listeners.forEach(l->{
+								    	if ( l.get() != null  ) {
+								    		l.get().notify(bpn);
+								    	}
+								    });
 									
 								} catch (JsonProcessingException e) {
 									LOGGER.error("Failed to parse notification: " + e.getMessage());
 								}
 					        }
 					    }
-	
-					    // notify all listeners - with max 1 notification per message stream (the most recent one)
-					    bookmarkPlacedsPerReader.values().forEach(n->listeners.forEach(l->{
-					    	if ( l.get() != null  ) {
-					    		l.get().notify(n);
-					    	}
-					    }));
-					    
 					}
 
 				} catch (SQLException e) {

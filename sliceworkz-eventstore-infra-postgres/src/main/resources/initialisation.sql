@@ -67,6 +67,7 @@ CREATE TABLE PREFIX_events (
 	    stream_context, 
 	    stream_purpose, 
 	    event_type,
+	    event_tx,
 	    event_position  -- for ordering
 	);
 	
@@ -79,6 +80,7 @@ CREATE TABLE PREFIX_events (
 	CREATE INDEX PREFIX_idx_events_stream_position ON PREFIX_events (
 	    stream_context, 
 	    stream_purpose, 
+	    event_tx,
 	    event_position
 	);
 

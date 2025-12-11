@@ -67,6 +67,7 @@ CREATE TABLE events (
 	    stream_context, 
 	    stream_purpose, 
 	    event_type,
+	    event_tx,
 	    event_position  -- for ordering
 	);
 	
@@ -79,6 +80,7 @@ CREATE TABLE events (
 	CREATE INDEX idx_events_stream_position ON events (
 	    stream_context, 
 	    stream_purpose, 
+	    event_tx,
 	    event_position
 	);
 

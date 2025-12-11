@@ -544,9 +544,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 		
 		// Order by position
-		sqlBuilder.append(" ORDER BY event_position");
 		if ( direction == QueryDirection.BACKWARD ) {
-			sqlBuilder.append(" DESC");
+			sqlBuilder.append(" ORDER BY event_tx DESC, event_position DESC");
+		} else {
+			sqlBuilder.append(" ORDER BY event_tx, event_position ");
+			
 		}
 		
 		Limit effectiveLimit = effectiveLimit(limit);

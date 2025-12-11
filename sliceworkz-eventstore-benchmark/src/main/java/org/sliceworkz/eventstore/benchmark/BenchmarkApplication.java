@@ -55,7 +55,7 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
 
 public class BenchmarkApplication {
 
-	public static final int EVENTS_PER_PRODUCER_INSTANCE = 10000;
+	public static final int EVENTS_PER_PRODUCER_INSTANCE = 100000;
 	public static final int PARALLEL_WORKERS_CUSTOMER = 2;
 	public static final int PARALLEL_WORKERS_SUPPLIER = 2;
 	public static final int TOTAL_CONSUMER_EVENTS = PARALLEL_WORKERS_CUSTOMER * EVENTS_PER_PRODUCER_INSTANCE; 

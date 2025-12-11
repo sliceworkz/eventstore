@@ -44,7 +44,7 @@ public class CustomerEventProducer extends EventProducer<CustomerEvent> {
 	}
 
 	@Override
-	public EventStreamId getEventStreamId() {
+	public EventStreamId getEventStreamId(EphemeralEvent<CustomerEvent> event) {
 		return eventStreamId;
 	}
 	

@@ -34,6 +34,8 @@ public class SupplierEventProducer extends EventProducer<SupplierEvent> {
 
 	public SupplierEventProducer(EventStream<SupplierEvent> eventStream, int eventsToGenerate, int msWaitBetweenEvents ) {
 		super(eventStream, eventsToGenerate, msWaitBetweenEvents);
+		this.eventStreamId = eventStream.id();
+				
 	}
 	
 	@Override
@@ -43,7 +45,7 @@ public class SupplierEventProducer extends EventProducer<SupplierEvent> {
 	}
 
 	@Override
-	public EventStreamId getEventStreamId() {
-		return eventStreamId.withPurpose("" + counter.get());
+	public EventStreamId getEventStreamId(EphemeralEvent<SupplierEvent> event) {
+		return eventStreamId.withPurpose(event.tags().tag("supplier").get().value());
 	}
 }

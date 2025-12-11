@@ -857,34 +857,38 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 					PGConnection pgConn = monitorConnection.unwrap(PGConnection.class);
 
-					LOGGER.debug("checking for notifications...");
-
-					PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // wait at max so long for new notifications, then ask new connection and start waiting again
+					while ( !stopped ) { // loop using a single connnection without returning it to the pool
 					
-					// we'll only keep one notification (the last one) per eventstream to notify our listeners - avoids duplicate activity
-					Map<EventStreamId,AppendsToEventStoreNotification> notificationsPerStream = new HashMap<>();
+						LOGGER.debug("checking for notifications...");
+	
+						PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // wait at max so long for new notifications, then ask new connection and start waiting again
+						
+						// we'll only keep one notification (the last one) per eventstream to notify our listeners - avoids duplicate activity
+						Map<EventStreamId,AppendsToEventStoreNotification> notificationsPerStream = new HashMap<>();
+						
+					    if (notifications != null) {
+					        for (PGNotification notification : notifications) {
+					            LOGGER.debug("Received: {}", notification.getParameter());
+					            try {
+									EventAppendedPostgresNotification msg = JSONMAPPER.readValue(notification.getParameter(), EventAppendedPostgresNotification.class);
+									AppendsToEventStoreNotification aesn = msg.toNotification();
+									
+									notificationsPerStream.put(aesn.stream(), aesn); // this replaces any previous ones on the same eventstream
+									
+								} catch (JsonProcessingException e) {
+									LOGGER.error("Failed to parse notification: " + e.getMessage());
+								}
+					        }
+					    }
+					    // notify all listeners - with max 1 notification per message stream (the most recent one)
+					    notificationsPerStream.values().forEach(n->listeners.forEach(l->{
+					    	if ( l.get() != null ) {
+					    		l.get().notify(n);
+					    	}
+					    }));
+				    
+					}
 					
-				    if (notifications != null) {
-				        for (PGNotification notification : notifications) {
-				            LOGGER.debug("Received: {}", notification.getParameter());
-				            try {
-								EventAppendedPostgresNotification msg = JSONMAPPER.readValue(notification.getParameter(), EventAppendedPostgresNotification.class);
-								AppendsToEventStoreNotification aesn = msg.toNotification();
-								
-								notificationsPerStream.put(aesn.stream(), aesn); // this replaces any previous ones on the same eventstream
-								
-							} catch (JsonProcessingException e) {
-								LOGGER.error("Failed to parse notification: " + e.getMessage());
-							}
-				        }
-				    }
-				    // notify all listeners - with max 1 notification per message stream (the most recent one)
-				    notificationsPerStream.values().forEach(n->listeners.forEach(l->{
-				    	if ( l.get() != null ) {
-				    		l.get().notify(n);
-				    	}
-				    }));
-
 				} catch (SQLException e) {
 					if ( !stopped ) {
 						LOGGER.error(e.getMessage(), e);
@@ -933,34 +937,38 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 					PGConnection pgConn = monitorConnection.unwrap(PGConnection.class);
 
-					LOGGER.debug("checking for notifications...");
-
-					// we'll only keep one notification (the last one) per reader to notify our listeners - avoids duplicate activity
-					Map<String,BookmarkPlacedNotification> bookmarkPlacedsPerReader = new HashMap<>();
-
-					PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // wait at for new notifications, then ask new connection and start waiting again 
-				    if (notifications != null) {
-				        for (PGNotification notification : notifications) {
-				            LOGGER.debug("Received: " + notification.getParameter());
-				            try {
-								BookmarkPlacedPostgresNotification msg = jsonMapper.readValue(notification.getParameter(), BookmarkPlacedPostgresNotification.class);
-								BookmarkPlacedNotification bpn = msg.toNotification();
-								LOGGER.debug("notification: " + bpn);
-								
-								bookmarkPlacedsPerReader.put(bpn.reader(), bpn);
-								
-							} catch (JsonProcessingException e) {
-								LOGGER.error("Failed to parse notification: " + e.getMessage());
-							}
-				        }
-				    }
-
-				    // notify all listeners - with max 1 notification per message stream (the most recent one)
-				    bookmarkPlacedsPerReader.values().forEach(n->listeners.forEach(l->{
-				    	if ( l.get() != null  ) {
-				    		l.get().notify(n);
-				    	}
-				    }));
+					while ( !stopped ) { // reuse single connection without returing in tot the pool
+					
+						LOGGER.debug("checking for notifications...");
+	
+						// we'll only keep one notification (the last one) per reader to notify our listeners - avoids duplicate activity
+						Map<String,BookmarkPlacedNotification> bookmarkPlacedsPerReader = new HashMap<>();
+	
+						PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // wait at for new notifications, then ask new connection and start waiting again 
+					    if (notifications != null) {
+					        for (PGNotification notification : notifications) {
+					            LOGGER.debug("Received: " + notification.getParameter());
+					            try {
+									BookmarkPlacedPostgresNotification msg = jsonMapper.readValue(notification.getParameter(), BookmarkPlacedPostgresNotification.class);
+									BookmarkPlacedNotification bpn = msg.toNotification();
+									LOGGER.debug("notification: " + bpn);
+									
+									bookmarkPlacedsPerReader.put(bpn.reader(), bpn);
+									
+								} catch (JsonProcessingException e) {
+									LOGGER.error("Failed to parse notification: " + e.getMessage());
+								}
+					        }
+					    }
+	
+					    // notify all listeners - with max 1 notification per message stream (the most recent one)
+					    bookmarkPlacedsPerReader.values().forEach(n->listeners.forEach(l->{
+					    	if ( l.get() != null  ) {
+					    		l.get().notify(n);
+					    	}
+					    }));
+					    
+					}
 
 				} catch (SQLException e) {
 					if ( !stopped ) {

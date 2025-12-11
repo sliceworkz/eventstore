@@ -487,8 +487,15 @@ public class PostgresEventStorageImpl implements EventStorage {
 		
 		StringBuilder sqlBuilder = new StringBuilder();
 		sqlBuilder.append(
-			"SELECT event_position, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags FROM %sevents WHERE 1=1".formatted(prefix)
+			"""
+				SELECT event_position, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags 
+				FROM %sevents 
+				WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot()) 
+			""".formatted(prefix)
 			);
+		// pg_snapshot_xmin(pg_current_snapshot()) makes sure we don't read data committed by transaction that were started
+		// after ones that are still running (race condition which would drop some events otherwise)
+		// great insight found in the blogpost by Oskar Dudycz (https://event-driven.io/en/ordering_in_postgres_outbox/)  
 		
 		List<Object> parameters = new ArrayList<>();
 		

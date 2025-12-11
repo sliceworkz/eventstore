@@ -34,9 +34,12 @@ CREATE TABLE PREFIX_events (
       -- Primary key and positioning
       event_position BIGSERIAL PRIMARY KEY,
 
+      -- XID8 transaction id
+      event_tx xid8 DEFAULT pg_current_xact_id()::xid8,
+
       -- Event identification
       event_id UUID NOT NULL UNIQUE,
-
+      
       -- Stream identification  
       stream_context TEXT NOT NULL,
       stream_purpose TEXT NOT NULL DEFAULT '',
@@ -78,22 +81,6 @@ CREATE TABLE PREFIX_events (
 	    stream_purpose, 
 	    event_position
 	);
-
-
----- LOCK BEFORE INSERT TO ENSURE POSITION AND COMMIT SEQUENCES ARE ALIGNED
-
-CREATE OR REPLACE FUNCTION PREFIX_lock_before_insert()
-RETURNS TRIGGER AS $$
-BEGIN
-  PERFORM pg_advisory_xact_lock(TG_RELID::int);
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER lock_trigger
-  BEFORE INSERT ON PREFIX_events
-  FOR EACH ROW
-  EXECUTE FUNCTION PREFIX_lock_before_insert();
 
 
 ---- EVENT APPEND NOTIFICATIONS

@@ -54,7 +54,7 @@ package org.sliceworkz.eventstore.events;
  * @see EventId
  * @see org.sliceworkz.eventstore.stream.AppendCriteria
  */
-public record EventReference ( EventId id, Long position ) {
+public record EventReference ( EventId id, long position, long tx ) {
 
 	/**
 	 * Constructs an EventReference with validation.
@@ -65,18 +65,17 @@ public record EventReference ( EventId id, Long position ) {
 	 * @param position the position in the stream (required, must be &gt; 0)
 	 * @throws IllegalArgumentException if id is null, position is null, or position is &le; 0
 	 */
-	public EventReference ( EventId id, Long position  ) {
+	public EventReference ( EventId id, long position, long tx  ) {
 		if ( id == null ) {
 			throw new IllegalArgumentException("event id in reference cannot be null");
 		}
-		if ( position == null ) {
-			throw new IllegalArgumentException("position in reference cannot be null");
-		} else if ( position <= 0 ) {
+		if ( position <= 0 ) {
 			throw new IllegalArgumentException("position %d is invalid, should be larger than 0".formatted(position));
 		}
 
 		this.id = id;
 		this.position = position;
+		this.tx = tx;
 	}
 
 	/**
@@ -87,8 +86,12 @@ public record EventReference ( EventId id, Long position ) {
 	 * @return a new EventReference
 	 * @throws IllegalArgumentException if id is null, position is null, or position is &le; 0
 	 */
+	public static EventReference of ( EventId id, long position, long tx ) {
+		return new EventReference(id, position, tx);
+	}
+
 	public static EventReference of ( EventId id, long position ) {
-		return new EventReference(id, position);
+		return new EventReference(id, position, 0);
 	}
 
 	/**
@@ -100,8 +103,12 @@ public record EventReference ( EventId id, Long position ) {
 	 * @return a new EventReference with a generated UUID-based ID
 	 * @throws IllegalArgumentException if position is null or &le; 0
 	 */
+	public static EventReference create ( long position, long tx ) {
+		return of ( EventId.create(), position, tx );
+	}
+
 	public static EventReference create ( long position ) {
-		return of ( EventId.create(), position );
+		return create(position, 0);
 	}
 
 	/**

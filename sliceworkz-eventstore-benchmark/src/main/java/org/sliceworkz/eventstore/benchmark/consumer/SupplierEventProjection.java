@@ -36,7 +36,7 @@ import org.sliceworkz.eventstore.query.EventQuery;
 public class SupplierEventProjection implements BatchAwareProjection<SupplierEvent> {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(SupplierEventProjection.class);
-	private static final String INSERT_SQL = "INSERT INTO benchmark_readmodel (event_id, event_position) VALUES (?, ?)";
+	private static final String INSERT_SQL = "INSERT INTO benchmark_readmodel (event_id, event_position, readmodel_thread) VALUES (?, ?, ?)";
 
 	private final DataSource dataSource;
 	private Connection connection;
@@ -44,6 +44,7 @@ public class SupplierEventProjection implements BatchAwareProjection<SupplierEve
 
 	private AtomicLong eventsProcessed = new AtomicLong();
 	private AtomicLong batchesProcessed = new AtomicLong();
+	private AtomicLong batchesCanceled = new AtomicLong();
 
 	public SupplierEventProjection(DataSource dataSource) {
 		this.dataSource = dataSource;
@@ -56,6 +57,10 @@ public class SupplierEventProjection implements BatchAwareProjection<SupplierEve
 	public long batchesProcessed ( ) {
 		return batchesProcessed.get();
 	}
+	
+	public long batchesCanceled( ) {
+		return batchesCanceled.get();
+	}
 
 	@Override
 	public EventQuery eventQuery() {
@@ -67,6 +72,7 @@ public class SupplierEventProjection implements BatchAwareProjection<SupplierEve
 		try {
 			insertStatement.setString(1, eventWithMeta.reference().id().value());
 			insertStatement.setLong(2, eventWithMeta.reference().position());
+			insertStatement.setString(3, Thread.currentThread().getName());
 			insertStatement.addBatch();
 			long idx = eventsProcessed.incrementAndGet();
 		} catch (SQLException e) {
@@ -89,6 +95,7 @@ public class SupplierEventProjection implements BatchAwareProjection<SupplierEve
 
 	@Override
 	public void cancelBatch() {
+		batchesCanceled.incrementAndGet();
 		try {
 			if (insertStatement != null) {
 				insertStatement.close();

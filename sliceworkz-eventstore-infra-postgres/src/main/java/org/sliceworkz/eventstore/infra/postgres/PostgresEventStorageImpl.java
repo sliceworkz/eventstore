@@ -480,15 +480,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 			return Stream.empty();
 		}
 		
-		// Handle case where reference exists but has no position - return empty stream for optimistic locking
-		if (reference != null && reference.position() == null) {
-			return Stream.empty();
-		}
-		
 		StringBuilder sqlBuilder = new StringBuilder();
 		sqlBuilder.append(
 			"""
-				SELECT event_position, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags 
+				SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags 
 				FROM %sevents 
 				WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot()) 
 			""".formatted(prefix)
@@ -500,20 +495,22 @@ public class PostgresEventStorageImpl implements EventStorage {
 		List<Object> parameters = new ArrayList<>();
 		
 		// Add position filtering if reference is provided
-		if (reference != null && reference.position() != null) {
+		if (reference != null ) {
 			if (includeReference) {
 				if ( direction == QueryDirection.FORWARD ) {
-					sqlBuilder.append(" AND event_position >= ?");
+					sqlBuilder.append(" AND ((event_tx>?::text::xid8) OR (event_tx = ?::text::xid8 AND event_position > ?))");
 				} else { 
-					sqlBuilder.append(" AND event_position <= ?");
+					sqlBuilder.append(" AND ((event_tx<?::text::xid8) OR (event_tx = ?::text::xid8 AND event_position < ?))");
 				}
 			} else {
 				if ( direction == QueryDirection.FORWARD ) {
-					sqlBuilder.append(" AND event_position > ?");
+					sqlBuilder.append(" AND ((event_tx>?::text::xid8) OR (event_tx = ?::text::xid8 AND event_position > ?))");
 				} else { 
-					sqlBuilder.append(" AND event_position < ?");
+					sqlBuilder.append(" AND ((event_tx<?::text::xid8) OR (event_tx = ?::text::xid8 AND event_position < ?))");
 				}
 			}
+			parameters.add(reference.tx());
+			parameters.add(reference.tx());
 			parameters.add(reference.position());
 		}
 		
@@ -702,7 +699,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 				}
 			}
 			
-			if ( appendCriteria.expectedLastEventReference() != null && appendCriteria.expectedLastEventReference().isPresent() && appendCriteria.expectedLastEventReference().get().position()!=null ) {
+			if ( appendCriteria.expectedLastEventReference() != null && appendCriteria.expectedLastEventReference().isPresent()  ) {
 				
 				// Add position filtering - check for events after the expected last event
 				sqlBuilder.append(" AND event_position > ?");
@@ -718,7 +715,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			sqlBuilder.append(") ");
 		}
 		
-		sqlBuilder.append("RETURNING event_position, event_timestamp");
+		sqlBuilder.append("RETURNING event_position, event_timestamp, event_tx");
 		
 		
 		try ( Connection writeConnection = dataSource.getConnection()) {
@@ -744,12 +741,13 @@ public class PostgresEventStorageImpl implements EventStorage {
 					
 					while (rs.next()) {
 						long position = rs.getLong("event_position");
+						long tx = rs.getLong("event_tx");
 						Timestamp timestamp = rs.getTimestamp("event_timestamp");
 						
 						EventToStore e = it.next();
 						EventId id = idIterator.next();
 						
-						EventReference reference = EventReference.of(id, position);
+						EventReference reference = EventReference.of(id, position, tx);
 						storedEvents.add(e.positionAt(reference, timestamp.toLocalDateTime()));
 					}
 					
@@ -776,7 +774,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	public Optional<StoredEvent> getEventById(EventId eventId) {
 		if ( eventId != null ) {
 			String sql = """
-				SELECT event_position, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags 
+				SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags 
 				FROM %sevents 
 				WHERE event_id = ?::uuid
 			""".formatted(prefix);
@@ -803,6 +801,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private <EVENT_TYPE> StoredEvent mapResultSetToEvent(ResultSet rs) throws SQLException {
 		long position = rs.getLong("event_position");
 		String eventIdValue = rs.getString("event_id");
+		long eventTx = Long.parseUnsignedLong(rs.getString("event_tx"));
 		String streamContext = rs.getString("stream_context");
 		String streamPurpose = rs.getString("stream_purpose");
 		String eventTypeName = rs.getString("event_type");
@@ -816,7 +815,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		
 		// Create EventReference
 		EventId eventId = new EventId(eventIdValue);
-		EventReference eventReference = EventReference.of(eventId, position);
+		EventReference eventReference = EventReference.of(eventId, position, eventTx);
 		
 		// Create EventStreamId
 		EventStreamId streamId = new EventStreamId(streamContext, streamPurpose);
@@ -975,19 +974,19 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 	}
 	
-	record EventAppendedPostgresNotification ( String streamContext, String streamPurpose, long eventPosition, String eventId ) { 
+	record EventAppendedPostgresNotification ( String streamContext, String streamPurpose, long eventPosition, long eventTx, String eventId ) { 
 		public AppendsToEventStoreNotification toNotification ( ) {
 			return new AppendsToEventStoreNotification ( 
 					EventStreamId.forContext(streamContext).withPurpose(streamPurpose),
-					EventReference.of(EventId.of(eventId), eventPosition));
+					EventReference.of(EventId.of(eventId), eventPosition, eventTx));
 		}
 	}
 
-	record BookmarkPlacedPostgresNotification ( String reader, long eventPosition, String eventId  ) { 
+	record BookmarkPlacedPostgresNotification ( String reader, long eventPosition, long eventTx, String eventId  ) { 
 		public BookmarkPlacedNotification toNotification ( ) {
 			return new BookmarkPlacedNotification ( 
 					reader,
-					EventReference.of(EventId.of(eventId), eventPosition));
+					EventReference.of(EventId.of(eventId), eventPosition, eventTx));
 		}
 	}
 
@@ -1000,7 +999,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	@Override
 	public Optional<EventReference> getBookmark(String reader) {
 		String sql = """
-			SELECT event_position, event_id 
+			SELECT event_position, event_id, event_tx
 			FROM %sbookmarks 
 			WHERE reader = ?
 		""".formatted(prefix);
@@ -1012,9 +1011,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 				try (ResultSet rs = stmt.executeQuery()) {
 					if (rs.next()) {
 						long position = rs.getLong("event_position");
+						long tx = rs.getLong("event_tx");
 						String eventIdValue = rs.getString("event_id");
 						EventId eventId = new EventId(eventIdValue);
-						return Optional.of(EventReference.of(eventId, position));
+						return Optional.of(EventReference.of(eventId, position, tx));
 					}
 				}
 			} catch (SQLException e) {
@@ -1034,11 +1034,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 			removeBookmark(reader);
 		} else {
 			String sql = """
-				INSERT INTO %sbookmarks (reader, event_position, event_id, updated_at, updated_tags) 
-				VALUES (?, ?, ?::uuid, CURRENT_TIMESTAMP, ? )
+				INSERT INTO %sbookmarks (reader, event_position, event_tx, event_id, updated_at, updated_tags) 
+				VALUES (?, ?, ?::text::xid8, ?::uuid, CURRENT_TIMESTAMP, ? )
 				ON CONFLICT (reader) 
 				DO UPDATE SET 
 					event_position = EXCLUDED.event_position,
+					event_tx = EXCLUDED.event_tx,
 					event_id = EXCLUDED.event_id,
 					updated_at = CURRENT_TIMESTAMP,
 					updated_tags = EXCLUDED.updated_tags
@@ -1055,11 +1056,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 					try ( PreparedStatement stmt = writeConnection.prepareStatement(sql) ) {
 						stmt.setString(1, reader.toString());
 						stmt.setLong(2, eventReference == null?0:eventReference.position());
-						stmt.setString(3, eventReference==null?null:eventReference.id().value());
+						stmt.setLong(3, eventReference == null?0:eventReference.tx());
+						stmt.setString(4, eventReference==null?null:eventReference.id().value());
 						
 						// Convert tags to array
 						String[] tagsArray = tags.toStrings().toArray(new String[tags.tags().size()]);
-						stmt.setArray(4, writeConnection.createArrayOf("text", (String[]) tagsArray));
+						stmt.setArray(5, writeConnection.createArrayOf("text", (String[]) tagsArray));
 						
 						int rowsAffected = stmt.executeUpdate();
 						if (rowsAffected == 0) {

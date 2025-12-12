@@ -237,14 +237,10 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		}
 		
 		if ( reference != null ) {
-			if ( reference.position() != null ) {
-				if ( direction == QueryDirection.FORWARD ) {
-					on = on.skip(reference.position()-(includeReference?1:0));  // skip until the position in the stream, including the referenced/current one as first or not
-				} else {
-					on = on.skip(eventlog.size()-reference.position()+(includeReference?0:1));  // skip until the position in the stream, including the referenced/current one as first or not
-				}
+			if ( direction == QueryDirection.FORWARD ) {
+				on = on.skip(reference.position()-(includeReference?1:0));  // skip until the position in the stream, including the referenced/current one as first or not
 			} else {
-				on = Stream.empty(); // no position: use empty stream, so reference event was not found and optimistic locking exception will be thrown
+				on = on.skip(eventlog.size()-reference.position()+(includeReference?0:1));  // skip until the position in the stream, including the referenced/current one as first or not
 			}
 		}
 		

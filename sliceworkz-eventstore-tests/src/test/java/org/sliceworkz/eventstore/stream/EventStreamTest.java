@@ -219,7 +219,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		
 		List<Event<MockDomainEvent>> events = es.append(AppendCriteria.none(), List.of(e1, e2));
 		assertEquals(2, events.size());
-		
+
 		waitBecauseOfEventualConsistency();
 		
 		// could be one or two events, depending whether the second gets processed before the first was offered to the appendListener or not. 

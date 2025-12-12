@@ -56,8 +56,8 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
 public class BenchmarkApplication {
 
 	public static final int EVENTS_PER_PRODUCER_INSTANCE = 10000;
-	public static final int PARALLEL_WORKERS_CUSTOMER = 4;
-	public static final int PARALLEL_WORKERS_SUPPLIER = 4;
+	public static final int PARALLEL_WORKERS_CUSTOMER = 8;
+	public static final int PARALLEL_WORKERS_SUPPLIER = 8;
 	public static final int TOTAL_CONSUMER_EVENTS = PARALLEL_WORKERS_CUSTOMER * EVENTS_PER_PRODUCER_INSTANCE; 
 	public static final int TOTAL_SUPPLIER_EVENTS = PARALLEL_WORKERS_SUPPLIER * EVENTS_PER_PRODUCER_INSTANCE; 
 	public static final int MS_WAIT_BETWEEN_EVENTS = 5;
@@ -148,8 +148,8 @@ public class BenchmarkApplication {
 			System.err.println("====================================================================================================");
 		}
 		
-		System.out.println("CUSTOMER EVENTS PROCESSED : %d (%d batches)".formatted(customerProjection.eventsProcessed(), customerProjection.batchesProcessed()));
-		System.out.println("SUPPLIER EVENTS PROCESSED : %d (%d batches)".formatted(supplierProjection.eventsProcessed(), supplierProjection.batchesProcessed()));
+		System.out.println("CUSTOMER EVENTS PROCESSED : %d (%d batches, %d canceled)".formatted(customerProjection.eventsProcessed(), customerProjection.batchesProcessed(), customerProjection.batchesCanceled()));
+		System.out.println("SUPPLIER EVENTS PROCESSED : %d (%d batches, %d canceled)".formatted(supplierProjection.eventsProcessed(), supplierProjection.batchesProcessed(), supplierProjection.batchesCanceled()));
 
 		long produceDurationMs = stopProduce.toEpochMilli() - start.toEpochMilli();
 		
@@ -188,6 +188,8 @@ public class BenchmarkApplication {
 
 		report(dataSource);
 		reportByTimeBucket(dataSource);
+		reportTableStats(dataSource);
+		reportOutOfOrderEvents(dataSource);
 
 		LOGGER.info("done.");
 	}
@@ -313,6 +315,106 @@ public class BenchmarkApplication {
 		}
 	}
 
+	public static void reportTableStats (DataSource dataSource) {
+		LOGGER.info("reporting table statistics ...");
+
+		try (Connection conn = dataSource.getConnection();
+		     Statement stmt = conn.createStatement()) {
+
+			// Count events
+			ResultSet eventsRs = stmt.executeQuery("SELECT COUNT(*) FROM benchmark_events");
+			long eventsCount = 0;
+			if (eventsRs.next()) {
+				eventsCount = eventsRs.getLong(1);
+			}
+			eventsRs.close();
+
+			// Count readmodel
+			ResultSet readmodelRs = stmt.executeQuery("SELECT COUNT(*) FROM benchmark_readmodel");
+			long readmodelCount = 0;
+			if (readmodelRs.next()) {
+				readmodelCount = readmodelRs.getLong(1);
+			}
+			readmodelRs.close();
+
+			System.out.println();
+			System.out.println("=".repeat(120));
+			System.out.println("TABLE STATISTICS");
+			System.out.println("=".repeat(120));
+			System.out.println("benchmark_events count    : " + eventsCount);
+			System.out.println("benchmark_readmodel count : " + readmodelCount);
+			System.out.println();
+
+			// Check for duplicate positions in readmodel
+			String duplicateQuery = """
+				SELECT event_position, COUNT(*) as duplicate_count
+				FROM benchmark_readmodel
+				GROUP BY event_position
+				HAVING COUNT(*) > 1
+				ORDER BY event_position
+				""";
+
+			ResultSet duplicatesRs = stmt.executeQuery(duplicateQuery);
+			boolean hasDuplicates = false;
+			while (duplicatesRs.next()) {
+				if (!hasDuplicates) {
+					System.out.println("WARNING: Duplicate positions found in benchmark_readmodel:");
+					System.out.println("-".repeat(120));
+					hasDuplicates = true;
+				}
+				long position = duplicatesRs.getLong("event_position");
+				long count = duplicatesRs.getLong("duplicate_count");
+				System.out.println("Position " + position + " appears " + count + " times:");
+
+				// Query detailed records for this duplicate position
+				String detailQuery = """
+					SELECT r.event_id, r.event_position, e.event_tx, r.processed_at, r.readmodel_tx, r.readmodel_thread
+					FROM benchmark_readmodel r
+					LEFT JOIN benchmark_events e ON r.event_position = e.event_position
+					WHERE r.event_position = %d
+					ORDER BY r.processed_at
+					""".formatted(position);
+
+				try (Statement detailStmt = conn.createStatement();
+				     ResultSet detailRs = detailStmt.executeQuery(detailQuery)) {
+					System.out.println(String.format("  %-40s | %-15s | %-15s | %-30s | %-15s | %-20s", "event_id", "event_position", "event_tx", "processed_at", "readmodel_tx", "readmodel_thread"));
+					System.out.println("  " + "-".repeat(166));
+					while (detailRs.next()) {
+						String eventId = detailRs.getString("event_id");
+						long eventPosition = detailRs.getLong("event_position");
+						Object eventTx = detailRs.getObject("event_tx");
+						Object processedAt = detailRs.getObject("processed_at");
+						Object readmodelTx = detailRs.getObject("readmodel_tx");
+						Object readmodelThread = detailRs.getObject("readmodel_thread");
+						System.out.println(String.format("  %-40s | %-15d | %-15s | %-30s | %-15s | %-20s",
+							eventId != null ? eventId : "NULL",
+							eventPosition,
+							eventTx != null ? eventTx.toString() : "NULL",
+							processedAt != null ? processedAt.toString() : "NULL",
+							readmodelTx != null ? readmodelTx.toString() : "NULL",
+							readmodelThread != null ? readmodelThread.toString() : "NULL"));
+					}
+				}
+				System.out.println();
+			}
+			duplicatesRs.close();
+
+			if (hasDuplicates) {
+				System.out.println("-".repeat(120));
+			} else {
+				System.out.println("No duplicate positions found in benchmark_readmodel");
+			}
+			System.out.println("=".repeat(120));
+			System.out.println();
+
+			LOGGER.info("Table statistics report completed.");
+
+		} catch (Exception e) {
+			LOGGER.error("Failed to execute table statistics report", e);
+			throw new RuntimeException("Failed to execute table statistics report", e);
+		}
+	}
+
 	public static void reportByTimeBucket (DataSource dataSource) {
 		LOGGER.info("reporting by time bucket ...");
 
@@ -413,6 +515,125 @@ public class BenchmarkApplication {
 		} catch (Exception e) {
 			LOGGER.error("Failed to execute time bucket report query", e);
 			throw new RuntimeException("Failed to execute time bucket report query", e);
+		}
+	}
+
+	public static void reportOutOfOrderEvents(DataSource dataSource) {
+		LOGGER.info("reporting out-of-order events...");
+
+		String query = """
+			SELECT
+			    event_id,
+			    event_tx,
+			    event_position,
+			    event_timestamp,
+			    processed_at as readmodel_timestamp,
+			    prev_tx,
+			    prev_position
+			FROM (
+			    SELECT
+			        e.event_id,
+			        e.event_tx,
+			        e.event_position,
+			        e.event_timestamp,
+			        r.processed_at,
+			        LAG(e.event_tx) OVER (ORDER BY e.event_position) as prev_tx,
+			        LAG(e.event_position) OVER (ORDER BY e.event_position) as prev_position
+			    FROM benchmark_events e
+			    LEFT JOIN benchmark_readmodel r ON e.event_position = r.event_position
+			) subquery
+			WHERE event_tx < prev_tx
+			ORDER BY event_position
+			""";
+
+		try (Connection conn = dataSource.getConnection();
+		     Statement stmt = conn.createStatement();
+		     ResultSet rs = stmt.executeQuery(query)) {
+
+			ResultSetMetaData metaData = rs.getMetaData();
+			int columnCount = metaData.getColumnCount();
+
+			// Calculate column widths - scan all rows first
+			int[] columnWidths = new int[columnCount];
+			String[] columnNames = new String[columnCount];
+			java.util.List<String[]> rows = new java.util.ArrayList<>();
+
+			// Get column names and initialize widths
+			for (int i = 0; i < columnCount; i++) {
+				columnNames[i] = metaData.getColumnName(i + 1);
+				columnWidths[i] = columnNames[i].length();
+			}
+
+			// Collect all rows and calculate column widths
+			while (rs.next()) {
+				String[] row = new String[columnCount];
+				for (int i = 0; i < columnCount; i++) {
+					Object value = rs.getObject(i + 1);
+					String valueStr;
+					if (value == null) {
+						valueStr = "NULL";
+					} else if (value instanceof Number && !(value instanceof Long || value instanceof Integer)) {
+						valueStr = String.format("%.4f", ((Number) value).doubleValue());
+					} else {
+						valueStr = value.toString();
+					}
+					row[i] = valueStr;
+					columnWidths[i] = Math.max(columnWidths[i], valueStr.length());
+				}
+				rows.add(row);
+			}
+
+			// Print separator before table
+			System.out.println();
+			System.out.println("=".repeat(120));
+			System.out.println("OUT-OF-ORDER EVENTS REPORT");
+			System.out.println("Events where transaction (event_tx) ordering doesn't match position ordering");
+			System.out.println("=".repeat(120));
+
+			if (rows.isEmpty()) {
+				System.out.println("No out-of-order events found - all event_tx values match position ordering");
+			} else {
+				// Print column headers
+				for (int i = 0; i < columnCount; i++) {
+					System.out.print(String.format("%-" + columnWidths[i] + "s", columnNames[i]));
+					if (i < columnCount - 1) {
+						System.out.print(" | ");
+					}
+				}
+				System.out.println();
+
+				// Print separator
+				for (int i = 0; i < columnCount; i++) {
+					System.out.print("-".repeat(columnWidths[i]));
+					if (i < columnCount - 1) {
+						System.out.print("-+-");
+					}
+				}
+				System.out.println();
+
+				// Print all rows
+				for (String[] row : rows) {
+					for (int i = 0; i < columnCount; i++) {
+						System.out.print(String.format("%-" + columnWidths[i] + "s", row[i]));
+						if (i < columnCount - 1) {
+							System.out.print(" | ");
+						}
+					}
+					System.out.println();
+				}
+
+				System.out.println("=".repeat(120));
+				System.out.println("Total out-of-order events: " + rows.size());
+			}
+
+			System.out.println("=".repeat(120));
+			System.out.println();
+
+			LOGGER.info("Out-of-order events report completed.");
+
+		} catch (Exception e) {
+			LOGGER.error("Failed to execute out-of-order events report query", e);
+			throw new RuntimeException("Failed to execute out-of-order events report query", e);
 		}
 	}
 }

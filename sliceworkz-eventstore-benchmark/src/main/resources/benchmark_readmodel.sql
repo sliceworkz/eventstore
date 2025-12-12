@@ -25,7 +25,9 @@ CREATE TABLE benchmark_readmodel (
     id BIGSERIAL PRIMARY KEY,
     event_id VARCHAR(255) NOT NULL,
     event_position BIGINT NOT NULL,
-    processed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    processed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    readmodel_tx xid8 DEFAULT pg_current_xact_id()::xid8,
+    readmodel_thread VARCHAR(255) NOT NULL
 );
 
 -- Index on event_position for potential queries

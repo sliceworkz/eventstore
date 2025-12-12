@@ -36,7 +36,7 @@ import org.sliceworkz.eventstore.query.EventQuery;
 public class CustomerEventProjection implements BatchAwareProjection<CustomerEvent> {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(CustomerEventProjection.class);
-	private static final String INSERT_SQL = "INSERT INTO benchmark_readmodel (event_id, event_position) VALUES (?, ?)";
+	private static final String INSERT_SQL = "INSERT INTO benchmark_readmodel (event_id, event_position, readmodel_thread) VALUES (?, ?, ?)";
 
 	private final DataSource dataSource;
 	private Connection connection;
@@ -44,7 +44,8 @@ public class CustomerEventProjection implements BatchAwareProjection<CustomerEve
 
 	private AtomicLong eventsProcessed = new AtomicLong();
 	private AtomicLong batchesProcessed = new AtomicLong();
-
+	private AtomicLong batchesCanceled = new AtomicLong();
+	
 	public CustomerEventProjection(DataSource dataSource) {
 		this.dataSource = dataSource;
 	}
@@ -57,16 +58,27 @@ public class CustomerEventProjection implements BatchAwareProjection<CustomerEve
 		return batchesProcessed.get();
 	}
 	
+	public long batchesCanceled( ) {
+		return batchesCanceled.get();
+	}
+
 	@Override
 	public EventQuery eventQuery() {
 		return EventQuery.matchAll();
 	}
 
+	private long lastPos;
+
 	@Override
 	public void when(Event<CustomerEvent> eventWithMeta) {
+		if ( eventWithMeta.reference().position() <= lastPos) {
+			System.err.println("!!! lastpos = " + lastPos + ", newpos=" + eventWithMeta.reference().position());
+		} 
+		lastPos = eventWithMeta.reference().position();
 		try {
 			insertStatement.setString(1, eventWithMeta.reference().id().value());
 			insertStatement.setLong(2, eventWithMeta.reference().position());
+			insertStatement.setString(3, Thread.currentThread().getName());
 			insertStatement.addBatch();
 			long idx = eventsProcessed.incrementAndGet();
 		} catch (SQLException e) {
@@ -89,6 +101,7 @@ public class CustomerEventProjection implements BatchAwareProjection<CustomerEve
 
 	@Override
 	public void cancelBatch() {
+		batchesCanceled.incrementAndGet();
 		try {
 			if (insertStatement != null) {
 				insertStatement.close();

@@ -160,7 +160,7 @@ public class EventStoreImpl implements EventStore {
 		this.eventStorage = eventStorage;
 		this.meterRegistry = meterRegistry;
 		
-		ThreadFactory threadFactory = Thread.ofVirtual().name("eventually-consistent-listener-notifier/" + eventStorage.name()).factory();
+		ThreadFactory threadFactory = Thread.ofVirtual().name("eventually-consistent-listener-notifier/" + eventStorage.name(), 0).factory();
 		this.executorServiceForEventAppends = Executors.newThreadPerTaskExecutor(threadFactory);
 
 		this.executorServiceForBookmarkUpdates = Executors.newSingleThreadExecutor(threadFactory);

@@ -95,6 +95,7 @@ BEGIN
             'streamContext', NEW.stream_context,
             'streamPurpose', NEW.stream_purpose,
             'eventPosition', NEW.event_position,
+            'eventTx', NEW.event_tx,
             'eventId', NEW.event_id
         )::text
     );
@@ -116,6 +117,7 @@ CREATE TABLE IF NOT EXISTS PREFIX_bookmarks (
       reader VARCHAR(255) PRIMARY KEY,
       event_position BIGINT NOT NULL,
       event_id UUID NOT NULL,
+      event_tx xid8 NOT NULL,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_tags TEXT[] DEFAULT '{}',
       CONSTRAINT fk_bookmarks_event_id
@@ -134,6 +136,7 @@ BEGIN
     PERFORM pg_notify('PREFIX_bookmark_placed',
         jsonb_build_object(
             'reader', NEW.reader,
+            'eventTx', NEW.event_tx,
             'eventPosition', NEW.event_position,
             'eventId', NEW.event_id
         )::text

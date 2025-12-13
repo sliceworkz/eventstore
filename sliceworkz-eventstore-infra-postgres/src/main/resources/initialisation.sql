@@ -35,7 +35,7 @@ CREATE TABLE PREFIX_events (
       event_position BIGSERIAL PRIMARY KEY,
 
       -- XID8 transaction id
-      event_tx xid8 DEFAULT pg_current_xact_id()::xid8,
+      event_tx xid8 DEFAULT pg_current_xact_id()::xid8 NOT NULL,
 
       -- Event identification
       event_id UUID NOT NULL UNIQUE,
@@ -56,8 +56,12 @@ CREATE TABLE PREFIX_events (
 
       -- Tags as string array
       event_tags TEXT[] DEFAULT '{}'
-  );
+      
+  ) WITH (FILLFACTOR = 100);
 
+
+	-- Compact BRIN index on event_position
+	CREATE INDEX PREFIX_idx_events_position_brin ON PREFIX_events USING BRIN (event_position);
 
 	-- Allows efficient filtering on multiple dimensions
 	-- Primary index for your most common query pattern
@@ -114,11 +118,11 @@ CREATE OR REPLACE TRIGGER table_insert_trigger
     
 DROP TABLE IF EXISTS PREFIX_bookmarks CASCADE;  
 CREATE TABLE IF NOT EXISTS PREFIX_bookmarks (
-      reader VARCHAR(255) PRIMARY KEY,
+      reader TEXT PRIMARY KEY,
       event_position BIGINT NOT NULL,
       event_id UUID NOT NULL,
       event_tx xid8 NOT NULL,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
       updated_tags TEXT[] DEFAULT '{}',
       CONSTRAINT fk_bookmarks_event_id
           FOREIGN KEY (event_id)
@@ -126,8 +130,7 @@ CREATE TABLE IF NOT EXISTS PREFIX_bookmarks (
           ON DELETE CASCADE
   );
 
-  CREATE INDEX IF NOT EXISTS PREFIX_idx_bookmarks_updated_at ON PREFIX_bookmarks(updated_at);
-
+  CREATE INDEX IF NOT EXISTS PREFIX_idx_bookmarks_event_id ON PREFIX_bookmarks(event_id);
 
     
 CREATE OR REPLACE FUNCTION PREFIX_notify_bookmark_placed()

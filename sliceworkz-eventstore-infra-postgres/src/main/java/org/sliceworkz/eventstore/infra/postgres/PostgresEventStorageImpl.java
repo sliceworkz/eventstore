@@ -221,10 +221,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 			checkTrigger(readConnection, prefix + "bookmarks", "table_insert_or_update_trigger");
 
 			// Check indexes
+			checkIndex(readConnection, prefix + "idx_events_position_brin");
 			checkIndex(readConnection, prefix + "idx_events_stream_type_position");
 			checkIndex(readConnection, prefix + "idx_events_tags");
 			checkIndex(readConnection, prefix + "idx_events_stream_position");
-			checkIndex(readConnection, prefix + "idx_bookmarks_updated_at");
+			checkIndex(readConnection, prefix + "idx_bookmarks_event_id");
 
 			LOGGER.info("Database schema validation completed successfully for prefix '{}'", prefix);
 
@@ -244,6 +245,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 		// Check required columns with their types
 		checkColumn(connection, tableName, "event_position", "bigserial", false);
+		checkColumn(connection, tableName, "event_tx", "xid8", false);
 		checkColumn(connection, tableName, "event_id", "uuid", false);
 		checkColumn(connection, tableName, "stream_context", "text", false);
 		checkColumn(connection, tableName, "stream_purpose", "text", false);
@@ -265,10 +267,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 
 		// Check required columns with their types
-		checkColumn(connection, tableName, "reader", "character varying", false);
+		checkColumn(connection, tableName, "reader", "text", false);
 		checkColumn(connection, tableName, "event_position", "bigint", false);
 		checkColumn(connection, tableName, "event_id", "uuid", false);
-		checkColumn(connection, tableName, "updated_at", "timestamp without time zone", true);
+		checkColumn(connection, tableName, "event_tx", "xid8", false);
+		checkColumn(connection, tableName, "updated_at", "timestamp with time zone", true);
 		checkColumn(connection, tableName, "updated_tags", "ARRAY", true);
 
 		// Check foreign key constraint

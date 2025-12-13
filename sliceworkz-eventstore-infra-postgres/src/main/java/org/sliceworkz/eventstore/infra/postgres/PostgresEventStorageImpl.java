@@ -501,19 +501,19 @@ public class PostgresEventStorageImpl implements EventStorage {
 		if (reference != null ) {
 			if (includeReference) {
 				if ( direction == QueryDirection.FORWARD ) {
-					sqlBuilder.append(" AND ((event_tx>?::text::xid8) OR (event_tx = ?::text::xid8 AND event_position > ?))");
-				} else { 
-					sqlBuilder.append(" AND ((event_tx<?::text::xid8) OR (event_tx = ?::text::xid8 AND event_position < ?))");
+					sqlBuilder.append(" AND ((event_tx>?::xid8) OR (event_tx = ?::xid8 AND event_position > ?))");
+				} else {
+					sqlBuilder.append(" AND ((event_tx<?::xid8) OR (event_tx = ?::xid8 AND event_position < ?))");
 				}
 			} else {
 				if ( direction == QueryDirection.FORWARD ) {
-					sqlBuilder.append(" AND ((event_tx>?::text::xid8) OR (event_tx = ?::text::xid8 AND event_position > ?))");
-				} else { 
-					sqlBuilder.append(" AND ((event_tx<?::text::xid8) OR (event_tx = ?::text::xid8 AND event_position < ?))");
+					sqlBuilder.append(" AND ((event_tx>?::xid8) OR (event_tx = ?::xid8 AND event_position > ?))");
+				} else {
+					sqlBuilder.append(" AND ((event_tx<?::xid8) OR (event_tx = ?::xid8 AND event_position < ?))");
 				}
 			}
-			parameters.add(reference.tx());
-			parameters.add(reference.tx());
+			parameters.add(Long.toUnsignedString(reference.tx()));
+			parameters.add(Long.toUnsignedString(reference.tx()));
 			parameters.add(reference.position());
 		}
 		
@@ -545,9 +545,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 		
 		// Order by position
 		if ( direction == QueryDirection.BACKWARD ) {
-			sqlBuilder.append(" ORDER BY event_tx DESC, event_position DESC");
+			sqlBuilder.append(" ORDER BY event_tx::xid8 DESC, event_position DESC");
 		} else {
-			sqlBuilder.append(" ORDER BY event_tx, event_position ");
+			sqlBuilder.append(" ORDER BY event_tx::xid8, event_position ");
 			
 		}
 		
@@ -555,7 +555,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		
 		// Add limit if specified
 		if (effectiveLimit != null && effectiveLimit.isSet()) {
-			sqlBuilder.append(" LIMIT ?");
+			sqlBuilder.append(" LIMIT ? OFFSET 0");
 			parameters.add(effectiveLimit.value());
 		}
 		
@@ -718,7 +718,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			sqlBuilder.append(") ");
 		}
 		
-		sqlBuilder.append("RETURNING event_position, event_timestamp, event_tx");
+		sqlBuilder.append("RETURNING event_position, event_timestamp, event_tx::text");
 		
 		
 		try ( Connection writeConnection = dataSource.getConnection()) {
@@ -744,7 +744,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 					
 					while (rs.next()) {
 						long position = rs.getLong("event_position");
-						long tx = rs.getLong("event_tx");
+						long tx = Long.parseUnsignedLong(rs.getString("event_tx"));
 						Timestamp timestamp = rs.getTimestamp("event_timestamp");
 						
 						EventToStore e = it.next();
@@ -1002,7 +1002,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	@Override
 	public Optional<EventReference> getBookmark(String reader) {
 		String sql = """
-			SELECT event_position, event_id, event_tx
+			SELECT event_position, event_id, event_tx::text
 			FROM %sbookmarks 
 			WHERE reader = ?
 		""".formatted(prefix);
@@ -1014,7 +1014,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 				try (ResultSet rs = stmt.executeQuery()) {
 					if (rs.next()) {
 						long position = rs.getLong("event_position");
-						long tx = rs.getLong("event_tx");
+						long tx = Long.parseUnsignedLong(rs.getString("event_tx"));
 						String eventIdValue = rs.getString("event_id");
 						EventId eventId = new EventId(eventIdValue);
 						return Optional.of(EventReference.of(eventId, position, tx));
@@ -1037,10 +1037,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 			removeBookmark(reader);
 		} else {
 			String sql = """
-				INSERT INTO %sbookmarks (reader, event_position, event_tx, event_id, updated_at, updated_tags) 
-				VALUES (?, ?, ?::text::xid8, ?::uuid, CURRENT_TIMESTAMP, ? )
-				ON CONFLICT (reader) 
-				DO UPDATE SET 
+				INSERT INTO %sbookmarks (reader, event_position, event_tx, event_id, updated_at, updated_tags)
+				VALUES (?, ?, ?::xid8, ?::uuid, CURRENT_TIMESTAMP, ? )
+				ON CONFLICT (reader)
+				DO UPDATE SET
 					event_position = EXCLUDED.event_position,
 					event_tx = EXCLUDED.event_tx,
 					event_id = EXCLUDED.event_id,
@@ -1059,7 +1059,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 					try ( PreparedStatement stmt = writeConnection.prepareStatement(sql) ) {
 						stmt.setString(1, reader.toString());
 						stmt.setLong(2, eventReference == null?0:eventReference.position());
-						stmt.setLong(3, eventReference == null?0:eventReference.tx());
+						stmt.setString(3, eventReference == null?"0":Long.toUnsignedString(eventReference.tx()));
 						stmt.setString(4, eventReference==null?null:eventReference.id().value());
 						
 						// Convert tags to array

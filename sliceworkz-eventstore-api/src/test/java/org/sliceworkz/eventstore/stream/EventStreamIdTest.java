@@ -19,11 +19,58 @@ package org.sliceworkz.eventstore.stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
 public class EventStreamIdTest {
+
+	@Test
+	void testCreation ( ) {
+		EventStreamId i = EventStreamId.anyContext();
+		assertNull(i.context());
+		assertNull(i.purpose());
+		assertFalse(i.canAppend());
+	}
+	
+	@Test
+	void testCreationWithAndWithoutPurpose ( ) {
+		EventStreamId i = EventStreamId.forContext("customer").withPurpose("42");
+		assertEquals("customer", i.context());
+		assertEquals("42", i.purpose());
+		assertTrue(i.canAppend());
+		i = i.anyPurpose();
+		assertEquals("customer", i.context());
+		assertEquals(null, i.purpose());
+		assertFalse(i.canAppend());
+		i = i.withPurpose("1337");
+		assertEquals("customer", i.context());
+		assertEquals("1337", i.purpose());
+		assertTrue(i.canAppend());
+	}
+	
+	@Test
+	void testCanAppendTo ( ) {
+		assertFalse(EventStreamId.forContext("customer").anyPurpose().canAppendTo(EventStreamId.forContext("customer").withPurpose("123")));
+		assertFalse(EventStreamId.forContext("customer").withPurpose("124").canAppendTo(EventStreamId.forContext("customer").withPurpose("123")));
+		assertTrue(EventStreamId.forContext("customer").withPurpose("123").canAppendTo(EventStreamId.forContext("customer").withPurpose("123")));
+		assertFalse(EventStreamId.forContext("supplier").withPurpose("123").canAppendTo(EventStreamId.forContext("customer").withPurpose("123")));
+		assertFalse(EventStreamId.anyContext().withPurpose("123").canAppendTo(EventStreamId.forContext("customer").withPurpose("123")));
+	}
+
+	@Test
+	void testConcretizes ( ) {
+		assertFalse(EventStreamId.forContext("customer").anyPurpose().concretizes(EventStreamId.forContext("customer").withPurpose("123")));
+		assertFalse(EventStreamId.forContext("customer").withPurpose("124").concretizes(EventStreamId.forContext("customer").withPurpose("123")));
+		assertFalse(EventStreamId.forContext("customer").withPurpose("123").concretizes(EventStreamId.forContext("customer").withPurpose("123")));
+		assertFalse(EventStreamId.forContext("supplier").withPurpose("123").concretizes(EventStreamId.forContext("customer").withPurpose("123")));
+		assertFalse(EventStreamId.anyContext().withPurpose("123").concretizes(EventStreamId.forContext("customer").withPurpose("123")));
+		
+		assertTrue(EventStreamId.forContext("customer").withPurpose("123").concretizes(EventStreamId.forContext("customer").anyPurpose()));
+		assertFalse(EventStreamId.forContext("customer").withPurpose("123").concretizes(EventStreamId.anyContext().anyPurpose()));
+		assertFalse(EventStreamId.forContext("customer").withPurpose("123").concretizes(EventStreamId.anyContext().withPurpose("123")));
+	}
 
 	@Test
 	void testToString ( ) {

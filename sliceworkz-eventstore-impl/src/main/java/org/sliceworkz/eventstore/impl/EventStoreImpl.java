@@ -160,7 +160,7 @@ public class EventStoreImpl implements EventStore {
 		this.eventStorage = eventStorage;
 		this.meterRegistry = meterRegistry;
 		
-		ThreadFactory threadFactory = Thread.ofVirtual().name("eventually-consistent-listener-notifier/" + eventStorage.name()).factory();
+		ThreadFactory threadFactory = Thread.ofVirtual().name("eventually-consistent-listener-notifier/" + eventStorage.name(), 0).factory();
 		this.executorServiceForEventAppends = Executors.newThreadPerTaskExecutor(threadFactory);
 
 		this.executorServiceForBookmarkUpdates = Executors.newSingleThreadExecutor(threadFactory);
@@ -241,14 +241,6 @@ public class EventStoreImpl implements EventStore {
 			meterRegistry.counter("sliceworkz.eventstore.stream.create", tags).increment();
 		}
 		
-		public boolean isReadOnly ( ) {
-			return !canAppend();
-		}
-		
-		public boolean canAppend ( ) {
-			return !eventStreamId.isAnyContext() && !eventStreamId.isAnyPurpose();
-		}
-
 		@Override
 		public EventStreamId id() {
 			return eventStreamId;
@@ -299,22 +291,31 @@ public class EventStoreImpl implements EventStore {
 			return new Event<>(storedEvent.stream(), typeAndPayload.type(), storedEvent.type(), storedEvent.reference(), data, storedEvent.tags(), storedEvent.timestamp());
 		}
 
-		private EventToStore reduce ( EphemeralEvent<? extends EVENT_TYPE> event ) {
-			meterAppendEvent.increment(); // one event more sent ot storage for appending
+		private EventToStore reduce ( EphemeralEvent<? extends EVENT_TYPE> event, EventStreamId streamToAppendTo ) {
+			meterAppendEvent.increment(); // one event more sent to storage for appending
 			Tags tags = event.tags(); 
 			TypeAndSerializedPayload data = serde.serialize(event.data());
-			return new EventToStore(eventStreamId, data.type(), data.immutablePayload(), data.erasablePayload(), tags);
+			return new EventToStore(streamToAppendTo, data.type(), data.immutablePayload(), data.erasablePayload(), tags);
 		}
 
-		private List<EventToStore> reduce ( List<? extends EphemeralEvent<? extends EVENT_TYPE>> events ) {
-			return events.stream().map(this::reduce).toList();
+		private List<EventToStore> reduce ( List<? extends EphemeralEvent<? extends EVENT_TYPE>> events, EventStreamId streamToAppendTo ) {
+			return events.stream().map(e->this.reduce(e,streamToAppendTo)).toList();
 		}
 
 		@Override
 		public List<Event<EVENT_TYPE>> append(AppendCriteria appendCriteria, List<EphemeralEvent<? extends EVENT_TYPE>> events) {
+			return append(appendCriteria, events, eventStreamId);
 			
-			if ( isReadOnly() ) {
-				throw new IllegalArgumentException("cannot append to non-specific eventstream %s".formatted(eventStreamId));
+		}
+		@Override
+		public List<Event<EVENT_TYPE>> append(AppendCriteria appendCriteria, List<EphemeralEvent<? extends EVENT_TYPE>> events, EventStreamId streamToAppendTo) {
+			
+			if ( !streamToAppendTo.canAppendTo(eventStreamId)) {
+				throw new IllegalArgumentException("cannot append to eventstream %s using streamId %s".formatted(eventStreamId, streamToAppendTo));
+			}
+			
+			if ( streamToAppendTo.isReadOnly() ) {
+				throw new IllegalArgumentException("cannot append to non-specific eventstream %s".formatted(streamToAppendTo));
 			}
 			
 			List<String> unAppendable = events.stream().map(e->e.type().name()).filter(t->!serde.canDeserialize(t)).toList();
@@ -325,7 +326,7 @@ public class EventStoreImpl implements EventStore {
 			// append events to the eventstore (with optimistic locking)
 			List<Event<EVENT_TYPE>> appendedEvents;
 			try {
-				appendedEvents = timerAppend.record(()->eventStorage.append(appendCriteria, Optional.of(eventStreamId), reduce(events)).stream().map(this::enrichAfterAppend).toList());
+				appendedEvents = timerAppend.record(()->eventStorage.append(appendCriteria, Optional.of(streamToAppendTo), reduce(events, streamToAppendTo)).stream().map(this::enrichAfterAppend).toList());
 				meterAppend.increment();
 
 				// update highest event position gauge
@@ -336,7 +337,7 @@ public class EventStoreImpl implements EventStore {
 					.ifPresent(maxPosition -> gaugeHighestEventPosition.updateAndGet(current -> current==null?maxPosition:Math.max(current, maxPosition)));
 
 				// ... and dispatch events directly back to the kernel for update of consistent readmodels etc...
-				LOGGER.debug("Notifying {} consistent clients of stream {} about append of {} events", consistentSubscribers.size(), eventStreamId, appendedEvents.size());
+				LOGGER.debug("Notifying {} consistent clients of stream {} about append of {} events", consistentSubscribers.size(), streamToAppendTo, appendedEvents.size());
 				consistentSubscribers.forEach(s->s.eventsAppended(appendedEvents));
 			} catch (OptimisticLockingException optimisticLockingException) {
 				meterAppendOptimisticLock.increment();

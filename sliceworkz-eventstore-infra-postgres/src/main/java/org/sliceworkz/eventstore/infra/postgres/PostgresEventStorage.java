@@ -428,7 +428,6 @@ public interface PostgresEventStorage {
 		public EventStorage build ( ) {
 			if ( dataSource == null ) {
 				Properties dbProperties = DataSourceFactory.loadProperties();
-				dataSource = DataSourceFactory.fromConfiguration(dbProperties);
 				if ( dataSource == null ) {
 					dataSource = DataSourceFactory.fromConfiguration(dbProperties, "pooled");
 					monitoringDataSource = DataSourceFactory.fromConfiguration(dbProperties, "nonpooled");
@@ -453,7 +452,7 @@ public interface PostgresEventStorage {
 				}
 			}
 			
-			var result = new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, meterRegistry);
+			var result = new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix);
 			if ( initializeDatabase ) {
 				result.initializeDatabase();
 			}

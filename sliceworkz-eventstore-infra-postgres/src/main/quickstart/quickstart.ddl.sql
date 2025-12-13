@@ -22,7 +22,7 @@
 ---- Eventstore database schema DDL
 ----
 ---- 
----- "" can be removed or replaced to allow multiple eventstores next to each other in one database schema
+---- "PREFIX" can be removed or replaced to allow multiple eventstores next to each other in one database schema
 ---- 
 
 
@@ -34,9 +34,12 @@ CREATE TABLE events (
       -- Primary key and positioning
       event_position BIGSERIAL PRIMARY KEY,
 
+      -- XID8 transaction id
+      event_tx xid8 DEFAULT pg_current_xact_id()::xid8 NOT NULL,
+
       -- Event identification
       event_id UUID NOT NULL UNIQUE,
-
+      
       -- Stream identification  
       stream_context TEXT NOT NULL,
       stream_purpose TEXT NOT NULL DEFAULT '',
@@ -53,8 +56,12 @@ CREATE TABLE events (
 
       -- Tags as string array
       event_tags TEXT[] DEFAULT '{}'
-  );
+      
+  ) WITH (FILLFACTOR = 100);
 
+
+	-- Compact BRIN index on event_position
+	CREATE INDEX idx_events_position_brin ON events USING BRIN (event_position);
 
 	-- Allows efficient filtering on multiple dimensions
 	-- Primary index for your most common query pattern
@@ -64,6 +71,7 @@ CREATE TABLE events (
 	    stream_context, 
 	    stream_purpose, 
 	    event_type,
+	    event_tx,
 	    event_position  -- for ordering
 	);
 	
@@ -76,6 +84,7 @@ CREATE TABLE events (
 	CREATE INDEX idx_events_stream_position ON events (
 	    stream_context, 
 	    stream_purpose, 
+	    event_tx,
 	    event_position
 	);
 
@@ -90,8 +99,8 @@ BEGIN
             'streamContext', NEW.stream_context,
             'streamPurpose', NEW.stream_purpose,
             'eventPosition', NEW.event_position,
-            'eventId', NEW.event_id,
-            'eventType', NEW.event_type
+            'eventTx', NEW.event_tx,
+            'eventId', NEW.event_id
         )::text
     );
     RETURN NEW;
@@ -109,10 +118,11 @@ CREATE OR REPLACE TRIGGER table_insert_trigger
     
 DROP TABLE IF EXISTS bookmarks CASCADE;  
 CREATE TABLE IF NOT EXISTS bookmarks (
-      reader VARCHAR(255) PRIMARY KEY,
+      reader TEXT PRIMARY KEY,
       event_position BIGINT NOT NULL,
       event_id UUID NOT NULL,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      event_tx xid8 NOT NULL,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
       updated_tags TEXT[] DEFAULT '{}',
       CONSTRAINT fk_bookmarks_event_id
           FOREIGN KEY (event_id)
@@ -120,8 +130,7 @@ CREATE TABLE IF NOT EXISTS bookmarks (
           ON DELETE CASCADE
   );
 
-  CREATE INDEX IF NOT EXISTS idx_bookmarks_updated_at ON bookmarks(updated_at);
-
+  CREATE INDEX IF NOT EXISTS idx_bookmarks_event_id ON bookmarks(event_id);
 
     
 CREATE OR REPLACE FUNCTION notify_bookmark_placed()
@@ -130,6 +139,7 @@ BEGIN
     PERFORM pg_notify('bookmark_placed',
         jsonb_build_object(
             'reader', NEW.reader,
+            'eventTx', NEW.event_tx,
             'eventPosition', NEW.event_position,
             'eventId', NEW.event_id
         )::text

@@ -246,6 +246,54 @@ public record Tags ( Set<Tag> tags ) {
 	}
 
 	/**
+	 * Convenience method to create Tags from a key and a long value.
+	 * <p>
+	 * The long value is automatically converted to a string representation. This method
+	 * is useful for creating tags with numeric identifiers or counters without explicit
+	 * string conversion.
+	 * <p>
+	 * <b>Example:</b>
+	 * <pre>{@code
+	 * // Tag with numeric customer ID
+	 * Tags tags = Tags.of("customer", 123L);
+	 *
+	 * // This is equivalent to:
+	 * Tags tags = Tags.of("customer", "123");
+	 * }</pre>
+	 *
+	 * @param key the tag key
+	 * @param value the long value to be converted to string
+	 * @return a new Tags instance containing a single tag with the specified key and string-converted value
+	 */
+	public static Tags of ( String key, long value ) {
+		return of(Tag.of(key, value));
+	}
+
+	/**
+	 * Convenience method to create Tags from a key and an int value.
+	 * <p>
+	 * The int value is automatically converted to a string representation. This method
+	 * is useful for creating tags with numeric identifiers or counters without explicit
+	 * string conversion.
+	 * <p>
+	 * <b>Example:</b>
+	 * <pre>{@code
+	 * // Tag with numeric region code
+	 * Tags tags = Tags.of("region", 42);
+	 *
+	 * // This is equivalent to:
+	 * Tags tags = Tags.of("region", "42");
+	 * }</pre>
+	 *
+	 * @param key the tag key
+	 * @param value the int value to be converted to string
+	 * @return a new Tags instance containing a single tag with the specified key and string-converted value
+	 */
+	public static Tags of ( String key, int value ) {
+		return of(Tag.of(key, value));
+	}
+
+	/**
 	 * Creates an empty Tags instance with no tags.
 	 * <p>
 	 * This is preferred over creating Tags with an empty set directly, and is commonly used

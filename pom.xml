@@ -62,6 +62,9 @@
 		<!-- infra implementations -->
 		<module>sliceworkz-eventstore-infra-inmem</module>
 		<module>sliceworkz-eventstore-infra-postgres</module>
+
+		<!-- benchmark tool -->
+		<module>sliceworkz-eventstore-benchmark</module>
 	</modules>
 	
 	<build>

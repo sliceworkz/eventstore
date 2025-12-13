@@ -128,7 +128,7 @@ public record EventQuery ( List<EventQueryItem> items, EventReference until ) {
 	 */
 	public boolean matches ( EventType eventType, Tags tags, EventReference reference ) {
 		boolean match = true;
-		if ( until == null || until.position() >= reference.position() ) {
+		if ( until == null || !reference.happenedAfter(until) ) {
 			if ( items != null ) {
 				if ( !items.isEmpty() ) { // null items = all match, empty items is none match
 					// if any query item matches the event, we keep it
@@ -254,7 +254,7 @@ public record EventQuery ( List<EventQueryItem> items, EventReference until ) {
 		if ( newUntil != null  ) {
 			if (this.until == null ) { // we don't have an until value, so we just take on the new one
 				return new EventQuery(items, newUntil);
-			} else if ( this.until.position() > newUntil.position() ) { // newUntil asks to stop earlier in the stream
+			} else if ( newUntil.happenedBefore(until) ) { // newUntil asks to stop earlier in the stream
 				return new EventQuery(items, newUntil);
 			} else { // our until value is earlier in the stream than the new one, not expanding our query
 				return this;

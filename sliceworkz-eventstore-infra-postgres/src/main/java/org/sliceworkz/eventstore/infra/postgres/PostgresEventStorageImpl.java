@@ -19,6 +19,7 @@ package org.sliceworkz.eventstore.infra.postgres;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -27,10 +28,8 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
@@ -59,8 +58,6 @@ import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.json.JsonMapper;
-
-import io.micrometer.core.instrument.MeterRegistry;
 
 /**
  * PostgreSQL-backed implementation of the {@link EventStorage} interface.
@@ -120,13 +117,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private final DataSource dataSource;
 	private final DataSource monitoringDataSource;
 	private final Limit absoluteLimit;
-	/**
-	 * The Micrometer meter registry for collecting metrics and observability data.
-	 * Used to track event store operations such as appends, queries, and connection pool metrics.
-	 */
-	private final MeterRegistry meterRegistry;
 
-	private final List<EventStoreListener> listeners = new CopyOnWriteArrayList<>();
+	private final List<WeakReference<EventStoreListener>> listeners = new CopyOnWriteArrayList<>();
 	private final ExecutorService executorService;
 	private boolean stopped;
 
@@ -135,7 +127,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private static final int THIRTY_SECONDS = 30*1000;
 	public static final int WAIT_FOR_NOTIFICATIONS_TIMEOUT = THIRTY_SECONDS;
 
-	private static final String NO_PREFIX = "";
 	private static final int MAX_PREFIX_LENGTH = 32;
 
 	/**
@@ -148,7 +139,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * <ul>
 	 *   <li>Virtual thread executors for PostgreSQL LISTEN/NOTIFY monitoring</li>
 	 *   <li>Background monitors for event append and bookmark notifications</li>
-	 *   <li>Micrometer metrics collection for observability</li>
 	 * </ul>
 	 *
 	 * @param name the logical name for this storage instance (used in logging and monitoring)
@@ -156,16 +146,14 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * @param monitoringDataSource the JDBC DataSource for LISTEN/NOTIFY operations
 	 * @param absoluteLimit the absolute limit on query results, or {@link Limit#none()} for no limit
 	 * @param prefix the table name prefix (validated, or empty string for no prefix)
-	 * @param meterRegistry the Micrometer meter registry for collecting observability metrics
 	 * @see PostgresEventStorage.Builder#build()
 	 */
-	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, MeterRegistry meterRegistry ) {
+	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix ) {
 		this.prefix = validatePrefix(prefix);
 		this.name = name;
 		this.dataSource = dataSource;
 		this.monitoringDataSource = monitoringDataSource;
 		this.absoluteLimit = absoluteLimit;
-		this.meterRegistry = meterRegistry;
 
 		this.executorService = Executors.newVirtualThreadPerTaskExecutor();
 	}
@@ -233,10 +221,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 			checkTrigger(readConnection, prefix + "bookmarks", "table_insert_or_update_trigger");
 
 			// Check indexes
+			checkIndex(readConnection, prefix + "idx_events_position_brin");
 			checkIndex(readConnection, prefix + "idx_events_stream_type_position");
 			checkIndex(readConnection, prefix + "idx_events_tags");
 			checkIndex(readConnection, prefix + "idx_events_stream_position");
-			checkIndex(readConnection, prefix + "idx_bookmarks_updated_at");
+			checkIndex(readConnection, prefix + "idx_bookmarks_event_id");
 
 			LOGGER.info("Database schema validation completed successfully for prefix '{}'", prefix);
 
@@ -256,6 +245,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 		// Check required columns with their types
 		checkColumn(connection, tableName, "event_position", "bigserial", false);
+		checkColumn(connection, tableName, "event_tx", "xid8", false);
 		checkColumn(connection, tableName, "event_id", "uuid", false);
 		checkColumn(connection, tableName, "stream_context", "text", false);
 		checkColumn(connection, tableName, "stream_purpose", "text", false);
@@ -277,10 +267,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 
 		// Check required columns with their types
-		checkColumn(connection, tableName, "reader", "character varying", false);
+		checkColumn(connection, tableName, "reader", "text", false);
 		checkColumn(connection, tableName, "event_position", "bigint", false);
 		checkColumn(connection, tableName, "event_id", "uuid", false);
-		checkColumn(connection, tableName, "updated_at", "timestamp without time zone", true);
+		checkColumn(connection, tableName, "event_tx", "xid8", false);
+		checkColumn(connection, tableName, "updated_at", "timestamp with time zone", true);
 		checkColumn(connection, tableName, "updated_tags", "ARRAY", true);
 
 		// Check foreign key constraint
@@ -492,33 +483,37 @@ public class PostgresEventStorageImpl implements EventStorage {
 			return Stream.empty();
 		}
 		
-		// Handle case where reference exists but has no position - return empty stream for optimistic locking
-		if (reference != null && reference.position() == null) {
-			return Stream.empty();
-		}
-		
 		StringBuilder sqlBuilder = new StringBuilder();
 		sqlBuilder.append(
-			"SELECT event_position, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags FROM %sevents WHERE 1=1".formatted(prefix)
+			"""
+				SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags 
+				FROM %sevents 
+				WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot()) 
+			""".formatted(prefix)
 			);
+		// pg_snapshot_xmin(pg_current_snapshot()) makes sure we don't read data committed by transaction that were started
+		// after ones that are still running (race condition which would drop some events otherwise)
+		// great insight found in the blogpost by Oskar Dudycz (https://event-driven.io/en/ordering_in_postgres_outbox/)  
 		
 		List<Object> parameters = new ArrayList<>();
 		
 		// Add position filtering if reference is provided
-		if (reference != null && reference.position() != null) {
+		if (reference != null ) {
 			if (includeReference) {
 				if ( direction == QueryDirection.FORWARD ) {
-					sqlBuilder.append(" AND event_position >= ?");
+					sqlBuilder.append(" AND ((event_tx>?::text::xid8) OR (event_tx = ?::text::xid8 AND event_position > ?))");
 				} else { 
-					sqlBuilder.append(" AND event_position <= ?");
+					sqlBuilder.append(" AND ((event_tx<?::text::xid8) OR (event_tx = ?::text::xid8 AND event_position < ?))");
 				}
 			} else {
 				if ( direction == QueryDirection.FORWARD ) {
-					sqlBuilder.append(" AND event_position > ?");
+					sqlBuilder.append(" AND ((event_tx>?::text::xid8) OR (event_tx = ?::text::xid8 AND event_position > ?))");
 				} else { 
-					sqlBuilder.append(" AND event_position < ?");
+					sqlBuilder.append(" AND ((event_tx<?::text::xid8) OR (event_tx = ?::text::xid8 AND event_position < ?))");
 				}
 			}
+			parameters.add(reference.tx());
+			parameters.add(reference.tx());
 			parameters.add(reference.position());
 		}
 		
@@ -549,9 +544,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 		
 		// Order by position
-		sqlBuilder.append(" ORDER BY event_position");
 		if ( direction == QueryDirection.BACKWARD ) {
-			sqlBuilder.append(" DESC");
+			sqlBuilder.append(" ORDER BY event_tx DESC, event_position DESC");
+		} else {
+			sqlBuilder.append(" ORDER BY event_tx, event_position ");
+			
 		}
 		
 		Limit effectiveLimit = effectiveLimit(limit);
@@ -705,7 +702,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 				}
 			}
 			
-			if ( appendCriteria.expectedLastEventReference() != null && appendCriteria.expectedLastEventReference().isPresent() && appendCriteria.expectedLastEventReference().get().position()!=null ) {
+			if ( appendCriteria.expectedLastEventReference() != null && appendCriteria.expectedLastEventReference().isPresent()  ) {
 				
 				// Add position filtering - check for events after the expected last event
 				sqlBuilder.append(" AND event_position > ?");
@@ -721,10 +718,13 @@ public class PostgresEventStorageImpl implements EventStorage {
 			sqlBuilder.append(") ");
 		}
 		
-		sqlBuilder.append("RETURNING event_position, event_timestamp");
+		sqlBuilder.append("RETURNING event_position, event_timestamp, event_tx");
 		
 		
-		try ( Connection writeConnection = dataSource.getConnection(); PreparedStatement stmt = writeConnection.prepareStatement(sqlBuilder.toString())) {
+		try ( Connection writeConnection = dataSource.getConnection()) {
+			writeConnection.setAutoCommit(false);
+			
+			try ( PreparedStatement stmt = writeConnection.prepareStatement(sqlBuilder.toString()) ) {
 				// Set parameters
 				for (int i = 0; i < parameters.size(); i++) {
 					Object param = parameters.get(i);
@@ -744,12 +744,13 @@ public class PostgresEventStorageImpl implements EventStorage {
 					
 					while (rs.next()) {
 						long position = rs.getLong("event_position");
+						long tx = rs.getLong("event_tx");
 						Timestamp timestamp = rs.getTimestamp("event_timestamp");
 						
 						EventToStore e = it.next();
 						EventId id = idIterator.next();
 						
-						EventReference reference = EventReference.of(id, position);
+						EventReference reference = EventReference.of(id, position, tx);
 						storedEvents.add(e.positionAt(reference, timestamp.toLocalDateTime()));
 					}
 					
@@ -758,18 +759,25 @@ public class PostgresEventStorageImpl implements EventStorage {
 						throw new OptimisticLockingException(appendCriteria.eventQuery(), appendCriteria.expectedLastEventReference());
 					}
 				}
+				writeConnection.commit();
 				
 				return storedEvents;
+			} catch (SQLException e) {
+				writeConnection.rollback();
+				throw new EventStorageException("SQLException during append", e);
+			}
+			
 		} catch (SQLException e) {
 			throw new EventStorageException("SQLException during append", e);
 		}
+			
 	}
 
 	@Override
 	public Optional<StoredEvent> getEventById(EventId eventId) {
 		if ( eventId != null ) {
 			String sql = """
-				SELECT event_position, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags 
+				SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags 
 				FROM %sevents 
 				WHERE event_id = ?::uuid
 			""".formatted(prefix);
@@ -796,6 +804,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private <EVENT_TYPE> StoredEvent mapResultSetToEvent(ResultSet rs) throws SQLException {
 		long position = rs.getLong("event_position");
 		String eventIdValue = rs.getString("event_id");
+		long eventTx = Long.parseUnsignedLong(rs.getString("event_tx"));
 		String streamContext = rs.getString("stream_context");
 		String streamPurpose = rs.getString("stream_purpose");
 		String eventTypeName = rs.getString("event_type");
@@ -809,7 +818,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		
 		// Create EventReference
 		EventId eventId = new EventId(eventIdValue);
-		EventReference eventReference = EventReference.of(eventId, position);
+		EventReference eventReference = EventReference.of(eventId, position, eventTx);
 		
 		// Create EventStreamId
 		EventStreamId streamId = new EventStreamId(streamContext, streamPurpose);
@@ -828,10 +837,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 		private static final Logger LOGGER = LoggerFactory.getLogger(NewEventsAppendedMonitor.class);
 		
 		private String name;
-		private List<EventStoreListener> listeners;
+		private List<WeakReference<EventStoreListener>> listeners;
 		private DataSource monitoringDataSource;
 		
-		public NewEventsAppendedMonitor ( String name, List<EventStoreListener> listeners, DataSource monitoringDataSource ) {
+		public NewEventsAppendedMonitor ( String name, List<WeakReference<EventStoreListener>> listeners, DataSource monitoringDataSource ) {
 			this.name = name;
 			this.listeners = listeners;
 			this.monitoringDataSource = monitoringDataSource;
@@ -857,31 +866,32 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 					PGConnection pgConn = monitorConnection.unwrap(PGConnection.class);
 
-					LOGGER.debug("checking for notifications...");
-
-					PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // wait at max so long for new notifications, then ask new connection and start waiting again
+					while ( !stopped ) { // loop using a single connnection without returning it to the pool
 					
-					// we'll only keep one notification (the last one) per eventstream to notify our listeners - avoids duplicate activity
-					Map<EventStreamId,AppendsToEventStoreNotification> notificationsPerStream = new HashMap<>();
+						LOGGER.debug("checking for notifications...");
+	
+						PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // wait at max so long for new notifications, then ask new connection and start waiting again
+						
+					    if (notifications != null) {
+					        for (PGNotification notification : notifications) {
+					            LOGGER.debug("Received: {}", notification.getParameter());
+					            try {
+									EventAppendedPostgresNotification msg = JSONMAPPER.readValue(notification.getParameter(), EventAppendedPostgresNotification.class);
+									AppendsToEventStoreNotification aesn = msg.toNotification();
+									
+									listeners.forEach(l->{
+								    	if ( l.get() != null ) {
+								    		l.get().notify(aesn);
+								    	}
+									});
+									
+								} catch (JsonProcessingException e) {
+									LOGGER.error("Failed to parse notification: " + e.getMessage());
+								}
+					        }
+					    }
+					}
 					
-				    if (notifications != null) {
-				        for (PGNotification notification : notifications) {
-				            LOGGER.debug("Received: {}", notification.getParameter());
-				            try {
-								EventAppendedPostgresNotification msg = JSONMAPPER.readValue(notification.getParameter(), EventAppendedPostgresNotification.class);
-								AppendsToEventStoreNotification aesn = msg.toNotification();
-								
-								notificationsPerStream.put(aesn.stream(), aesn); // this replaces any previous ones on the same eventstream
-								
-							} catch (JsonProcessingException e) {
-								LOGGER.error("Failed to parse notification: " + e.getMessage());
-							}
-				        }
-				    }
-
-				    // notify all listeners - with max 1 notification per message stream (the most recent one)
-				    notificationsPerStream.values().forEach(n->listeners.forEach(l->l.notify(n)));
-
 				} catch (SQLException e) {
 					if ( !stopped ) {
 						LOGGER.error(e.getMessage(), e);
@@ -899,10 +909,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 		private static final Logger LOGGER = LoggerFactory.getLogger(BookmarkPlacedMonitor.class);
 		
 		private String name;
-		private List<EventStoreListener> listeners;
+		private List<WeakReference<EventStoreListener>> listeners;
 		private DataSource monitoringDataSource;
 		
-		public BookmarkPlacedMonitor ( String name, List<EventStoreListener> listeners, DataSource monitoringDataSource ) {
+		public BookmarkPlacedMonitor ( String name, List<WeakReference<EventStoreListener>> listeners, DataSource monitoringDataSource ) {
 			this.name = name;
 			this.listeners = listeners;
 			this.monitoringDataSource = monitoringDataSource;
@@ -930,30 +940,31 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 					PGConnection pgConn = monitorConnection.unwrap(PGConnection.class);
 
-					LOGGER.debug("checking for notifications...");
-
-					// we'll only keep one notification (the last one) per reader to notify our listeners - avoids duplicate activity
-					Map<String,BookmarkPlacedNotification> bookmarkPlacedsPerReader = new HashMap<>();
-
-					PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // wait at for new notifications, then ask new connection and start waiting again 
-				    if (notifications != null) {
-				        for (PGNotification notification : notifications) {
-				            LOGGER.debug("Received: " + notification.getParameter());
-				            try {
-								BookmarkPlacedPostgresNotification msg = jsonMapper.readValue(notification.getParameter(), BookmarkPlacedPostgresNotification.class);
-								BookmarkPlacedNotification bpn = msg.toNotification();
-								LOGGER.debug("notification: " + bpn);
-								
-								bookmarkPlacedsPerReader.put(bpn.reader(), bpn);
-								
-							} catch (JsonProcessingException e) {
-								LOGGER.error("Failed to parse notification: " + e.getMessage());
-							}
-				        }
-				    }
-
-				    // notify all listeners - with max 1 notification per message stream (the most recent one)
-				    bookmarkPlacedsPerReader.values().forEach(n->listeners.forEach(l->l.notify(n)));
+					while ( !stopped ) { // reuse single connection without returing in tot the pool
+					
+						LOGGER.debug("checking for notifications...");
+	
+						PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // wait at for new notifications, then ask new connection and start waiting again 
+					    if (notifications != null) {
+					        for (PGNotification notification : notifications) {
+					            LOGGER.debug("Received: " + notification.getParameter());
+					            try {
+									BookmarkPlacedPostgresNotification msg = jsonMapper.readValue(notification.getParameter(), BookmarkPlacedPostgresNotification.class);
+									BookmarkPlacedNotification bpn = msg.toNotification();
+									LOGGER.debug("notification: " + bpn);
+									
+									listeners.forEach(l->{
+								    	if ( l.get() != null  ) {
+								    		l.get().notify(bpn);
+								    	}
+								    });
+									
+								} catch (JsonProcessingException e) {
+									LOGGER.error("Failed to parse notification: " + e.getMessage());
+								}
+					        }
+					    }
+					}
 
 				} catch (SQLException e) {
 					if ( !stopped ) {
@@ -966,31 +977,32 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 	}
 	
-	record EventAppendedPostgresNotification ( String streamContext, String streamPurpose, long eventPosition, String eventId, String eventType ) { 
+	record EventAppendedPostgresNotification ( String streamContext, String streamPurpose, long eventPosition, long eventTx, String eventId ) { 
 		public AppendsToEventStoreNotification toNotification ( ) {
 			return new AppendsToEventStoreNotification ( 
 					EventStreamId.forContext(streamContext).withPurpose(streamPurpose),
-					EventReference.of(EventId.of(eventId), eventPosition));
+					EventReference.of(EventId.of(eventId), eventPosition, eventTx));
 		}
 	}
 
-	record BookmarkPlacedPostgresNotification ( String reader, long eventPosition, String eventId  ) { 
+	record BookmarkPlacedPostgresNotification ( String reader, long eventPosition, long eventTx, String eventId  ) { 
 		public BookmarkPlacedNotification toNotification ( ) {
 			return new BookmarkPlacedNotification ( 
 					reader,
-					EventReference.of(EventId.of(eventId), eventPosition));
+					EventReference.of(EventId.of(eventId), eventPosition, eventTx));
 		}
 	}
 
 	@Override
 	public void subscribe(EventStoreListener listener) {
-		listeners.add(listener);
+		listeners.add(new WeakReference<>(listener));
+		listeners.removeIf(ref -> ref.get() == null);
 	}
 
 	@Override
 	public Optional<EventReference> getBookmark(String reader) {
 		String sql = """
-			SELECT event_position, event_id 
+			SELECT event_position, event_id, event_tx
 			FROM %sbookmarks 
 			WHERE reader = ?
 		""".formatted(prefix);
@@ -1002,9 +1014,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 				try (ResultSet rs = stmt.executeQuery()) {
 					if (rs.next()) {
 						long position = rs.getLong("event_position");
+						long tx = rs.getLong("event_tx");
 						String eventIdValue = rs.getString("event_id");
 						EventId eventId = new EventId(eventIdValue);
-						return Optional.of(EventReference.of(eventId, position));
+						return Optional.of(EventReference.of(eventId, position, tx));
 					}
 				}
 			} catch (SQLException e) {
@@ -1024,11 +1037,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 			removeBookmark(reader);
 		} else {
 			String sql = """
-				INSERT INTO %sbookmarks (reader, event_position, event_id, updated_at, updated_tags) 
-				VALUES (?, ?, ?::uuid, CURRENT_TIMESTAMP, ? )
+				INSERT INTO %sbookmarks (reader, event_position, event_tx, event_id, updated_at, updated_tags) 
+				VALUES (?, ?, ?::text::xid8, ?::uuid, CURRENT_TIMESTAMP, ? )
 				ON CONFLICT (reader) 
 				DO UPDATE SET 
 					event_position = EXCLUDED.event_position,
+					event_tx = EXCLUDED.event_tx,
 					event_id = EXCLUDED.event_id,
 					updated_at = CURRENT_TIMESTAMP,
 					updated_tags = EXCLUDED.updated_tags
@@ -1045,11 +1059,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 					try ( PreparedStatement stmt = writeConnection.prepareStatement(sql) ) {
 						stmt.setString(1, reader.toString());
 						stmt.setLong(2, eventReference == null?0:eventReference.position());
-						stmt.setString(3, eventReference==null?null:eventReference.id().value());
+						stmt.setLong(3, eventReference == null?0:eventReference.tx());
+						stmt.setString(4, eventReference==null?null:eventReference.id().value());
 						
 						// Convert tags to array
 						String[] tagsArray = tags.toStrings().toArray(new String[tags.tags().size()]);
-						stmt.setArray(4, writeConnection.createArrayOf("text", (String[]) tagsArray));
+						stmt.setArray(5, writeConnection.createArrayOf("text", (String[]) tagsArray));
 						
 						int rowsAffected = stmt.executeUpdate();
 						if (rowsAffected == 0) {

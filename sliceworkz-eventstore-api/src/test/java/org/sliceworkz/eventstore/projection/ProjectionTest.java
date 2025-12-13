@@ -42,8 +42,8 @@ public class ProjectionTest {
 	@BeforeEach
 	void setUp ( ) {
 		EventStreamId mockStream = EventStreamId.forContext("unit").withPurpose("test");
-		EventReference ref1 = EventReference.create(1);
-		EventReference ref2 = EventReference.create(2);
+		EventReference ref1 = EventReference.create(1, 1);
+		EventReference ref2 = EventReference.create(2, 2);
 		LocalDateTime now = LocalDateTime.now();
 		this.mockEvents = Arrays.asList(new Event[] {
 				Event.of(new FirstDomainEvent(), Tags.none()).positionAt(mockStream, ref1, now), 

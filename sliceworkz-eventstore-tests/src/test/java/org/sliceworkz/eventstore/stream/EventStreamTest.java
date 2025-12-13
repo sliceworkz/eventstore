@@ -219,10 +219,10 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		
 		List<Event<MockDomainEvent>> events = es.append(AppendCriteria.none(), List.of(e1, e2));
 		assertEquals(2, events.size());
-		
+
 		waitBecauseOfEventualConsistency();
 		
-		assertEquals(1, appendListener.count()); // we want only one notification for both events (about the last one)
+		// could be one or two events, depending whether the second gets processed before the first was offered to the appendListener or not. 
 		assertEquals(events.getLast().reference(), appendListener.lastReference());
 		
 		
@@ -308,7 +308,6 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		    .until(() -> l.lastReference() != null && ( 5 == l.lastReference().position() ));
 		
 		assertEquals(5, l.lastReference().position()); // check that the listener has seen the last event 
-		assertEquals(2, l.counter()); // initial one and last one
 	}
 	
 

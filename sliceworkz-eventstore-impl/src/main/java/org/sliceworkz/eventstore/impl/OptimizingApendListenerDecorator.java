@@ -32,17 +32,17 @@ import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendLis
  *   <li>Batching multiple rapid notifications into a single call to the delegate listener</li>
  *   <li>Skipping redundant notifications when events have already been processed</li>
  *   <li>Ensuring only one notification is in progress at a time</li>
- *   <li>Tracking the maximum event position seen and notifying with the highest position</li>
+ *   <li>Tracking the latest event reference seen (ordered by transaction, then position) and notifying with the most recent reference</li>
  *   <li>Respecting the listener's reported actual processing position to avoid redundant work</li>
  * </ul>
  * <p>
  * The decorator maintains thread-safe state tracking to handle concurrent append operations
  * efficiently. When multiple threads trigger notifications simultaneously, only one proceeds
- * while others register their target positions for batch processing.
+ * while others register their target event references for batch processing.
  * <p>
  * The optimization leverages the return value of {@link EventStreamEventuallyConsistentAppendListener#eventsAppended(EventReference)}
  * to track what the delegate listener has actually processed, allowing it to skip notifications
- * for positions already handled.
+ * for event references already handled.
  *
  * @see EventStreamEventuallyConsistentAppendListener
  */
@@ -71,12 +71,12 @@ public class OptimizingApendListenerDecorator implements EventStreamEventuallyCo
      * <p>
      * This implementation optimizes notification delivery by:
      * <ul>
-     *   <li>Skipping notifications for positions already processed by the delegate</li>
-     *   <li>Batching concurrent notifications into a single delegate call with the highest position</li>
+     *   <li>Skipping notifications for event references already processed by the delegate</li>
+     *   <li>Batching concurrent notifications into a single delegate call with the latest event reference</li>
      *   <li>Ensuring only one notification to the delegate is in progress at any time</li>
      * </ul>
      * <p>
-     * The method returns the {@code atLeastUntil} parameter, as the actual processing position
+     * The method returns the {@code atLeastUntil} parameter, as the actual processing reference
      * is tracked from the delegate's return value and used internally for optimization.
      *
      * @param atLeastUntil reference to at least the last appended event
@@ -84,12 +84,12 @@ public class OptimizingApendListenerDecorator implements EventStreamEventuallyCo
      */
     @Override
     public EventReference eventsAppended ( EventReference atLeastUntil ) {
-        if ((lastNotifiedReference.get() != null) && ( atLeastUntil.position() <= lastNotifiedReference.get().position()) ) {
+        if ((lastNotifiedReference.get() != null) && !atLeastUntil.happenedAfter(lastNotifiedReference.get())) {
             return atLeastUntil;
         }
-        
-        // Update target to maximum position seen
-        nextEventReference.updateAndGet(current -> (current == null || (current.position() < atLeastUntil.position()))? atLeastUntil:current);
+
+        // Update target to the latest event reference seen
+        nextEventReference.updateAndGet(current -> (current == null || current.happenedBefore(atLeastUntil))? atLeastUntil:current);
         
         if (!lock.tryLock()) {
             return atLeastUntil; // Someone else is handling it
@@ -112,8 +112,8 @@ public class OptimizingApendListenerDecorator implements EventStreamEventuallyCo
     private void notifyDecoratedListener() {
         while (true) {
             EventReference target = nextEventReference.get();
-            
-            if (lastNotifiedReference.get() != null && ( target.position() <= lastNotifiedReference.get().position())) {
+
+            if (lastNotifiedReference.get() != null && !target.happenedAfter(lastNotifiedReference.get())) {
                 return;
             }
             
@@ -123,7 +123,7 @@ public class OptimizingApendListenerDecorator implements EventStreamEventuallyCo
             try {
                 EventReference lastSeenByDelegate = delegate.eventsAppended(target);
                 if ( lastSeenByDelegate != null ) {
-                	lastNotifiedReference.set(target.position()>lastSeenByDelegate.position()?target:lastSeenByDelegate);
+                	lastNotifiedReference.set(lastSeenByDelegate.happenedAfter(target)?lastSeenByDelegate:target);
                 }
             } finally {
                 lock.lock();

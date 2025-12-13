@@ -114,7 +114,7 @@ public class OptimisticLockingTest {
 		eventStream.append(AppendCriteria.none(), Collections.singletonList(firstEvent));
 		
 		// Create a fake event ID that doesn't match the actual last event
-		EventReference fakeEvent = EventReference.create(1234567890);
+		EventReference fakeEvent = EventReference.create(1234567890, 1234567890);
 		
 		// Second append with incorrect expected event ID (should fail)
 		EphemeralEvent<SecondDomainEvent> secondEvent = Event.of(new SecondDomainEvent("test2"), Tags.none());

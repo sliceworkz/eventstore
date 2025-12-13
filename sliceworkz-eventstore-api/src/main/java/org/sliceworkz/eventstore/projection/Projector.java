@@ -27,6 +27,7 @@ import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.stream.EventSource;
+import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
 
 /**
  * Processes a {@link Projection} by efficiently streaming events from an {@link EventSource} and applying them to the projection handler.
@@ -133,7 +134,7 @@ import org.sliceworkz.eventstore.stream.EventSource;
  * @see ProjectorMetrics
  * @see EventSource
  */
-public class Projector<CONSUMED_EVENT_TYPE> {
+public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyConsistentAppendListener {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(Projector.class);
 
@@ -223,10 +224,9 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 		return runUntilInternal(until, false);
 	}
 
-	private ProjectorMetrics runUntilInternal ( EventReference until, boolean singleBatch ) {
+	private synchronized ProjectorMetrics runUntilInternal ( EventReference until, boolean singleBatch ) {
 		ProjectorRunResult result = new ProjectorRun().execute(until, singleBatch);
 		accumulatedMetrics = accumulatedMetrics.add(result.metrics());
-		
 		
 		if ( result.throwable() != null ) {
 			throw result.throwable();
@@ -337,16 +337,16 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 				if ( !lastEventReference.equals(lastReadAtStart)) {
 					es.placeBookmark(bookmarkReader, lastEventReference.get(), bookmarkTags);
 				}
+				LOGGER.debug("readmodel {} updated until {} with {} queries", projection, lastEventReference, queriesDone);
 			}
 			
-			LOGGER.debug("readmodel {} updated until {} with {} queries", projection, lastEventReference, queriesDone);
 			
 			return new ProjectorRunResult ( new ProjectorMetrics ( eventsStreamed, eventsHandled, queriesDone, lastEventReference==null?null:lastEventReference.orElse(null)), exception );
 		}
 	
 		private Event<CONSUMED_EVENT_TYPE> offerEventToProjection ( Event<CONSUMED_EVENT_TYPE> e, Projection<CONSUMED_EVENT_TYPE> projection, EventReference until, Batch batch ) {
 			this.eventsStreamed++;
-			if ( until == null || until.position() >= e.reference().position() ) {
+			if ( until == null || !e.reference().happenedAfter(until) ) {
 				if ( projection.eventQuery().matches(e) ) {
 					batch.startBatchIfNeeded(e);
 					currentEventReference = e.reference();
@@ -971,6 +971,11 @@ public class Projector<CONSUMED_EVENT_TYPE> {
 			}
 		}
 
+	}
+
+	@Override
+	public EventReference eventsAppended(EventReference atLeastUntil) {
+		return run().lastEventReference();
 	}
 	
 }

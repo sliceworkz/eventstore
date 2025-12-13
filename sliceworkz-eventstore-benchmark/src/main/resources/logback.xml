@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+
+    Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
+    Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Lesser General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+-->
+<configuration>
+
+    <!-- loki appender -->
+    <appender name="LOKI" class="com.github.loki4j.logback.Loki4jAppender">
+        <http>
+            <url>http://localhost:3100/loki/api/v1/push</url>
+	        <!--<useProtobufApi>true</useProtobufApi>-->
+        </http>
+            <labels>
+            	app=eventstore-benchmark
+            </labels>
+            <message>
+                <pattern>[%thread] %-5level %logger{36} - %msg%n</pattern>
+            </message>
+        <structuredMetadata>off</structuredMetadata>
+	    <batch>
+	        <!--<maxItems>1</maxItems>-->
+	        <timeoutMs>1000</timeoutMs>
+	    </batch>
+	    <verbose>true</verbose>
+    </appender>
+    
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+	<appender name="FILE" class="ch.qos.logback.core.FileAppender">
+		<file>readmodel.log</file>
+		<encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+	    	<pattern>%d{HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n</pattern>
+		</encoder>
+	</appender>  
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <!-- ENABLE THIS TO SEND LOGFILES TO LOKI (RUN VIA `docker compose up`) 
+        <appender-ref ref="LOKI"/>
+        -->
+    </root>  
+    
+    <logger name="com.github.loki4j" level="WARN"/>
+
+</configuration>

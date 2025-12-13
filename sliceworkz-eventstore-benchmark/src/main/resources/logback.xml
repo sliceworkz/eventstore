@@ -34,7 +34,7 @@
             </message>
         <structuredMetadata>off</structuredMetadata>
 	    <batch>
-	        <maxItems>1</maxItems>
+	        <!--<maxItems>1</maxItems>-->
 	        <timeoutMs>1000</timeoutMs>
 	    </batch>
 	    <verbose>true</verbose>
@@ -55,7 +55,9 @@
 
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>
-        <!--<appender-ref ref="LOKI"/>-->
+        <!-- ENABLE THIS TO SEND LOGFILES TO LOKI (RUN VIA `docker compose up`) 
+        <appender-ref ref="LOKI"/>
+        -->
     </root>  
     
     <logger name="com.github.loki4j" level="WARN"/>

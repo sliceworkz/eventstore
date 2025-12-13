@@ -39,6 +39,7 @@
 	<properties>
 		<maven.deploy.skip>true</maven.deploy.skip>
 		
+		<javalin.version>6.7.0</javalin.version>
 		<logback.version>1.5.21</logback.version>
 		<loki-logback.version>2.0.1</loki-logback.version>
 		
@@ -79,6 +80,27 @@
 		    <artifactId>postgresql</artifactId>
 		    <scope>compile</scope>
 		</dependency>
+		
+		
+		<!-- REST API via Javalin -->
+		<dependency>
+		    <groupId>io.javalin</groupId>
+		    <artifactId>javalin</artifactId>
+		    <version>${javalin.version}</version>
+		</dependency>
+		
+	    <dependency>
+	        <groupId>io.micrometer</groupId>
+	        <artifactId>micrometer-core</artifactId>
+	    </dependency>
+	    
+	    <!-- Micrometer Prometheus registry -->
+	    <dependency>
+	        <groupId>io.micrometer</groupId>
+	        <artifactId>micrometer-registry-prometheus</artifactId>
+	        <version>${micrometer.version}</version>
+	    </dependency>
+    
 	</dependencies>
 	
 	<build>
@@ -86,7 +108,7 @@
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-shade-plugin</artifactId>
-				<version>3.4.1</version>
+				<version>3.6.1</version>
 				<executions>
 					<execution>
 						<phase>package</phase>

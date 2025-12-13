@@ -53,6 +53,10 @@ import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
+import io.javalin.Javalin;
+import io.micrometer.prometheusmetrics.PrometheusConfig;
+import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
+
 public class BenchmarkApplication {
 
 	public static final int EVENTS_PER_PRODUCER_INSTANCE = 10000;
@@ -67,8 +71,29 @@ public class BenchmarkApplication {
 	public static void main ( String[] args ) throws InterruptedException {
 		LOGGER.info("starting...");
 		
+		
+		/**
+		 * Starting PrometheusRegistry and Javalin REST API to expose metrics 
+		 */
+		PrometheusMeterRegistry prometheusMeterRegistry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT); 
+		
+		// Javalin framework for REST
+		var javalin = Javalin.create(config -> {
+			config.useVirtualThreads = true; // Enables virtual threads for all request handling
+		});
+
+		if ( prometheusMeterRegistry != null ) {
+	       // Expose metrics endpoint for Prometheus to scrape
+	        javalin.get("/metrics", ctx -> {
+	            ctx.contentType("text/plain; version=0.0.4")
+	            	.result(prometheusMeterRegistry.scrape());
+	        });
+		
+		}
+		javalin.start(7072);
+		
 		//EventStore eventStore = InMemoryEventStorage.newBuilder().buildStore();
-		EventStore eventStore = PostgresEventStorage.newBuilder().prefix("benchmark_").initializeDatabase().buildStore();
+		EventStore eventStore = PostgresEventStorage.newBuilder().meterRegistry(prometheusMeterRegistry).prefix("benchmark_").initializeDatabase().buildStore();
 		
 		// stream-design: one single stream "customer", tags to differentiate
 		EventStream<CustomerEvent> customerStream = eventStore.getEventStream(EventStreamId.forContext("customer").defaultPurpose(), CustomerEvent.class);

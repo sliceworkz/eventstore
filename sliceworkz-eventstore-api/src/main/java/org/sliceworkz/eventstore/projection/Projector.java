@@ -346,7 +346,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 	
 		private Event<CONSUMED_EVENT_TYPE> offerEventToProjection ( Event<CONSUMED_EVENT_TYPE> e, Projection<CONSUMED_EVENT_TYPE> projection, EventReference until, Batch batch ) {
 			this.eventsStreamed++;
-			if ( until == null || until.position() >= e.reference().position() ) {
+			if ( until == null || !e.reference().happenedAfter(until) ) {
 				if ( projection.eventQuery().matches(e) ) {
 					batch.startBatchIfNeeded(e);
 					currentEventReference = e.reference();

@@ -591,6 +591,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		
 		@Override
 		public void when(MockDomainEvent event) {
+			//System.out.println(event);
 			counter++;
 		}
 

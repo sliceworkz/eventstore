@@ -353,7 +353,8 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	}
 	
 	private StoredEvent addEventToEventLog ( EventToStore event ) {
-		EventReference reference = EventReference.create(eventlog.size()+1);
+		int posAndTxAsWell = eventlog.size()+1;
+		EventReference reference = EventReference.create(posAndTxAsWell, posAndTxAsWell);
 		StoredEvent storedEvent = event.positionAt(reference, LocalDateTime.now());
 		eventlog.add(storedEvent);
 		return storedEvent;

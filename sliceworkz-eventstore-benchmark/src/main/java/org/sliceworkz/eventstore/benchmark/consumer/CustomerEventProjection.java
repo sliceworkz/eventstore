@@ -72,6 +72,7 @@ public class CustomerEventProjection implements BatchAwareProjection<CustomerEve
 	@Override
 	public void when(Event<CustomerEvent> eventWithMeta) {
 		if ( eventWithMeta.reference().position() <= lastPos) {
+			// can happen, transaciton is primary sort criterium, position is only second
 			System.err.println("!!! lastpos = " + lastPos + ", newpos=" + eventWithMeta.reference().position());
 		} 
 		lastPos = eventWithMeta.reference().position();

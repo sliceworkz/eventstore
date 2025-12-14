@@ -1,19 +1,18 @@
 name: auto-assign-issues
+
 on:
-  issues:
-    types: [opened]
   pull_request:
     types: [opened]
+
 jobs:
-  run:
+  assign:
     runs-on: ubuntu-latest
-    permissions:
-      issues: write
-      pull-requests: write
+    if: github.actor == 'dependabot[bot]'
     steps:
-    - name: 'Auto-assign issue'
-      uses: pozil/auto-assign-issue@d11e715efc663fe323c3d8d4d3cbbfdddd539baf #v1
-      with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          assignees: vanrogu
-          numOfAssignee: 1
+      - name: Assign Dependabot PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr edit ${{ github.event.pull_request.number }} \
+            --repo ${{ github.repository }} \
+            --add-assignee "vanrogu"

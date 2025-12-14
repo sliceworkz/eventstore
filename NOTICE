@@ -12,7 +12,7 @@ This product includes software developed by third parties:
 - HikariCP (https://github.com/brettwooldridge/HikariCP) - licensed under Apache 2.0 License
 - SLF4j (Https://github.com/qos-ch/slf4j) - licensed under MIT License
 - PG/JDBC (https://github.com/pgjdbc/pgjdbc) - licensed under BSD-2 Clause License
-
+- Micrometer (https://github.com/micrometer-metrics/micrometer) - licensed under Apache 2.0 License
 
 Trademarks:
 

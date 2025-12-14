@@ -23,11 +23,138 @@ import java.util.List;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
 
+/**
+ * Interface for writing events to an event stream.
+ * <p>
+ * EventSink provides the capability to append events to the event store with support for
+ * optimistic locking through {@link AppendCriteria}. This is a key component of the
+ * Dynamic Consistency Boundary (DCB) pattern, enabling conditional appends based on
+ * relevant historical facts.
+ * <p>
+ * When events are appended, they are transformed from {@link EphemeralEvent}s (lightweight events
+ * without position information) to full {@link Event}s with assigned references, timestamps, and
+ * stream associations.
+ * <p>
+ * EventSink is typically accessed through {@link EventStream}, which combines reading and writing capabilities.
+ *
+ * <h2>Append Modes:</h2>
+ * <ul>
+ *   <li><strong>Simple append</strong>: Use {@code AppendCriteria.none()} to append without any conditions</li>
+ *   <li><strong>Conditional append (DCB)</strong>: Use {@code AppendCriteria.of(query, lastRef)} to implement
+ *       optimistic locking based on relevant facts. The append will fail if new events matching the query
+ *       have been added since the last reference.</li>
+ * </ul>
+ *
+ * <h2>Example Usage:</h2>
+ * <pre>{@code
+ * EventStream<CustomerEvent> stream = eventStore.getEventStream(
+ *     EventStreamId.forContext("customer").withPurpose("123"),
+ *     CustomerEvent.class
+ * );
+ *
+ * // Simple append without conditions
+ * List<Event<CustomerEvent>> appended = stream.append(
+ *     AppendCriteria.none(),
+ *     Event.of(new CustomerRegistered("John Doe"), Tags.of("region", "EU"))
+ * );
+ *
+ * // Conditional append with optimistic locking (DCB pattern)
+ * // First, query relevant facts
+ * List<Event<CustomerEvent>> relevantEvents = stream.query(
+ *     EventQuery.forEvents(EventTypesFilter.any(), Tags.of("customer", "123"))
+ * ).toList();
+ *
+ * // Make decision based on relevant facts
+ * EventReference lastRelevantRef = relevantEvents.isEmpty()
+ *     ? null
+ *     : relevantEvents.getLast().reference();
+ *
+ * // Attempt conditional append - will fail if new relevant facts have emerged
+ * try {
+ *     stream.append(
+ *         AppendCriteria.of(
+ *             EventQuery.forEvents(EventTypesFilter.any(), Tags.of("customer", "123")),
+ *             Optional.ofNullable(lastRelevantRef)
+ *         ),
+ *         Event.of(new CustomerNameChanged("Jane Doe"), Tags.of("customer", "123"))
+ *     );
+ * } catch (OptimisticLockingException e) {
+ *     // New relevant facts have emerged - retry decision
+ * }
+ *
+ * // Batch append multiple events
+ * List<Event<CustomerEvent>> batchAppended = stream.append(
+ *     AppendCriteria.none(),
+ *     List.of(
+ *         Event.of(new CustomerAddressChanged("123 Main St"), Tags.of("customer", "123")),
+ *         Event.of(new CustomerEmailChanged("john@example.com"), Tags.of("customer", "123"))
+ *     )
+ * );
+ * }</pre>
+ *
+ * @param <DOMAIN_EVENT_TYPE> the type of domain events in this stream (typically a sealed interface)
+ * @see EventStream
+ * @see EventSource
+ * @see AppendCriteria
+ * @see EphemeralEvent
+ * @see Event
+ */
 public interface EventSink<DOMAIN_EVENT_TYPE> {
 
-	// returns Events with filled in position in stream
+	/**
+	 * Appends a list of events to the stream with conditional logic based on append criteria.
+	 * <p>
+	 * This is the primary append method. Events are provided as {@link EphemeralEvent}s and are
+	 * converted to full {@link Event}s upon successful append, with assigned references, timestamps,
+	 * and position information.
+	 * <p>
+	 * When using {@link AppendCriteria} with optimistic locking, the append will only succeed if
+	 * no new events matching the criteria's query have been added since the expected last event reference.
+	 * If conflicting events are detected, an {@link OptimisticLockingException}
+	 * is thrown.
+	 *
+	 * @param appendCriteria the criteria determining whether the append should proceed (use AppendCriteria.none() for unconditional append)
+	 * @param events the list of ephemeral events to append
+	 * @return a list of fully-formed Events with assigned references and metadata
+	 * @throws OptimisticLockingException if append criteria are violated (new relevant facts detected)
+	 * @see AppendCriteria
+	 */
 	List<Event<DOMAIN_EVENT_TYPE>> append ( AppendCriteria appendCriteria, List<EphemeralEvent<? extends DOMAIN_EVENT_TYPE>> events );
-	
+
+	/**
+	 * Appends a list of events to a specific stream with conditional logic based on append criteria.
+	 * <p>
+	 * This method allows appending events to a different stream than the one this EventSink is bound to,
+	 * provided the target stream is compatible (either the same stream or a concretization of an anyPurpose stream).
+	 * This is useful when working with wildcard streams that need to append to specific stream instances.
+	 * <p>
+	 * The target stream must be compatible with this EventSink's stream ID, meaning either:
+	 * <ul>
+	 *   <li>The streams are exactly the same</li>
+	 *   <li>This EventSink is bound to an anyPurpose stream and the target stream concretizes it with a specific purpose</li>
+	 * </ul>
+	 *
+	 * @param appendCriteria the criteria determining whether the append should proceed
+	 * @param events the list of ephemeral events to append
+	 * @param streamToAppendTo the specific stream ID to append the events to
+	 * @return a list of fully-formed Events with assigned references and metadata
+	 * @throws OptimisticLockingException if append criteria are violated (new relevant facts detected)
+	 * @throws IllegalArgumentException if the target stream is not compatible with this EventSink's stream ID, or if the target stream is read-only
+	 * @see #append(AppendCriteria, List)
+	 */
+	List<Event<DOMAIN_EVENT_TYPE>> append ( AppendCriteria appendCriteria, List<EphemeralEvent<? extends DOMAIN_EVENT_TYPE>> events, EventStreamId streamToAppendTo );
+
+	/**
+	 * Appends a single event to the stream with conditional logic based on append criteria.
+	 * <p>
+	 * Convenience method for appending a single event. Delegates to {@link #append(AppendCriteria, List)}
+	 * with a single-element list.
+	 *
+	 * @param appendCriteria the criteria determining whether the append should proceed
+	 * @param event the ephemeral event to append
+	 * @return a list containing the single fully-formed Event with assigned reference and metadata
+	 * @throws OptimisticLockingException if append criteria are violated
+	 */
 	default List<Event<DOMAIN_EVENT_TYPE>> append ( AppendCriteria appendCriteria, EphemeralEvent<? extends DOMAIN_EVENT_TYPE> event ) {
 		return append(appendCriteria, Collections.singletonList(event));
 	}

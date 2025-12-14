@@ -17,8 +17,6 @@
  */
 package org.sliceworkz.eventstore.examples;
 
-import java.util.stream.Stream;
-
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.LegacyEvent;

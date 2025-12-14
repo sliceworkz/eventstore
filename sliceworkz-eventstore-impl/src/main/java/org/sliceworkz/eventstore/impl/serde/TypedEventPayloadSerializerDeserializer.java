@@ -32,26 +32,42 @@ import org.sliceworkz.eventstore.events.Upcast;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
+/**
+ * Typed mode implementation of {@link EventPayloadSerializerDeserializer} that maps events to/from Java objects.
+ * <p>
+ * This implementation provides type-safe event handling with full support for:
+ * <ul>
+ *   <li>Sealed interfaces for discovering event types automatically</li>
+ *   <li>Event upcasting from historical/legacy events using {@link LegacyEvent} annotations</li>
+ *   <li>GDPR compliance via separate storage of erasable fields</li>
+ * </ul>
+ * <p>
+ * Event types must be registered via {@link #registerEventTypes(Class)} before they can be serialized or deserialized.
+ *
+ * @see EventPayloadSerializerDeserializer#typed()
+ */
 public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloadSerializerDeserializer {
 
-	private Map<String,EventDeserializer> deserializers = new HashMap<>();
-	private Map<EventType, EventType> mostRecentTypes = new HashMap<>();
+	private final Map<String,EventDeserializer> deserializers = new HashMap<>();
+	private final Map<EventType, EventType> mostRecentTypes = new HashMap<>();
+	private final Map<EventType, Set<EventType>> mostRecentMultiTypes = new HashMap<>(); // for interface hierarchies, this maps interface->set of interface-implementing event types
 	
 	@Override
-	public TypeAndPayload deserialize ( String eventTypeName, String payload ) {
+	public TypeAndPayload deserialize ( TypeAndSerializedPayload serialized ) {
 		TypeAndPayload result;
 		try {
-			EventDeserializer deserializer = deserializers.get(eventTypeName);
+			EventDeserializer deserializer = deserializers.get(serialized.type().name());
 			if ( deserializer == null  ) {
-				throw new RuntimeException("No mapping found for event type '" + eventTypeName + "'");
+				throw new RuntimeException("No mapping found for event type '" + serialized.type().name() + "'");
 			}
-			result = new TypeAndPayload(deserializer.eventType(), deserializer.deserialize(payload)); 
+			result = new TypeAndPayload(deserializer.eventType(), deserializer.deserialize(serialized.immutablePayload(), serialized.erasablePayload())); 
 		} catch (Exception e) {
 			if ( deserializers.keySet().isEmpty() ) {
-				throw new RuntimeException(String.format("Failed to deserialize event data for type '%s', no EventType mappings configured. Pass the Event root Class when creating the EventStream", eventTypeName) , e);
+				throw new RuntimeException("Failed to deserialize event data for type '%s', no EventType mappings configured. Pass the Event root Class when creating the EventStream".formatted(serialized.type().name()) , e);
 			} else {
-				throw new RuntimeException(String.format("Failed to deserialize event data for type '%s', known mappings for %s", eventTypeName, deserializers.keySet()) , e);
+				throw new RuntimeException("Failed to deserialize event data for type '%s', known mappings for %s".formatted(serialized.type().name(), deserializers.keySet()) , e);
 			}
 		}
 		return result;
@@ -59,14 +75,14 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 	
 	@Override
 	public TypedEventPayloadSerializerDeserializer registerEventTypes(Class<?> rootClass) {
-		deserializersFor(rootClass).forEach(m->registerEventType(m.name(), m.clazz(), false));
+		deserializersFor(rootClass, Collections.emptySet()).forEach(m->registerEventType(m.name(), m.clazz(), false));
 		
 		return this;
 	}
 	
 	@Override
 	public TypedEventPayloadSerializerDeserializer registerLegacyEventTypes(Class<?> rootClass) {
-		deserializersFor(rootClass).forEach(m->registerEventType(m.name(), m.clazz(), true));
+		deserializersFor(rootClass, Collections.emptySet()).forEach(m->registerEventType(m.name(), m.clazz(), true));
 		
 		return this;
 	}
@@ -84,7 +100,7 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		if ( clazz.isAnnotationPresent(LegacyEvent.class)) {
 			
 			if ( !assumeUpcasters ) {
-				throw new RuntimeException(String.format("Event type %s should not be annotated as a @LegcayEvent, or moved to the legacy Event types", clazz));
+				throw new RuntimeException("Event type %s should not be annotated as a @LegacyEvent, or moved to the legacy Event types".formatted(clazz));
 			}
 			
 			LegacyEvent annotation = clazz.getAnnotation(LegacyEvent.class);
@@ -108,7 +124,7 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 			
 		} else {
 			if  ( assumeUpcasters ) {
-				throw new RuntimeException(String.format("legacy Event type %s should be annotated as a @LegcayEvent and configured with an Upcaster", clazz));
+				throw new RuntimeException("legacy Event type %s should be annotated as a @LegacyEvent and configured with an Upcaster".formatted(clazz));
 			}
 			mostRecentTypes.put(eventType, eventType); // no upcasting needed
 		}
@@ -117,26 +133,54 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		deserializers.put(key, eventDeserializer);
 	}
 	
-	private Set<EventNameAndEventClass> deserializersFor ( Class<?> eventRootClass ) {
+	private Set<EventNameAndEventClass> deserializersFor ( Class<?> eventRootClass, Set<EventType> implementedInterfaces ) {
 		Set<EventNameAndEventClass> result = Collections.emptySet();
 		if ( eventRootClass != null && !eventRootClass.equals(Object.class)) {
 			if ( eventRootClass.isInterface() ) {
 				
 				if ( ! eventRootClass.isSealed() ) {
-					throw new IllegalArgumentException(String.format("interface %s should be sealed to allow Event Type determination", eventRootClass.getName()));
+					throw new IllegalArgumentException("interface %s should be sealed to allow Event Type determination".formatted(eventRootClass.getName()));
 				}
 				
 				Class<?>[] permittedSubclassses = eventRootClass.getPermittedSubclasses();
 				if ( permittedSubclassses != null && permittedSubclassses.length > 0 ) {
-					result =Stream.of(permittedSubclassses).map(EventNameAndEventClass::of).collect(Collectors.toSet()) ;
+					
+					result = new HashSet<>();
+					
+					for ( Class<?> psc: permittedSubclassses ) {
+						if ( psc.isInterface() ) {
+							
+							Set<EventType> newImplementedInterfaces = new HashSet<>(implementedInterfaces);
+							newImplementedInterfaces.add(EventType.of(psc));
+							result.addAll(deserializersFor(psc, newImplementedInterfaces));
+						} else {
+							result.add(EventNameAndEventClass.of(psc));
+
+							registerEventTypeWithParentInterfaceType(implementedInterfaces, EventType.of(psc)); 
+							// add eg a CustomerRegistered record with a CustomerDomainEvent interface (to allow querying with typefilter CustomerDomainEvent.class, etc... 
+							
+						}
+					}
+					
 				} else {
 					result = Collections.emptySet();
 				}
 			} else {
 				result = Stream.of(eventRootClass).map(EventNameAndEventClass::of).collect(Collectors.toSet()) ;
+				registerEventTypeWithParentInterfaceType(implementedInterfaces, EventType.of(eventRootClass)); 
 			}
 		}
 		return result;
+	}
+
+	private void registerEventTypeWithParentInterfaceType(Set<EventType> implementedInterfaces, EventType eventType) {
+		// register this event class as a descendent of each of its implemented interfaces
+		implementedInterfaces.forEach(parentTypeInterface->{
+			if ( !mostRecentMultiTypes.containsKey(parentTypeInterface)) {
+				mostRecentMultiTypes.put(parentTypeInterface, new HashSet<>());
+			}
+			mostRecentMultiTypes.get(parentTypeInterface).add(eventType);	
+		});
 	}
 	
 	record EventNameAndEventClass (String name, Class<?> clazz) { 
@@ -153,14 +197,14 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 	
 	
 	interface EventDeserializer {
-		Object deserialize ( String payload );
+		Object deserialize ( String immutablePayload, String erasablePayload );
 		EventType eventType ( );
 	}
 	
 	class InstantiationEventDeserializer implements EventDeserializer {
 		
-		private Class<?> eventClass;
-		private EventType eventType;
+		private final Class<?> eventClass;
+		private final EventType eventType;
 		
 		public InstantiationEventDeserializer ( Class<?> eventClass, EventType eventType ) {
 			this.eventClass = eventClass;
@@ -168,14 +212,30 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		}
 
 		@Override
-		public Object deserialize ( String payload ) {
+		public Object deserialize ( String immutablePayload, String erasablePayload ) {
+			Object object;
 			try {
-				return jsonMapper.readValue(payload, eventClass);
+				
+				if ( erasablePayload == null ) {
+					object = immutableDataMapper.readValue(immutablePayload, eventClass);
+				} else {
+					// reconstruct the full object by merging
+					ObjectNode nodeImmutableData = (ObjectNode) immutableDataMapper.readTree(immutablePayload);
+					ObjectNode nodeErasableData = (ObjectNode) erasableDataMapper.readTree(erasablePayload);
+
+					// Merge erasable data into immutable data
+					deepMerge(nodeImmutableData, nodeErasableData);
+
+					// Directly convert the merged JsonNode to the target class without string roundtrip
+					object = immutableDataMapper.treeToValue(nodeImmutableData, eventClass);
+				}
+
 			} catch (JsonMappingException e) {
 				throw new RuntimeException(e);
 			} catch (JsonProcessingException e) {
 				throw new RuntimeException(e);
 			} 
+			return object;
 		}
 
 		@Override
@@ -187,9 +247,9 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 	
 	class InstantiationAndUpcastEventDeserializer implements EventDeserializer {
 
-		private Upcast<Object,Object> upcaster;
-		private EventDeserializer deser;
-		private EventType eventType;
+		private final Upcast<Object,Object> upcaster;
+		private final EventDeserializer deser;
+		private final EventType eventType;
 
 		public InstantiationAndUpcastEventDeserializer ( EventDeserializer deser, Upcast<Object,Object> upcaster ) {
 			this.deser = deser;
@@ -198,8 +258,8 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		}
 		
 		@Override
-		public Object deserialize ( String payload ) {
-			return upcaster.upcast(deser.deserialize(payload));
+		public Object deserialize ( String immutablePayload, String erasablePayload ) {
+			return upcaster.upcast(deser.deserialize(immutablePayload, erasablePayload));
 		}
 
 		@Override
@@ -212,9 +272,34 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 	@Override
 	public Set<EventType> determineLegacyTypes(Set<EventType> currentTypes) {
 		// return all types that are upcasted to the currentType, and include the currentType itself as well
-		Set<EventType> result = new HashSet<>(currentTypes); // in case no mapping is found (no match), keep them
-		result.addAll(mostRecentTypes.entrySet().stream().filter(e->currentTypes.contains(e.getValue())).map(e->e.getKey()).collect(Collectors.toSet()));
+		Set<EventType> currentConcreteEventTypes = concreteEventTypesFor(currentTypes); // explode to concrete implementations if interfaces are passed
+		Set<EventType> result = new HashSet<>(currentConcreteEventTypes); // we always include "current types", legacy types are optional - only if they are present
+		result.addAll(mostRecentTypes.entrySet().stream().filter(e->currentConcreteEventTypes.contains(e.getValue())).map(e->e.getKey()).collect(Collectors.toSet()));
 		return result;
 	}
 	
+	private Set<EventType> concreteEventTypesFor ( Set<EventType> types ) {
+		Set<EventType> result = new HashSet<>();
+		for ( EventType e: types ) {
+			if ( mostRecentMultiTypes.containsKey(e)) { // if type is an interface
+				result.addAll(mostRecentMultiTypes.get(e));
+			} else { // if type is a concrete event class
+				result.add(e);
+			}
+		}
+		return result;
+	}
+
+	/**
+	 * Returns true to indicate this is a typed serializer/deserializer.
+	 * <p>
+	 * This information is used for observability and metrics tagging.
+	 *
+	 * @return true (typed mode)
+	 */
+	@Override
+	public boolean isTyped() {
+		return true;
+	}
+
 }

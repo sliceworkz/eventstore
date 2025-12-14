@@ -27,7 +27,11 @@ public class PostgresEventStoreBasicTest extends EventStoreBasicTest {
 
 	@Override
 	public EventStorage createEventStorage ( ) {
-		return new PostgresEventStorageImpl("unit-test", PostgresContainer.dataSource()).initializeDatabase();
+		return PostgresEventStorage.newBuilder()
+				.name("unit-test")
+				.dataSource(PostgresContainer.dataSource())
+				.initializeDatabase()
+				.build();
 	}
 	
 	@Override
@@ -43,7 +47,6 @@ public class PostgresEventStoreBasicTest extends EventStoreBasicTest {
 
 	@AfterAll
 	public static void tearDownAfterAll ( ) {
-		PostgresContainer.dumpEventsInTable();
 		PostgresContainer.stop();
 		PostgresContainer.cleanup();
 	}

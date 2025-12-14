@@ -19,11 +19,10 @@ package org.sliceworkz.eventstore.infra.postgres;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Properties;
-
-import javax.sql.DataSource;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,53 +31,104 @@ import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 
 /**
- * Utility class that can be used to create a DataSource to use.
- * Only useful when passing a DataSource to the PostgresEventStorage.Builder. 
+ * Utility class that can be used to create a HikariCP DataSource.
+ * <p>
+ * This factory creates {@link HikariDataSource} instances instead of generic DataSource,
+ * allowing for configuration of Micrometer metrics on the returned HikariDataSource instances.
+ * Only useful when passing a DataSource to the PostgresEventStorage.Builder.
  */
 public class DataSourceFactory {
-	
+
 	private static final Logger LOGGER = LoggerFactory.getLogger(DataSourceFactory.class);
-	
+
 	private DataSourceFactory ( ) {
-		
+
 	}
-	
-	public static DataSource fromConfiguration ( String datasourceConfigurationName ) {
-		
-		Properties dbProperties;
-		try {
-			dbProperties = loadProperties();
-		} catch (IOException e) {
-			throw new RuntimeException(e);
-		}
-		
+
+	/**
+	 * Creates a HikariDataSource using properties loaded from the default location.
+	 *
+	 * @return a configured HikariDataSource instance
+	 */
+	public static HikariDataSource fromConfiguration ( ) {
+		return fromConfiguration((Properties)null);
+	}
+
+	/**
+	 * Creates a HikariDataSource using the provided properties.
+	 *
+	 * @param properties the database connection properties
+	 * @return a configured HikariDataSource instance
+	 */
+	public static HikariDataSource fromConfiguration ( Properties properties ) {
+		return fromConfiguration(properties, null);
+	}
+
+	/**
+	 * Creates a HikariDataSource using the specified named datasource configuration.
+	 *
+	 * @param datasourceConfigurationName the name of the datasource configuration to use
+	 * @return a configured HikariDataSource instance
+	 */
+	public static HikariDataSource fromConfiguration ( String datasourceConfigurationName ) {
+		return fromConfiguration(loadProperties(), datasourceConfigurationName);
+	}
+
+	/**
+	 * Creates a HikariDataSource using the provided properties and named configuration.
+	 *
+	 * @param dbProperties the database connection properties
+	 * @param datasourceConfigurationName the name of the datasource configuration to use
+	 * @return a configured HikariDataSource instance, or null if no configuration is found
+	 */
+	public static HikariDataSource fromConfiguration ( Properties dbProperties, String datasourceConfigurationName ) {
 		HikariConfig config = HikariConfigurationUtil.createConfig(datasourceConfigurationName, dbProperties);
-        
-		return new HikariDataSource(config);
+		if ( config != null ) {
+			return new HikariDataSource(config);
+		} else {
+			return null;
+		}
 	}
 
 	// looks for file in current working directory of process, and few levels up
-	static Properties loadProperties ( ) throws IOException {
+	public static Properties loadProperties ( ) {
 
 		String configPath = System.getProperty("eventstore.db.config");
-
-		LOGGER.info("determining configuration file path - attempt 1 - from System property 'eventstore.db.config' ({})", configPath);
+		if ( configPath != null ) {
+			LOGGER.info("database configuration config path configured via System property 'eventstore.db.config' ({})", configPath);
+		} else {
+			LOGGER.debug("database configuration config path not found via System property 'eventstore.db.config'");
+		}
 		
 		// 2. Environment variable: EVENTSTORE_DB_CONFIG
 		if (configPath == null) {
 			configPath = System.getenv("EVENTSTORE_DB_CONFIG");
-			LOGGER.info("determining configuration file path - attempt 2 - from environment variable EVENTSTORE_DB_CONFIG  ({})", configPath);
+			if ( configPath != null ) {
+				LOGGER.info("searching database configuration in config path via environment variable EVENTSTORE_DB_CONFIG 'eventstore.db.config' ({})", configPath);
+			} else {
+				LOGGER.debug("database configuration config path not found via environment variable EVENTSTORE_DB_CONFIG 'eventstore.db.config'");
+			}
 		}
 
 		// 3. Fall back to file search
 		if (configPath == null) {
 		    configPath = findPropertiesFile();
-		    LOGGER.info("determining configuration file path - attempt 3 - from db.properties in pwd or parent folder(s)  ({})", configPath);
+			if ( configPath != null ) {
+				LOGGER.info("searching database configuration in db.properties in pwd or parent folder(s) ({})", configPath);
+			} else {
+				LOGGER.error("database configuration not found in db.properties in pwd or parent folder(s)");
+			}
 		}
 
 		Properties result = new Properties();
-		try ( InputStream is = new FileInputStream(configPath)) {
-			result.load(is);
+		try {
+			try ( InputStream is = new FileInputStream(configPath)) {
+				result.load(is);
+			}
+		} catch (FileNotFoundException e) {
+			throw new RuntimeException(e);
+		} catch (IOException e) {
+			throw new RuntimeException(e);
 		}
 		return result;
 	}
@@ -94,7 +144,7 @@ public class DataSourceFactory {
 		if (!file.exists() ) {
 			throw new RuntimeException("db.properties file not found in current or parent directory up to 2 levels up");
 		} else {
-			LOGGER.info(String.format("read properties from '%s'", file));
+			LOGGER.info("read properties from '{}'", file);
 		}
 		return file.getPath();
 	}

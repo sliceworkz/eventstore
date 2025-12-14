@@ -33,14 +33,13 @@ import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.LegacyEvent;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.events.Upcast;
-import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImpl;
+import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.stream.UpcastTest.CustomerEvent.CustomerRegisteredV2;
 import org.sliceworkz.eventstore.stream.UpcastTest.CustomerEvent.CustomerRenamed;
 import org.sliceworkz.eventstore.stream.UpcastTest.CustomerEvent.Name;
-import org.sliceworkz.eventstore.stream.UpcastTest.CustomerHistoricalEvent;
 
 public class UpcastTest {
 	
@@ -60,7 +59,7 @@ public class UpcastTest {
 	}
 	
 	public EventStorage createEventStorage ( ) {
-		return new InMemoryEventStorageImpl();
+		return InMemoryEventStorage.newBuilder().build();
 	}
 	
 	public void destroyEventStorage ( EventStorage storage ) {
@@ -163,13 +162,13 @@ public class UpcastTest {
 	@Test
 	void testUpcastAnnotationNotAllowedOnCurrentEventVersions ( ) {
 		RuntimeException e = assertThrows(RuntimeException.class,()->eventStore.getEventStream(streamId, CustomerHistoricalEvent.CustomerNameChanged.class));
-		assertEquals("Event type class org.sliceworkz.eventstore.stream.UpcastTest$CustomerHistoricalEvent$CustomerNameChanged should not be annotated as a @LegcayEvent, or moved to the legacy Event types", e.getMessage());
+		assertEquals("Event type class org.sliceworkz.eventstore.stream.UpcastTest$CustomerHistoricalEvent$CustomerNameChanged should not be annotated as a @LegacyEvent, or moved to the legacy Event types", e.getMessage());
 	}
 	
 	@Test
 	void testUpcastRequiredOnHistoricalEventVersions ( ) {
 		RuntimeException e = assertThrows(RuntimeException.class,()->eventStore.getEventStream(streamId, OriginalEvent.CustomerRegistered.class, CustomerEvent.CustomerRenamed.class));
-		assertEquals("legacy Event type class org.sliceworkz.eventstore.stream.UpcastTest$CustomerEvent$CustomerRenamed should be annotated as a @LegcayEvent and configured with an Upcaster", e.getMessage());
+		assertEquals("legacy Event type class org.sliceworkz.eventstore.stream.UpcastTest$CustomerEvent$CustomerRenamed should be annotated as a @LegacyEvent and configured with an Upcaster", e.getMessage());
 	}
 	
 	

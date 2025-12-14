@@ -27,10 +27,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.events.EphemeralEvent;
-import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImpl;
+import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.mock.MockDomainEvent;
 import org.sliceworkz.eventstore.mock.MockDomainEvent.FirstDomainEvent;
 import org.sliceworkz.eventstore.spi.EventStorage;
@@ -56,7 +56,7 @@ public class EventStorePerformanceTest {
 	}
 	
 	public EventStorage createEventStorage ( ) {
-		return new InMemoryEventStorageImpl();
+		return InMemoryEventStorage.newBuilder().build();
 	}
 	
 	public void destroyEventStorage ( EventStorage storage ) {
@@ -81,7 +81,7 @@ public class EventStorePerformanceTest {
 		eventStream.subscribe(new EventStreamConsistentAppendListener<MockDomainEvent>() {
 			
 			@Override
-			public void eventsAppended(List<? extends Event<? extends MockDomainEvent>> events) {
+			public void eventsAppended(List<? extends Event<MockDomainEvent>> events) {
 				counter.incrementAndGet();
 			}
 		});

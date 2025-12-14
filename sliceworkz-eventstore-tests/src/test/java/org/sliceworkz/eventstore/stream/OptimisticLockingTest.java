@@ -28,11 +28,11 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.EventStoreFactory;
+import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.events.EphemeralEvent;
-import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImpl;
+import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.mock.MockDomainEvent;
 import org.sliceworkz.eventstore.mock.MockDomainEvent.FirstDomainEvent;
 import org.sliceworkz.eventstore.mock.MockDomainEvent.SecondDomainEvent;
@@ -58,7 +58,7 @@ public class OptimisticLockingTest {
 	}
 	
 	public EventStorage createEventStorage ( ) {
-		return new InMemoryEventStorageImpl();
+		return InMemoryEventStorage.newBuilder().build();
 	}
 	
 	public void destroyEventStorage ( EventStorage storage ) {
@@ -114,7 +114,7 @@ public class OptimisticLockingTest {
 		eventStream.append(AppendCriteria.none(), Collections.singletonList(firstEvent));
 		
 		// Create a fake event ID that doesn't match the actual last event
-		EventReference fakeEvent = EventReference.create(1234567890);
+		EventReference fakeEvent = EventReference.create(1234567890, 1234567890);
 		
 		// Second append with incorrect expected event ID (should fail)
 		EphemeralEvent<SecondDomainEvent> secondEvent = Event.of(new SecondDomainEvent("test2"), Tags.none());

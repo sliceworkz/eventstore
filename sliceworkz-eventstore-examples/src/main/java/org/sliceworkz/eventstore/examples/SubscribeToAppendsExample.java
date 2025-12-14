@@ -48,7 +48,7 @@ public class SubscribeToAppendsExample {
 		stream.subscribe(new EventStreamEventuallyConsistentAppendListener() {
 			
 			@Override
-			public synchronized void eventsAppended(EventReference atLeastUntil) {
+			public synchronized EventReference eventsAppended(EventReference atLeastUntil) {
 				
 				// each time we are notified, we query any events after the last we've seen ...
 				List<Event<Object>> events = stream.query(EventQuery.matchAll(), lastSeen.get()).toList();
@@ -58,6 +58,7 @@ public class SubscribeToAppendsExample {
 				if ( ! events.isEmpty() ) {
 					lastSeen.set(events.getLast().reference());
 				}
+				return lastSeen.get();
 			}
 			
 		});

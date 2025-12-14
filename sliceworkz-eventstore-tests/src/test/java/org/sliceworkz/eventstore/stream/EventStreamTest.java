@@ -17,16 +17,20 @@
  */
 package org.sliceworkz.eventstore.stream;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.Duration;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,8 +38,9 @@ import org.sliceworkz.eventstore.AbstractEventStoreTest;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventId;
+import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImpl;
+import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.mock.MockConsistentAppendListener;
 import org.sliceworkz.eventstore.mock.MockDomainEventWithNonSealedInterface;
 import org.sliceworkz.eventstore.mock.MockDomainEventWithNonSealedInterface.DomainEventPartOfMockDomainEventWithNonSealedInterface;
@@ -43,6 +48,7 @@ import org.sliceworkz.eventstore.mock.MockEventuallyConsistentAppendListener;
 import org.sliceworkz.eventstore.mockdomain.MockDomainDuplicatedEvent;
 import org.sliceworkz.eventstore.mockdomain.MockDomainEvent;
 import org.sliceworkz.eventstore.mockdomain.MockDomainEvent.FirstDomainEvent;
+import org.sliceworkz.eventstore.mockdomain.MockDomainEvent.FourthDomainEventWithErasableParts;
 import org.sliceworkz.eventstore.mockdomain.MockDomainEvent.SecondDomainEvent;
 import org.sliceworkz.eventstore.mockdomain.OtherMockDomainEvent;
 import org.sliceworkz.eventstore.mockdomain.OtherMockDomainEvent.AnotherDomainEvent;
@@ -97,21 +103,18 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		
 		MockConsistentAppendListener<MockDomainEvent> s1cal = new MockConsistentAppendListener<>();
 		MockEventuallyConsistentAppendListener s1ecal = new MockEventuallyConsistentAppendListener();
-		waitBecauseOfEventualConsistency();
 		
 		s1.subscribe(s1cal);
 		s1.subscribe(s1ecal);
 
 		MockConsistentAppendListener<MockDomainEvent> s2cal = new MockConsistentAppendListener<>();
 		MockEventuallyConsistentAppendListener s2ecal = new MockEventuallyConsistentAppendListener();
-		waitBecauseOfEventualConsistency();
 
 		s2.subscribe(s2cal);
 		s2.subscribe(s2ecal);
 
 		MockConsistentAppendListener<OtherMockDomainEvent> s3cal = new MockConsistentAppendListener<>();
 		MockEventuallyConsistentAppendListener s3ecal = new MockEventuallyConsistentAppendListener();
-		waitBecauseOfEventualConsistency();
 
 		s3.subscribe(s3cal);
 		s3.subscribe(s3ecal);
@@ -168,7 +171,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		List<Event<MockDomainEvent>> events = es.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FirstDomainEvent("1"), Tags.none())));
 		assertEquals(1, events.size());
 
-		waitBecauseOfEventualConsistency();
+		waitBecauseOfEventualConsistency(()->appendListener.count()>=1);
 		
 		assertEquals(1, appendListener.count()); // we expect one notification on our appendlistener
 		assertEquals(events.getLast().reference(), appendListener.lastReference());
@@ -216,10 +219,10 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		
 		List<Event<MockDomainEvent>> events = es.append(AppendCriteria.none(), List.of(e1, e2));
 		assertEquals(2, events.size());
-		
+
 		waitBecauseOfEventualConsistency();
 		
-		assertEquals(1, appendListener.count()); // we want only one notification for both events (about the last one)
+		// could be one or two events, depending whether the second gets processed before the first was offered to the appendListener or not. 
 		assertEquals(events.getLast().reference(), appendListener.lastReference());
 		
 		
@@ -268,15 +271,156 @@ public class EventStreamTest extends AbstractEventStoreTest {
 	}
 
 	@Test
+	void testAppendWithConcreteEventClassWithErasableParts ( ) {
+		
+		// this stream only contains this concrete event type (we use <Object> generic for test purposes only)
+		EventStream<Object> specialEs = eventStore().getEventStream(stream, FourthDomainEventWithErasableParts.class);
+		
+		// should be ok
+		specialEs.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FourthDomainEventWithErasableParts("1", "someName"), Tags.none())));
+
+	}
+
+	@Test
 	void testAppendToNonSpecificStream ( ) {
 		var otherStream = eventStore().getEventStream(EventStreamId.anyContext());
 		IllegalArgumentException e = assertThrows(IllegalArgumentException.class,()->otherStream.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FirstDomainEvent("1"), Tags.none()))));
 		assertEquals("cannot append to non-specific eventstream ", e.getMessage());
 	}
+	
+	@Test
+	void testNotificationsToSlowListener ( ) {
+		
+		SlowMockListener l = new SlowMockListener(100);
+		
+		es.subscribe(l);
+		
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none()));
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("2"), Tags.none()));
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("3"), Tags.none()));
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("4"), Tags.none()));
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("5"), Tags.none()));
+		
+		await()
+		    .atMost(Duration.ofMillis(5000))
+		    	.with()
+		    	.pollInterval(Duration.ofMillis(100))
+		    .until(() -> l.lastReference() != null && ( 5 == l.lastReference().position() ));
+		
+		assertEquals(5, l.lastReference().position()); // check that the listener has seen the last event 
+	}
+	
+
+	@Test
+	void testNotificationsToSlowListenerInTwoPhases ( ) {
+		
+		SlowMockListener l = new SlowMockListener(100);
+		
+		es.subscribe(l);
+		
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none()));
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("2"), Tags.none()));
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("3"), Tags.none()));
+		
+		await()
+	    	.atMost(Duration.ofMillis(5000))
+	    		.with()
+	    		.pollInterval(Duration.ofMillis(100))
+	    	.until(() -> l.lastReference() != null && ( 3 == l.lastReference().position())); // wait until 3 has been seen by listener
+
+		// then append some extra events, this will force extra notification update calls
+
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("4"), Tags.none()));
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("5"), Tags.none()));
+		
+		await()
+			.atMost(Duration.ofMillis(5000))
+				.with()
+		    	.pollInterval(Duration.ofMillis(100))
+		    .until(() -> l.lastReference()!=null && (5 == l.lastReference().position()));
+
+		assertEquals(5, l.lastReference().position()); // check that the listener has seen the last event 
+		assertTrue(l.counter() >= 3); // initial one (calling thread), third (first thread second loop), fourth and fifth separate or combined
+	}
+
+	
+	@Test
+	void testNotificationsToProactivelyQueryingListener ( ) {
+		// when a listener is notified and already queries further events proactively
+		
+		SlowMockListener l = new SlowMockListener(100);
+		
+		// make sure we're synchronously updated with the latest events
+		es.subscribe(new EventStreamConsistentAppendListener<MockDomainEvent>() {
+			@Override
+			public void eventsAppended(List<? extends Event<MockDomainEvent>> events) {
+				if ( events.getLast().reference().position() <= 4 ) { // assume we won't "query" the last one ...
+					l.mockLastQueried(events.getLast().reference());
+				}
+			}
+		});
+		
+		es.subscribe(l);
+		
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none()));
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("2"), Tags.none()));
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("3"), Tags.none()));
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("4"), Tags.none()));
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("5"), Tags.none()));
+		
+		await()
+			.atMost(Duration.ofMillis(5000))
+				.with()
+		    	.pollInterval(Duration.ofMillis(100))
+		    .until(() -> (l.lastReference()!=null) && (5 == l.lastReference().position()));
+
+		assertEquals(5, l.lastReference().position()); // check that the listener has seen the last event 
+	}
 
 	@Override
 	public EventStorage createEventStorage() {
-		return new InMemoryEventStorageImpl();
+		return InMemoryEventStorage.newBuilder().build();
 	}
 	
+}
+
+class SlowMockListener implements EventStreamEventuallyConsistentAppendListener {
+	
+	private AtomicInteger counter = new AtomicInteger();
+	private AtomicReference<EventReference> lastReference = new AtomicReference<>();
+	private EventReference lastQueried;
+	private int delayMs;
+	
+	public SlowMockListener ( int delayMs ) {
+		this.delayMs = delayMs;
+	}
+	
+	@Override
+	public EventReference eventsAppended(EventReference atLeastUntil) {
+//		System.out.println("notified by %s until %d".formatted(Thread.currentThread().threadId(), atLeastUntil.position()));
+		try {
+			Thread.sleep(delayMs);
+		} catch (InterruptedException e) {
+		}
+		if ( lastReference.get() == null || (atLeastUntil.position() > lastReference.get().position()) ) {
+			lastReference.set(atLeastUntil);
+		}
+		counter.incrementAndGet();
+		return lastQueried==null?atLeastUntil:lastQueried;
+	}
+	
+	public void mockLastQueried ( EventReference lastQueried ) {
+		this.lastQueried = lastQueried;
+		if ( lastReference.get() == null || ( lastQueried.position() > lastReference.get().position() ) ) {
+			lastReference.set(lastQueried);
+		}
+	}
+	
+	public int counter ( ) {
+		return counter.get();
+	}
+	
+	public EventReference lastReference ( ) {
+		return lastReference.get();
+	}
 }

@@ -17,7 +17,6 @@
  */
 package org.sliceworkz.eventstore.impl.serde;
 
-import java.util.Collection;
 import java.util.Set;
 
 import org.sliceworkz.eventstore.events.EventType;
@@ -25,20 +24,44 @@ import org.sliceworkz.eventstore.events.EventType;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
+/**
+ * Raw mode implementation of {@link EventPayloadSerializerDeserializer} that works with JSON strings directly.
+ * <p>
+ * This implementation does not map events to Java classes. Events are deserialized as Jackson {@link JsonNode}
+ * objects, allowing for schema-less event processing without requiring static type definitions.
+ * <p>
+ * Use this mode when event types are not statically known or when you need flexible JSON handling.
+ *
+ * @see EventPayloadSerializerDeserializer#raw()
+ */
 public class RawEventPayloadSerializerDeserializer extends AbstractEventPayloadSerializerDeserializer {
 	
 	@Override
-	public TypeAndPayload deserialize ( String eventTypeName, String payload ) {
+	public TypeAndPayload deserialize ( TypeAndSerializedPayload serialized ) {
 		JsonNode object;
 		try {
-			object = jsonMapper.readTree(payload);
+			
+			if ( serialized.erasablePayload() == null ) {
+				object = immutableDataMapper.readTree(serialized.immutablePayload());
+			} else {
+				// reconstruct the full object by merging
+				ObjectNode nodeImmutableData = (ObjectNode) immutableDataMapper.readTree(serialized.immutablePayload());
+				ObjectNode nodeErasableData = (ObjectNode) erasableDataMapper.readTree(serialized.erasablePayload());
+				
+				// Merge erasable data into immutable data
+				deepMerge(nodeImmutableData, nodeErasableData);
+				
+				object = nodeImmutableData; // with erasable merged in
+			}
+			
 		} catch (JsonMappingException e) {
 			throw new RuntimeException("Failed to deserialize event data: JsonMappingException", e);
 		} catch (JsonProcessingException e) {
 			throw new RuntimeException("Failed to deserialize event data: JsonProcessingException", e);
 		}
-		return new TypeAndPayload(EventType.ofType(eventTypeName), object);
+		return new TypeAndPayload(serialized.type(), object);
 	}
 
 	@Override
@@ -61,6 +84,18 @@ public class RawEventPayloadSerializerDeserializer extends AbstractEventPayloadS
 	@Override
 	public Set<EventType> determineLegacyTypes(Set<EventType> currentTypes) {
 		return currentTypes;
+	}
+
+	/**
+	 * Returns false to indicate this is a raw (untyped) serializer/deserializer.
+	 * <p>
+	 * This information is used for observability and metrics tagging.
+	 *
+	 * @return false (raw mode)
+	 */
+	@Override
+	public boolean isTyped() {
+		return false;
 	}
 	
 }

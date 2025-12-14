@@ -21,6 +21,8 @@ import java.util.stream.Stream;
 
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.Event;
+import org.sliceworkz.eventstore.events.EventHandler;
+import org.sliceworkz.eventstore.events.EventWithMetaDataHandler;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.examples.AppendAndQueryAllExample.CustomerEvent.CustomerChurned;
 import org.sliceworkz.eventstore.examples.AppendAndQueryAllExample.CustomerEvent.CustomerNameChanged;
@@ -49,8 +51,42 @@ public class AppendAndQueryAllExample {
 		
 		// query and print all events that are now in the stream
 		Stream<Event<CustomerEvent>> allEvents = stream.query(EventQuery.matchAll());
-		allEvents.forEach(System.out::println);
 		
+		new EventWithMetaDataHandler<CustomerEvent>() {
+
+			@Override
+			public void when(Stream<Event<CustomerEvent>> eventsWithMeta) {
+				System.out.println("printing events with metadata...");
+				eventsWithMeta.forEach(this::when);
+				System.out.println("done printing events.");
+			}
+			
+			@Override
+			public void when(Event<CustomerEvent> eventWithMeta) {
+				System.out.println(eventWithMeta);
+			}
+
+		}.when(allEvents);
+
+		// query and print all events that are now in the stream
+		allEvents = stream.query(EventQuery.matchAll());
+
+		new EventHandler<CustomerEvent>() {
+
+			@Override
+			public void when(Stream<Event<CustomerEvent>> events) {
+				System.out.println("printing events ...");
+				events.forEach(this::when);
+				System.out.println("done printing events.");
+			}
+			
+			@Override
+			public void when(CustomerEvent event) {
+				System.out.println(event);
+			}
+
+		}.when(allEvents);
+
 	}
 	
 	sealed interface CustomerEvent {

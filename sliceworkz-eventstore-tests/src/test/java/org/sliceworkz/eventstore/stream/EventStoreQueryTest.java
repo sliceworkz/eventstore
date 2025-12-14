@@ -35,9 +35,11 @@ import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImpl;
+import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.mock.MockDomainEvent;
 import org.sliceworkz.eventstore.mock.MockDomainEvent.FirstDomainEvent;
+import org.sliceworkz.eventstore.projection.ProjectionWithoutMetaData;
+import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.query.Limit;
@@ -95,7 +97,7 @@ public class EventStoreQueryTest {
 	}
 	
 	public EventStorage createEventStorage ( ) {
-		return new InMemoryEventStorageImpl();
+		return InMemoryEventStorage.newBuilder().build();
 	}
 	
 	public void destroyEventStorage ( EventStorage storage ) {
@@ -249,10 +251,10 @@ public class EventStoreQueryTest {
 		assertEquals(4, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(2)).count());
 		assertEquals(3, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(3)).count());
 		assertEquals(3, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(4)).count());
-		assertEquals(3, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(5)).count()); // TODO is this OK, as this event is not in the stream.  should "after" work with an event reference on an event that is not in the stream??
+		assertEquals(3, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(5)).count()); // "after" event is not in the stream, but query is taking it into account nonetheless
 		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(6)).count());
 		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(7)).count());
-		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(8)).count()); // TODO same question
+		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(8)).count()); // "after" event is not in the stream, but query is taking it into account nonetheless
 		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(9)).count());
 		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(10)).count());
 
@@ -262,10 +264,10 @@ public class EventStoreQueryTest {
 		assertEquals(1, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(2)).count());
 		assertEquals(1, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(3)).count());
 		assertEquals(2, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(4)).count());
-		assertEquals(2, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(5)).count()); // TODO is this OK, as this event is not in the stream.  should "after" work with an event reference on an event that is not in the stream??
+		assertEquals(2, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(5)).count()); // "after" event is not in the stream, but query is taking it into account nonetheless
 		assertEquals(2, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(6)).count());
 		assertEquals(3, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(7)).count());
-		assertEquals(4, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(8)).count()); // TODO same question
+		assertEquals(4, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(8)).count()); // "after" event is not in the stream, but query is taking it into account nonetheless
 		assertEquals(4, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(9)).count());
 		assertEquals(5, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(10)).count());
 
@@ -316,6 +318,26 @@ public class EventStoreQueryTest {
 		assertEquals(1, queryOther(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.parse("otherapp:tag"))));
 	}
 
+	@Test
+	void testProjectionWithHigherNumberOfEvents ( ) {
+		int expectedQueries = (10000+Projector.Builder.DEFAULT_MAX_EVENTS_PER_QUERY)/Projector.Builder.DEFAULT_MAX_EVENTS_PER_QUERY;
+
+		EventStream<MockDomainEvent> str = EventStoreFactory.get().eventStore(eventStorage).getEventStream(EventStreamId.forContext("UnitTestBoundedContext").withPurpose("domain"), MockDomainEvent.class);
+		
+		for ( int i = 0; i < 10000; i++ ) {
+			str.append(AppendCriteria.none(), Event.of(new MockDomainEvent.FirstDomainEvent("test " + i), Tags.none()));
+		}
+		
+		MockReadModel mrm = new MockReadModel("test");
+		
+		Projector<MockDomainEvent> prj = Projector.from(str).towards(mrm).inBatchesOf(500).build();
+		prj.run();
+		
+		assertEquals(10000, mrm.eventCount(), "model should have seen all events");
+		assertEquals(10000, prj.accumulatedMetrics().eventsHandled());
+		assertEquals(expectedQueries, prj.accumulatedMetrics().queriesDone());
+	}
+	
 	private Stream<Event<Object>> query ( EventQuery eventQuery ) {
 		return query(eventQuery, null, null);
 	}
@@ -385,6 +407,65 @@ public class EventStoreQueryTest {
 		public static AccountId of ( String value ) {
 			return new AccountId(value);
 		}
+	}
+
+}
+
+class MockReadModel implements ProjectionWithoutMetaData<MockDomainEvent> {
+	
+	private static int TOTAL_EVENT_COUNT_OVER_ALL_INSTANCES = 0;
+
+	private String name;
+	private int eventCount = 0;
+	private ThreadLocal<Integer> eventCountPerThread = new ThreadLocal<>();
+	
+	private EventQuery eventQuery;
+	
+	public MockReadModel ( String name, List<Class<?>> queriedClasses ) {
+		this.name = name;
+		this.eventQuery = EventQuery.forEvents(EventTypesFilter.of(queriedClasses), Tags.none());
+	}
+	
+	public MockReadModel ( String name ) {
+		this.name = name;
+		this.eventQuery = EventQuery.forEvents(EventTypesFilter.any(), Tags.none());
+	}
+	@Override
+	public EventQuery eventQuery() {
+		return eventQuery;
+	}
+
+	@Override
+	public synchronized void when(MockDomainEvent event) {
+		eventCount++;
+		
+		Integer current = eventCountPerThread.get();
+		if ( current == null ) {
+			current = 0;
+		}
+		eventCountPerThread.set(++current);
+		
+		TOTAL_EVENT_COUNT_OVER_ALL_INSTANCES++;
+	}
+	
+	public String name ( ) {
+		return name;
+	}
+	
+	public int eventCount ( ) {
+		return eventCount;
+	}
+
+	public int eventCountForThisThread ( ) {
+		return eventCountPerThread.get()==null?0:eventCountPerThread.get();
+	}
+
+	public static int TOTAL_EVENT_COUNT_OVER_INSTANCES ( ) {
+		return TOTAL_EVENT_COUNT_OVER_ALL_INSTANCES;
+	}
+	
+	public static void reset ( ) {
+		TOTAL_EVENT_COUNT_OVER_ALL_INSTANCES = 0;
 	}
 
 }

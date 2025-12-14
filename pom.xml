@@ -22,9 +22,9 @@
 	<modelVersion>4.0.0</modelVersion>
 	<groupId>org.sliceworkz</groupId>
 	<artifactId>sliceworkz-eventstore</artifactId>
-	<version>0.2.1</version>
+	<version>0.5.1</version>
 	
-	<name>${project.artifactId}}</name>
+	<name>${project.artifactId}</name>
 	<description>DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)</description>
 	<url>https://sliceworkz.github.io/eventstore</url>
 	
@@ -36,9 +36,10 @@
 		<maven.minimal-version>3.6.3</maven.minimal-version>
 		
 		<maven.maven-pgp-plugin.version>3.2.8</maven.maven-pgp-plugin.version>
-		<maven.maven-versions-plugin.version>2.19.1</maven.maven-versions-plugin.version>
+		<maven.maven-versions-plugin.version>2.20.1</maven.maven-versions-plugin.version>
 		<maven.maven-enforcer-plugin.version>3.6.2</maven.maven-enforcer-plugin.version>
 		<maven.mycila-license-plugin.version>5.0.0</maven.mycila-license-plugin.version>
+		<maven.maven-central-publishing-plugin.version>0.9.0</maven.maven-central-publishing-plugin.version>
 		
 		<maven.compiler.release>21</maven.compiler.release>
 	</properties>
@@ -61,6 +62,9 @@
 		<!-- infra implementations -->
 		<module>sliceworkz-eventstore-infra-inmem</module>
 		<module>sliceworkz-eventstore-infra-postgres</module>
+
+		<!-- benchmark tool -->
+		<module>sliceworkz-eventstore-benchmark</module>
 	</modules>
 	
 	<build>
@@ -117,10 +121,11 @@
 			<plugin>
 			    <groupId>org.sonatype.central</groupId>
 			    <artifactId>central-publishing-maven-plugin</artifactId>
-			    <version>0.6.0</version>
+			    <version>${maven.maven-central-publishing-plugin.version}</version>
 			    <extensions>true</extensions>
 			    <configuration>
-				<publishingServerId>central</publishingServerId>
+					<publishingServerId>central</publishingServerId>
+					<deploymentName>eventstore-${project.version}</deploymentName>
 			    </configuration>
 			</plugin>
       		
@@ -194,23 +199,10 @@
 		</profile>
 	</profiles>
 
-	<distributionManagement>
-		<repository>
-			<id>io.cloudrepo.xti.opensource</id>
-			<name>CloudRepo Releases</name>
-			<url>https://xti.mycloudrepo.io/repositories/opensource</url>
-		</repository>
-		<snapshotRepository>
-			<id>io.cloudrepo.xti.opensource</id>
-			<name>CloudRepo Snapshots</name>
-			<url>https://xti.mycloudrepo.io/repositories/opensource</url>
-		</snapshotRepository>
-	</distributionManagement>
-	
 	<licenses>
 		<license>
 			<name>LGPL License</name>
-			<url>https://opensource.org/licenses/LGPL</url>
+			<url>https://opensource.org/license/lgpl-3-0</url>
 		</license>
 	</licenses>
 

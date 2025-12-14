@@ -25,11 +25,11 @@
 	<parent>
 		<groupId>org.sliceworkz</groupId>
 		<artifactId>sliceworkz-eventstore-parent-pom</artifactId>
-		<version>0.2.1</version>
+		<version>0.5.1</version>
 		<relativePath>../sliceworkz-eventstore-parent-pom</relativePath>
 	</parent>
 
-	<name>${project.artifactId}}</name>
+	<name>${project.artifactId}</name>
 	<description>DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)</description>
 	<url>https://sliceworkz.github.io/eventstore</url>
 
@@ -49,6 +49,11 @@
 			<groupId>org.sliceworkz</groupId>
 			<artifactId>sliceworkz-eventstore-impl</artifactId>
 			<scope>test</scope>
+		</dependency>
+
+		<dependency>
+		    <groupId>org.awaitility</groupId>
+		    <artifactId>awaitility</artifactId>
 		</dependency>
 
 	</dependencies>

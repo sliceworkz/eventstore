@@ -23,12 +23,12 @@
 	<parent>
 		<groupId>org.sliceworkz</groupId>
 		<artifactId>sliceworkz-eventstore</artifactId>
-		<version>0.2.1</version>
+		<version>0.5.1</version>
 		<relativePath>../</relativePath>
 	</parent>
 	<artifactId>sliceworkz-eventstore-parent-pom</artifactId>
 
-	<name>${project.artifactId}}</name>
+	<name>${project.artifactId}</name>
 	<description>DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)</description>
 	<url>https://sliceworkz.github.io/eventstore</url>
 
@@ -39,15 +39,17 @@
 		<slf4j.version>2.0.17</slf4j.version>
 		<postgresql.jdbc.version>42.7.8</postgresql.jdbc.version>
 		<hikari.version>7.0.2</hikari.version>
+		<micrometer.version>1.16.0</micrometer.version>
 		<junit-jupiter.version>6.0.1</junit-jupiter.version>
 		<testcontainers.postgresql.version>1.21.3</testcontainers.postgresql.version>
+	    <awaitility.version>4.3.0</awaitility.version>
 
 		<maven.maven-surefire-plugin.version>3.5.4</maven.maven-surefire-plugin.version>
 		<maven.maven-compiler-plugin.version>3.14.1</maven.maven-compiler-plugin.version>
-		<maven.maven-source-plugin.version>3.3.1</maven.maven-source-plugin.version>
+		<maven.maven-source-plugin.version>3.4.0</maven.maven-source-plugin.version>
 		<maven.maven-javadoc-plugin.version>3.12.0</maven.maven-javadoc-plugin.version>
-		<maven.maven-jar-plugin.version>3.4.2</maven.maven-jar-plugin.version>
-		<maven.maven-assembly-plugin.version>3.7.1</maven.maven-assembly-plugin.version>
+		<maven.maven-jar-plugin.version>3.5.0</maven.maven-jar-plugin.version>
+		<maven.maven-assembly-plugin.version>3.8.0</maven.maven-assembly-plugin.version>
 	</properties>
 
 	<dependencyManagement>
@@ -91,7 +93,13 @@
 				<version>${junit-jupiter.version}</version>
 				<scope>test</scope>
 			</dependency>
-			
+			<dependency>
+			    <groupId>org.awaitility</groupId>
+			    <artifactId>awaitility</artifactId>
+			    <version>${awaitility.version}</version>
+			    <scope>test</scope>
+			</dependency>
+
 			<!-- PostgreSQL -->
 			<dependency>
 			    <groupId>org.postgresql</groupId>
@@ -111,6 +119,15 @@
 			    <artifactId>HikariCP</artifactId>
 			    <version>${hikari.version}</version>
 			</dependency>
+			
+			<!-- micrometer -->
+			<dependency>
+			    <groupId>io.micrometer</groupId>
+			    <artifactId>micrometer-core</artifactId>
+			    <version>${micrometer.version}</version>
+			    <optional>true</optional>
+			</dependency>
+			
 		</dependencies>
 	</dependencyManagement>
 	
@@ -122,6 +139,11 @@
 		<dependency>
 		  <groupId>com.fasterxml.jackson.datatype</groupId>
 		  <artifactId>jackson-datatype-jsr310</artifactId>
+		</dependency>
+		
+		<dependency>
+		    <groupId>io.micrometer</groupId>
+		    <artifactId>micrometer-core</artifactId>
 		</dependency>
 		
 		<dependency>

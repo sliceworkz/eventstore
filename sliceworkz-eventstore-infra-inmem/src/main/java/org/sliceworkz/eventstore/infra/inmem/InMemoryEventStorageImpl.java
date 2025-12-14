@@ -45,8 +45,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 
-import io.micrometer.core.instrument.MeterRegistry;
-
 /**
  * Thread-safe in-memory implementation of the {@link EventStorage} interface.
  * <p>
@@ -102,7 +100,6 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	private Map<String,EventReference> bookmarks = new HashMap<>();
 	private JsonMapper jsonMapper;
 	private Limit absoluteLimit;
-	private MeterRegistry meterRegistry;
 
 	/**
 	 * Constructs a new in-memory event storage instance with the specified absolute query limit and observability support.
@@ -117,19 +114,16 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	 *   <li>An empty list of event listeners</li>
 	 *   <li>An empty bookmark map</li>
 	 *   <li>A Jackson {@link JsonMapper} with auto-discovered modules for event serialization validation</li>
-	 *   <li>A Micrometer meter registry for collecting metrics about storage operations</li>
 	 * </ul>
 	 *
 	 * @param absoluteLimit the absolute limit on query results, or {@link Limit#none()} for no limit
-	 * @param meterRegistry the Micrometer meter registry for collecting observability metrics
 	 * @see InMemoryEventStorage.Builder#build()
 	 */
-	public InMemoryEventStorageImpl ( Limit absoluteLimit, MeterRegistry meterRegistry ) {
+	public InMemoryEventStorageImpl ( Limit absoluteLimit ) {
 		this.name = "inmem-%s".formatted(System.identityHashCode(this)); // unique name in case different objects are used
 		this.jsonMapper = new JsonMapper();
 		this.jsonMapper.findAndRegisterModules();
 		this.absoluteLimit = absoluteLimit;
-		this.meterRegistry = meterRegistry;
 	}
 
 	/**

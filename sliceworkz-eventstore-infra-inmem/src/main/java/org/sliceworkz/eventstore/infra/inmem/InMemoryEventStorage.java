@@ -213,7 +213,7 @@ public interface InMemoryEventStorage {
 		 * @see InMemoryEventStorageImpl
 		 */
 		public EventStorage build ( ) {
-			return new InMemoryEventStorageImpl(limit, meterRegistry);
+			return new InMemoryEventStorageImpl(limit);
 		}
 
 		/**

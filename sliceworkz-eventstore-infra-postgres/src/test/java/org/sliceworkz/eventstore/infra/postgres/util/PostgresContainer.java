@@ -29,7 +29,7 @@ import com.zaxxer.hikari.HikariDataSource;
 
 public class PostgresContainer {
 	
-	public static final String POSTGRES_DOCKER_CONTAINER_IMAGE = "postgres:16";
+	public static final String POSTGRES_DOCKER_CONTAINER_IMAGE = "postgres:17";
 	
 	@SuppressWarnings("resource")
 	public static PostgreSQLContainer<?> postgreSQLContainer = new PostgreSQLContainer<>(POSTGRES_DOCKER_CONTAINER_IMAGE)

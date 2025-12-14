@@ -38,6 +38,8 @@ import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.mock.MockDomainEvent;
 import org.sliceworkz.eventstore.mock.MockDomainEvent.FirstDomainEvent;
+import org.sliceworkz.eventstore.projection.ProjectionWithoutMetaData;
+import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.query.Limit;
@@ -316,6 +318,26 @@ public class EventStoreQueryTest {
 		assertEquals(1, queryOther(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.parse("otherapp:tag"))));
 	}
 
+	@Test
+	void testProjectionWithHigherNumberOfEvents ( ) {
+		int expectedQueries = (10000+Projector.Builder.DEFAULT_MAX_EVENTS_PER_QUERY)/Projector.Builder.DEFAULT_MAX_EVENTS_PER_QUERY;
+
+		EventStream<MockDomainEvent> str = EventStoreFactory.get().eventStore(eventStorage).getEventStream(EventStreamId.forContext("UnitTestBoundedContext").withPurpose("domain"), MockDomainEvent.class);
+		
+		for ( int i = 0; i < 10000; i++ ) {
+			str.append(AppendCriteria.none(), Event.of(new MockDomainEvent.FirstDomainEvent("test " + i), Tags.none()));
+		}
+		
+		MockReadModel mrm = new MockReadModel("test");
+		
+		Projector<MockDomainEvent> prj = Projector.from(str).towards(mrm).inBatchesOf(500).build();
+		prj.run();
+		
+		assertEquals(10000, mrm.eventCount(), "model should have seen all events");
+		assertEquals(10000, prj.accumulatedMetrics().eventsHandled());
+		assertEquals(expectedQueries, prj.accumulatedMetrics().queriesDone());
+	}
+	
 	private Stream<Event<Object>> query ( EventQuery eventQuery ) {
 		return query(eventQuery, null, null);
 	}
@@ -385,6 +407,65 @@ public class EventStoreQueryTest {
 		public static AccountId of ( String value ) {
 			return new AccountId(value);
 		}
+	}
+
+}
+
+class MockReadModel implements ProjectionWithoutMetaData<MockDomainEvent> {
+	
+	private static int TOTAL_EVENT_COUNT_OVER_ALL_INSTANCES = 0;
+
+	private String name;
+	private int eventCount = 0;
+	private ThreadLocal<Integer> eventCountPerThread = new ThreadLocal<>();
+	
+	private EventQuery eventQuery;
+	
+	public MockReadModel ( String name, List<Class<?>> queriedClasses ) {
+		this.name = name;
+		this.eventQuery = EventQuery.forEvents(EventTypesFilter.of(queriedClasses), Tags.none());
+	}
+	
+	public MockReadModel ( String name ) {
+		this.name = name;
+		this.eventQuery = EventQuery.forEvents(EventTypesFilter.any(), Tags.none());
+	}
+	@Override
+	public EventQuery eventQuery() {
+		return eventQuery;
+	}
+
+	@Override
+	public synchronized void when(MockDomainEvent event) {
+		eventCount++;
+		
+		Integer current = eventCountPerThread.get();
+		if ( current == null ) {
+			current = 0;
+		}
+		eventCountPerThread.set(++current);
+		
+		TOTAL_EVENT_COUNT_OVER_ALL_INSTANCES++;
+	}
+	
+	public String name ( ) {
+		return name;
+	}
+	
+	public int eventCount ( ) {
+		return eventCount;
+	}
+
+	public int eventCountForThisThread ( ) {
+		return eventCountPerThread.get()==null?0:eventCountPerThread.get();
+	}
+
+	public static int TOTAL_EVENT_COUNT_OVER_INSTANCES ( ) {
+		return TOTAL_EVENT_COUNT_OVER_ALL_INSTANCES;
+	}
+	
+	public static void reset ( ) {
+		TOTAL_EVENT_COUNT_OVER_ALL_INSTANCES = 0;
 	}
 
 }

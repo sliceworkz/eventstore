@@ -120,26 +120,24 @@ public class BenchmarkApplication {
 		Projector<CustomerEvent> customerProjector = Projector.<CustomerEvent>newBuilder()
 			.from(customerStream)
 			.towards(customerProjection)
+			.subscribe()
 			.bookmarkProgress()
 				.withReader("customer-projector")
 				.readBeforeFirstExecution()
 				.done()
 			.build();
-		customerStream.subscribe(customerProjector);
-
 		
 
 		SupplierEventProjection supplierProjection = new SupplierEventProjection(dataSource);
 		Projector<SupplierEvent> supplierProjector = Projector.<SupplierEvent>newBuilder()
 			.from(supplierStream)
 			.towards(supplierProjection)
+			.subscribe()
 			.bookmarkProgress()
 				.withReader("supplier-projector")
 				.readBeforeFirstExecution()
 				.done()
 			.build();
-		customerStream.subscribe(supplierProjector);
-		
 		
 		CustomerEventProducer cep = new CustomerEventProducer(customerStream, EVENTS_PER_PRODUCER_INSTANCE, MS_WAIT_BETWEEN_EVENTS);
 		SupplierEventProducer sep = new SupplierEventProducer(supplierStream, EVENTS_PER_PRODUCER_INSTANCE, MS_WAIT_BETWEEN_EVENTS);

@@ -516,6 +516,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		private EventSource<EVENT_TYPE> eventSource;
 		private Projection<EVENT_TYPE> projection;
 		private EventReference after;
+		private boolean subscribe;
 		private int maxEventsPerQuery = DEFAULT_MAX_EVENTS_PER_QUERY;
 
 		private BookmarkBuilder bookmarkBuilder = new BookmarkBuilder(this);
@@ -528,6 +529,31 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		 */
 		public Builder<EVENT_TYPE> from ( EventSource<EVENT_TYPE> eventSource ) {
 			this.eventSource = eventSource;
+			return this;
+		}
+
+		/**
+		 * Configures the projector to automatically subscribe to the event source for eventually consistent updates.
+		 * <p>
+		 * When enabled, the projector will automatically re-run whenever new events are appended to the event source,
+		 * enabling near-real-time projection updates without manual polling. This is useful for:
+		 * <ul>
+		 *   <li>Live dashboards and read models that need to reflect recent changes quickly</li>
+		 *   <li>Reactive projections that respond to events as they arrive</li>
+		 *   <li>Systems where projection staleness needs to be minimized</li>
+		 * </ul>
+		 * <p>
+		 * Note that the updates are <em>eventually consistent</em> - there may be a small delay between
+		 * event append and projection update. The subscription mechanism is optimized for efficiency
+		 * and may batch multiple events before triggering a projection run.
+		 * <p>
+		 * Without this setting, projections only update when explicitly triggered via {@link Projector#run()}.
+		 *
+		 * @return this builder for method chaining
+		 * @see EventStreamEventuallyConsistentAppendListener
+		 */
+		public Builder<EVENT_TYPE> subscribe ( ) {
+			this.subscribe = true;
 			return this;
 		}
 
@@ -603,7 +629,12 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		 * @return a new Projector configured with the builder's settings
 		 */
 		public Projector<EVENT_TYPE> build ( ) {
-			return new Projector<>(eventSource, projection, after, maxEventsPerQuery, bookmarkBuilder.readerName, bookmarkBuilder.tags, bookmarkBuilder.bookmarkReadFrequency);
+			Projector<EVENT_TYPE> projector = new Projector<>(eventSource, projection, after, maxEventsPerQuery, bookmarkBuilder.readerName, bookmarkBuilder.tags, bookmarkBuilder.bookmarkReadFrequency);
+			if ( subscribe ) {
+				// subscribe for eventually consistent updates about event appends, so the projector will automatically trigger projection updates
+				eventSource.subscribe(projector);
+			}
+			return projector;
 		}
 
 		/**
@@ -973,9 +1004,25 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 
 	}
 
+	/**
+	 * Handles notifications of newly appended events when the projector is subscribed to an event source.
+	 * <p>
+	 * This method is called by the event source when new events are appended, triggering an automatic
+	 * projection run to process the new events. It implements the {@link EventStreamEventuallyConsistentAppendListener}
+	 * interface to enable reactive, near-real-time projection updates.
+	 * <p>
+	 * The method runs the projection and returns the reference of the last processed event. This allows
+	 * the event source to track which events have been successfully processed by this projector.
+	 * <p>
+	 * This method is only invoked if the projector was configured with {@link Builder#subscribe()}.
+	 *
+	 * @param atLeastUntil the reference indicating events have been appended at least up to this point
+	 * @return the reference of the last event processed by this projection run, or null if no events were processed
+	 * @see Builder#subscribe()
+	 */
 	@Override
 	public EventReference eventsAppended(EventReference atLeastUntil) {
 		return run().lastEventReference();
 	}
-	
+
 }

@@ -170,7 +170,7 @@ public record Event<DOMAIN_EVENT_TYPE> ( EventStreamId stream, EventType type, E
 	 * @param timestamp the timestamp when this event was persisted
 	 * @return a new Event instance
 	 */
-	public static final <DOMAIN_EVENT_TYPE> Event<DOMAIN_EVENT_TYPE> of ( EventStreamId stream, EventReference reference, EventType type, EventType storedType, DOMAIN_EVENT_TYPE data, Tags tags, LocalDateTime timestamp ) {
+	public static final <DOMAIN_EVENT_TYPE> Event<DOMAIN_EVENT_TYPE> of ( EventStreamId stream, EventReference reference, EventType type, EventType storedType, DOMAIN_EVENT_TYPE data, Tags tags, LocalDateTime timestamp) {
 		return new Event<DOMAIN_EVENT_TYPE>(stream, type, storedType, reference, data, tags, timestamp);
 	}
 

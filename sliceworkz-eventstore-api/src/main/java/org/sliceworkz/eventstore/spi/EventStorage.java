@@ -502,7 +502,7 @@ public interface EventStorage {
 	 * @see StoredEvent
 	 * @see #append(AppendCriteria, Optional, List)
 	 */
-	public record EventToStore ( EventStreamId stream, EventType type, String immutableData, String erasableData, Tags tags ) {
+	public record EventToStore ( EventStreamId stream, EventType type, String immutableData, String erasableData, Tags tags, String idempotencyKey ) {
 
 		/**
 		 * Converts this event to a stored event by assigning a reference and timestamp.

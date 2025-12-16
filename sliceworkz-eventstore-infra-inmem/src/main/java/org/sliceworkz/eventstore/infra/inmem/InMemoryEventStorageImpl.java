@@ -22,10 +22,12 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -96,6 +98,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 
 	private String name;
 	private List<StoredEvent> eventlog = new CopyOnWriteArrayList<>();
+	private Set<String> idempotencyKeys = new HashSet<>();
 	private List<WeakReference<EventStoreListener>> listeners = new CopyOnWriteArrayList<>();
 	private Map<String,EventReference> bookmarks = new HashMap<>();
 	private JsonMapper jsonMapper;
@@ -327,7 +330,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	}
 	
 	private List<StoredEvent> addAndNotifyListeners ( List<EventToStore> events ) {
-		var addedEvents = events.stream().map(this::addEventToEventLog).toList();
+		var addedEvents = events.stream().map(this::addEventToEventLog).filter(e->e!=null).toList();
 		
 		// notify each Listener about the appends, but if multiple Events were appended, only notify about the last one
 		addedEvents.stream()
@@ -347,6 +350,14 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	}
 	
 	private StoredEvent addEventToEventLog ( EventToStore event ) {
+		
+		if ( event.idempotencyKey() != null ) {
+			if ( idempotencyKeys.contains(event.idempotencyKey())) {
+				return null;
+			}
+			idempotencyKeys.add(event.idempotencyKey());
+		}
+		
 		int posAndTxAsWell = eventlog.size()+1;
 		EventReference reference = EventReference.create(posAndTxAsWell, posAndTxAsWell);
 		StoredEvent storedEvent = event.positionAt(reference, LocalDateTime.now());

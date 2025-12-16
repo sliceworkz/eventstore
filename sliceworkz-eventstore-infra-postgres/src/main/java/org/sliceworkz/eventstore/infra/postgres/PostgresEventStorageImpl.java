@@ -28,6 +28,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
@@ -648,12 +649,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 	public List<StoredEvent> append(AppendCriteria appendCriteria, Optional<EventStreamId> streamId, List<EventToStore> events) {
 		// Build conditional insert with optimistic locking check
 		StringBuilder sqlBuilder = new StringBuilder();
-		sqlBuilder.append("INSERT INTO %sevents (event_id, stream_context, stream_purpose, event_type, event_data, event_erasable_data, event_tags) SELECT * FROM ( VALUES ".formatted(prefix));
+		sqlBuilder.append("INSERT INTO %sevents (event_id, idempotency_key, stream_context, stream_purpose, event_type, event_data, event_erasable_data, event_tags) SELECT * FROM ( VALUES ".formatted(prefix));
 		for ( int i = 0; i < events.size(); i++ ) {
 			if ( i > 0 ) {
 				sqlBuilder.append(", ");
 			}
-			sqlBuilder.append("(?::uuid, ?, ?, ?, ?::jsonb, ?::jsonb, ?)");
+			sqlBuilder.append("(?::uuid, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?)");
 		}
 		sqlBuilder.append(")");
 
@@ -668,6 +669,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			
 			// Add to-be-appended-event parameters first
 			parameters.add(id.value());
+			parameters.add(event.idempotencyKey());
 			parameters.add(event.stream().context());
 			parameters.add(event.stream().purpose());
 			parameters.add(event.type().name());
@@ -764,7 +766,13 @@ public class PostgresEventStorageImpl implements EventStorage {
 				return storedEvents;
 			} catch (SQLException e) {
 				writeConnection.rollback();
-				throw new EventStorageException("SQLException during append", e);
+				
+				// idempotency issue
+				if ( e.getMessage().contains("idempotency_key")) {
+					return Collections.emptyList();
+				} else {
+					throw new EventStorageException("SQLException during append", e);
+				}
 			}
 			
 		} catch (SQLException e) {

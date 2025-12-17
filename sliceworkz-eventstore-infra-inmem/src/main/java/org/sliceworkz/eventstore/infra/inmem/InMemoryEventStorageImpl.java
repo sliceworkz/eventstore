@@ -22,10 +22,12 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -44,8 +46,6 @@ import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.json.JsonMapper;
-
-import io.micrometer.core.instrument.MeterRegistry;
 
 /**
  * Thread-safe in-memory implementation of the {@link EventStorage} interface.
@@ -98,11 +98,11 @@ public class InMemoryEventStorageImpl implements EventStorage {
 
 	private String name;
 	private List<StoredEvent> eventlog = new CopyOnWriteArrayList<>();
+	private Set<String> idempotencyKeys = new HashSet<>();
 	private List<WeakReference<EventStoreListener>> listeners = new CopyOnWriteArrayList<>();
 	private Map<String,EventReference> bookmarks = new HashMap<>();
 	private JsonMapper jsonMapper;
 	private Limit absoluteLimit;
-	private MeterRegistry meterRegistry;
 
 	/**
 	 * Constructs a new in-memory event storage instance with the specified absolute query limit and observability support.
@@ -117,19 +117,16 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	 *   <li>An empty list of event listeners</li>
 	 *   <li>An empty bookmark map</li>
 	 *   <li>A Jackson {@link JsonMapper} with auto-discovered modules for event serialization validation</li>
-	 *   <li>A Micrometer meter registry for collecting metrics about storage operations</li>
 	 * </ul>
 	 *
 	 * @param absoluteLimit the absolute limit on query results, or {@link Limit#none()} for no limit
-	 * @param meterRegistry the Micrometer meter registry for collecting observability metrics
 	 * @see InMemoryEventStorage.Builder#build()
 	 */
-	public InMemoryEventStorageImpl ( Limit absoluteLimit, MeterRegistry meterRegistry ) {
+	public InMemoryEventStorageImpl ( Limit absoluteLimit ) {
 		this.name = "inmem-%s".formatted(System.identityHashCode(this)); // unique name in case different objects are used
 		this.jsonMapper = new JsonMapper();
 		this.jsonMapper.findAndRegisterModules();
 		this.absoluteLimit = absoluteLimit;
-		this.meterRegistry = meterRegistry;
 	}
 
 	/**
@@ -333,7 +330,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	}
 	
 	private List<StoredEvent> addAndNotifyListeners ( List<EventToStore> events ) {
-		var addedEvents = events.stream().map(this::addEventToEventLog).toList();
+		var addedEvents = events.stream().map(this::addEventToEventLog).filter(e->e!=null).toList();
 		
 		// notify each Listener about the appends, but if multiple Events were appended, only notify about the last one
 		addedEvents.stream()
@@ -353,6 +350,14 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	}
 	
 	private StoredEvent addEventToEventLog ( EventToStore event ) {
+		
+		if ( event.idempotencyKey() != null ) {
+			if ( idempotencyKeys.contains(event.idempotencyKey())) {
+				return null;
+			}
+			idempotencyKeys.add(event.idempotencyKey());
+		}
+		
 		int posAndTxAsWell = eventlog.size()+1;
 		EventReference reference = EventReference.create(posAndTxAsWell, posAndTxAsWell);
 		StoredEvent storedEvent = event.positionAt(reference, LocalDateTime.now());

@@ -207,6 +207,28 @@ public class EventStreamTest extends AbstractEventStoreTest {
 
 	}
 	
+	@Test
+	void testAppendWithIdempotency ( ) {
+		
+		MockEventuallyConsistentAppendListener appendListener = new MockEventuallyConsistentAppendListener();
+		es.subscribe(appendListener);
+		
+		List<Event<MockDomainEvent>> events = es.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FirstDomainEvent("1"), Tags.none()).withIdempotencyKey("some-idempotency-key")));
+		assertEquals(1, events.size());
+
+		waitBecauseOfEventualConsistency(()->appendListener.count()>=1);
+		
+		assertEquals(1, appendListener.count()); // we expect one notification on our appendlistener
+		assertEquals(events.getLast().reference(), appendListener.lastReference());
+
+		events = es.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FirstDomainEvent("2"), Tags.none()).withIdempotencyKey("some-idempotency-key")));
+		assertEquals(0, events.size());
+
+		waitBecauseOfEventualConsistency(()->appendListener.count()>=1);
+		
+		assertEquals(1, appendListener.count()); // we expect one notification on our appendlistener
+	}
+	
 	
 	@Test
 	void testAppendMultiple ( ) {
@@ -255,6 +277,20 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		assertFalse(otherStream.query(EventQuery.matchAll()).map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());
 
 	}
+	
+	@Test
+	void testAppendMultipleWithIdempotency ( ) {
+		
+		// if at least one of the events carries an idempotency key, this is not possible
+		EphemeralEvent<MockDomainEvent> e1 = Event.<MockDomainEvent>of(new FirstDomainEvent("1"), Tags.none());
+		EphemeralEvent<MockDomainEvent> e2 = Event.<MockDomainEvent>of(new SecondDomainEvent("2"), Tags.none()).withIdempotencyKey("idempotency-key");
+		
+		IllegalArgumentException iae = assertThrows(IllegalArgumentException.class, ()->
+			es.append(AppendCriteria.none(), List.of(e1, e2))
+		);
+		assertEquals("cannot append multiple events in combination with an idempotency key", iae.getMessage());
+	}
+
 	
 	@Test
 	void testAppendWithConcreteEventClass ( ) {

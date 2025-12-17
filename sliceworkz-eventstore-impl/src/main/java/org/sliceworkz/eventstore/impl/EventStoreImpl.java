@@ -115,14 +115,15 @@ public class EventStoreImpl implements EventStore {
 	private final EventStorage eventStorage;
 
 	/**
-	 * Executor service using virtual threads for asynchronously notifying eventually consistent subscribers.
-	 * Named threads help with debugging and monitoring.
+	 * Executor service using virtual threads for asynchronously notifying eventually consistent subscribers
+	 * about new event appends. Named threads help with debugging and monitoring.
 	 */
 	private final ExecutorService executorServiceForEventAppends;
 
 	/**
-	 * Executor service using virtual threads for asynchronously notifying eventually consistent subscribers.
-	 * Named threads help with debugging and monitoring.
+	 * Executor service using virtual threads for asynchronously notifying eventually consistent subscribers
+	 * about bookmark updates. This uses a single-threaded executor to ensure bookmark notifications are
+	 * processed sequentially. Named threads help with debugging and monitoring.
 	 */
 	private final ExecutorService executorServiceForBookmarkUpdates;
 
@@ -295,7 +296,7 @@ public class EventStoreImpl implements EventStore {
 			meterAppendEvent.increment(); // one event more sent to storage for appending
 			Tags tags = event.tags(); 
 			TypeAndSerializedPayload data = serde.serialize(event.data());
-			return new EventToStore(streamToAppendTo, data.type(), data.immutablePayload(), data.erasablePayload(), tags);
+			return new EventToStore(streamToAppendTo, data.type(), data.immutablePayload(), data.erasablePayload(), tags, event.idempotencyKey());
 		}
 
 		private List<EventToStore> reduce ( List<? extends EphemeralEvent<? extends EVENT_TYPE>> events, EventStreamId streamToAppendTo ) {
@@ -321,6 +322,12 @@ public class EventStoreImpl implements EventStore {
 			List<String> unAppendable = events.stream().map(e->e.type().name()).filter(t->!serde.canDeserialize(t)).toList();
 			if ( !unAppendable.isEmpty() ) {
 				throw new IllegalArgumentException("cannot append event type '%s' via this stream".formatted(unAppendable.getFirst()));
+			}
+			
+			if ( events.size() > 1 ) {
+				if ( events.stream().filter(e->e.idempotencyKey()!=null).findAny().isPresent()) {
+					throw new IllegalArgumentException("cannot append multiple events in combination with an idempotency key");
+				}
 			}
 
 			// append events to the eventstore (with optimistic locking)

@@ -40,6 +40,9 @@ CREATE TABLE PREFIX_events (
       -- Event identification
       event_id UUID NOT NULL UNIQUE,
       
+      -- Idempotency key
+      idempotency_key TEXT UNIQUE,
+
       -- Stream identification  
       stream_context TEXT NOT NULL,
       stream_purpose TEXT NOT NULL DEFAULT '',

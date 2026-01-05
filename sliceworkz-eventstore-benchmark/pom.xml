@@ -41,7 +41,7 @@
 		
 		<javalin.version>6.7.0</javalin.version>
 		<logback.version>1.5.22</logback.version>
-		<loki-logback.version>2.0.1</loki-logback.version>
+		<loki-logback.version>2.0.2</loki-logback.version>
 		
 	</properties>
 	

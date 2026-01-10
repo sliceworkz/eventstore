@@ -81,7 +81,7 @@ public class CustomerEventProjection implements BatchAwareProjection<CustomerEve
 			insertStatement.setLong(2, eventWithMeta.reference().position());
 			insertStatement.setString(3, Thread.currentThread().getName());
 			insertStatement.addBatch();
-			long idx = eventsProcessed.incrementAndGet();
+			eventsProcessed.incrementAndGet();
 		} catch (SQLException e) {
 			LOGGER.error("Failed to insert event", e);
 			throw new RuntimeException("Failed to insert event", e);

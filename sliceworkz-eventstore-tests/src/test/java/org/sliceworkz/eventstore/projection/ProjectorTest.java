@@ -97,7 +97,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		var batchAwareProjector = Projector.from(es).towards(batchAwareProjection).build();
 
 		ProjectorException e = assertThrows (ProjectorException.class, ()->{
-			ProjectorMetrics projectorMetrics = batchAwareProjector.run();
+			batchAwareProjector.run();
 		});
 		assertEquals("UNIT TEST FAKED PROBLEM WITH EVENT PROCESSING", e.getCause().getMessage());
 		
@@ -115,7 +115,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		// new re-run to check whether we start over from last batch
 		
 		e = assertThrows (ProjectorException.class, ()->{
-			ProjectorMetrics projectorMetrics = batchAwareProjector.run();
+			batchAwareProjector.run();
 		});
 		assertEquals("UNIT TEST FAKED PROBLEM WITH EVENT PROCESSING", e.getCause().getMessage());
 		
@@ -139,7 +139,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		var batchAwareProjector = Projector.from(es).towards(batchAwareProjection).inBatchesOf(2).build();
 
 		ProjectorException e = assertThrows (ProjectorException.class, ()->{
-			ProjectorMetrics projectorMetrics = batchAwareProjector.run();
+			batchAwareProjector.run();
 		});
 		assertEquals("UNIT TEST FAKED PROBLEM WITH EVENT PROCESSING", e.getCause().getMessage());
 		assertEquals(4, e.getEventReference().position());
@@ -158,7 +158,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		// new re-run to check whether we start over from last batch
 		
 		e = assertThrows (ProjectorException.class, ()->{
-			ProjectorMetrics projectorMetrics = batchAwareProjector.run();
+			batchAwareProjector.run();
 		});
 		assertEquals("UNIT TEST FAKED PROBLEM WITH EVENT PROCESSING", e.getCause().getMessage());
 		assertEquals(4, e.getEventReference().position());

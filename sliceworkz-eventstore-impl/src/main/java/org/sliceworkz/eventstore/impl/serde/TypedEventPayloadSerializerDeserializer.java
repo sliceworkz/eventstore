@@ -87,6 +87,7 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		return this;
 	}
 
+	@SuppressWarnings("unchecked")
 	private void registerEventType ( String eventName, Class<?> clazz, boolean assumeUpcasters ) {
 		String key = eventName;
 		if ( deserializers.containsKey(key) ) {
@@ -104,10 +105,10 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 			}
 			
 			LegacyEvent annotation = clazz.getAnnotation(LegacyEvent.class);
-			Upcast upcast;
+			Upcast<Object, Object> upcast;
 			try {
 				
-				upcast = (Upcast) annotation.upcast().getDeclaredConstructor().newInstance(new Object[0]);
+				upcast = (Upcast<Object, Object>) annotation.upcast().getDeclaredConstructor().newInstance(new Object[0]);
 				
 				mostRecentTypes.put(eventType, EventType.of(upcast.targetType()));
 				

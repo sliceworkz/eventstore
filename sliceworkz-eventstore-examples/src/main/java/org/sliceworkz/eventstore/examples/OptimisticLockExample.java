@@ -18,7 +18,6 @@
 package org.sliceworkz.eventstore.examples;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.stream.Stream;
 
 import org.sliceworkz.eventstore.EventStore;

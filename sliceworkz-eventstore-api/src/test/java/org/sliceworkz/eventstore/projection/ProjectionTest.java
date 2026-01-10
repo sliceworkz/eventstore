@@ -39,6 +39,7 @@ public class ProjectionTest {
 	
 	List<Event<MockDomainEvent>> mockEvents;
 	
+	@SuppressWarnings("unchecked")
 	@BeforeEach
 	void setUp ( ) {
 		EventStreamId mockStream = EventStreamId.forContext("unit").withPurpose("test");

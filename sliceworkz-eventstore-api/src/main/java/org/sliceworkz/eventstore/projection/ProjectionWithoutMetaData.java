@@ -18,7 +18,6 @@
 package org.sliceworkz.eventstore.projection;
 
 import org.sliceworkz.eventstore.events.EventHandler;
-import org.sliceworkz.eventstore.events.EventWithMetaDataHandler;
 import org.sliceworkz.eventstore.query.EventQuery;
 
 /**

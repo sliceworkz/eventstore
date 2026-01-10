@@ -18,7 +18,6 @@
 package org.sliceworkz.eventstore.examples;
 
 import java.util.List;
-import java.util.Optional;
 
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.EphemeralEvent;

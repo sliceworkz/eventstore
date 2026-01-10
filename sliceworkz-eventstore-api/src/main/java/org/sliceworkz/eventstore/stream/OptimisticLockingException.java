@@ -17,9 +17,9 @@
  */
 package org.sliceworkz.eventstore.stream;
 
+import java.util.List;
 import java.util.Optional;
 
-import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.query.EventQuery;
 

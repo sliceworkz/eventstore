@@ -92,9 +92,9 @@ public class OptimisticLockingTest {
 		eventStream.append(AppendCriteria.none(), Collections.singletonList(firstEvent));
 		
 		// Get the event ID of the first event
-		Optional<EventReference> lastEventInStream = eventStream.query(EventQuery.matchAll())
+		EventReference lastEventInStream = eventStream.query(EventQuery.matchAll())
 			.map(Event::reference)
-			.reduce((first, second) -> second); // Get last event ID
+			.reduce((first, second) -> second).orElse(null); // Get last event ID
 		
 		// Second append with correct expected event ID (should succeed)
 		EphemeralEvent<SecondDomainEvent> secondEvent = Event.of(new SecondDomainEvent("test2"), Tags.none());
@@ -118,7 +118,7 @@ public class OptimisticLockingTest {
 		
 		// Second append with incorrect expected event ID (should fail)
 		EphemeralEvent<SecondDomainEvent> secondEvent = Event.of(new SecondDomainEvent("test2"), Tags.none());
-		AppendCriteria criteria = AppendCriteria.of(EventQuery.matchAll(), Optional.of(fakeEvent));
+		AppendCriteria criteria = AppendCriteria.of(EventQuery.matchAll(), fakeEvent);
 		
 		// in the ideal world, we would throw an exception since the reference event would not be found, but not all implementations would be able to catch this ...
 		eventStream.append(criteria, Collections.singletonList(secondEvent));
@@ -142,7 +142,7 @@ public class OptimisticLockingTest {
 		// Try to append on expecting stream with assumed only first append (should fail)
 		EphemeralEvent<ThirdDomainEvent> thirdEvent = Event.of(new ThirdDomainEvent("test3"), Tags.none());
 		// re-read from stread to get position filled in
-		AppendCriteria criteria = AppendCriteria.of(EventQuery.matchAll(), Optional.of(eventStream.getEventById(firstEventStored.reference().id()).get().reference()));
+		AppendCriteria criteria = AppendCriteria.of(EventQuery.matchAll(), eventStream.getEventById(firstEventStored.reference().id()).get().reference());
 		
 		// Should throw OptimisticLockingException
 		assertThrows(OptimisticLockingException.class, () -> {
@@ -159,7 +159,7 @@ public class OptimisticLockingTest {
 		
 		// Append to empty stream expecting it to be empty (should succeed)
 		EphemeralEvent<FirstDomainEvent> firstEvent = Event.of(new FirstDomainEvent("test1"), Tags.none());
-		AppendCriteria criteria = AppendCriteria.of(EventQuery.matchAll(), Optional.empty());
+		AppendCriteria criteria = AppendCriteria.of(EventQuery.matchAll(), null);
 		eventStream.append(criteria, Collections.singletonList(firstEvent));
 		
 		// Verify event was appended
@@ -172,7 +172,7 @@ public class OptimisticLockingTest {
 		
 		// Append to empty stream expecting it to be empty (should succeed)
 		EphemeralEvent<FirstDomainEvent> firstEvent = Event.of(new FirstDomainEvent("test1"), Tags.none());
-		AppendCriteria criteria = AppendCriteria.of(EventQuery.matchAll(), Optional.empty());
+		AppendCriteria criteria = AppendCriteria.of(EventQuery.matchAll(), null);
 
 		// quickly append another event on the stream ...
 		EphemeralEvent<FirstDomainEvent> intermediateEvent = Event.of(new FirstDomainEvent("test1"), Tags.none());
@@ -203,9 +203,9 @@ public class OptimisticLockingTest {
 		
 		// Query only for FirstDomainEvent types
 		EventQuery firstEventQuery = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none());
-		Optional<EventReference> idOfFirstEvent = eventStream.query(firstEventQuery)
+		EventReference idOfFirstEvent = eventStream.query(firstEventQuery)
 			.map(Event::reference)
-			.reduce((first, second) -> second);
+			.reduce((first, second) -> second).orElse(null);
 		
 		// Append another FirstDomainEvent with criteria based on FirstDomainEvent query
 		EphemeralEvent<FirstDomainEvent> thirdEvent = Event.of(new FirstDomainEvent("test3"), Tags.none());

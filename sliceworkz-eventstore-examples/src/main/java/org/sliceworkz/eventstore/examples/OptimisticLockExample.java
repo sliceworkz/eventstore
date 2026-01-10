@@ -73,14 +73,14 @@ public class OptimisticLockExample {
 		// An extra (conditional) append is done, notice we still hold the same lastEventReference without changing it
 		stream.append(AppendCriteria.of(
 				EventQuery.forEvents(EventTypesFilter.any(), Tags.of("customer", "123")), 
-				Optional.of(lastEventReference)),
+				lastEventReference),
 				Event.of(new CustomerNameChanged("123", "Marc"), Tags.of(Tag.of("customer", "123"))));
 
 		// Another conditional append is not possible using the (outdated) lastEventReference ...
 		try {
 			stream.append(AppendCriteria.of(
 								EventQuery.forEvents(EventTypesFilter.any(), Tags.of("customer", "123")), 
-								Optional.of(lastEventReference)), Event.of(new CustomerNameChanged("123", "John"), Tags.of("customer", "123")));
+								lastEventReference), Event.of(new CustomerNameChanged("123", "John"), Tags.of("customer", "123")));
 		} catch (OptimisticLockingException e) {
 			// ... as a new fact about this customer exists, that is found by the optimistic-lock query linked to the append AppendCriteria
 		}

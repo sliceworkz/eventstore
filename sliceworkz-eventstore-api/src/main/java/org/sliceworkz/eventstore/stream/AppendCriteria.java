@@ -51,11 +51,11 @@ public record AppendCriteria ( EventQuery eventQuery, Optional<EventReference> e
 	/**
 	 * Convenience method to create an AppendQuery object. 
 	 * @param eventQuery the query to run when appending the Events
-	 * @param reference the last known Event matching the query that our decision was based upon, or Optional.empty() for none assumed (empty EventStream)
+	 * @param reference the last known Event matching the query that our decision was based upon (null if none)
 	 * @return AppendCriteria without conditional appends
 	 */
-	public static final AppendCriteria of ( EventQuery eventQuery, Optional<EventReference> reference ) {
-		return new AppendCriteria(eventQuery, reference);
+	public static final AppendCriteria of ( EventQuery eventQuery, EventReference reference ) {
+		return new AppendCriteria(eventQuery, Optional.ofNullable(reference));
 	}
 
 	/**

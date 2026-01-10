@@ -711,7 +711,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		public class BookmarkBuilder {
 
 			private Builder<EVENT_TYPE> parent;
-			private BookmarkReadFrequency bookmarkReadFrequency = BookmarkReadFrequency.BEFORE_EACH_EXECUTION;
+			private BookmarkReadFrequency bookmarkReadFrequency = BookmarkReadFrequency.MANUAL_TRIGGER;
 			private String readerName = null; // by default, no bookmarking is done
 			private Tags tags = Tags.none();
 

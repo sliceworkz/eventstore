@@ -20,6 +20,7 @@ package org.sliceworkz.eventstore.infra.inmem;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Collections;
 
@@ -28,12 +29,32 @@ import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImplTest.ProblematicParsing.ProblematicParsingRecord;
+import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
 import com.fasterxml.jackson.databind.json.JsonMapper;
 
 public class InMemoryEventStorageImplTest {
+	
+	@Test
+	void testNameDefault ( ) {
+		EventStorage es = InMemoryEventStorage.newBuilder().build();
+		assertTrue(es.name().startsWith("inmem-"));
+	}
+
+	@Test
+	void testNameChosen ( ) {
+		EventStorage es = InMemoryEventStorage.newBuilder().name("myChosenName").build();
+		assertEquals("myChosenName", es.name());
+	}
+
+	@Test
+	void testNameNullOrEmpty ( ) {
+		assertThrows(IllegalArgumentException.class, ()->InMemoryEventStorage.newBuilder().name(null).build());
+		assertThrows(IllegalArgumentException.class, ()->InMemoryEventStorage.newBuilder().name("").build());
+		assertThrows(IllegalArgumentException.class, ()->InMemoryEventStorage.newBuilder().name(" ").build());
+	}
 
 	@Test
 	void testUnparsableJsonNotAppendable ( ) {

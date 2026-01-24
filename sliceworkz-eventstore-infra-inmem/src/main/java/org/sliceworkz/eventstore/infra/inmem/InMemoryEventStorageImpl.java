@@ -105,25 +105,29 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	private Limit absoluteLimit;
 
 	/**
-	 * Constructs a new in-memory event storage instance with the specified absolute query limit and observability support.
+	 * Constructs a new in-memory event storage instance with the specified name and absolute query limit.
 	 * <p>
 	 * This constructor is package-private and should not be called directly. Instead, use the
 	 * {@link InMemoryEventStorage.Builder} to create instances.
 	 * <p>
 	 * The constructor initializes:
 	 * <ul>
-	 *   <li>A unique name based on the object's identity hash code</li>
-	 *   <li>An empty event log backed by a {@link LinkedList}</li>
+	 *   <li>An empty event log backed by a {@link CopyOnWriteArrayList}</li>
 	 *   <li>An empty list of event listeners</li>
 	 *   <li>An empty bookmark map</li>
 	 *   <li>A Jackson {@link JsonMapper} with auto-discovered modules for event serialization validation</li>
 	 * </ul>
 	 *
+	 * @param name the unique name for this storage instance; must not be null or blank
 	 * @param absoluteLimit the absolute limit on query results, or {@link Limit#none()} for no limit
+	 * @throws IllegalArgumentException if name is null or blank
 	 * @see InMemoryEventStorage.Builder#build()
 	 */
-	public InMemoryEventStorageImpl ( Limit absoluteLimit ) {
-		this.name = "inmem-%s".formatted(System.identityHashCode(this)); // unique name in case different objects are used
+	public InMemoryEventStorageImpl ( String name, Limit absoluteLimit ) {
+		if ( name == null || "".equals(name.strip())) {
+			throw new IllegalArgumentException("name must not be empty");
+		}
+		this.name = name;
 		this.jsonMapper = new JsonMapper();
 		this.jsonMapper.findAndRegisterModules();
 		this.absoluteLimit = absoluteLimit;

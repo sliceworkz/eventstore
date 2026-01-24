@@ -143,6 +143,8 @@ public interface InMemoryEventStorage {
 		
 		private Limit limit = Limit.none();
 		private MeterRegistry meterRegistry = Metrics.globalRegistry;
+		private String name = "inmem-%s".formatted(System.identityHashCode(this)); // default unique name in case different objects are used
+
 		
 		private Builder ( ) {
 
@@ -165,6 +167,22 @@ public interface InMemoryEventStorage {
 		 */
 		public Builder resultLimit ( int absoluteLimit ) {
 			this.limit = Limit.to(absoluteLimit);
+			return this;
+		}
+
+		/**
+		 * Configures a custom name for this in-memory event storage instance.
+		 * <p>
+		 * The name is used for identification in logging, metrics tagging, and debugging purposes.
+		 * If not specified, a default unique name is generated based on the builder's identity hash code
+		 * in the format "inmem-{hashcode}".
+		 *
+		 * @param name the name to assign to this storage instance; must not be null or blank
+		 * @return this Builder instance for method chaining
+		 * @throws IllegalArgumentException if name is null or blank (validated at build time)
+		 */
+		public Builder name ( String name ) {
+			this.name = name;
 			return this;
 		}
 
@@ -213,7 +231,7 @@ public interface InMemoryEventStorage {
 		 * @see InMemoryEventStorageImpl
 		 */
 		public EventStorage build ( ) {
-			return new InMemoryEventStorageImpl(limit);
+			return new InMemoryEventStorageImpl(name, limit);
 		}
 
 		/**

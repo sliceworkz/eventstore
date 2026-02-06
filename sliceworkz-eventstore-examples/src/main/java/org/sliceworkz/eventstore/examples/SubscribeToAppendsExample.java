@@ -25,7 +25,6 @@ import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
 import org.sliceworkz.eventstore.query.EventQuery;
-import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -41,7 +40,7 @@ public class SubscribeToAppendsExample {
 		EventStream<Object> stream = eventstore.getEventStream(EventStreamId.anyContext());
 		
 		// get a reference to the last Event in the stream as a starting point ...
-		Handle<EventReference> lastSeen = Handle.of(stream.queryBackwards(EventQuery.matchAll(), Limit.to(1)).findFirst().map(Event::reference).orElse(null));
+		Handle<EventReference> lastSeen = Handle.of(stream.query(EventQuery.matchAll().backwards().limit(1)).findFirst().map(Event::reference).orElse(null));
 		
 		System.out.println("following all events as from " + lastSeen.get());
 		

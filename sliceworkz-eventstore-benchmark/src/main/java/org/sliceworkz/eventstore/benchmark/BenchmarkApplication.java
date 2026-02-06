@@ -49,7 +49,6 @@ import org.sliceworkz.eventstore.infra.postgres.DataSourceFactory;
 import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
 import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.query.EventQuery;
-import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -178,10 +177,10 @@ public class BenchmarkApplication {
 		long produceDurationMs = stopProduce.toEpochMilli() - start.toEpochMilli();
 		
 		EventStream<Object> allStream = eventStore.getEventStream(EventStreamId.anyContext().anyPurpose());
-		allStream.queryBackwards(EventQuery.matchAll(),Limit.to(10)).forEach(System.out::println);
+		allStream.query(EventQuery.matchAll().backwards().limit(10)).forEach(System.out::println);
 
 		long position = 0;
-		EventReference at = allStream.queryBackwards(EventQuery.matchAll(),Limit.to(1)).map(Event::reference).findFirst().orElse(null);
+		EventReference at = allStream.query(EventQuery.matchAll().backwards().limit(1)).map(Event::reference).findFirst().orElse(null);
 		if(at != null ) {
 			position = at.position();
 		}

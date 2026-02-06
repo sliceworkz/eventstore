@@ -44,11 +44,13 @@ import org.sliceworkz.eventstore.query.Limit;
  * <p>
  * EventSource is typically accessed through {@link EventStream}, which combines reading and writing capabilities.
  *
- * <h2>Query Modes:</h2>
+ * <h2>Query Direction:</h2>
+ * The direction of query traversal is controlled by the {@link EventQuery} itself via
+ * {@link EventQuery#backwards()}. By default, queries run forward (oldest to newest).
  * <ul>
  *   <li><strong>Forward queries</strong>: Read events from earliest to latest (default)</li>
- *   <li><strong>Backward queries</strong>: Read events from latest to earliest</li>
- *   <li><strong>Pagination</strong>: Use 'after'/'before' references and limits for efficient navigation</li>
+ *   <li><strong>Backward queries</strong>: Read events from latest to earliest (via {@link EventQuery#backwards()})</li>
+ *   <li><strong>Pagination</strong>: Use cursor references and limits for efficient navigation</li>
  * </ul>
  *
  * <h2>Example Usage:</h2>
@@ -85,10 +87,14 @@ import org.sliceworkz.eventstore.query.Limit;
  * );
  *
  * // Backward query (most recent 10 events)
- * Stream<Event<CustomerEvent>> recent = stream.queryBackwards(
- *     EventQuery.matchAll(),
- *     Limit.of(10)
+ * Stream<Event<CustomerEvent>> recent = stream.query(
+ *     EventQuery.matchAll().backwards().limit(10)
  * );
+ *
+ * // Most recent single event
+ * Optional<Event<CustomerEvent>> mostRecent = stream.query(
+ *     EventQuery.matchAll().backwards().limit(1)
+ * ).findFirst();
  *
  * // Get specific event by ID
  * Optional<Event<CustomerEvent>> event = stream.getEventById(eventId);
@@ -105,36 +111,43 @@ import org.sliceworkz.eventstore.query.Limit;
  * @see Event
  */
 public interface EventSource<DOMAIN_EVENT_TYPE> {
-	
+
 	/**
-	 * Queries events from the stream in forward order (earliest to latest) with full control over pagination.
+	 * Queries events from the stream with full control over pagination.
 	 * <p>
 	 * This is the primary query method providing complete control over event retrieval.
-	 * The 'after' parameter enables pagination and is purely a technical optimization - it does not affect
-	 * which events match the query, only where the scan starts. The 'until' reference in the EventQuery
-	 * is the functional boundary that determines query results.
+	 * The direction of traversal is determined by the query's direction ({@link EventQuery#backwards()}).
+	 * <p>
+	 * The cursor reference enables pagination:
+	 * <ul>
+	 *   <li><strong>Forward queries:</strong> the cursor acts as "after" — only events after this reference are returned</li>
+	 *   <li><strong>Backward queries:</strong> the cursor acts as "before" — only events before this reference are returned</li>
+	 * </ul>
+	 * The cursor is purely a technical optimization — it does not affect which events match the query,
+	 * only where the scan starts. The 'until' reference in the EventQuery is the functional boundary
+	 * that determines query results.
 	 *
-	 * @param query the query criteria specifying which events to retrieve
-	 * @param after optional reference to start reading after (for pagination), null to start from the beginning
-	 * @param limit optional limit on the number of events to return
+	 * @param query the query criteria specifying which events to retrieve and in which direction
+	 * @param cursor optional reference for pagination (after for forward, before for backward), null to start from the beginning/end
+	 * @param limit maximum number of events to return (overrides the query's own limit)
 	 * @return a Stream of events matching the query criteria
 	 * @see EventQuery
 	 * @see Limit
 	 */
-	Stream<Event<DOMAIN_EVENT_TYPE>> query ( EventQuery query, EventReference after, Limit limit );
+	Stream<Event<DOMAIN_EVENT_TYPE>> query ( EventQuery query, EventReference cursor, Limit limit );
 
 	/**
-	 * Queries events from the stream in forward order starting after a specific event reference.
+	 * Queries events from the stream starting from a specific cursor reference.
 	 * <p>
-	 * Convenience method for paginated queries without a limit. Returns all matching events
-	 * after the specified reference.
+	 * Convenience method for paginated queries without an explicit limit.
+	 * The direction is determined by the query ({@link EventQuery#backwards()}).
 	 *
-	 * @param query the query criteria specifying which events to retrieve
-	 * @param after optional reference to start reading after, null to start from the beginning
+	 * @param query the query criteria specifying which events to retrieve and in which direction
+	 * @param cursor optional reference for pagination, null to start from the beginning/end
 	 * @return a Stream of events matching the query criteria
 	 */
-	default Stream<Event<DOMAIN_EVENT_TYPE>> query ( EventQuery query, EventReference after ) {
-		return query(query, after, Limit.none());
+	default Stream<Event<DOMAIN_EVENT_TYPE>> query ( EventQuery query, EventReference cursor ) {
+		return query(query, cursor, Limit.none());
 	}
 
 	/**
@@ -148,52 +161,8 @@ public interface EventSource<DOMAIN_EVENT_TYPE> {
 	 * @return a Stream of events matching the query criteria
 	 */
 	default Stream<Event<DOMAIN_EVENT_TYPE>> query ( EventQuery query ) {
-		if ( query.isBackwards() ) {
-			return queryBackwards(query, query.limit());
-		}
 		return query(query, null, query.limit());
 	}
-
-	/**
-	 * Queries events from the stream in backward order (latest to earliest) with a limit.
-	 * <p>
-	 * Convenience method for retrieving the most recent events matching a query.
-	 * Useful for displaying recent activity or processing events in reverse chronological order.
-	 *
-	 * @param query the query criteria specifying which events to retrieve
-	 * @param limit optional limit on the number of events to return
-	 * @return a Stream of events matching the query criteria in reverse order
-	 */
-	default Stream<Event<DOMAIN_EVENT_TYPE>> queryBackwards ( EventQuery query, Limit limit ) {
-		return queryBackwards(query, null, limit);
-	}
-
-	/**
-	 * Queries events from the stream in backward order ending before a specific event reference.
-	 * <p>
-	 * Convenience method for backward pagination without a limit. Returns all matching events
-	 * before the specified reference in reverse chronological order.
-	 *
-	 * @param query the query criteria specifying which events to retrieve
-	 * @param before optional reference to end reading before, null to start from the end
-	 * @return a Stream of events matching the query criteria in reverse order
-	 */
-	default Stream<Event<DOMAIN_EVENT_TYPE>> queryBackwards ( EventQuery query, EventReference before ) {
-		return queryBackwards(query, before, Limit.none());
-	}
-
-	/**
-	 * Queries events from the stream in backward order (latest to earliest) with full control over pagination.
-	 * <p>
-	 * Primary method for backward queries. Events are returned in reverse chronological order,
-	 * optionally limited and starting before a specific event reference.
-	 *
-	 * @param query the query criteria specifying which events to retrieve
-	 * @param before optional reference to end reading before (for pagination), null to start from the end
-	 * @param limit optional limit on the number of events to return
-	 * @return a Stream of events matching the query criteria in reverse order
-	 */
-	Stream<Event<DOMAIN_EVENT_TYPE>> queryBackwards ( EventQuery query, EventReference before, Limit limit );
 
 	/**
 	 * Retrieves the event reference for a specific event ID.

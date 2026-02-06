@@ -354,8 +354,8 @@ public class EventStoreQueryTest {
 	private Stream<Event<Object>> queryReversed ( EventQuery eventQuery, Limit limit ) {
 		return queryReversed(eventQuery, limit, null);
 	}
-	private Stream<Event<Object>> queryReversed ( EventQuery eventQuery, Limit limit, Event<?> after ) {
-		return eventStore.getEventStream(EventStreamId.forContext("app").withPurpose("domain"), BankDomainEvent.class).queryBackwards(eventQuery, after==null?null:after.reference(), limit);
+	private Stream<Event<Object>> queryReversed ( EventQuery eventQuery, Limit limit, Event<?> before ) {
+		return eventStore.getEventStream(EventStreamId.forContext("app").withPurpose("domain"), BankDomainEvent.class).query(eventQuery.backwards(), before==null?null:before.reference(), limit);
 	}
 
 	private long queryOther ( EventQuery eventQuery ) {

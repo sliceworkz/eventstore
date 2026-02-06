@@ -263,15 +263,10 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		@Override
-		public Stream<Event<EVENT_TYPE>> query(EventQuery query, EventReference after, Limit limit ) {
+		public Stream<Event<EVENT_TYPE>> query(EventQuery query, EventReference cursor, Limit limit ) {
 			meterQuery.increment(); // one query done
-			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), after, limit, QueryDirection.FORWARD).map(this::enrichAfterQuery));
-		}
-
-		@Override
-		public Stream<Event<EVENT_TYPE>> queryBackwards(EventQuery query, EventReference before, Limit limit) {
-			meterQuery.increment(); // one query done
-			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), before, limit, QueryDirection.BACKWARD).map(this::enrichAfterQuery));
+			QueryDirection direction = query.isBackwards() ? QueryDirection.BACKWARD : QueryDirection.FORWARD;
+			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), cursor, limit, direction).map(this::enrichAfterQuery));
 		}
 		
 		private Event<EVENT_TYPE> enrichAfterQuery ( StoredEvent storedEvent ) {

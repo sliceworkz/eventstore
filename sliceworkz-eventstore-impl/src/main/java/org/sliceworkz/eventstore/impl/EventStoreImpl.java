@@ -359,9 +359,9 @@ public class EventStoreImpl implements EventStore {
 		 */
 		private EventQuery includeLegacyEventTypes ( EventQuery query ) {
 			if ( query.items() == null ) {
-				return new EventQuery(null, query.until());
+				return new EventQuery(null, query.until(), query.direction(), query.limit());
 			} else {
-				return new EventQuery(query.items().stream().map(this::includeLegacyEventTypes).toList(), query.until());
+				return new EventQuery(query.items().stream().map(this::includeLegacyEventTypes).toList(), query.until(), query.direction(), query.limit());
 			}
 		}
 

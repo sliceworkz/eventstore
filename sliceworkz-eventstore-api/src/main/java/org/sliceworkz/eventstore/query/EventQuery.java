@@ -44,6 +44,16 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
  *   <li><strong>Match Specific:</strong> When the items list contains one or more {@link EventQueryItem}s, events matching any item will match</li>
  * </ul>
  *
+ * <p><strong>Direction and Limit:</strong>
+ * EventQuery can optionally carry traversal semantics:
+ * <ul>
+ *   <li><strong>Direction:</strong> Controls whether events are returned forward (oldest first) or backward (newest first)</li>
+ *   <li><strong>Limit:</strong> Restricts the maximum number of events returned</li>
+ * </ul>
+ * These are used by convenience query methods on {@link org.sliceworkz.eventstore.stream.EventSource} and do not affect
+ * the {@link #matches(Event)} predicate. When used inside {@link org.sliceworkz.eventstore.stream.AppendCriteria} for
+ * optimistic locking, direction and limit should be stripped via {@link #forLockingCheck()}.
+ *
  * <p><strong>Usage Examples:</strong>
  * <pre>{@code
  * // Query all events
@@ -64,6 +74,15 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
  *     Tags.of("customer", "123")
  * ).until(lastKnownReference);
  *
+ * // Query backwards (newest first)
+ * EventQuery backwardsQuery = EventQuery.matchAll().backwards();
+ *
+ * // Query the most recent event matching criteria
+ * EventQuery mostRecent = EventQuery.forEvents(
+ *     EventTypesFilter.of(CustomerRegistered.class),
+ *     Tags.of("customer", "123")
+ * ).backwards().limit(1);
+ *
  * // Combine multiple queries (UNION)
  * EventQuery combined = query1.combineWith(query2);
  * }</pre>
@@ -75,22 +94,40 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
  *
  * @param items the list of query items to match against (null for match-all, empty for match-none, populated for specific criteria)
  * @param until the reference to query up to (null for no limit, or a specific reference to stop at that point in history)
+ * @param direction the traversal direction (FORWARD or BACKWARD), defaults to FORWARD
+ * @param limit the maximum number of events to return, defaults to no limit
  *
  * @see EventQueryItem
  * @see EventTypesFilter
  * @see org.sliceworkz.eventstore.stream.AppendCriteria
  * @see Tags
  */
-public record EventQuery ( List<EventQueryItem> items, EventReference until ) {
-	
-	public EventQuery ( List<EventQueryItem> items, EventReference until ) {
+public record EventQuery ( List<EventQueryItem> items, EventReference until, Direction direction, Limit limit ) {
+
+	/**
+	 * Defines the traversal direction for event queries.
+	 */
+	public enum Direction {
+		/** Events are returned in chronological order (oldest to newest). */
+		FORWARD,
+		/** Events are returned in reverse chronological order (newest to oldest). */
+		BACKWARD
+	}
+
+	public EventQuery ( List<EventQueryItem> items, EventReference until, Direction direction, Limit limit ) {
 		// can be null, this means no criteria at all (match-all)
 		this.items = items;
 		this.until = until;
+		this.direction = direction != null ? direction : Direction.FORWARD;
+		this.limit = limit != null ? limit : Limit.none();
 	}
-	
+
+	public EventQuery ( List<EventQueryItem> items, EventReference until ) {
+		this(items, until, Direction.FORWARD, Limit.none());
+	}
+
 	public EventQuery (  ) {
-		this(new ArrayList<>(), null);
+		this(new ArrayList<>(), null, Direction.FORWARD, Limit.none());
 	}
 
 	/**
@@ -164,15 +201,66 @@ public record EventQuery ( List<EventQueryItem> items, EventReference until ) {
 	}
 
 	/**
+	 * Checks if this query has a backward direction.
+	 *
+	 * @return true if direction is BACKWARD, false otherwise
+	 */
+	@JsonIgnore
+	public boolean isBackwards ( ) {
+		return direction == Direction.BACKWARD;
+	}
+
+	/**
+	 * Returns a new EventQuery with backward direction (newest first).
+	 *
+	 * @return a new EventQuery with direction set to BACKWARD
+	 */
+	public EventQuery backwards ( ) {
+		return new EventQuery(items, until, Direction.BACKWARD, limit);
+	}
+
+	/**
+	 * Returns a new EventQuery with the specified limit.
+	 *
+	 * @param limit the maximum number of events to return
+	 * @return a new EventQuery with the specified limit
+	 */
+	public EventQuery limit ( Limit limit ) {
+		return new EventQuery(items, until, direction, limit);
+	}
+
+	/**
+	 * Returns a new EventQuery with the specified limit.
+	 *
+	 * @param n the maximum number of events to return (must be positive)
+	 * @return a new EventQuery with the specified limit
+	 */
+	public EventQuery limit ( long n ) {
+		return new EventQuery(items, until, direction, Limit.to(n));
+	}
+
+	/**
+	 * Returns a normalized copy of this query suitable for optimistic locking checks.
+	 * Strips direction and limit, keeping only the matching criteria (items and until).
+	 * This ensures that append checks always scan forward with no limit to detect all
+	 * potentially conflicting events.
+	 *
+	 * @return a new EventQuery with direction FORWARD and no limit
+	 */
+	public EventQuery forLockingCheck ( ) {
+		return new EventQuery(items, until, Direction.FORWARD, Limit.none());
+	}
+
+	/**
 	 * Creates a new EventQuery that combines the criteria of this query with another (UNION operation).
 	 * The resulting query will match events that match either this query or the other query.
 	 *
-	 * <p>With regards to the "until" reference, both queries must have the same value (or both must be unset).
-	 * If the "until" references differ, an IllegalArgumentException is thrown.
+	 * <p>With regards to the "until" reference, direction, and limit, both queries must have the same
+	 * values (or both must be unset/default). If they differ, an IllegalArgumentException is thrown.
 	 *
 	 * @param other the other query to combine with this one
 	 * @return a new EventQuery representing the union of both queries
-	 * @throws IllegalArgumentException if the "until" references are incompatible
+	 * @throws IllegalArgumentException if the "until" references, directions, or limits are incompatible
 	 */
 	public EventQuery combineWith ( EventQuery other ) {
 		List<EventQueryItem> combinedQueryItems = Stream.concat(this.items==null?Stream.empty():this.items.stream(), other.items==null?Stream.empty():other.items.stream()).toList();
@@ -186,7 +274,16 @@ public record EventQuery ( List<EventQueryItem> items, EventReference until ) {
 		} else {
 			throw new IllegalArgumentException("can't combine two EventQuery that don't share the same until value (both different values)");
 		}
-		return new EventQuery(combinedQueryItems, combinedUntil);
+
+		if ( this.direction != other.direction ) {
+			throw new IllegalArgumentException("can't combine two EventQuery with different directions");
+		}
+
+		if ( !this.limit.equals(other.limit) ) {
+			throw new IllegalArgumentException("can't combine two EventQuery with different limits");
+		}
+
+		return new EventQuery(combinedQueryItems, combinedUntil, this.direction, this.limit);
 	}
 
 	/**
@@ -239,7 +336,7 @@ public record EventQuery ( List<EventQueryItem> items, EventReference until ) {
 	 * @return a new EventQuery with the "until" reference set
 	 */
 	public EventQuery until ( EventReference until ) {
-		return new EventQuery(items, until);
+		return new EventQuery(items, until, direction, limit);
 	}
 
 	/**
@@ -253,9 +350,9 @@ public record EventQuery ( List<EventQueryItem> items, EventReference until ) {
 	public EventQuery untilIfEarlier ( EventReference newUntil ) {
 		if ( newUntil != null  ) {
 			if (this.until == null ) { // we don't have an until value, so we just take on the new one
-				return new EventQuery(items, newUntil);
+				return new EventQuery(items, newUntil, direction, limit);
 			} else if ( newUntil.happenedBefore(until) ) { // newUntil asks to stop earlier in the stream
-				return new EventQuery(items, newUntil);
+				return new EventQuery(items, newUntil, direction, limit);
 			} else { // our until value is earlier in the stream than the new one, not expanding our query
 				return this;
 			}

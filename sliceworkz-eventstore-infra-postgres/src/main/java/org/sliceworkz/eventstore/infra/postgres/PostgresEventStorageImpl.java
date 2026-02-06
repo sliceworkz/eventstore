@@ -713,8 +713,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 		
 		
 			// Add EventQuery filtering for the consistency boundary
-			if (!appendCriteria.eventQuery().isMatchAll()) {
-				addEventQueryFiltering(sqlBuilder, parameters, appendCriteria.eventQuery());
+			// Use forLockingCheck() to strip direction/limit — locking always scans forward with no limit
+			EventQuery lockingQuery = appendCriteria.eventQuery().forLockingCheck();
+			if (!lockingQuery.isMatchAll()) {
+				addEventQueryFiltering(sqlBuilder, parameters, lockingQuery);
 			}
 			
 			sqlBuilder.append(") ");

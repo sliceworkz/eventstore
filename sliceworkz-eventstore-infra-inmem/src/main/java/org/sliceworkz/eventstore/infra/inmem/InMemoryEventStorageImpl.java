@@ -294,7 +294,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 			
 			// we query the stream with the same filter from the last event known as our reference
 			// we only need to fetch max 1 event to prove a locking issue
-			Stream<StoredEvent> newEventStream = queryAfter(appendCriteria.eventQuery(), streamId, appendCriteria.expectedLastEventReference().orElse(null), Limit.to(1), QueryDirection.FORWARD);
+			Stream<StoredEvent> newEventStream = queryAfter(appendCriteria.eventQuery().forLockingCheck(), streamId, appendCriteria.expectedLastEventReference().orElse(null), Limit.to(1), QueryDirection.FORWARD);
 			
 			List<StoredEvent> newEvents = newEventStream.toList();
 			

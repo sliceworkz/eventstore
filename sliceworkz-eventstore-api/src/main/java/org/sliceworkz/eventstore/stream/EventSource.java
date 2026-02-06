@@ -138,16 +138,20 @@ public interface EventSource<DOMAIN_EVENT_TYPE> {
 	}
 
 	/**
-	 * Queries events from the stream in forward order starting from the beginning.
+	 * Queries events from the stream, respecting the query's own direction and limit.
 	 * <p>
-	 * Convenience method for querying without pagination. Returns all events matching
-	 * the query criteria from the start of the stream.
+	 * If the query has a backward direction (via {@link EventQuery#backwards()}), events are returned
+	 * in reverse chronological order. If the query has a limit (via {@link EventQuery#limit(long)}),
+	 * at most that many events are returned. Otherwise, returns all events in forward order.
 	 *
 	 * @param query the query criteria specifying which events to retrieve
 	 * @return a Stream of events matching the query criteria
 	 */
 	default Stream<Event<DOMAIN_EVENT_TYPE>> query ( EventQuery query ) {
-		return query(query, null, Limit.none());
+		if ( query.isBackwards() ) {
+			return queryBackwards(query, query.limit());
+		}
+		return query(query, null, query.limit());
 	}
 
 	/**

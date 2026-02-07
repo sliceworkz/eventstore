@@ -17,6 +17,7 @@
  */
 package org.sliceworkz.eventstore.impl;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -317,6 +318,10 @@ public class EventStoreImpl implements EventStore {
 			List<String> unAppendable = events.stream().map(e->e.type().name()).filter(t->!serde.canDeserialize(t)).toList();
 			if ( !unAppendable.isEmpty() ) {
 				throw new IllegalArgumentException("cannot append event type '%s' via this stream".formatted(unAppendable.getFirst()));
+			}
+			
+			if ( events.size() == 0 ) {
+				return Collections.emptyList();
 			}
 			
 			if ( events.size() > 1 ) {

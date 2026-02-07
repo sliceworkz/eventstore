@@ -647,139 +647,143 @@ public class PostgresEventStorageImpl implements EventStorage {
 	
 	@Override
 	public List<StoredEvent> append(AppendCriteria appendCriteria, Optional<EventStreamId> streamId, List<EventToStore> events) {
-		// Build conditional insert with optimistic locking check
-		StringBuilder sqlBuilder = new StringBuilder();
-		sqlBuilder.append("INSERT INTO %sevents (event_id, idempotency_key, stream_context, stream_purpose, event_type, event_data, event_erasable_data, event_tags) SELECT * FROM ( VALUES ".formatted(prefix));
-		for ( int i = 0; i < events.size(); i++ ) {
-			if ( i > 0 ) {
-				sqlBuilder.append(", ");
-			}
-			sqlBuilder.append("(?::uuid, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?)");
-		}
-		sqlBuilder.append(")");
+		List<StoredEvent> storedEvents = new ArrayList<>();
 
-		List<Object> parameters = new ArrayList<>();
-		
-		List<EventId> ids = new ArrayList<>();
-
-		for ( EventToStore event: events ) {
+		if ( events.size() != 0 ) {
 			
-			EventId id = EventId.create();
-			ids.add(id);
-			
-			// Add to-be-appended-event parameters first
-			parameters.add(id.value());
-			parameters.add(event.idempotencyKey());
-			parameters.add(event.stream().context());
-			parameters.add(event.stream().purpose());
-			parameters.add(event.type().name());
-	
-			parameters.add(event.immutableData());
-			parameters.add(event.erasableData());
-			
-			// Convert tags to array
-			String[] tagsArray = event.tags().toStrings().toArray(new String[event.tags().tags().size()]);
-			parameters.add(tagsArray);
-		}
-		
-		if ( ! appendCriteria.isNone() ) {
-
-			// Now add the optimistic locking conditions
-			sqlBuilder.append(
-					"""
-				WHERE NOT EXISTS (
-					SELECT 1 FROM %sevents 
-					WHERE 1=1 """.formatted(prefix));
-			
-			
-			// Add stream filtering
-			if (streamId.isPresent()) {
-				if (!streamId.get().isAnyContext()) {
-					sqlBuilder.append(" AND stream_context = ?");
-					parameters.add(streamId.get().context());
+			// Build conditional insert with optimistic locking check
+			StringBuilder sqlBuilder = new StringBuilder();
+			sqlBuilder.append("INSERT INTO %sevents (event_id, idempotency_key, stream_context, stream_purpose, event_type, event_data, event_erasable_data, event_tags) SELECT * FROM ( VALUES ".formatted(prefix));
+			for ( int i = 0; i < events.size(); i++ ) {
+				if ( i > 0 ) {
+					sqlBuilder.append(", ");
 				}
-				if (!streamId.get().isAnyPurpose()) {
-					sqlBuilder.append(" AND stream_purpose = ?");
-					parameters.add(streamId.get().purpose());
-				}
+				sqlBuilder.append("(?::uuid, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?) ");
 			}
-			
-			if ( appendCriteria.expectedLastEventReference() != null && appendCriteria.expectedLastEventReference().isPresent()  ) {
-				
-				// Add position filtering - check for events after the expected last event
-				sqlBuilder.append(" AND event_position > ?");
-				parameters.add(appendCriteria.expectedLastEventReference().get().position());
-			}
-		
-		
-			// Add EventQuery filtering for the consistency boundary
-			// Use forLockingCheck() to strip direction/limit — locking always scans forward with no limit
-			EventQuery lockingQuery = appendCriteria.eventQuery().forLockingCheck();
-			if (!lockingQuery.isMatchAll()) {
-				addEventQueryFiltering(sqlBuilder, parameters, lockingQuery);
-			}
-			
 			sqlBuilder.append(") ");
-		}
-		
-		sqlBuilder.append("RETURNING event_position, event_timestamp, event_tx::text");
-		
-		
-		try ( Connection writeConnection = dataSource.getConnection()) {
-			writeConnection.setAutoCommit(false);
+	
+			List<Object> parameters = new ArrayList<>();
 			
-			try ( PreparedStatement stmt = writeConnection.prepareStatement(sqlBuilder.toString()) ) {
-				// Set parameters
-				for (int i = 0; i < parameters.size(); i++) {
-					Object param = parameters.get(i);
-					if (param instanceof String[]) {
-						stmt.setArray(i + 1, writeConnection.createArrayOf("text", (String[]) param));
-					} else {
-						stmt.setObject(i + 1, param);
-					}
-				}
+			List<EventId> ids = new ArrayList<>();
+	
+			for ( EventToStore event: events ) {
 				
-				List<StoredEvent> storedEvents = new ArrayList<>();
+				EventId id = EventId.create();
+				ids.add(id);
 				
-				try (ResultSet rs = stmt.executeQuery()) {
-					
-					Iterator<EventToStore> it = events.iterator();
-					Iterator<EventId> idIterator = ids.iterator();
-					
-					while (rs.next()) {
-						long position = rs.getLong("event_position");
-						long tx = Long.parseUnsignedLong(rs.getString("event_tx"));
-						Timestamp timestamp = rs.getTimestamp("event_timestamp");
-						
-						EventToStore e = it.next();
-						EventId id = idIterator.next();
-						
-						EventReference reference = EventReference.of(id, position, tx);
-						storedEvents.add(e.positionAt(reference, timestamp.toLocalDateTime()));
-					}
-					
-					if ( storedEvents.size() != events.size() ) {
-						// Insert failed due to optimistic locking conflict
-						throw new OptimisticLockingException(appendCriteria.eventQuery(), appendCriteria.expectedLastEventReference());
-					}
-				}
-				writeConnection.commit();
+				// Add to-be-appended-event parameters first
+				parameters.add(id.value());
+				parameters.add(event.idempotencyKey());
+				parameters.add(event.stream().context());
+				parameters.add(event.stream().purpose());
+				parameters.add(event.type().name());
+		
+				parameters.add(event.immutableData());
+				parameters.add(event.erasableData());
 				
-				return storedEvents;
-			} catch (SQLException e) {
-				writeConnection.rollback();
-				
-				// idempotency issue
-				if ( e.getMessage().contains("idempotency_key")) {
-					return Collections.emptyList();
-				} else {
-					throw new EventStorageException("SQLException during append", e);
-				}
+				// Convert tags to array
+				String[] tagsArray = event.tags().toStrings().toArray(new String[event.tags().tags().size()]);
+				parameters.add(tagsArray);
 			}
 			
-		} catch (SQLException e) {
-			throw new EventStorageException("SQLException during append", e);
+			if ( ! appendCriteria.isNone() ) {
+	
+				// Now add the optimistic locking conditions
+				sqlBuilder.append(
+						"""
+					WHERE NOT EXISTS (
+						SELECT 1 FROM %sevents 
+						WHERE 1=1 """.formatted(prefix));
+				
+				
+				// Add stream filtering
+				if (streamId.isPresent()) {
+					if (!streamId.get().isAnyContext()) {
+						sqlBuilder.append(" AND stream_context = ?");
+						parameters.add(streamId.get().context());
+					}
+					if (!streamId.get().isAnyPurpose()) {
+						sqlBuilder.append(" AND stream_purpose = ?");
+						parameters.add(streamId.get().purpose());
+					}
+				}
+				
+				if ( appendCriteria.expectedLastEventReference() != null && appendCriteria.expectedLastEventReference().isPresent()  ) {
+					
+					// Add position filtering - check for events after the expected last event
+					sqlBuilder.append(" AND event_position > ?");
+					parameters.add(appendCriteria.expectedLastEventReference().get().position());
+				}
+			
+			
+				// Add EventQuery filtering for the consistency boundary
+				// Use forLockingCheck() to strip direction/limit — locking always scans forward with no limit
+				EventQuery lockingQuery = appendCriteria.eventQuery().forLockingCheck();
+				if (!lockingQuery.isMatchAll()) {
+					addEventQueryFiltering(sqlBuilder, parameters, lockingQuery);
+				}
+				
+				sqlBuilder.append(") ");
+			}
+			
+			sqlBuilder.append("RETURNING event_position, event_timestamp, event_tx::text");
+			
+			
+			try ( Connection writeConnection = dataSource.getConnection()) {
+				writeConnection.setAutoCommit(false);
+				
+				try ( PreparedStatement stmt = writeConnection.prepareStatement(sqlBuilder.toString()) ) {
+					// Set parameters
+					for (int i = 0; i < parameters.size(); i++) {
+						Object param = parameters.get(i);
+						if (param instanceof String[]) {
+							stmt.setArray(i + 1, writeConnection.createArrayOf("text", (String[]) param));
+						} else {
+							stmt.setObject(i + 1, param);
+						}
+					}
+					
+					try (ResultSet rs = stmt.executeQuery()) {
+						
+						Iterator<EventToStore> it = events.iterator();
+						Iterator<EventId> idIterator = ids.iterator();
+						
+						while (rs.next()) {
+							long position = rs.getLong("event_position");
+							long tx = Long.parseUnsignedLong(rs.getString("event_tx"));
+							Timestamp timestamp = rs.getTimestamp("event_timestamp");
+							
+							EventToStore e = it.next();
+							EventId id = idIterator.next();
+							
+							EventReference reference = EventReference.of(id, position, tx);
+							storedEvents.add(e.positionAt(reference, timestamp.toLocalDateTime()));
+						}
+						
+						if ( storedEvents.size() != events.size() ) {
+							// Insert failed due to optimistic locking conflict
+							throw new OptimisticLockingException(appendCriteria.eventQuery(), appendCriteria.expectedLastEventReference());
+						}
+					}
+					writeConnection.commit();
+					
+				} catch (SQLException e) {
+					writeConnection.rollback();
+					
+					// idempotency issue
+					if ( e.getMessage().contains("idempotency_key")) {
+						return Collections.emptyList();
+					} else {
+						throw new EventStorageException("SQLException during append", e);
+					}
+				}
+				
+			} catch (SQLException e) {
+				throw new EventStorageException("SQLException during append", e);
+			}
 		}
+		
+		return storedEvents;
 			
 	}
 

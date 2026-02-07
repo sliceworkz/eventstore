@@ -18,6 +18,7 @@
 package org.sliceworkz.eventstore.stream;
 
 import static org.awaitility.Awaitility.await;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -315,6 +316,15 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		// should be ok
 		specialEs.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FourthDomainEventWithErasableParts("1", "someName"), Tags.none())));
 
+	}
+
+	@Test
+	void testAppendEmptyEventList ( ) {
+		List<Event<MockDomainEvent>> events = assertDoesNotThrow(
+			() -> es.append(AppendCriteria.none(), Collections.emptyList())
+		);
+		assertEquals(0, events.size());
+		assertEquals(0, es.query(EventQuery.matchAll()).count());
 	}
 
 	@Test

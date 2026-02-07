@@ -3,7 +3,10 @@ name: auto-assign-issues
 on:
   pull_request:
     types: [opened]
-
+    
+permissions:
+  pull-requests: write
+  
 jobs:
   assign:
     runs-on: ubuntu-latest

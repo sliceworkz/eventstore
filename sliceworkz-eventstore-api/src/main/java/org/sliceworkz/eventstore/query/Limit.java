@@ -77,6 +77,58 @@ public record Limit ( Long value ) {
 	}
 
 	/**
+	 * Returns a Limit with the given value if it is lower than the current limit,
+	 * or if no limit is currently set. Otherwise returns this Limit unchanged.
+	 *
+	 * <p>This is useful for imposing an upper bound on an existing limit. For example,
+	 * when a system-wide maximum should cap a user-specified limit:
+	 * <pre>{@code
+	 * Limit userLimit = Limit.to(500);
+	 * Limit capped = userLimit.orIfLower(100); // Limit.to(100)
+	 *
+	 * Limit noLimit = Limit.none();
+	 * Limit bounded = noLimit.orIfLower(100); // Limit.to(100)
+	 * }</pre>
+	 *
+	 * @param value the candidate limit value (must be positive)
+	 * @return a Limit with the lower of the two values, or the given value if no limit is currently set
+	 * @throws IllegalArgumentException if value is less than or equal to 0
+	 */
+	public Limit orIfLower ( long value ) {
+		if ( this.value == null || this.value > value ) {
+			return Limit.to(value);
+		} else {
+			return this;
+		}
+	}
+
+	/**
+	 * Returns the Limit with the lower value between this and the given Limit.
+	 * If the given Limit has no value set, this Limit is returned unchanged.
+	 * If this Limit has no value set, the given Limit is returned.
+	 *
+	 * <pre>{@code
+	 * Limit a = Limit.to(500);
+	 * Limit b = Limit.to(100);
+	 * Limit result = a.orIfLower(b); // Limit.to(100)
+	 *
+	 * Limit noLimit = Limit.none();
+	 * Limit bounded = noLimit.orIfLower(Limit.to(100)); // Limit.to(100)
+	 *
+	 * Limit kept = Limit.to(50).orIfLower(Limit.none()); // Limit.to(50)
+	 * }</pre>
+	 *
+	 * @param limit the candidate Limit to compare against
+	 * @return the Limit with the lower value, or this Limit if the given Limit has no value set
+	 */
+	public Limit orIfLower ( Limit limit ) {
+		if ( limit.isNotSet() ) {
+			return this;
+		}
+		return orIfLower(limit.value());
+	}
+
+	/**
 	 * Creates a Limit with no restriction (returns all matching events).
 	 *
 	 * @return a Limit representing no limit

@@ -289,7 +289,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 			Optional<EventReference> lastReadAtStart = lastEventReference;
 			
 			// in order to avoid memory issues, we'll loop in batches om MAX_EVENTS_PER_QUERY, until no more events are found in the stream
-			Limit limit = Limit.to(maxEventsPerQuery);
+			Limit limit =  Limit.to(maxEventsPerQuery).orIfLower(projection.eventQuery().limit());
 	
 			
 			EventQuery effectiveQuery = projection.eventQuery().untilIfEarlier ( until );

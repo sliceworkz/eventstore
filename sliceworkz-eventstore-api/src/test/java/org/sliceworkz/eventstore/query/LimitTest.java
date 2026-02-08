@@ -20,6 +20,7 @@ package org.sliceworkz.eventstore.query;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -63,6 +64,79 @@ public class LimitTest {
 	void testZero ( ) {
 		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> Limit.to(0));
 		assertEquals("limit 0 is invalid, should be larger than 0", e.getMessage());
+	}
+
+	@Test
+	void testOrIfLowerLong_WhenNone_ReturnsGivenValue ( ) {
+		Limit result = Limit.none().orIfLower(100);
+		assertEquals(Limit.to(100), result);
+	}
+
+	@Test
+	void testOrIfLowerLong_WhenCurrentIsHigher_ReturnsGivenValue ( ) {
+		Limit result = Limit.to(500).orIfLower(100);
+		assertEquals(Limit.to(100), result);
+	}
+
+	@Test
+	void testOrIfLowerLong_WhenCurrentIsLower_ReturnsCurrent ( ) {
+		Limit original = Limit.to(50);
+		Limit result = original.orIfLower(100);
+		assertSame(original, result);
+	}
+
+	@Test
+	void testOrIfLowerLong_WhenEqual_ReturnsCurrent ( ) {
+		Limit original = Limit.to(100);
+		Limit result = original.orIfLower(100);
+		assertSame(original, result);
+	}
+
+	@Test
+	void testOrIfLowerLong_WithInvalidValue_Throws ( ) {
+		assertThrows(IllegalArgumentException.class, () -> Limit.to(100).orIfLower(0));
+		assertThrows(IllegalArgumentException.class, () -> Limit.to(100).orIfLower(-1));
+		assertThrows(IllegalArgumentException.class, () -> Limit.none().orIfLower(0));
+	}
+
+	@Test
+	void testOrIfLowerLimit_WhenNone_ReturnsGivenLimit ( ) {
+		Limit result = Limit.none().orIfLower(Limit.to(100));
+		assertEquals(Limit.to(100), result);
+	}
+
+	@Test
+	void testOrIfLowerLimit_WhenCurrentIsHigher_ReturnsGivenValue ( ) {
+		Limit result = Limit.to(500).orIfLower(Limit.to(100));
+		assertEquals(Limit.to(100), result);
+	}
+
+	@Test
+	void testOrIfLowerLimit_WhenCurrentIsLower_ReturnsCurrent ( ) {
+		Limit original = Limit.to(50);
+		Limit result = original.orIfLower(Limit.to(100));
+		assertSame(original, result);
+	}
+
+	@Test
+	void testOrIfLowerLimit_WhenEqual_ReturnsCurrent ( ) {
+		Limit original = Limit.to(100);
+		Limit result = original.orIfLower(Limit.to(100));
+		assertSame(original, result);
+	}
+
+	@Test
+	void testOrIfLowerLimit_WhenGivenIsNone_ReturnsCurrent ( ) {
+		Limit original = Limit.to(50);
+		Limit result = original.orIfLower(Limit.none());
+		assertSame(original, result);
+	}
+
+	@Test
+	void testOrIfLowerLimit_WhenBothNone_ReturnsCurrent ( ) {
+		Limit original = Limit.none();
+		Limit result = original.orIfLower(Limit.none());
+		assertSame(original, result);
 	}
 
 }

@@ -46,7 +46,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
  * <ul>
  *   <li><strong>Match All:</strong> When the items list is null, any event matches</li>
  *   <li><strong>Match None:</strong> When the items list is empty, no event matches</li>
- *   <li><strong>Match Specific:</strong> When the items list contains one or more {@link EventQueryItem}s,
+ *   <li><strong>Match Specific:</strong> When the items list contains one or more {@link EventFilterItem}s,
  *       events matching any item will match (OR condition)</li>
  * </ul>
  *
@@ -54,10 +54,10 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
  * @param until the reference to match up to (null for no boundary, or a specific reference to stop at that point in history)
  *
  * @see EventQuery
- * @see EventQueryItem
+ * @see EventFilterItem
  * @see org.sliceworkz.eventstore.stream.AppendCriteria
  */
-public record EventFilter ( List<EventQueryItem> items, EventReference until ) {
+public record EventFilter ( List<EventFilterItem> items, EventReference until ) {
 
 	/**
 	 * Tests whether the given event matches this filter.
@@ -173,7 +173,7 @@ public record EventFilter ( List<EventQueryItem> items, EventReference until ) {
 	 * @throws IllegalArgumentException if the "until" references are incompatible
 	 */
 	public EventFilter combineWith ( EventFilter other ) {
-		List<EventQueryItem> combinedQueryItems = Stream.concat(this.items==null?Stream.empty():this.items.stream(), other.items==null?Stream.empty():other.items.stream()).toList();
+		List<EventFilterItem> combinedQueryItems = Stream.concat(this.items==null?Stream.empty():this.items.stream(), other.items==null?Stream.empty():other.items.stream()).toList();
 		EventReference combinedUntil = null;
 		if ( this.until == null && other.until == null ) {
 			combinedUntil = null;
@@ -214,7 +214,7 @@ public record EventFilter ( List<EventQueryItem> items, EventReference until ) {
 	 * @return an EventFilter matching the specified criteria
 	 */
 	public static EventFilter forEvents ( EventTypesFilter eventTypes, Tags tags ) {
-		return forEvents(new EventQueryItem(eventTypes, tags));
+		return forEvents(new EventFilterItem(eventTypes, tags));
 	}
 
 	/**
@@ -223,7 +223,7 @@ public record EventFilter ( List<EventQueryItem> items, EventReference until ) {
 	 * @param queryItem the query item defining the match criteria
 	 * @return an EventFilter containing the single query item
 	 */
-	public static EventFilter forEvents ( EventQueryItem queryItem ) {
+	public static EventFilter forEvents ( EventFilterItem queryItem ) {
 		return new EventFilter(Collections.singletonList(queryItem), null);
 	}
 

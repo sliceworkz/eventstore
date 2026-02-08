@@ -50,7 +50,7 @@ import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
-import org.sliceworkz.eventstore.query.EventQueryItem;
+import org.sliceworkz.eventstore.query.EventFilterItem;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageException;
@@ -592,7 +592,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		sqlBuilder.append(" AND (");
 		boolean first = true;
 
-		for (EventQueryItem item : filter.items()) {
+		for (EventFilterItem item : filter.items()) {
 			if (!first) {
 				sqlBuilder.append(" OR ");
 			}

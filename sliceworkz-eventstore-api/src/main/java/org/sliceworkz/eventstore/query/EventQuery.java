@@ -72,7 +72,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
  * @param limit the maximum number of events to return, defaults to no limit
  *
  * @see EventFilter
- * @see EventQueryItem
+ * @see EventFilterItem
  * @see EventTypesFilter
  * @see org.sliceworkz.eventstore.stream.AppendCriteria
  * @see Tags
@@ -98,14 +98,14 @@ public record EventQuery ( EventFilter filter, Direction direction, Limit limit 
 	/**
 	 * Convenience constructor from raw filter components.
 	 */
-	public EventQuery ( List<EventQueryItem> items, EventReference until, Direction direction, Limit limit ) {
+	public EventQuery ( List<EventFilterItem> items, EventReference until, Direction direction, Limit limit ) {
 		this(new EventFilter(items, until), direction, limit);
 	}
 
 	/**
 	 * Convenience constructor from raw filter components with default direction and limit.
 	 */
-	public EventQuery ( List<EventQueryItem> items, EventReference until ) {
+	public EventQuery ( List<EventFilterItem> items, EventReference until ) {
 		this(new EventFilter(items, until), Direction.FORWARD, Limit.none());
 	}
 
@@ -121,7 +121,7 @@ public record EventQuery ( EventFilter filter, Direction direction, Limit limit 
 	 *
 	 * @return the list of query items (null for match-all, empty for match-none)
 	 */
-	public List<EventQueryItem> items ( ) {
+	public List<EventFilterItem> items ( ) {
 		return filter.items();
 	}
 
@@ -278,7 +278,7 @@ public record EventQuery ( EventFilter filter, Direction direction, Limit limit 
 	 * @return an EventQuery matching the specified criteria
 	 */
 	public static final EventQuery forEvents ( EventTypesFilter eventTypes, Tags tags ) {
-		return forEvents(new EventQueryItem(eventTypes, tags));
+		return forEvents(new EventFilterItem(eventTypes, tags));
 	}
 
 	/**
@@ -287,7 +287,7 @@ public record EventQuery ( EventFilter filter, Direction direction, Limit limit 
 	 * @param queryItem the query item defining the match criteria
 	 * @return an EventQuery containing the single query item
 	 */
-	public static final EventQuery forEvents ( EventQueryItem queryItem ) {
+	public static final EventQuery forEvents ( EventFilterItem queryItem ) {
 		return new EventQuery(Collections.singletonList(queryItem), null);
 	}
 

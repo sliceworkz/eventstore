@@ -162,7 +162,7 @@ public class EventQueryTest {
 		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1")).until(e3_event1TagsA1.reference());
 		
 		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, ()-> q1.combineWith(q2) );
-		assertEquals("can't combine two EventQuery that don't share the same until value (both different values)", e.getMessage());
+		assertEquals("can't combine two EventFilter that don't share the same until value (both different values)", e.getMessage());
 	}
 	
 	@Test
@@ -171,7 +171,7 @@ public class EventQueryTest {
 		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1")).until(e3_event1TagsA1.reference());
 		
 		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, ()-> q1.combineWith(q2) );
-		assertEquals("can't combine two EventQuery don't share the same until value (one was not set)", e.getMessage());
+		assertEquals("can't combine two EventFilter that don't share the same until value (one was not set)", e.getMessage());
 	}
 
 	@Test
@@ -273,26 +273,37 @@ public class EventQueryTest {
 	}
 
 	@Test
-	void testForLockingCheck ( ) {
+	void testFilter ( ) {
 		EventQuery q = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.of("A", "1"))
 				.until(e4_event2TagsA1.reference())
 				.backwards()
 				.limit(1);
 
-		EventQuery locking = q.forLockingCheck();
+		EventFilter filter = q.filter();
 
-		// direction and limit are stripped
-		assertEquals(EventQuery.Direction.FORWARD, locking.direction());
-		assertEquals(Limit.none(), locking.limit());
-		assertFalse(locking.isBackwards());
+		// filter contains items and until
+		assertEquals(q.items(), filter.items());
+		assertEquals(q.until(), filter.until());
 
-		// items and until are preserved
-		assertEquals(q.items(), locking.items());
-		assertEquals(q.until(), locking.until());
+		// matching behavior is identical to the query
+		assertTrue(filter.matches(e3_event1TagsA1));
+		assertFalse(filter.matches(e5_event1TagsA1B1));
+	}
 
-		// matching behavior is identical
-		assertTrue(locking.matches(e3_event1TagsA1));
-		assertFalse(locking.matches(e5_event1TagsA1B1));
+	@Test
+	void testFilterMatchAll ( ) {
+		EventFilter filter = EventQuery.matchAll().filter();
+		assertTrue(filter.isMatchAll());
+		assertFalse(filter.isMatchNone());
+		assertTrue(filter.matches(e1_event1NoTags));
+	}
+
+	@Test
+	void testFilterMatchNone ( ) {
+		EventFilter filter = EventQuery.matchNone().filter();
+		assertTrue(filter.isMatchNone());
+		assertFalse(filter.isMatchAll());
+		assertFalse(filter.matches(e1_event1NoTags));
 	}
 
 	@Test

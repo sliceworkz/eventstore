@@ -40,8 +40,9 @@ import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.impl.serde.EventPayloadSerializerDeserializer;
 import org.sliceworkz.eventstore.impl.serde.EventPayloadSerializerDeserializer.TypeAndPayload;
 import org.sliceworkz.eventstore.impl.serde.EventPayloadSerializerDeserializer.TypeAndSerializedPayload;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
-import org.sliceworkz.eventstore.query.EventQueryItem;
+import org.sliceworkz.eventstore.query.EventFilterItem;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
@@ -359,14 +360,15 @@ public class EventStoreImpl implements EventStore {
 		 */
 		private EventQuery includeLegacyEventTypes ( EventQuery query ) {
 			if ( query.items() == null ) {
-				return new EventQuery(null, query.until(), query.direction(), query.limit());
+				return query; // match-all, nothing to modify
 			} else {
-				return new EventQuery(query.items().stream().map(this::includeLegacyEventTypes).toList(), query.until(), query.direction(), query.limit());
+				EventFilter newFilter = new EventFilter(query.items().stream().map(this::includeLegacyEventTypes).toList(), query.until());
+				return new EventQuery(newFilter, query.direction(), query.limit());
 			}
 		}
 
-		private EventQueryItem includeLegacyEventTypes ( EventQueryItem queryItem ) {
-			return new EventQueryItem(includeLegacyEventTypes(queryItem.eventTypes()), queryItem.tags());
+		private EventFilterItem includeLegacyEventTypes ( EventFilterItem queryItem ) {
+			return new EventFilterItem(includeLegacyEventTypes(queryItem.eventTypes()), queryItem.tags());
 		}
 
 		private EventTypesFilter includeLegacyEventTypes ( EventTypesFilter typesFilter ) {

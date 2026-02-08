@@ -292,21 +292,22 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		// otherwise, we'll need to be aware of any optimistic locking issues
 		} else {
 			
-			// we query the stream with the same filter from the last event known as our reference
+			// we query the stream with the event filter from the last event known as our reference
 			// we only need to fetch max 1 event to prove a locking issue
-			Stream<StoredEvent> newEventStream = queryAfter(appendCriteria.eventQuery().forLockingCheck(), streamId, appendCriteria.expectedLastEventReference().orElse(null), Limit.to(1), QueryDirection.FORWARD);
-			
+			EventQuery lockingQuery = new EventQuery(appendCriteria.eventFilter(), EventQuery.Direction.FORWARD, Limit.none());
+			Stream<StoredEvent> newEventStream = queryAfter(lockingQuery, streamId, appendCriteria.expectedLastEventReference().orElse(null), Limit.to(1), QueryDirection.FORWARD);
+
 			List<StoredEvent> newEvents = newEventStream.toList();
-			
+
 			// if there are no new events in the stream ...
 			if ( newEvents.isEmpty() ) {
-				
+
 				// we can safely append to the event log
 				result = addAndNotifyListeners(events);
-				
+
 			} else {
 				// new events means an optimistic lock !
-				throw new OptimisticLockingException(appendCriteria.eventQuery(), appendCriteria.expectedLastEventReference());
+				throw new OptimisticLockingException(appendCriteria.eventFilter(), appendCriteria.expectedLastEventReference());
 			}				
 		}
 		

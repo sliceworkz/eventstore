@@ -61,7 +61,7 @@ import org.sliceworkz.eventstore.events.EventType;
  * @param eventTypes the set of event types to match (empty set means match any type)
  *
  * @see EventQuery
- * @see EventQueryItem
+ * @see EventFilterItem
  * @see EventType
  */
 public record EventTypesFilter ( Set<EventType> eventTypes ) {

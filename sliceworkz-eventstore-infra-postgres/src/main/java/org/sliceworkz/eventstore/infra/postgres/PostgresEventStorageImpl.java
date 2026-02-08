@@ -48,8 +48,9 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
-import org.sliceworkz.eventstore.query.EventQueryItem;
+import org.sliceworkz.eventstore.query.EventFilterItem;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageException;
@@ -539,9 +540,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 			}
 		}
 		
-		// Add EventQuery filtering (event types and tags)
+		// Add EventFilter filtering (event types and tags)
 		if (!query.isMatchAll()) {
-			addEventQueryFiltering(sqlBuilder, parameters, query);
+			addEventFilterFiltering(sqlBuilder, parameters, query.filter());
 		}
 		
 		// Order by position
@@ -583,15 +584,15 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 	}
 	
-	private void addEventQueryFiltering(StringBuilder sqlBuilder, List<Object> parameters, EventQuery query) {
-		if (query.items() == null || query.items().isEmpty()) {
+	private void addEventFilterFiltering(StringBuilder sqlBuilder, List<Object> parameters, EventFilter filter) {
+		if (filter.items() == null || filter.items().isEmpty()) {
 			return; // matchAll case is already handled
 		}
-		
+
 		sqlBuilder.append(" AND (");
 		boolean first = true;
-		
-		for (EventQueryItem item : query.items()) {
+
+		for (EventFilterItem item : filter.items()) {
 			if (!first) {
 				sqlBuilder.append(" OR ");
 			}
@@ -716,11 +717,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 				}
 			
 			
-				// Add EventQuery filtering for the consistency boundary
-				// Use forLockingCheck() to strip direction/limit — locking always scans forward with no limit
-				EventQuery lockingQuery = appendCriteria.eventQuery().forLockingCheck();
-				if (!lockingQuery.isMatchAll()) {
-					addEventQueryFiltering(sqlBuilder, parameters, lockingQuery);
+				// Add EventFilter filtering for the consistency boundary
+				EventFilter lockingFilter = appendCriteria.eventFilter();
+				if (!lockingFilter.isMatchAll()) {
+					addEventFilterFiltering(sqlBuilder, parameters, lockingFilter);
 				}
 				
 				sqlBuilder.append(") ");
@@ -762,7 +762,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 						
 						if ( storedEvents.size() != events.size() ) {
 							// Insert failed due to optimistic locking conflict
-							throw new OptimisticLockingException(appendCriteria.eventQuery(), appendCriteria.expectedLastEventReference());
+							throw new OptimisticLockingException(appendCriteria.eventFilter(), appendCriteria.expectedLastEventReference());
 						}
 					}
 					writeConnection.commit();

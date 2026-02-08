@@ -74,19 +74,26 @@ mvn clean install -DskipTests
 - Core to the Dynamic Consistency Boundary pattern
 - Created via `Tags.of("key", "value")` or `Tags.of(Tag.of("key", "value"))`
 
+**EventFilter:**
+- Pure matching criteria: event types, tags, and an optional "until" temporal boundary
+- Does not carry traversal semantics (direction, limit) — those belong to `EventQuery`
+- Can match all (`EventFilter.matchAll()`), none (`EventFilter.matchNone()`), or specific criteria
+- Created via `EventFilter.forEvents(eventTypesFilter, tags)`
+- Used by `AppendCriteria` for optimistic locking (where direction/limit are irrelevant)
+
 **EventQuery:**
-- Defines which events to retrieve from storage
+- Wraps an `EventFilter` together with traversal semantics (direction and limit)
+- Use `EventQuery.filter()` to extract the pure matching criteria
 - Can match all (`EventQuery.matchAll()`), none (`EventQuery.matchNone()`), or specific criteria
-- Uses `EventTypesFilter` to filter by event types and `Tags` to filter by tags
-- Supports an optional "until" reference to query up to a specific point in history
+- Supports backward direction (`.backwards()`) and result limits (`.limit(n)`)
 - Created via `EventQuery.forEvents(eventTypesFilter, tags)`
 
 **AppendCriteria:**
 - Controls optimistic locking when appending events
-- Contains an `EventQuery` and an optional `EventReference` for the expected last event
+- Contains an `EventFilter` and an optional `EventReference` for the expected last event
 - If new matching events are found after the reference, append fails with `OptimisticLockingException`
 - Use `AppendCriteria.none()` for simple appends without locking
-- Use `AppendCriteria.of(eventQuery, Optional.of(reference))` for conditional appends
+- Use `AppendCriteria.of(eventQuery, reference)` or `AppendCriteria.of(eventFilter, reference)` for conditional appends
 
 **Projection:**
 - Combines an `EventQuery` with an `EventHandler`
@@ -150,15 +157,12 @@ Stream<Event<CustomerEvent>> filtered = stream.query(
 );
 
 // 6. Conditional append with optimistic locking
-List<Event<CustomerEvent>> existingEvents = stream.query(
-    EventQuery.forEvents(EventTypesFilter.any(), Tags.of("customer", "123"))).toList();
+EventQuery customerQuery = EventQuery.forEvents(EventTypesFilter.any(), Tags.of("customer", "123"));
+List<Event<CustomerEvent>> existingEvents = stream.query(customerQuery).toList();
 EventReference lastRef = existingEvents.getLast().reference();
 
 stream.append(
-    AppendCriteria.of(
-        EventQuery.forEvents(EventTypesFilter.any(), Tags.of("customer", "123")),
-        Optional.of(lastRef)
-    ),
+    AppendCriteria.of(customerQuery, lastRef),
     Event.of(new CustomerNameChanged("Jane"), Tags.of("customer", "123"))
 );
 ```
@@ -213,8 +217,8 @@ This implementation is fully compliant with the [DCB Specification](https://dcb.
 The key insight of DCB is that business decisions are based on querying relevant historical events, and new events should only be stored if no new relevant facts have emerged since the decision was made. This is achieved through:
 1. Query events with an `EventQuery` to make a decision
 2. Note the reference of the last relevant event
-3. Append new events with `AppendCriteria` containing the same query and last reference
-4. If new events matching the query exist after the reference, the append fails
+3. Append new events with `AppendCriteria` containing the query's `EventFilter` and last reference
+4. If new events matching the filter exist after the reference, the append fails
 
 ## PostgreSQL Specific Notes
 

@@ -21,7 +21,7 @@ import java.util.List;
 import java.util.Optional;
 
 import org.sliceworkz.eventstore.events.EventReference;
-import org.sliceworkz.eventstore.query.EventQuery;
+import org.sliceworkz.eventstore.query.EventFilter;
 
 /**
  * Exception thrown when an optimistic locking check fails during event append operations.
@@ -30,9 +30,9 @@ import org.sliceworkz.eventstore.query.EventQuery;
  * that the {@link AppendCriteria} specified for an append operation were violated because new relevant
  * facts (events) were found in the event store that were not present when the business decision was made.
  * <p>
- * In DCB, business decisions are based on querying relevant historical events using an {@link EventQuery}.
- * When appending the resulting events, the same query is provided along with a reference to the last
- * relevant event that was considered. If new events matching the query have been appended after that
+ * In DCB, business decisions are based on querying relevant historical events using an {@link EventFilter}.
+ * When appending the resulting events, the same filter is provided along with a reference to the last
+ * relevant event that was considered. If new events matching the filter have been appended after that
  * reference by the time the append executes, this exception is thrown.
  *
  * <h2>DCB Workflow:</h2>
@@ -81,7 +81,7 @@ import org.sliceworkz.eventstore.query.EventQuery;
  *     // New relevant events were appended concurrently
  *     System.out.println("Concurrent modification detected: " + e.getMessage());
  *     System.out.println("Expected last reference: " + e.getExpectedLastEventReference());
- *     System.out.println("Query used: " + e.getQuery());
+ *     System.out.println("Filter used: " + e.getFilter());
  *
  *     // Retry the operation with fresh data
  *     retryWithdrawal();
@@ -116,16 +116,16 @@ import org.sliceworkz.eventstore.query.EventQuery;
  *
  * @see AppendCriteria
  * @see EventSink#append(AppendCriteria, List)
- * @see EventQuery
+ * @see EventFilter
  * @see EventReference
  */
 public class OptimisticLockingException extends RuntimeException {
 
-	private final EventQuery query;
+	private final EventFilter filter;
     private final Optional<EventReference> expectedLastEventReference;
 
     /**
-     * Constructs a new OptimisticLockingException with the query and expected reference that failed.
+     * Constructs a new OptimisticLockingException with the filter and expected reference that failed.
      * <p>
      * This constructor creates an exception with a detailed message indicating why the optimistic
      * locking check failed. The message differs based on whether an event reference was expected:
@@ -134,33 +134,33 @@ public class OptimisticLockingException extends RuntimeException {
      *   <li>If reference is empty: indicates an empty stream was expected but events were found</li>
      * </ul>
      *
-     * @param query the EventQuery used in the AppendCriteria that failed, never null
+     * @param filter the EventFilter used in the AppendCriteria that failed, never null
      * @param expectedLastEventReference the expected last event reference, or Optional.empty() if an empty stream was expected
      */
-    public OptimisticLockingException(EventQuery query, Optional<EventReference> expectedLastEventReference ) {
+    public OptimisticLockingException(EventFilter filter, Optional<EventReference> expectedLastEventReference ) {
         super(
         	expectedLastEventReference != null && expectedLastEventReference.isPresent()?
-		            "Optimistic locking failed. Expected last Event with EventReference %s/%d/%d, was not last anymore for EventQuery: %s".formatted(
+		            "Optimistic locking failed. Expected last Event with EventReference %s/%d/%d, was not last anymore for EventFilter: %s".formatted(
 		            expectedLastEventReference.get().id() != null ? expectedLastEventReference.get().id().value() : -1,
 		            expectedLastEventReference.get().position(),
 		            expectedLastEventReference.get().tx(),
-		            query):
-	    		            "Optimistic locking failed. Empty EventStream expected and Events found for EventQuery: %s".formatted(query)
+		            filter):
+	    		            "Optimistic locking failed. Empty EventStream expected and Events found for EventFilter: %s".formatted(filter)
         );
-        this.query = query;
+        this.filter = filter;
         this.expectedLastEventReference = expectedLastEventReference;
     }
 
     /**
-     * Returns the EventQuery that was used in the failed AppendCriteria.
+     * Returns the EventFilter that was used in the failed AppendCriteria.
      * <p>
-     * This query defines which events were considered relevant for the business decision.
+     * This filter defines which events were considered relevant for the business decision.
      * It can be used to re-query the stream and retry the operation with fresh data.
      *
-     * @return the EventQuery from the AppendCriteria, never null
+     * @return the EventFilter from the AppendCriteria, never null
      */
-	public EventQuery getQuery() {
-		return query;
+	public EventFilter getFilter() {
+		return filter;
 	}
 
 	/**

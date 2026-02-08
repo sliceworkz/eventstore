@@ -234,8 +234,8 @@ public class OptimisticLockingTest {
 		assertNotNull(mostRecent, "Should find the most recent FirstDomainEvent");
 		assertEquals("e3", ((FirstDomainEvent) mostRecent.data()).value());
 
-		// Use that same backwards query for append criteria — forLockingCheck() strips direction/limit
-		// so the locking check still scans forward for any FirstDomainEvent after e3's reference
+		// Use that same backwards query for append criteria — AppendCriteria.of(EventQuery, ...) extracts
+		// the filter, discarding direction/limit so locking scans for any FirstDomainEvent after e3's reference
 		AppendCriteria criteria = AppendCriteria.of(backwardsQuery, mostRecent.reference());
 		eventStream.append(criteria, Collections.singletonList(Event.of(new FirstDomainEvent("e4"), Tags.none())));
 
@@ -262,7 +262,7 @@ public class OptimisticLockingTest {
 		// Another FirstDomainEvent sneaks in after our read
 		eventStream.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FirstDomainEvent("conflict"), Tags.none())));
 
-		// Our append should fail — forLockingCheck() ensures the query scans forward for ALL
+		// Our append should fail — the extracted filter scans forward for ALL
 		// matching FirstDomainEvents after our reference, detecting the conflicting event
 		AppendCriteria criteria = AppendCriteria.of(backwardsQuery, mostRecent.reference());
 		assertThrows(OptimisticLockingException.class, () -> {
@@ -328,7 +328,7 @@ public class OptimisticLockingTest {
 		// A conflicting FirstDomainEvent sneaks in
 		eventStream.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FirstDomainEvent("conflict"), Tags.none())));
 
-		// Should fail — forLockingCheck() ensures full forward scan detects "conflict"
+		// Should fail — the extracted filter ensures full forward scan detects "conflict"
 		AppendCriteria criteria = AppendCriteria.of(backwardsQuery, latestAppended);
 		assertThrows(OptimisticLockingException.class, () -> {
 			eventStream.append(criteria, Collections.singletonList(Event.of(new FirstDomainEvent("e4"), Tags.none())));

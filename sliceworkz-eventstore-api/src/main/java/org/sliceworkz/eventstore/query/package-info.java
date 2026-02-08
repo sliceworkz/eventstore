@@ -25,7 +25,7 @@
  * <h2>Query Components:</h2>
  * <ul>
  *   <li>{@link org.sliceworkz.eventstore.query.EventQuery} - Complete query specification combining filters and time bounds</li>
- *   <li>{@link org.sliceworkz.eventstore.query.EventQueryItem} - Single matching rule combining event types and tags</li>
+ *   <li>{@link org.sliceworkz.eventstore.query.EventFilterItem} - Single matching rule combining event types and tags</li>
  *   <li>{@link org.sliceworkz.eventstore.query.EventTypesFilter} - Filters events by their type (class)</li>
  *   <li>{@link org.sliceworkz.eventstore.query.Limit} - Limits the number of events returned</li>
  * </ul>

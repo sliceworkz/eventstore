@@ -17,9 +17,6 @@
  */
 package org.sliceworkz.eventstore.events;
 
-import java.time.LocalDateTime;
-
-import org.sliceworkz.eventstore.stream.EventStreamId;
 
 /**
  * A lightweight event representation before it is persisted to an event stream.
@@ -130,19 +127,4 @@ public record EphemeralEvent<DOMAIN_EVENT_TYPE> ( EventType type, DOMAIN_EVENT_T
 		return new EphemeralEvent<DOMAIN_EVENT_TYPE>(EventType.of(data), data, tags, null);
 	}
 
-	/**
-	 * Converts this ephemeral event to a full {@link Event} by adding metadata.
-	 * <p>
-	 * This method is used internally when appending events to a stream. It assigns the stream,
-	 * reference (ID and position), and timestamp to create a persisted event.
-	 *
-	 * @param stream the event stream this event will belong to
-	 * @param reference the unique reference for this event
-	 * @param timestamp the timestamp when this event is being persisted
-	 * @return a new Event instance with all metadata populated
-	 */
-	public Event<DOMAIN_EVENT_TYPE> positionAt ( EventStreamId stream, EventReference reference, LocalDateTime timestamp ) {
-		return Event.of(stream, reference, type, type, data, tags, timestamp);
-	}
-	
 }

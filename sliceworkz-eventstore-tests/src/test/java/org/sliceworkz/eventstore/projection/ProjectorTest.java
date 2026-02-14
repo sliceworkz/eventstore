@@ -581,6 +581,107 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	}
 
 
+	@Test
+	void testProjectorWithInitQuery ( ) {
+		// Set up a stream simulating stock keeping with a savepoint
+		EventStreamId stream = EventStreamId.forContext("app").withPurpose("initquery");
+		EventStream<MockDomainEvent> initEs = eventStore().getEventStream(stream, MockDomainEvent.class);
+
+		// Append: First("10"), First("5"), Third("savepoint:15"), First("3"), First("7")
+		// Using First as "stock added", Third as "savepoint/stock counted", Second is unrelated
+		append(initEs, new FirstDomainEvent("10"), Tags.none());
+		append(initEs, new FirstDomainEvent("5"), Tags.none());
+		append(initEs, new ThirdDomainEvent("savepoint:15"), Tags.none());
+		append(initEs, new FirstDomainEvent("3"), Tags.none());
+		append(initEs, new FirstDomainEvent("7"), Tags.none());
+
+		InitQueryProjection projection = new InitQueryProjection();
+		var projector = Projector.from(initEs).towards(projection).build();
+
+		ProjectorMetrics metrics = projector.run();
+
+		// initQuery finds the savepoint (ThirdDomainEvent), then eventQuery processes the 2 FirstDomainEvents after it
+		assertEquals(3, projection.counter()); // 1 from initQuery + 2 from eventQuery
+		assertEquals("savepoint:15", projection.lastSavepoint()); // savepoint was processed
+		assertEquals(2, metrics.queriesDone()); // 1 for initQuery + 1 for eventQuery
+		assertEquals(3, metrics.eventsHandled()); // 1 savepoint + 2 movements
+	}
+
+	@Test
+	void testProjectorWithInitQueryNoSavepointExists ( ) {
+		// Set up a stream with no savepoint events
+		EventStreamId stream = EventStreamId.forContext("app").withPurpose("initquery-nosavepoint");
+		EventStream<MockDomainEvent> initEs = eventStore().getEventStream(stream, MockDomainEvent.class);
+
+		append(initEs, new FirstDomainEvent("10"), Tags.none());
+		append(initEs, new FirstDomainEvent("5"), Tags.none());
+		append(initEs, new FirstDomainEvent("3"), Tags.none());
+
+		InitQueryProjection projection = new InitQueryProjection();
+		var projector = Projector.from(initEs).towards(projection).build();
+
+		ProjectorMetrics metrics = projector.run();
+
+		// No savepoint found, so all FirstDomainEvents are processed by the main eventQuery
+		assertEquals(3, projection.counter());
+		assertNull(projection.lastSavepoint()); // no savepoint was found
+		assertEquals(2, metrics.queriesDone()); // 1 for initQuery (empty) + 1 for eventQuery
+		assertEquals(3, metrics.eventsHandled());
+	}
+
+	@Test
+	void testProjectorWithInitQueryAndBookmarkingIgnoresInitQuery ( ) {
+		// When bookmarking is enabled, initQuery should be ignored
+		EventStreamId stream = EventStreamId.forContext("app").withPurpose("initquery-bookmark");
+		EventStream<MockDomainEvent> initEs = eventStore().getEventStream(stream, MockDomainEvent.class);
+
+		append(initEs, new FirstDomainEvent("10"), Tags.none());
+		append(initEs, new FirstDomainEvent("5"), Tags.none());
+		append(initEs, new ThirdDomainEvent("savepoint:15"), Tags.none());
+		append(initEs, new FirstDomainEvent("3"), Tags.none());
+		append(initEs, new FirstDomainEvent("7"), Tags.none());
+
+		InitQueryProjection projection = new InitQueryProjection();
+		var projector = Projector.from(initEs).towards(projection)
+				.bookmarkProgress().withReader("initquery-test-reader").readBeforeEachExecution().done()
+				.build();
+
+		ProjectorMetrics metrics = projector.run();
+
+		// With bookmarking, initQuery is ignored — all FirstDomainEvents are processed from the start
+		assertEquals(4, projection.counter()); // all 4 FirstDomainEvents (Third is excluded by eventQuery)
+		assertNull(projection.lastSavepoint()); // savepoint was NOT processed (initQuery skipped, Third not in eventQuery)
+		assertEquals(1, metrics.queriesDone()); // no initQuery, just 1 eventQuery batch
+		assertEquals(4, metrics.eventsHandled());
+	}
+
+	@Test
+	void testProjectorWithInitQueryMultipleRuns ( ) {
+		// Verify initQuery only runs once (on first run), subsequent runs continue from cursor
+		EventStreamId stream = EventStreamId.forContext("app").withPurpose("initquery-multirun");
+		EventStream<MockDomainEvent> initEs = eventStore().getEventStream(stream, MockDomainEvent.class);
+
+		append(initEs, new FirstDomainEvent("10"), Tags.none());
+		append(initEs, new ThirdDomainEvent("savepoint:10"), Tags.none());
+		append(initEs, new FirstDomainEvent("5"), Tags.none());
+
+		InitQueryProjection projection = new InitQueryProjection();
+		var projector = Projector.from(initEs).towards(projection).build();
+
+		// First run: initQuery finds savepoint, then processes 1 movement after it
+		ProjectorMetrics metrics1 = projector.run();
+		assertEquals(2, projection.counter()); // savepoint + 1 movement
+		assertEquals("savepoint:10", projection.lastSavepoint());
+
+		// Add more events
+		append(initEs, new FirstDomainEvent("3"), Tags.none());
+
+		// Second run: should continue from last cursor, no initQuery
+		ProjectorMetrics metrics2 = projector.run();
+		assertEquals(3, projection.counter()); // 1 new movement added
+		assertEquals(1, metrics2.eventsHandled()); // only the new event
+	}
+
 	private List<Event<MockDomainEvent>> append ( EventStream<MockDomainEvent> es, MockDomainEvent event, Tags tags ) {
 		return es.append(AppendCriteria.none(), Collections.singletonList(Event.of(event, tags)));
 	}
@@ -707,6 +808,41 @@ public class ProjectorTest extends AbstractEventStoreTest {
 			return cancelTriggered;
 		}
 		
+	}
+
+	class InitQueryProjection implements Projection<MockDomainEvent> {
+
+		private int counter;
+		private String lastSavepoint;
+
+		@Override
+		public EventQuery initQuery() {
+			// Find the last savepoint (ThirdDomainEvent) — backwards, limit 1
+			return EventQuery.forEvents(EventTypesFilter.of(ThirdDomainEvent.class), Tags.none()).backwards().limit(1);
+		}
+
+		@Override
+		public EventQuery eventQuery() {
+			// Only process movements (FirstDomainEvent) — savepoints are handled by initQuery
+			return EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none());
+		}
+
+		@Override
+		public void when(Event<MockDomainEvent> event) {
+			counter++;
+			if ( event.data() instanceof ThirdDomainEvent t ) {
+				lastSavepoint = t.value();
+			}
+		}
+
+		public int counter ( ) {
+			return counter;
+		}
+
+		public String lastSavepoint ( ) {
+			return lastSavepoint;
+		}
+
 	}
 
 	@Override

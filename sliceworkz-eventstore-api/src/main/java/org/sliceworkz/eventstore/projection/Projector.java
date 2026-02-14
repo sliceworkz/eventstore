@@ -277,23 +277,38 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 
 		protected ProjectorRunResult execute ( EventReference until, boolean singleBatch ) {
 			boolean done = false;
-			
-			if ( ( bookmarkReadFrequency == BookmarkReadFrequency.BEFORE_EACH_EXECUTION) || 
+
+			if ( ( bookmarkReadFrequency == BookmarkReadFrequency.BEFORE_EACH_EXECUTION) ||
 				 ((bookmarkReadFrequency == BookmarkReadFrequency.BEFORE_FIRST_EXECUTION) && (lastEventReference==null) )
 				) {
 				readBookmark();
 			}
-			
+
+			// Run initQuery if present and bookmarking is not enabled.
+			// The initQuery enables the savepoint pattern: a backward query with limit 1 finds the most recent
+			// savepoint event, initializing the read model without replaying the entire stream.
+			// The main eventQuery then starts from that savepoint's reference.
+			if ( bookmarkReader == null && projection.initQuery() != null && !projection.initQuery().isMatchNone() ) {
+				EventQuery initQuery = projection.initQuery();
+				queriesDone++;
+				es.query(initQuery).forEach(e -> {
+					eventsStreamed++;
+					eventsHandled++;
+					projection.when(e);
+					lastEventReference = Optional.of(e.reference());
+				});
+			}
+
 			ProjectorException exception = null;
-			
+
 			Optional<EventReference> lastReadAtStart = lastEventReference;
-			
+
 			// in order to avoid memory issues, we'll loop in batches om MAX_EVENTS_PER_QUERY, until no more events are found in the stream
 			Limit limit =  Limit.to(maxEventsPerQuery).orIfLower(projection.eventQuery().limit());
-	
-			
+
+
 			EventQuery effectiveQuery = projection.eventQuery().untilIfEarlier ( until );
-			
+
 			EventReference lastRead = lastEventReference==null?null:lastEventReference.orElse(null);
 			
 			while ( !done ) {
@@ -629,6 +644,9 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		 * @return a new Projector configured with the builder's settings
 		 */
 		public Projector<EVENT_TYPE> build ( ) {
+			if ( bookmarkBuilder.readerName != null && projection.initQuery() != null && !projection.initQuery().isMatchNone() ) {
+				LOGGER.warn("Projection has initQuery but bookmarking is enabled — initQuery will be ignored. Remove bookmarking for live-model use, or remove initQuery for full replay.");
+			}
 			Projector<EVENT_TYPE> projector = new Projector<>(eventSource, projection, after, maxEventsPerQuery, bookmarkBuilder.readerName, bookmarkBuilder.tags, bookmarkBuilder.bookmarkReadFrequency);
 			if ( subscribe ) {
 				// subscribe for eventually consistent updates about event appends, so the projector will automatically trigger projection updates

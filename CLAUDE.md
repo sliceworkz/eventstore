@@ -99,6 +99,16 @@ mvn clean install -DskipTests
 - Combines an `EventQuery` with an `EventHandler`
 - Processes all events matching the query criteria
 - Used for building read models from event streams
+- Optionally defines an `initQuery()` for the savepoint pattern (see below)
+
+**Projection initQuery (Savepoint Pattern):**
+- Projections can define an optional `initQuery()` (default returns `null`) that runs before the main `eventQuery()`
+- Enables the savepoint pattern: a backward query with limit 1 finds the most recent savepoint event that summarizes prior state
+- The `Projector` executes `initQuery()` first, passes results to `when()`, then uses the last event's reference as the cursor for `eventQuery()`
+- Savepoint events are pure domain events — no special framework support needed
+- When no savepoint exists, the main `eventQuery()` replays from the beginning (graceful degradation)
+- When bookmarking is enabled on the `Projector`, `initQuery()` is ignored (a warning is logged at build time)
+- The `initQuery()` and `eventQuery()` should query different event types to avoid double-processing and to allow recovery from buggy savepoints
 
 ### Storage Implementations
 
@@ -165,6 +175,56 @@ stream.append(
     AppendCriteria.of(customerQuery, lastRef),
     Event.of(new CustomerNameChanged("Jane"), Tags.of("customer", "123"))
 );
+```
+
+### Savepoint Pattern with initQuery
+
+```java
+// Stock keeping with savepoint optimization
+sealed interface StockEvent {
+    record StockAdded(String product, int quantity) implements StockEvent {}
+    record StockPicked(String product, int quantity) implements StockEvent {}
+    record StockCounted(String product, int counted) implements StockEvent {} // savepoint
+}
+
+class StockLevelProjection implements Projection<StockEvent> {
+    private final String product;
+    private int level = 0;
+
+    @Override
+    public EventQuery initQuery() {
+        // Find the last stock count (savepoint) — backwards, limit 1
+        return EventQuery.forEvents(
+            EventTypesFilter.of(StockCounted.class),
+            Tags.of("product", product)
+        ).backwards().limit(1);
+    }
+
+    @Override
+    public EventQuery eventQuery() {
+        // Only process movements — savepoints are handled exclusively by initQuery
+        return EventQuery.forEvents(
+            EventTypesFilter.of(StockAdded.class, StockPicked.class),
+            Tags.of("product", product)
+        );
+    }
+
+    @Override
+    public void when(Event<StockEvent> event) {
+        switch (event.data()) {
+            case StockCounted c  -> level = c.counted();
+            case StockAdded a    -> level += a.quantity();
+            case StockPicked p   -> level -= p.quantity();
+        }
+    }
+
+    public int level() { return level; }
+}
+
+// Usage
+StockLevelProjection projection = new StockLevelProjection("WIDGET-42");
+Projector.from(stream).towards(projection).build().run();
+// initQuery finds the last StockCounted, then eventQuery processes only subsequent movements
 ```
 
 ## Testing

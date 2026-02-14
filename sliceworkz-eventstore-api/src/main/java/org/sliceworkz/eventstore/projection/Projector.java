@@ -284,11 +284,12 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 				readBookmark();
 			}
 
-			// Run initQuery if present and bookmarking is not enabled.
+			// Run initQuery on first execution only, if present and bookmarking is not enabled.
 			// The initQuery enables the savepoint pattern: a backward query with limit 1 finds the most recent
 			// savepoint event, initializing the read model without replaying the entire stream.
 			// The main eventQuery then starts from that savepoint's reference.
-			if ( bookmarkReader == null && projection.initQuery() != null && !projection.initQuery().isMatchNone() ) {
+			// On subsequent run() calls, lastEventReference is already set, so initQuery is skipped.
+			if ( bookmarkReader == null && lastEventReference == null && projection.initQuery() != null && !projection.initQuery().isMatchNone() ) {
 				EventQuery initQuery = projection.initQuery();
 				queriesDone++;
 				es.query(initQuery).forEach(e -> {

@@ -32,6 +32,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -123,8 +124,9 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		// first append via the first stream instance ...
 		s1.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none()));
 		s1.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none()));
-		waitBecauseOfEventualConsistency();
-		
+		BooleanSupplier bothEventualListenersReceivedBothAppends = () -> s1ecal.count() >= 2 && s2ecal.count() >= 2;
+		waitBecauseOfEventualConsistency(bothEventualListenersReceivedBothAppends);
+
 		assertEquals(2, s1cal.count());
 		assertEquals(2, s1ecal.count());
 
@@ -136,9 +138,9 @@ public class EventStreamTest extends AbstractEventStoreTest {
 
 		// ... now append via the other stream instance on the same logical stream
 		s2.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none()));
-		
-		waitBecauseOfEventualConsistency();
-		
+		BooleanSupplier bothEventualListenersReceivedThirdAppend = () -> s1ecal.count() >= 3 && s2ecal.count() >= 3;
+		waitBecauseOfEventualConsistency(bothEventualListenersReceivedThirdAppend);
+
 		assertEquals(2, s1cal.count());
 		assertEquals(3, s1ecal.count());
 
@@ -151,8 +153,9 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		
 		// ... and now append on another logical stream
 		s3.append(AppendCriteria.none(), Event.of(new AnotherDomainEvent("1"), Tags.none()));
-		waitBecauseOfEventualConsistency();
-		
+		BooleanSupplier s3EventualListenerNotified = () -> s3ecal.count() >= 1;
+		waitBecauseOfEventualConsistency(s3EventualListenerNotified);
+
 		assertEquals(2, s1cal.count());  // other stream, shouldn't be notified
 		assertEquals(3, s1ecal.count()); // other stream, shouldn't be notified
 
@@ -243,9 +246,10 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		List<Event<MockDomainEvent>> events = es.append(AppendCriteria.none(), List.of(e1, e2));
 		assertEquals(2, events.size());
 
-		waitBecauseOfEventualConsistency();
-		
-		// could be one or two events, depending whether the second gets processed before the first was offered to the appendListener or not. 
+		BooleanSupplier listenerReceivedLastEvent = () -> events.getLast().reference().equals(appendListener.lastReference());
+		waitBecauseOfEventualConsistency(listenerReceivedLastEvent);
+
+		// could be one or two events, depending whether the second gets processed before the first was offered to the appendListener or not.
 		assertEquals(events.getLast().reference(), appendListener.lastReference());
 		
 		

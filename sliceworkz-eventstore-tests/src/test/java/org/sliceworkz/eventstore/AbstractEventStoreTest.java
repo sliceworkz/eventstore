@@ -56,16 +56,7 @@ public abstract class AbstractEventStoreTest {
     		.pollInterval(Duration.ofMillis(100))
     	.until(waitForCriterion::getAsBoolean);
 	}
-	
 
-	public void waitBecauseOfEventualConsistency ( ) {
-		try {
-			Thread.sleep(500);
-		} catch (InterruptedException e) {
-			e.printStackTrace();
-		}
-	}
-	
 	public abstract EventStorage createEventStorage ( );
 	
 }

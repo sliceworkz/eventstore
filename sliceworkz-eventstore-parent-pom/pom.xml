@@ -37,7 +37,7 @@
 	<properties>
 		<jackson.version>2.21.0</jackson.version>
 		<slf4j.version>2.0.17</slf4j.version>
-		<postgresql.jdbc.version>42.7.9</postgresql.jdbc.version>
+		<postgresql.jdbc.version>42.7.10</postgresql.jdbc.version>
 		<hikari.version>7.0.2</hikari.version>
 		<micrometer.version>1.16.3</micrometer.version>
 		<junit-jupiter.version>6.0.2</junit-jupiter.version>

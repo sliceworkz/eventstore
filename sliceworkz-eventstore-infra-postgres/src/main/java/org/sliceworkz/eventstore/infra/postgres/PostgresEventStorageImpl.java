@@ -183,10 +183,61 @@ public class PostgresEventStorageImpl implements EventStorage {
 		return prefix;
 	}
 	
+	/**
+	 * Validates that all required database objects exist and are correctly defined.
+	 * <p>
+	 * This is equivalent to using {@link DatabaseInitMode#VALIDATE}. No objects are created
+	 * or modified. Throws {@link EventStorageException} if any required object is missing
+	 * or malformed.
+	 *
+	 * @return this instance for method chaining
+	 * @throws EventStorageException if the schema is invalid
+	 */
+	public PostgresEventStorageImpl validateDatabase ( ) {
+		checkDatabase();
+		return this;
+	}
+
+	/**
+	 * Creates missing database objects if they do not exist, leaving existing objects untouched,
+	 * then validates the schema.
+	 * <p>
+	 * This is equivalent to using {@link DatabaseInitMode#ENSURE}. It is safe to run repeatedly.
+	 * If an existing object has an incompatible definition, the subsequent validation will
+	 * detect and report it.
+	 *
+	 * @return this instance for method chaining
+	 * @throws EventStorageException if schema creation or validation fails
+	 */
+	public PostgresEventStorageImpl ensureDatabase ( ) {
+		LOGGER.info("Ensuring database schema for prefix '{}'", prefix);
+		executeSqlScript("ensure-schema.sql");
+		checkDatabase();
+		return this;
+	}
+
+	/**
+	 * Drops all event store objects and recreates them from scratch, then validates the schema.
+	 * <p>
+	 * This is equivalent to using {@link DatabaseInitMode#INITIALIZE}.
+	 * <p>
+	 * <strong>Warning:</strong> This is destructive — all existing event data will be lost.
+	 *
+	 * @return this instance for method chaining
+	 * @throws EventStorageException if schema initialization or validation fails
+	 */
 	public PostgresEventStorageImpl initializeDatabase ( ) {
-		try (InputStream inputStream = getClass().getClassLoader().getResourceAsStream("initialisation.sql")) {
+		LOGGER.info("Initializing database schema for prefix '{}' (drop and recreate)", prefix);
+		executeSqlScript("drop-schema.sql");
+		executeSqlScript("ensure-schema.sql");
+		checkDatabase();
+		return this;
+	}
+
+	private void executeSqlScript ( String scriptName ) {
+		try (InputStream inputStream = getClass().getClassLoader().getResourceAsStream(scriptName)) {
 			if (inputStream == null) {
-				throw new EventStorageException("Could not find initialisation.sql in classpath");
+				throw new EventStorageException("Could not find %s in classpath".formatted(scriptName));
 			}
 
 			String sql = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
@@ -199,12 +250,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 			}
 
 		} catch (IOException | SQLException e) {
-			throw new EventStorageException("Failed to initialize database", e);
+			throw new EventStorageException("Failed to execute database script: %s".formatted(scriptName), e);
 		}
-		return this;
 	}
 
-	public PostgresEventStorageImpl checkDatabase ( ) {
+	PostgresEventStorageImpl checkDatabase ( ) {
 		LOGGER.info("Starting database schema validation for prefix '{}'", prefix);
 
 		try ( Connection readConnection = dataSource.getConnection() ) {

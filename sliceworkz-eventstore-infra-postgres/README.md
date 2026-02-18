@@ -1,8 +1,9 @@
 
 # Postgres Storage for Eventstore
 
-Create a database schema with the DDL scripts found in 'initialisation.sql', 
+Create a database schema with the DDL scripts found in 'ensure-schema.sql',
 removing "PREFIX_" or replacing it to manage different stores next to each other.
+Use 'drop-schema.sql' to drop existing schema objects before recreating.
  
 
 

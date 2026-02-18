@@ -55,10 +55,9 @@
  *     .build();
  * EventStore eventStore = EventStoreFactory.get().eventStore(storage);
  *
- * // Using PostgreSQL storage
+ * // Using PostgreSQL storage (default mode ENSURE creates schema if missing)
  * EventStorage storage = PostgresEventStorage.newBuilder()
  *     .prefix("tenant1_")
- *     .initializeDatabase()
  *     .build();
  * EventStore eventStore = EventStoreFactory.get().eventStore(storage);
  * }</pre>

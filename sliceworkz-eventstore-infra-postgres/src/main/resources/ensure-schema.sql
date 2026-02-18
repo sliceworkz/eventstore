@@ -21,16 +21,15 @@
 ----
 ---- Eventstore database schema DDL
 ----
----- 
+----
 ---- "PREFIX" can be removed or replaced to allow multiple eventstores next to each other in one database schema
----- 
+----
 
 
 
 ---- EVENTS
 
-DROP TABLE IF EXISTS PREFIX_events CASCADE;
-CREATE TABLE PREFIX_events (
+CREATE TABLE IF NOT EXISTS PREFIX_events (
       -- Primary key and positioning
       event_position BIGSERIAL PRIMARY KEY,
 
@@ -39,11 +38,11 @@ CREATE TABLE PREFIX_events (
 
       -- Event identification
       event_id UUID NOT NULL UNIQUE,
-      
+
       -- Idempotency key
       idempotency_key TEXT UNIQUE,
 
-      -- Stream identification  
+      -- Stream identification
       stream_context TEXT NOT NULL,
       stream_purpose TEXT NOT NULL DEFAULT '',
 
@@ -59,34 +58,31 @@ CREATE TABLE PREFIX_events (
 
       -- Tags as string array
       event_tags TEXT[] DEFAULT '{}'
-      
+
   ) WITH (FILLFACTOR = 100);
 
 
 	-- Compact BRIN index on event_position
-	CREATE INDEX PREFIX_idx_events_position_brin ON PREFIX_events USING BRIN (event_position);
+	CREATE INDEX IF NOT EXISTS PREFIX_idx_events_position_brin ON PREFIX_events USING BRIN (event_position);
 
 	-- Allows efficient filtering on multiple dimensions
 	-- Primary index for your most common query pattern
 	-- B-tree handles equality (=) and IN clauses efficiently
-	DROP INDEX IF EXISTS PREFIX_idx_events_stream_type_position;
-	CREATE INDEX PREFIX_idx_events_stream_type_position ON PREFIX_events (
-	    stream_context, 
-	    stream_purpose, 
+	CREATE INDEX IF NOT EXISTS PREFIX_idx_events_stream_type_position ON PREFIX_events (
+	    stream_context,
+	    stream_purpose,
 	    event_type,
 	    event_tx,
 	    event_position  -- for ordering
 	);
-	
+
 	-- Separate GIN index ONLY for tag filtering
-	DROP INDEX IF EXISTS PREFIX_idx_events_tags;
-	CREATE INDEX PREFIX_idx_events_tags ON PREFIX_events USING GIN (event_tags);
-	
+	CREATE INDEX IF NOT EXISTS PREFIX_idx_events_tags ON PREFIX_events USING GIN (event_tags);
+
 	-- Keep stream position index for stream reads
-	DROP INDEX IF EXISTS PREFIX_idx_events_stream_position;
-	CREATE INDEX PREFIX_idx_events_stream_position ON PREFIX_events (
-	    stream_context, 
-	    stream_purpose, 
+	CREATE INDEX IF NOT EXISTS PREFIX_idx_events_stream_position ON PREFIX_events (
+	    stream_context,
+	    stream_purpose,
 	    event_tx,
 	    event_position
 	);
@@ -94,32 +90,39 @@ CREATE TABLE PREFIX_events (
 
 ---- EVENT APPEND NOTIFICATIONS
 
-CREATE OR REPLACE FUNCTION PREFIX_notify_event_appended()
-RETURNS trigger AS $$
-BEGIN
-    PERFORM pg_notify('PREFIX_event_appended',
-        jsonb_build_object(
-            'streamContext', NEW.stream_context,
-            'streamPurpose', NEW.stream_purpose,
-            'eventPosition', NEW.event_position,
-            'eventTx', NEW.event_tx,
-            'eventId', NEW.event_id
-        )::text
-    );
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = current_schema() AND p.proname = 'PREFIX_notify_event_appended') THEN
+    CREATE FUNCTION PREFIX_notify_event_appended()
+    RETURNS trigger AS $fn$
+    BEGIN
+        PERFORM pg_notify('PREFIX_event_appended',
+            jsonb_build_object(
+                'streamContext', NEW.stream_context,
+                'streamPurpose', NEW.stream_purpose,
+                'eventPosition', NEW.event_position,
+                'eventTx', NEW.event_tx,
+                'eventId', NEW.event_id
+            )::text
+        );
+        RETURN NEW;
+    END;
+    $fn$ LANGUAGE plpgsql;
+  END IF;
+END $$;
 
-CREATE OR REPLACE TRIGGER table_insert_trigger
-    AFTER INSERT ON PREFIX_events
-    FOR EACH ROW
-    EXECUTE FUNCTION PREFIX_notify_event_appended();
-    
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.triggers WHERE trigger_schema = current_schema() AND event_object_table = 'PREFIX_events' AND trigger_name = 'table_insert_trigger') THEN
+    CREATE TRIGGER table_insert_trigger
+        AFTER INSERT ON PREFIX_events
+        FOR EACH ROW
+        EXECUTE FUNCTION PREFIX_notify_event_appended();
+  END IF;
+END $$;
 
 
----- BOOKMARKING 
-    
-DROP TABLE IF EXISTS PREFIX_bookmarks CASCADE;  
+
+---- BOOKMARKING
+
 CREATE TABLE IF NOT EXISTS PREFIX_bookmarks (
       reader TEXT PRIMARY KEY,
       event_position BIGINT NOT NULL,
@@ -135,24 +138,31 @@ CREATE TABLE IF NOT EXISTS PREFIX_bookmarks (
 
   CREATE INDEX IF NOT EXISTS PREFIX_idx_bookmarks_event_id ON PREFIX_bookmarks(event_id);
 
-    
-CREATE OR REPLACE FUNCTION PREFIX_notify_bookmark_placed()
-RETURNS trigger AS $$
-BEGIN
-    PERFORM pg_notify('PREFIX_bookmark_placed',
-        jsonb_build_object(
-            'reader', NEW.reader,
-            'eventTx', NEW.event_tx,
-            'eventPosition', NEW.event_position,
-            'eventId', NEW.event_id
-        )::text
-    );
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE TRIGGER table_insert_or_update_trigger
-    AFTER INSERT OR UPDATE ON PREFIX_bookmarks
-    FOR EACH ROW
-    EXECUTE FUNCTION PREFIX_notify_bookmark_placed();
-    
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = current_schema() AND p.proname = 'PREFIX_notify_bookmark_placed') THEN
+    CREATE FUNCTION PREFIX_notify_bookmark_placed()
+    RETURNS trigger AS $fn$
+    BEGIN
+        PERFORM pg_notify('PREFIX_bookmark_placed',
+            jsonb_build_object(
+                'reader', NEW.reader,
+                'eventTx', NEW.event_tx,
+                'eventPosition', NEW.event_position,
+                'eventId', NEW.event_id
+            )::text
+        );
+        RETURN NEW;
+    END;
+    $fn$ LANGUAGE plpgsql;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.triggers WHERE trigger_schema = current_schema() AND event_object_table = 'PREFIX_bookmarks' AND trigger_name = 'table_insert_or_update_trigger') THEN
+    CREATE TRIGGER table_insert_or_update_trigger
+        AFTER INSERT OR UPDATE ON PREFIX_bookmarks
+        FOR EACH ROW
+        EXECUTE FUNCTION PREFIX_notify_bookmark_placed();
+  END IF;
+END $$;

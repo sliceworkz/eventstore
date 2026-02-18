@@ -357,39 +357,6 @@ public interface PostgresEventStorage {
 		}
 
 		/**
-		 * Sets the database initialization mode to {@link DatabaseInitMode#INITIALIZE} or
-		 * {@link DatabaseInitMode#ENSURE} based on the boolean parameter.
-		 *
-		 * @param value {@code true} for {@link DatabaseInitMode#INITIALIZE}, {@code false} is ignored
-		 * @return this Builder for method chaining
-		 * @deprecated Use {@link #databaseInitMode(DatabaseInitMode)} or {@link #initializeDatabase()} instead.
-		 */
-		@Deprecated
-		public Builder initializeDatabase ( boolean value ) {
-			if ( value ) {
-				this.databaseInitMode = DatabaseInitMode.INITIALIZE;
-			}
-			return this;
-		}
-
-		/**
-		 * Controls automatic database schema validation when the storage is built.
-		 *
-		 * @param value {@code true} to validate the database schema, {@code false} to skip validation
-		 * @return this Builder for method chaining
-		 * @deprecated Use {@link #databaseInitMode(DatabaseInitMode)} or {@link #validateDatabase()} instead.
-		 *     Note: passing {@code false} sets the mode to {@link DatabaseInitMode#NONE} only if the
-		 *     current mode is {@link DatabaseInitMode#VALIDATE} or {@link DatabaseInitMode#ENSURE}.
-		 */
-		@Deprecated
-		public Builder checkDatabase ( boolean value ) {
-			if ( !value && (this.databaseInitMode == DatabaseInitMode.VALIDATE || this.databaseInitMode == DatabaseInitMode.ENSURE) ) {
-				this.databaseInitMode = DatabaseInitMode.NONE;
-			}
-			return this;
-		}
-
-		/**
 		 * Configures the Micrometer meter registry for collecting observability metrics.
 		 * <p>
 		 * The meter registry is used to track event store operations including event stream creation,

@@ -17,6 +17,7 @@
  */
 package org.sliceworkz.eventstore.impl.serde;
 
+import java.util.List;
 import java.util.Set;
 
 import org.sliceworkz.eventstore.events.EventType;
@@ -88,6 +89,28 @@ public interface EventPayloadSerializerDeserializer {
 	 * @throws RuntimeException if deserialization fails or type mapping is not found
 	 */
 	TypeAndPayload deserialize(TypeAndSerializedPayload serialized);
+
+	/**
+	 * Deserializes a JSON representation back to zero or more domain event objects.
+	 * <p>
+	 * This method supports multi-event upcasting where a single historical event can produce
+	 * zero or more current events. This is useful for:
+	 * <ul>
+	 *   <li><b>Event splitting:</b> One legacy event becomes multiple current events</li>
+	 *   <li><b>Event filtering:</b> Obsolete legacy events produce zero current events</li>
+	 *   <li><b>Standard upcasting:</b> One legacy event becomes one current event (default)</li>
+	 * </ul>
+	 * <p>
+	 * The default implementation delegates to {@link #deserialize(TypeAndSerializedPayload)} and
+	 * wraps the result in a singleton list.
+	 *
+	 * @param serialized the serialized event including type and separated payloads
+	 * @return a list of deserialized event types and data objects (may be empty, never null)
+	 * @throws RuntimeException if deserialization fails or type mapping is not found
+	 */
+	default List<TypeAndPayload> deserializeMulti(TypeAndSerializedPayload serialized) {
+		return List.of(deserialize(serialized));
+	}
 
 	/**
 	 * Checks whether this serializer/deserializer can deserialize events of the given type name.

@@ -17,6 +17,9 @@
  */
 package org.sliceworkz.eventstore.events;
 
+import java.util.List;
+import java.util.Set;
+
 /**
  * Transforms a historical event to its current domain event representation.
  * <p>
@@ -138,6 +141,79 @@ package org.sliceworkz.eventstore.events;
  * }
  * }</pre>
  *
+ * <h2>Advanced Example - Splitting One Event Into Multiple:</h2>
+ * <p>
+ * Override {@link #upcastAll(Object)} and {@link #targetTypes()} to produce multiple events from a single
+ * historical event. This is useful when a legacy event contained data that should now be modeled as
+ * separate events.
+ * </p>
+ * <pre>{@code
+ * // Legacy event that combined customer and address data
+ * @LegacyEvent(upcast = FullCustomerRegisteredUpcaster.class)
+ * record FullCustomerRegistered(String name, String street, String city) implements CustomerHistoricalEvent {}
+ *
+ * // Current events: split into two separate concerns
+ * record CustomerRegisteredV2(Name name) implements CustomerEvent {}
+ * record AddressRecorded(String street, String city) implements CustomerEvent {}
+ *
+ * public class FullCustomerRegisteredUpcaster
+ *     implements Upcast<CustomerHistoricalEvent.FullCustomerRegistered, CustomerEvent> {
+ *
+ *     @Override
+ *     public CustomerEvent upcast(CustomerHistoricalEvent.FullCustomerRegistered historical) {
+ *         return new CustomerEvent.CustomerRegisteredV2(new Name(historical.name()));
+ *     }
+ *
+ *     @Override
+ *     public Class<CustomerEvent> targetType() {
+ *         return CustomerEvent.class;
+ *     }
+ *
+ *     @Override
+ *     public List<CustomerEvent> upcastAll(CustomerHistoricalEvent.FullCustomerRegistered historical) {
+ *         return List.of(
+ *             new CustomerEvent.CustomerRegisteredV2(new Name(historical.name())),
+ *             new CustomerEvent.AddressRecorded(historical.street(), historical.city())
+ *         );
+ *     }
+ *
+ *     @Override
+ *     public Set<Class<? extends CustomerEvent>> targetTypes() {
+ *         return Set.of(CustomerEvent.CustomerRegisteredV2.class, CustomerEvent.AddressRecorded.class);
+ *     }
+ * }
+ * }</pre>
+ *
+ * <h2>Advanced Example - Filtering Out Events (0 Events):</h2>
+ * <p>
+ * Override {@link #upcastAll(Object)} to return an empty list when a legacy event should be
+ * excluded from the current event stream.
+ * </p>
+ * <pre>{@code
+ * // Legacy event that is no longer relevant
+ * @LegacyEvent(upcast = ObsoleteEventUpcaster.class)
+ * record CustomerNoteAdded(String note) implements CustomerHistoricalEvent {}
+ *
+ * public class ObsoleteEventUpcaster
+ *     implements Upcast<CustomerHistoricalEvent.CustomerNoteAdded, CustomerEvent> {
+ *
+ *     @Override
+ *     public CustomerEvent upcast(CustomerHistoricalEvent.CustomerNoteAdded historical) {
+ *         return null; // not used when upcastAll is overridden
+ *     }
+ *
+ *     @Override
+ *     public Class<CustomerEvent> targetType() {
+ *         return CustomerEvent.class;
+ *     }
+ *
+ *     @Override
+ *     public List<CustomerEvent> upcastAll(CustomerHistoricalEvent.CustomerNoteAdded historical) {
+ *         return List.of(); // filter out this legacy event
+ *     }
+ * }
+ * }</pre>
+ *
  * @param <HISTORICAL_EVENT> the legacy event type (annotated with {@link LegacyEvent})
  * @param <DOMAIN_EVENT> the current event type to transform into
  * @see LegacyEvent
@@ -172,9 +248,58 @@ public interface Upcast<HISTORICAL_EVENT,DOMAIN_EVENT> {
 	 * </ul>
 	 * <p>
 	 * The returned class must match the {@code DOMAIN_EVENT} generic parameter.
+	 * <p>
+	 * For upcasters that produce multiple event types, override {@link #targetTypes()} instead.
 	 *
 	 * @return the Class object of the target event type (must not be null)
 	 */
 	Class<DOMAIN_EVENT> targetType ( );
+
+	/**
+	 * Transforms a historical event instance to zero or more current domain event representations.
+	 * <p>
+	 * This method enables advanced upcasting scenarios:
+	 * <ul>
+	 *   <li><b>Splitting:</b> One historical event can be split into multiple current events
+	 *       (e.g., a legacy event containing both customer and address data becomes two separate events)</li>
+	 *   <li><b>Filtering:</b> Return an empty list to exclude obsolete or irrelevant historical events
+	 *       from the current event stream</li>
+	 *   <li><b>One-to-one:</b> The default implementation delegates to {@link #upcast(Object)} for
+	 *       backward compatibility with existing upcasters</li>
+	 * </ul>
+	 * <p>
+	 * All events in the returned list share the same {@link org.sliceworkz.eventstore.events.EventReference},
+	 * {@link Tags}, and timestamp from the original stored event.
+	 * <p>
+	 * Override this method (along with {@link #targetTypes()}) when the upcaster needs to produce
+	 * zero or more than one event. When overriding this method, {@link #upcast(Object)} will not be
+	 * called by the framework.
+	 *
+	 * @param historicalEvent the legacy event instance to transform (never null)
+	 * @return a list of current domain event representations (may be empty, must not be null,
+	 *         individual elements must not be null)
+	 */
+	default List<DOMAIN_EVENT> upcastAll ( HISTORICAL_EVENT historicalEvent ) {
+		return List.of(upcast(historicalEvent));
+	}
+
+	/**
+	 * Returns all target event types that this upcaster can produce.
+	 * <p>
+	 * This method is used by the event store framework to expand queries so that legacy event types
+	 * are included when querying for any of the target types. For example, if a legacy event
+	 * {@code FullCustomerRegistered} can be upcasted to both {@code CustomerRegisteredV2} and
+	 * {@code AddressRecorded}, then querying for either of those types will also fetch the
+	 * legacy {@code FullCustomerRegistered} events.
+	 * <p>
+	 * The default implementation delegates to {@link #targetType()} for backward compatibility.
+	 * Override this method when the upcaster produces events of multiple types.
+	 *
+	 * @return the set of all possible target event type classes (must not be null or empty)
+	 */
+	@SuppressWarnings("unchecked")
+	default Set<Class<? extends DOMAIN_EVENT>> targetTypes ( ) {
+		return Set.of((Class<? extends DOMAIN_EVENT>) targetType());
+	}
 
 }

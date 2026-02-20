@@ -268,25 +268,34 @@ public class EventStoreImpl implements EventStore {
 		public Stream<Event<EVENT_TYPE>> query(EventQuery query, EventReference cursor, Limit limit ) {
 			meterQuery.increment(); // one query done
 			QueryDirection direction = query.isBackwards() ? QueryDirection.BACKWARD : QueryDirection.FORWARD;
-			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), cursor, limit, direction).map(this::enrichAfterQuery));
+			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), cursor, limit, direction).flatMap(this::enrichMultiAfterQuery));
 		}
-		
-		private Event<EVENT_TYPE> enrichAfterQuery ( StoredEvent storedEvent ) {
+
+		private Stream<Event<EVENT_TYPE>> enrichMultiAfterQuery ( StoredEvent storedEvent ) {
 			meterQueryEvent.increment(); // one event more seen coming from storage
-			return enrich(storedEvent);
+			return enrichMulti(storedEvent);
 		}
 
 		private Event<EVENT_TYPE> enrichAfterAppend ( StoredEvent storedEvent ) {
 			// not metered, as this is used for appended events
 			return enrich(storedEvent);
 		}
-		
+
 		@SuppressWarnings("unchecked")
 		private Event<EVENT_TYPE> enrich ( StoredEvent storedEvent ) {
 			// not metered, depends on the usage
 			TypeAndPayload typeAndPayload = serde.deserialize(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.immutableData(), storedEvent.erasableData()));
 			EVENT_TYPE data = (EVENT_TYPE)typeAndPayload.eventData();
 			return new Event<>(storedEvent.stream(), typeAndPayload.type(), storedEvent.type(), storedEvent.reference(), data, storedEvent.tags(), storedEvent.timestamp());
+		}
+
+		@SuppressWarnings("unchecked")
+		private Stream<Event<EVENT_TYPE>> enrichMulti ( StoredEvent storedEvent ) {
+			List<TypeAndPayload> results = serde.deserializeMulti(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.immutableData(), storedEvent.erasableData()));
+			return results.stream().map(typeAndPayload -> {
+				EVENT_TYPE data = (EVENT_TYPE)typeAndPayload.eventData();
+				return new Event<>(storedEvent.stream(), typeAndPayload.type(), storedEvent.type(), storedEvent.reference(), data, storedEvent.tags(), storedEvent.timestamp());
+			});
 		}
 
 		private EventToStore reduce ( EphemeralEvent<? extends EVENT_TYPE> event, EventStreamId streamToAppendTo ) {
@@ -424,14 +433,14 @@ public class EventStoreImpl implements EventStore {
 		@Override
 		public Optional<EventReference> queryReference(EventId id) {
 			meterGetEvent.increment();
-			return eventStorage.getEventById(id).map(this::enrichAfterQuery).map(Event::reference);
+			return eventStorage.getEventById(id).map(this::enrich).map(Event::reference);
 		}
-		
+
 		@Override
 		public Optional<Event<EVENT_TYPE>> getEventById(EventId eventId) {
 			meterGetEvent.increment();
 			// filters out events that can not be read by this stream
-			return eventStorage.getEventById(eventId).filter(e->eventStreamId.canRead(e.stream())).map(this::enrichAfterQuery);
+			return eventStorage.getEventById(eventId).filter(e->eventStreamId.canRead(e.stream())).map(this::enrich);
 		}
 
 	}

@@ -140,8 +140,7 @@ public class OptimisticLockingTest {
 
 		// Try to append on expecting stream with assumed only first append (should fail)
 		EphemeralEvent<ThirdDomainEvent> thirdEvent = Event.of(new ThirdDomainEvent("test3"), Tags.none());
-		// re-read from stread to get position filled in
-		AppendCriteria criteria = AppendCriteria.of(EventQuery.matchAll(), eventStream.getEventById(firstEventStored.reference().id()).get().reference());
+		AppendCriteria criteria = AppendCriteria.of(EventQuery.matchAll(), firstEventStored.reference());
 		
 		// Should throw OptimisticLockingException
 		assertThrows(OptimisticLockingException.class, () -> {

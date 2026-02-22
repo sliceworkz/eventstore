@@ -318,22 +318,23 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 				try {
 					
 					queriesDone++;
-					long eventsStreamBeforeThisIteration = eventsStreamed;
-					
+
 					lastRead = es.query(effectiveQuery, lastRead, limit).map(e->offerEventToProjection(e, projection, until, batch)).map(e->e.reference()).reduce((first, second) -> second).orElse(null);
-					
+
 					// if we still read data, keep the reference
 					if ( lastRead != null ) {
-						lastEventReference = Optional.of(lastRead); 
+						lastEventReference = Optional.of(lastRead);
 					} else {
 						// otherwise, we were at the end of the stream
 						done = true;
 					}
-					
-					// if we got less events than we could, we reached the end of the stream
-					if ( eventsStreamed - eventsStreamBeforeThisIteration < maxEventsPerQuery ) {
-						done = true;
-					}
+
+					// Note: we intentionally do NOT compare the number of events streamed against maxEventsPerQuery
+					// to detect end-of-stream. The batch limit is applied at the storage level (on stored events),
+					// but upcasters may produce fewer or more events per stored event (0 for filtered events,
+					// N for split events). Comparing post-upcasting counts against the storage-level limit would
+					// cause premature termination when upcasters filter out events. Instead, we rely solely on
+					// the lastRead == null check above: if the storage returned nothing, we're done.
 				} catch ( Throwable t ) {
 					batch.failBatchIfNeeded();
 					exception = new ProjectorException(t, currentEventReference);

@@ -268,12 +268,12 @@ public class EventStoreImpl implements EventStore {
 		public Stream<Event<EVENT_TYPE>> query(EventQuery query, EventReference cursor, Limit limit ) {
 			meterQuery.increment(); // one query done
 			QueryDirection direction = query.isBackwards() ? QueryDirection.BACKWARD : QueryDirection.FORWARD;
-			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), cursor, limit, direction).flatMap(this::enrichMultiAfterQuery));
+			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), cursor, limit, direction).flatMap(se->enrichMultiAfterQuery(se, direction)));
 		}
 
-		private Stream<Event<EVENT_TYPE>> enrichMultiAfterQuery ( StoredEvent storedEvent ) {
+		private Stream<Event<EVENT_TYPE>> enrichMultiAfterQuery ( StoredEvent storedEvent, QueryDirection direction ) {
 			meterQueryEvent.increment(); // one event more seen coming from storage
-			return enrichMulti(storedEvent);
+			return enrichMulti(storedEvent, direction);
 		}
 
 		private Event<EVENT_TYPE> enrichAfterAppend ( StoredEvent storedEvent ) {
@@ -290,8 +290,13 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		@SuppressWarnings("unchecked")
-		private Stream<Event<EVENT_TYPE>> enrichMulti ( StoredEvent storedEvent ) {
+		private Stream<Event<EVENT_TYPE>> enrichMulti ( StoredEvent storedEvent, QueryDirection direction ) {
 			List<TypeAndPayload> results = serde.deserializeMulti(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.immutableData(), storedEvent.erasableData()));
+			// For backward queries, reverse the upcasted sub-events so they appear in descending order,
+			// consistent with the overall backward traversal of stored events.
+			if ( direction == QueryDirection.BACKWARD ) {
+				results = results.reversed();
+			}
 			return results.stream().map(typeAndPayload -> {
 				EVENT_TYPE data = (EVENT_TYPE)typeAndPayload.eventData();
 				return new Event<>(storedEvent.stream(), typeAndPayload.type(), storedEvent.type(), storedEvent.reference(), data, storedEvent.tags(), storedEvent.timestamp());

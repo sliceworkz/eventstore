@@ -320,16 +320,152 @@ public class UpcastMultiTest {
 		assertEquals(0, events.get(3).reference().index());
 	}
 
+	// =========================================================================
+	// Tests: limit applies to stored events, not upcasted events
+	// =========================================================================
+	//
+	// The limit parameter restricts how many *stored* events are fetched from
+	// storage, before upcasting expands (or filters) them. This means:
+	//
+	//   Stored events (backward from position 4):
+	//     Position 4: CustomerChurned                → 1 upcasted event
+	//     Position 3: CustomerNameChanged             → 1 upcasted event  (renamed)
+	//     Position 2: CustomerLegacyAuditLog          → 0 upcasted events (filtered)
+	//     Position 1: CustomerRegisteredWithAddress   → 2 upcasted events (split)
+	//
+	//   Stored events (forward from position 1):
+	//     Position 1: CustomerRegisteredWithAddress   → 2 upcasted events (split)
+	//     Position 2: CustomerLegacyAuditLog          → 0 upcasted events (filtered)
+	//     Position 3: CustomerNameChanged             → 1 upcasted event  (renamed)
+	//     Position 4: CustomerChurned                → 1 upcasted event
+
 	@Test
-	void testBackwardQueryWithLimit ( ) {
+	void testBackwardQueryWithLimit1 ( ) {
 		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
 
-		// Get the most recent 2 events
+		// limit(1) → 1 stored event (position 4: CustomerChurned) → 1 upcasted event
+		List<Event<CurrentEvent>> events = stream.query(EventQuery.matchAll().backwards().limit(1)).toList();
+
+		assertEquals(1, events.size());
+		assertEquals(CurrentEvent.CustomerChurned.class, events.get(0).data().getClass());
+	}
+
+	@Test
+	void testBackwardQueryWithLimit2 ( ) {
+		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
+
+		// limit(2) → 2 stored events (position 4 + 3) → 2 upcasted events
 		List<Event<CurrentEvent>> events = stream.query(EventQuery.matchAll().backwards().limit(2)).toList();
 
 		assertEquals(2, events.size());
 		assertEquals(CurrentEvent.CustomerChurned.class, events.get(0).data().getClass());
 		assertEquals(CurrentEvent.CustomerRenamed.class, events.get(1).data().getClass());
+	}
+
+	@Test
+	void testBackwardQueryWithLimit3 ( ) {
+		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
+
+		// limit(3) → 3 stored events (position 4 + 3 + 2)
+		// position 2 is the filtered audit log → 0 upcasted events
+		// so we still get only 2 upcasted events despite fetching 3 stored events
+		List<Event<CurrentEvent>> events = stream.query(EventQuery.matchAll().backwards().limit(3)).toList();
+
+		assertEquals(2, events.size());
+		assertEquals(CurrentEvent.CustomerChurned.class, events.get(0).data().getClass());
+		assertEquals(CurrentEvent.CustomerRenamed.class, events.get(1).data().getClass());
+	}
+
+	@Test
+	void testBackwardQueryWithLimit4 ( ) {
+		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
+
+		// limit(4) → all 4 stored events
+		// position 1 splits into 2 → we get 4 upcasted events total
+		List<Event<CurrentEvent>> events = stream.query(EventQuery.matchAll().backwards().limit(4)).toList();
+
+		assertEquals(4, events.size());
+		assertEquals(CurrentEvent.CustomerChurned.class, events.get(0).data().getClass());
+		assertEquals(CurrentEvent.CustomerRenamed.class, events.get(1).data().getClass());
+		assertEquals(CurrentEvent.AddressRecorded.class, events.get(2).data().getClass());
+		assertEquals(CurrentEvent.CustomerRegistered.class, events.get(3).data().getClass());
+	}
+
+	@Test
+	void testBackwardQueryWithLimit5 ( ) {
+		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
+
+		// limit(5) → exceeds the 4 stored events, same result as limit(4)
+		List<Event<CurrentEvent>> events = stream.query(EventQuery.matchAll().backwards().limit(5)).toList();
+
+		assertEquals(4, events.size());
+		assertEquals(CurrentEvent.CustomerChurned.class, events.get(0).data().getClass());
+		assertEquals(CurrentEvent.CustomerRenamed.class, events.get(1).data().getClass());
+		assertEquals(CurrentEvent.AddressRecorded.class, events.get(2).data().getClass());
+		assertEquals(CurrentEvent.CustomerRegistered.class, events.get(3).data().getClass());
+	}
+
+	@Test
+	void testForwardQueryWithLimit1 ( ) {
+		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
+
+		// limit(1) → 1 stored event (position 1: split) → 2 upcasted events
+		List<Event<CurrentEvent>> events = stream.query(EventQuery.matchAll().limit(1)).toList();
+
+		assertEquals(2, events.size());
+		assertEquals(CurrentEvent.CustomerRegistered.class, events.get(0).data().getClass());
+		assertEquals(CurrentEvent.AddressRecorded.class, events.get(1).data().getClass());
+	}
+
+	@Test
+	void testForwardQueryWithLimit2 ( ) {
+		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
+
+		// limit(2) → 2 stored events (position 1 + 2)
+		// position 2 is the filtered audit log → 0 upcasted events
+		// so we still get only 2 upcasted events from the split
+		List<Event<CurrentEvent>> events = stream.query(EventQuery.matchAll().limit(2)).toList();
+
+		assertEquals(2, events.size());
+		assertEquals(CurrentEvent.CustomerRegistered.class, events.get(0).data().getClass());
+		assertEquals(CurrentEvent.AddressRecorded.class, events.get(1).data().getClass());
+	}
+
+	@Test
+	void testForwardQueryWithLimit3 ( ) {
+		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
+
+		// limit(3) → 3 stored events (position 1 + 2 + 3) → 3 upcasted events (2 from split + 0 filtered + 1 renamed)
+		List<Event<CurrentEvent>> events = stream.query(EventQuery.matchAll().limit(3)).toList();
+
+		assertEquals(3, events.size());
+		assertEquals(CurrentEvent.CustomerRegistered.class, events.get(0).data().getClass());
+		assertEquals(CurrentEvent.AddressRecorded.class, events.get(1).data().getClass());
+		assertEquals(CurrentEvent.CustomerRenamed.class, events.get(2).data().getClass());
+	}
+
+	@Test
+	void testForwardQueryWithLimit4 ( ) {
+		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
+
+		// limit(4) → all 4 stored events → 4 upcasted events
+		List<Event<CurrentEvent>> events = stream.query(EventQuery.matchAll().limit(4)).toList();
+
+		assertEquals(4, events.size());
+		assertEquals(CurrentEvent.CustomerRegistered.class, events.get(0).data().getClass());
+		assertEquals(CurrentEvent.AddressRecorded.class, events.get(1).data().getClass());
+		assertEquals(CurrentEvent.CustomerRenamed.class, events.get(2).data().getClass());
+		assertEquals(CurrentEvent.CustomerChurned.class, events.get(3).data().getClass());
+	}
+
+	@Test
+	void testForwardQueryWithLimit5 ( ) {
+		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
+
+		// limit(5) → exceeds the 4 stored events, same result as limit(4)
+		List<Event<CurrentEvent>> events = stream.query(EventQuery.matchAll().limit(5)).toList();
+
+		assertEquals(4, events.size());
 	}
 
 	@Test

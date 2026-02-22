@@ -17,6 +17,7 @@
  */
 package org.sliceworkz.eventstore.stream;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 
@@ -176,15 +177,18 @@ public interface EventSource<DOMAIN_EVENT_TYPE> {
 	Optional<EventReference> queryReference ( EventId id );
 
 	/**
-	 * Retrieves a specific event by its unique event ID.
+	 * Retrieves events by their stored event ID.
 	 * <p>
-	 * This method performs a direct lookup of an event by its ID, returning the full
-	 * event with all metadata and data if it exists in this stream.
+	 * This method performs a direct lookup of an event by its ID and returns all events
+	 * that result from deserializing and upcasting the stored event. For non-upcasted events,
+	 * this returns a single-element list. For events that are upcasted into multiple sub-events,
+	 * all sub-events are returned with distinct references (differing by index).
+	 * Returns an empty list if no event with the given ID exists in this stream.
 	 *
-	 * @param eventId the unique identifier of the event to retrieve
-	 * @return an Optional containing the Event if found, empty otherwise
+	 * @param eventId the unique identifier of the stored event to retrieve
+	 * @return a list of events produced from the stored event, or an empty list if not found
 	 */
-	Optional<Event<DOMAIN_EVENT_TYPE>> getEventById ( EventId eventId );
+	List<Event<DOMAIN_EVENT_TYPE>> getEventById ( EventId eventId );
 
 
 	/**

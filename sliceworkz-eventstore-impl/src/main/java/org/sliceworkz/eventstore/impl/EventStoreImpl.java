@@ -297,9 +297,15 @@ public class EventStoreImpl implements EventStore {
 			if ( direction == QueryDirection.BACKWARD ) {
 				results = results.reversed();
 			}
-			return results.stream().map(typeAndPayload -> {
+			EventReference baseRef = storedEvent.reference();
+			List<TypeAndPayload> finalResults = results;
+			return java.util.stream.IntStream.range(0, finalResults.size()).mapToObj(i -> {
+				TypeAndPayload typeAndPayload = finalResults.get(i);
 				EVENT_TYPE data = (EVENT_TYPE)typeAndPayload.eventData();
-				return new Event<>(storedEvent.stream(), typeAndPayload.type(), storedEvent.type(), storedEvent.reference(), data, storedEvent.tags(), storedEvent.timestamp());
+				// Each sub-event gets a unique reference via the index, distinguishing upcasted events
+				// that originate from the same stored event. For single-event results, index is 0.
+				EventReference ref = baseRef.withIndex(direction == QueryDirection.BACKWARD ? finalResults.size() - 1 - i : i);
+				return new Event<>(storedEvent.stream(), typeAndPayload.type(), storedEvent.type(), ref, data, storedEvent.tags(), storedEvent.timestamp());
 			});
 		}
 
@@ -438,14 +444,18 @@ public class EventStoreImpl implements EventStore {
 		@Override
 		public Optional<EventReference> queryReference(EventId id) {
 			meterGetEvent.increment();
-			return eventStorage.getEventById(id).map(this::enrich).map(Event::reference);
+			return eventStorage.getEventById(id).map(StoredEvent::reference);
 		}
 
 		@Override
-		public Optional<Event<EVENT_TYPE>> getEventById(EventId eventId) {
+		public List<Event<EVENT_TYPE>> getEventById(EventId eventId) {
 			meterGetEvent.increment();
-			// filters out events that can not be read by this stream
-			return eventStorage.getEventById(eventId).filter(e->eventStreamId.canRead(e.stream())).map(this::enrich);
+			// filters out events that can not be read by this stream, then upcasts via enrichMulti
+			return eventStorage.getEventById(eventId)
+				.filter(e->eventStreamId.canRead(e.stream()))
+				.map(e->enrichMulti(e, QueryDirection.FORWARD))
+				.map(s->s.toList())
+				.orElse(List.of());
 		}
 
 	}

@@ -106,7 +106,7 @@ public class BenchmarkApplication {
 			@Override
 			public EventReference eventsAppended(EventReference atLeastUntil) {
 				System.err.println("-------> " + atLeastUntil);
-				System.err.println(supplier42Stream.getEventById(atLeastUntil.id()).get());
+				System.err.println(supplier42Stream.getEventById(atLeastUntil.id()));
 				return atLeastUntil;
 			}
 		});

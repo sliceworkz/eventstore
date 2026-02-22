@@ -79,8 +79,6 @@ public class UpcastMultiTest {
 		record CustomerLegacyAuditLog ( String message ) implements OriginalEvent { }
 		/** A simple rename upcast (1-to-1) */
 		record CustomerNameChanged ( String name ) implements OriginalEvent { }
-		/** An event that stays as-is (no upcast needed) */
-		record CustomerChurned ( ) implements OriginalEvent { }
 	}
 
 	// =========================================================================
@@ -182,12 +180,14 @@ public class UpcastMultiTest {
 			new OriginalEvent.CustomerNameChanged("Jane"),
 			Tags.of("customer", "1")));
 
-		// Position 4: not upcasted, stays as-is
-		originalStream.append(AppendCriteria.none(), Event.of(
-			new OriginalEvent.CustomerChurned(),
+		EventStream<CurrentEvent> stream = eventStore.getEventStream(streamId, CurrentEvent.class, LegacyEvents.class);
+
+		// Position 4: a real current event, not upcasted — creates a mix of legacy and current events
+		stream.append(AppendCriteria.none(), Event.of(
+			new CurrentEvent.CustomerChurned(),
 			Tags.of("customer", "1")));
 
-		return eventStore.getEventStream(streamId, CurrentEvent.class, LegacyEvents.class);
+		return stream;
 	}
 
 
@@ -217,7 +217,7 @@ public class UpcastMultiTest {
 		assertEquals(CurrentEvent.CustomerRenamed.class, events.get(2).data().getClass());
 		assertEquals("Jane", ((CurrentEvent.CustomerRenamed) events.get(2).data()).name());
 
-		// Fourth: CustomerChurned (no upcast)
+		// Fourth: CustomerChurned (current event, not upcasted)
 		assertEquals(CurrentEvent.CustomerChurned.class, events.get(3).data().getClass());
 	}
 
@@ -412,10 +412,10 @@ public class UpcastMultiTest {
 	}
 
 	@Test
-	void testGetEventByIdForNonUpcastedEvent ( ) {
+	void testGetEventByIdForCurrentEvent ( ) {
 		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
 
-		// Find the CustomerChurned event (not upcasted)
+		// Find the CustomerChurned event (appended as a current event, not upcasted)
 		Event<CurrentEvent> churnedEvent = stream.query(EventQuery.matchAll()).toList().stream()
 			.filter(e -> e.data() instanceof CurrentEvent.CustomerChurned)
 			.findFirst().orElseThrow();

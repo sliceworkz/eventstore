@@ -276,28 +276,35 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 
 		private final Upcast<Object,Object> upcaster;
 		private final EventDeserializer deser;
-		private final EventType eventType;
 
 		public InstantiationAndUpcastEventDeserializer ( EventDeserializer deser, Upcast<Object,Object> upcaster ) {
 			this.deser = deser;
 			this.upcaster = upcaster;
-			this.eventType = EventType.of(upcaster.targetType());
 		}
 
 		@Override
 		public Object deserialize ( String immutablePayload, String erasablePayload ) {
-			return upcaster.upcast(deser.deserialize(immutablePayload, erasablePayload));
+			// Single-event path: delegate to deserializeMulti and return the first result.
+			// This path is not used for upcasted events during queries (which use deserializeMulti),
+			// but may be called for non-query scenarios (e.g., after append).
+			List<TypeAndPayload> results = deserializeMulti(immutablePayload, erasablePayload);
+			return results.isEmpty() ? null : results.getFirst().eventData();
 		}
 
 		@Override
 		public EventType eventType() {
-			return eventType;
+			// For upcasters, the event type is determined per-event in deserializeMulti.
+			// This fallback returns the first target type from targetTypes(), or null if empty.
+			return upcaster.targetTypes().stream()
+					.map(EventType::of)
+					.findFirst()
+					.orElse(null);
 		}
 
 		@Override
 		public List<TypeAndPayload> deserializeMulti ( String immutablePayload, String erasablePayload ) {
 			Object historicalEvent = deser.deserialize(immutablePayload, erasablePayload);
-			List<Object> upcastedEvents = upcaster.upcastAll(historicalEvent);
+			List<Object> upcastedEvents = upcaster.upcast(historicalEvent);
 			return upcastedEvents.stream()
 					.map(e -> new TypeAndPayload(EventType.of(e), e))
 					.toList();

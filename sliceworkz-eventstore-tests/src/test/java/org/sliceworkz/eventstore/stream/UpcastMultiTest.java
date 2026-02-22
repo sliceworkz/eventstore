@@ -118,24 +118,13 @@ public class UpcastMultiTest {
 	public static class SplitRegistrationUpcaster implements Upcast<LegacyEvents.CustomerRegisteredWithAddress, CurrentEvent> {
 
 		@Override
-		public CurrentEvent upcast ( LegacyEvents.CustomerRegisteredWithAddress historicalEvent ) {
-			throw new UnsupportedOperationException("should use upcastAll");
-		}
-
-		@Override
-		public List<CurrentEvent> upcastAll ( LegacyEvents.CustomerRegisteredWithAddress historicalEvent ) {
+		public List<CurrentEvent> upcast ( LegacyEvents.CustomerRegisteredWithAddress historicalEvent ) {
 			return List.of(
 				new CurrentEvent.CustomerRegistered(historicalEvent.name()),
 				new CurrentEvent.AddressRecorded(historicalEvent.street(), historicalEvent.city())
 			);
 		}
 
-		@Override
-		public Class<CurrentEvent> targetType ( ) {
-			return CurrentEvent.class; // not used directly, targetTypes() is overridden
-		}
-
-		@SuppressWarnings("unchecked")
 		@Override
 		public Set<Class<? extends CurrentEvent>> targetTypes ( ) {
 			return Set.of(CurrentEvent.CustomerRegistered.class, CurrentEvent.AddressRecorded.class);
@@ -146,21 +135,10 @@ public class UpcastMultiTest {
 	public static class FilterAuditLogUpcaster implements Upcast<LegacyEvents.CustomerLegacyAuditLog, CurrentEvent> {
 
 		@Override
-		public CurrentEvent upcast ( LegacyEvents.CustomerLegacyAuditLog historicalEvent ) {
-			throw new UnsupportedOperationException("should use upcastAll");
-		}
-
-		@Override
-		public List<CurrentEvent> upcastAll ( LegacyEvents.CustomerLegacyAuditLog historicalEvent ) {
+		public List<CurrentEvent> upcast ( LegacyEvents.CustomerLegacyAuditLog historicalEvent ) {
 			return List.of(); // filtered out
 		}
 
-		@Override
-		public Class<CurrentEvent> targetType ( ) {
-			return CurrentEvent.class;
-		}
-
-		@SuppressWarnings("unchecked")
 		@Override
 		public Set<Class<? extends CurrentEvent>> targetTypes ( ) {
 			return Set.of(); // produces no target types
@@ -171,13 +149,13 @@ public class UpcastMultiTest {
 	public static class RenameNameChangedUpcaster implements Upcast<LegacyEvents.CustomerNameChanged, CurrentEvent.CustomerRenamed> {
 
 		@Override
-		public CurrentEvent.CustomerRenamed upcast ( LegacyEvents.CustomerNameChanged historicalEvent ) {
-			return new CurrentEvent.CustomerRenamed(historicalEvent.name());
+		public List<CurrentEvent.CustomerRenamed> upcast ( LegacyEvents.CustomerNameChanged historicalEvent ) {
+			return List.of(new CurrentEvent.CustomerRenamed(historicalEvent.name()));
 		}
 
 		@Override
-		public Class<CurrentEvent.CustomerRenamed> targetType ( ) {
-			return CurrentEvent.CustomerRenamed.class;
+		public Set<Class<? extends CurrentEvent.CustomerRenamed>> targetTypes ( ) {
+			return Set.of(CurrentEvent.CustomerRenamed.class);
 		}
 	}
 

@@ -268,7 +268,10 @@ public class EventStoreImpl implements EventStore {
 		public Stream<Event<EVENT_TYPE>> query(EventQuery query, EventReference cursor, Limit limit ) {
 			meterQuery.increment(); // one query done
 			QueryDirection direction = query.isBackwards() ? QueryDirection.BACKWARD : QueryDirection.FORWARD;
-			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), cursor, limit, direction).flatMap(se->enrichMultiAfterQuery(se, direction)));
+			EventFilter originalFilter = query.filter();
+			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), cursor, limit, direction)
+				.flatMap(se->enrichMultiAfterQuery(se, direction))
+				.filter(e->originalFilter.matches(e)));
 		}
 
 		private Stream<Event<EVENT_TYPE>> enrichMultiAfterQuery ( StoredEvent storedEvent, QueryDirection direction ) {

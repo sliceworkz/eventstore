@@ -715,6 +715,27 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	}
 
 	@Test
+	void testProjectorBackwardsWithLimitGreaterThanOne ( ) {
+		// 6 events: First("1")@1, Second("2")@2, Third("3")@3, First("4")@4, Second("5")@5, Third("6")@6
+		// Backwards query for First+Third with limit(3) should process the 3 newest matches:
+		//   Third("6")@6, First("4")@4, Third("3")@3
+		// mostRecentEventReference should be @6 (newest), lastEventReference should be @3 (cursor)
+
+		BackwardsLimit3Projection projection = new BackwardsLimit3Projection();
+		var projector = Projector.from(es).towards(projection).build();
+
+		EventReference refThree = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "three"))).findFirst().get().reference();
+		EventReference refSix = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "six"))).findFirst().get().reference();
+
+		ProjectorMetrics metrics = projector.run();
+		assertEquals(3, projection.counter());
+		assertEquals(3, metrics.eventsStreamed());
+		assertEquals(3, metrics.eventsHandled());
+		assertEquals(refSix, metrics.mostRecentEventReference()); // newest event processed
+		assertEquals(refThree, metrics.lastEventReference()); // cursor: last event in backwards traversal
+	}
+
+	@Test
 	void testProjectorForwardMostRecentEqualsLast ( ) {
 		// For forward queries, mostRecentEventReference should always equal lastEventReference.
 		TestProjection projection = new TestProjection();
@@ -850,6 +871,26 @@ public class ProjectorTest extends AbstractEventStoreTest {
 			return cancelTriggered;
 		}
 		
+	}
+
+	class BackwardsLimit3Projection implements ProjectionWithoutMetaData<MockDomainEvent> {
+
+		private int counter;
+
+		@Override
+		public void when(MockDomainEvent event) {
+			counter++;
+		}
+
+		@Override
+		public EventQuery eventQuery() {
+			return EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class, ThirdDomainEvent.class), Tags.none()).backwards().limit(3);
+		}
+
+		public int counter ( ) {
+			return counter;
+		}
+
 	}
 
 	class BackwardsLimitProjection implements ProjectionWithoutMetaData<MockDomainEvent> {

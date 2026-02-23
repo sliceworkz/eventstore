@@ -18,6 +18,7 @@
 package org.sliceworkz.eventstore.projection;
 
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -316,25 +317,27 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 
 				Batch batch = new Batch(projection);
 				try {
-					
+
 					queriesDone++;
 
-					lastRead = es.query(effectiveQuery, lastRead, limit).map(e->offerEventToProjection(e, projection, until, batch)).map(e->e.reference()).reduce((first, second) -> second).orElse(null);
+					AtomicReference<EventReference> rawCursor = new AtomicReference<>();
 
-					// if we still read data, keep the reference
+					lastRead = es.query(effectiveQuery, lastRead, limit, rawCursor::set).map(e->offerEventToProjection(e, projection, until, batch)).map(e->e.reference()).reduce((first, second) -> second).orElse(null);
+
+					// if we still read enriched data, keep the reference
 					if ( lastRead != null ) {
 						lastEventReference = Optional.of(lastRead);
+					} else if ( rawCursor.get() != null ) {
+						// Storage returned stored events but upcasting produced zero enriched events
+						// (e.g., all events in this batch were filtered out by an upcaster returning List.of()).
+						// Advance the cursor past these vanished events to avoid re-querying them.
+						lastRead = rawCursor.get();
+						lastEventReference = Optional.of(lastRead);
+						// Do NOT set done — there may be more events beyond the vanished batch.
 					} else {
-						// otherwise, we were at the end of the stream
+						// No stored events returned at all — we are truly at end of stream.
 						done = true;
 					}
-
-					// Note: we intentionally do NOT compare the number of events streamed against maxEventsPerQuery
-					// to detect end-of-stream. The batch limit is applied at the storage level (on stored events),
-					// but upcasters may produce fewer or more events per stored event (0 for filtered events,
-					// N for split events). Comparing post-upcasting counts against the storage-level limit would
-					// cause premature termination when upcasters filter out events. Instead, we rely solely on
-					// the lastRead == null check above: if the storage returned nothing, we're done.
 				} catch ( Throwable t ) {
 					batch.failBatchIfNeeded();
 					exception = new ProjectorException(t, currentEventReference);

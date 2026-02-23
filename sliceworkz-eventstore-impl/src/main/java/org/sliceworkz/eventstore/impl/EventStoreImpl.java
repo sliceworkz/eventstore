@@ -26,6 +26,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import org.slf4j.Logger;
@@ -265,11 +266,12 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		@Override
-		public Stream<Event<EVENT_TYPE>> query(EventQuery query, EventReference cursor, Limit limit ) {
+		public Stream<Event<EVENT_TYPE>> query(EventQuery query, EventReference cursor, Limit limit, Consumer<EventReference> storedEventCursorTracker ) {
 			meterQuery.increment(); // one query done
 			QueryDirection direction = query.isBackwards() ? QueryDirection.BACKWARD : QueryDirection.FORWARD;
 			EventFilter originalFilter = query.filter();
 			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), cursor, limit, direction)
+				.peek(se -> storedEventCursorTracker.accept(se.reference()))
 				.flatMap(se->enrichAfterQuery(se, direction))
 				.filter(e->originalFilter.matches(e)));
 		}

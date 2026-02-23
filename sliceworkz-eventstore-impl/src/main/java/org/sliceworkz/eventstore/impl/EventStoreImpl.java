@@ -432,12 +432,6 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		@Override
-		public Optional<EventReference> queryReference(EventId id) {
-			meterGetEvent.increment();
-			return eventStorage.getEventById(id).map(StoredEvent::reference);
-		}
-
-		@Override
 		public List<Event<EVENT_TYPE>> getEventById(EventId eventId) {
 			meterGetEvent.increment();
 			// filters out events that can not be read by this stream, then upcasts via enrich

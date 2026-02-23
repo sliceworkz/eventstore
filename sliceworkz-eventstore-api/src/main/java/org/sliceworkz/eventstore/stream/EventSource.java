@@ -166,17 +166,6 @@ public interface EventSource<DOMAIN_EVENT_TYPE> {
 	}
 
 	/**
-	 * Retrieves the event reference for a specific event ID.
-	 * <p>
-	 * This method is useful when you have an event ID and need to obtain its reference
-	 * (which includes position information) without retrieving the full event.
-	 *
-	 * @param id the event ID to look up
-	 * @return an Optional containing the EventReference if found, empty otherwise
-	 */
-	Optional<EventReference> queryReference ( EventId id );
-
-	/**
 	 * Retrieves events by their stored event ID.
 	 * <p>
 	 * This method performs a direct lookup of an event by its ID and returns all events

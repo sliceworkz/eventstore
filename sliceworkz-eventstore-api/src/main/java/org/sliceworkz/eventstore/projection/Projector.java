@@ -311,8 +311,10 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 
 			EventQuery effectiveQuery = projection.eventQuery().untilIfEarlier ( until );
 
+			Limit queryTotalLimit = projection.eventQuery().limit();
+
 			EventReference lastRead = lastEventReference==null?null:lastEventReference.orElse(null);
-			
+
 			while ( !done ) {
 
 				Batch batch = new Batch(projection);
@@ -345,7 +347,11 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 				} finally {
 					batch.stopBatchIfNeeded(lastEventReference);
 				}
-				
+
+				if ( queryTotalLimit.isSet() && eventsStreamed >= queryTotalLimit.value() ) {
+					break;
+				}
+
 				if ( singleBatch ) {
 					break;
 				}

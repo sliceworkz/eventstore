@@ -682,6 +682,37 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		assertEquals(1, metrics2.eventsHandled()); // only the new event
 	}
 
+	@Test
+	void testProjectorBackwardsWithLimitEnforcesTotalLimit ( ) {
+		// 6 events in the stream: First("1"), Second("2"), Third("3"), First("4"), Second("5"), Third("6")
+		// A backwards query with limit(1) for FirstDomainEvent should only process the LAST FirstDomainEvent,
+		// not traverse the entire stream backwards.
+
+		BackwardsLimitProjection projection = new BackwardsLimitProjection();
+		var projector = Projector.from(es).towards(projection).build();
+
+		ProjectorMetrics metrics = projector.run();
+		assertEquals(1, projection.counter()); // only the most recent FirstDomainEvent
+		assertEquals("4", projection.lastValue()); // First("4") is the newest FirstDomainEvent
+		assertEquals(1, metrics.eventsStreamed());
+		assertEquals(1, metrics.eventsHandled());
+	}
+
+	@Test
+	void testProjectorBackwardsWithLimitReturnsNewestEventReference ( ) {
+		// The lastEventReference should point to the newest event (the first returned in a backwards query),
+		// not the oldest. This is critical for optimistic locking.
+
+		BackwardsLimitProjection projection = new BackwardsLimitProjection();
+		var projector = Projector.from(es).towards(projection).build();
+
+		// Get the reference of First("4") — the newest FirstDomainEvent (position 4)
+		EventReference refFour = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).findFirst().get().reference();
+
+		ProjectorMetrics metrics = projector.run();
+		assertEquals(refFour, metrics.lastEventReference());
+	}
+
 	private List<Event<MockDomainEvent>> append ( EventStream<MockDomainEvent> es, MockDomainEvent event, Tags tags ) {
 		return es.append(AppendCriteria.none(), Collections.singletonList(Event.of(event, tags)));
 	}
@@ -808,6 +839,34 @@ public class ProjectorTest extends AbstractEventStoreTest {
 			return cancelTriggered;
 		}
 		
+	}
+
+	class BackwardsLimitProjection implements ProjectionWithoutMetaData<MockDomainEvent> {
+
+		private int counter;
+		private String lastValue;
+
+		@Override
+		public void when(MockDomainEvent event) {
+			counter++;
+			if ( event instanceof FirstDomainEvent f ) {
+				lastValue = f.value();
+			}
+		}
+
+		@Override
+		public EventQuery eventQuery() {
+			return EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).backwards().limit(1);
+		}
+
+		public int counter ( ) {
+			return counter;
+		}
+
+		public String lastValue ( ) {
+			return lastValue;
+		}
+
 	}
 
 	class InitQueryProjection implements Projection<MockDomainEvent> {

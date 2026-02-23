@@ -79,17 +79,15 @@ public class BenchmarkApplication {
 		
 		// Javalin framework for REST
 		var javalin = Javalin.create(config -> {
-			config.useVirtualThreads = true; // Enables virtual threads for all request handling
+			config.concurrency.useVirtualThreads = true; // Enables virtual threads for all request handling
+			if ( prometheusMeterRegistry != null ) {
+				// Expose metrics endpoint for Prometheus to scrape
+				config.routes.get("/metrics", ctx -> {
+					ctx.contentType("text/plain; version=0.0.4")
+						.result(prometheusMeterRegistry.scrape());
+				});
+			}
 		});
-
-		if ( prometheusMeterRegistry != null ) {
-	       // Expose metrics endpoint for Prometheus to scrape
-	        javalin.get("/metrics", ctx -> {
-	            ctx.contentType("text/plain; version=0.0.4")
-	            	.result(prometheusMeterRegistry.scrape());
-	        });
-		
-		}
 		javalin.start(7072);
 		
 		//EventStore eventStore = InMemoryEventStorage.newBuilder().buildStore();

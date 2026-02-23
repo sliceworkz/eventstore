@@ -1,6 +1,6 @@
 --
 -- Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
--- Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+-- Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
 --
 -- This program is free software: you can redistribute it and/or modify
 -- it under the terms of the GNU Lesser General Public License as published by
@@ -15,7 +15,6 @@
 -- You should have received a copy of the GNU Lesser General Public License
 -- along with this program.  If not, see <http://www.gnu.org/licenses/>.
 --
-
 
 -- BASIC INFO : NUMBER OF EVENTS, TIMESTAMP OF FIRST AND LAST
 

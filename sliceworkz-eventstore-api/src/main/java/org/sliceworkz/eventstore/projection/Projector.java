@@ -275,6 +275,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		private long eventsHandled = 0;
 		private long queriesDone = 0;
 		private EventReference currentEventReference; // required for identifying a poison event
+		private EventReference mostRecentEventReference; // chronologically newest event seen (for optimistic locking)
 
 		protected ProjectorRunResult execute ( EventReference until, boolean singleBatch ) {
 			boolean done = false;
@@ -296,6 +297,9 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 				es.query(initQuery).forEach(e -> {
 					eventsStreamed++;
 					eventsHandled++;
+					if ( mostRecentEventReference == null || e.reference().happenedAfter(mostRecentEventReference) ) {
+						mostRecentEventReference = e.reference();
+					}
 					projection.when(e);
 					lastEventReference = Optional.of(e.reference());
 				});
@@ -367,11 +371,14 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 			}
 			
 			
-			return new ProjectorRunResult ( new ProjectorMetrics ( eventsStreamed, eventsHandled, queriesDone, lastEventReference==null?null:lastEventReference.orElse(null)), exception );
+			return new ProjectorRunResult ( new ProjectorMetrics ( eventsStreamed, eventsHandled, queriesDone, lastEventReference==null?null:lastEventReference.orElse(null), mostRecentEventReference), exception );
 		}
 	
 		private Event<CONSUMED_EVENT_TYPE> offerEventToProjection ( Event<CONSUMED_EVENT_TYPE> e, Projection<CONSUMED_EVENT_TYPE> projection, EventReference until, Batch batch ) {
 			this.eventsStreamed++;
+			if ( mostRecentEventReference == null || e.reference().happenedAfter(mostRecentEventReference) ) {
+				mostRecentEventReference = e.reference();
+			}
 			if ( until == null || !e.reference().happenedAfter(until) ) {
 				if ( projection.eventQuery().matches(e) ) {
 					batch.startBatchIfNeeded(e);
@@ -444,30 +451,42 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 	 * @param eventsStreamed the total number of events streamed from the event source
 	 * @param eventsHandled the number of events actually processed by the projection handler
 	 * @param queriesDone the number of batch queries executed against the event source
-	 * @param lastEventReference the reference to the last event processed, or null if no events were processed
+	 * @param lastEventReference the reference to the last event processed (cursor position), or null if no events were processed
+	 * @param mostRecentEventReference the chronologically newest event reference seen during processing, or null if no events were processed.
+	 *        For forward queries this equals lastEventReference. For backward queries this is the first event returned (the newest),
+	 *        which is the correct reference for optimistic locking via {@link org.sliceworkz.eventstore.stream.AppendCriteria}.
 	 */
-	public record ProjectorMetrics ( long eventsStreamed, long eventsHandled, long queriesDone, EventReference lastEventReference) {
+	public record ProjectorMetrics ( long eventsStreamed, long eventsHandled, long queriesDone, EventReference lastEventReference, EventReference mostRecentEventReference) {
 
 		/**
 		 * Combines these metrics with another set of metrics.
 		 * <p>
 		 * Used internally to accumulate metrics across multiple projection runs.
-		 * The lastEventReference from the other metrics is used (as it's the most recent).
+		 * The lastEventReference from the other metrics is used (as it's the most recent run).
+		 * The mostRecentEventReference is the chronologically newest across both.
 		 *
 		 * @param other the metrics to add to these metrics
 		 * @return a new ProjectorMetrics with combined values
 		 */
 		public ProjectorMetrics add ( ProjectorMetrics other) {
-			return new ProjectorMetrics(this.eventsStreamed+other.eventsStreamed, this.eventsHandled + other.eventsHandled, this.queriesDone + other.queriesDone, other.lastEventReference );
+			EventReference newestMostRecent;
+			if ( this.mostRecentEventReference == null ) {
+				newestMostRecent = other.mostRecentEventReference;
+			} else if ( other.mostRecentEventReference == null ) {
+				newestMostRecent = this.mostRecentEventReference;
+			} else {
+				newestMostRecent = other.mostRecentEventReference.happenedAfter(this.mostRecentEventReference) ? other.mostRecentEventReference : this.mostRecentEventReference;
+			}
+			return new ProjectorMetrics(this.eventsStreamed+other.eventsStreamed, this.eventsHandled + other.eventsHandled, this.queriesDone + other.queriesDone, other.lastEventReference, newestMostRecent );
 		}
 
 		/**
-		 * Creates empty metrics with all counts at zero and no last event reference.
+		 * Creates empty metrics with all counts at zero and no event references.
 		 *
 		 * @return empty ProjectorMetrics
 		 */
 		public static ProjectorMetrics empty ( ) {
-			return new ProjectorMetrics(0, 0, 0, null);
+			return new ProjectorMetrics(0, 0, 0, null, null);
 		}
 
 		/**
@@ -479,7 +498,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		 * @return ProjectorMetrics with zero counts and the specified reference
 		 */
 		public static ProjectorMetrics skipUntil ( EventReference lastEventReference ) {
-			return new ProjectorMetrics(0, 0, 0, lastEventReference);
+			return new ProjectorMetrics(0, 0, 0, lastEventReference, null);
 		}
 
 	}

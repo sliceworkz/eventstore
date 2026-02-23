@@ -699,8 +699,8 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	}
 
 	@Test
-	void testProjectorBackwardsWithLimitReturnsNewestEventReference ( ) {
-		// The lastEventReference should point to the newest event (the first returned in a backwards query),
+	void testProjectorBackwardsWithLimitReturnsMostRecentEventReference ( ) {
+		// mostRecentEventReference should point to the newest event (the first returned in a backwards query),
 		// not the oldest. This is critical for optimistic locking.
 
 		BackwardsLimitProjection projection = new BackwardsLimitProjection();
@@ -710,7 +710,18 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		EventReference refFour = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).findFirst().get().reference();
 
 		ProjectorMetrics metrics = projector.run();
-		assertEquals(refFour, metrics.lastEventReference());
+		assertEquals(refFour, metrics.mostRecentEventReference());
+		assertEquals(refFour, metrics.lastEventReference()); // with limit(1), both point to the same event
+	}
+
+	@Test
+	void testProjectorForwardMostRecentEqualsLast ( ) {
+		// For forward queries, mostRecentEventReference should always equal lastEventReference.
+		TestProjection projection = new TestProjection();
+		var projector = Projector.from(es).towards(projection).build();
+
+		ProjectorMetrics metrics = projector.run();
+		assertEquals(metrics.lastEventReference(), metrics.mostRecentEventReference());
 	}
 
 	private List<Event<MockDomainEvent>> append ( EventStream<MockDomainEvent> es, MockDomainEvent event, Tags tags ) {

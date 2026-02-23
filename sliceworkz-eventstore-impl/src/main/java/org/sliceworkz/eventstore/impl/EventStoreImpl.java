@@ -196,16 +196,15 @@ public class EventStoreImpl implements EventStore {
 		private final EventPayloadSerializerDeserializer serde;
 
 		private Counter meterAppend;
-		private Counter meterAppendEvent;
 		private Counter meterAppendOptimisticLock;
 		private Counter meterQuery;
-		private Counter meterQueryEvent;
 		private Counter meterGetEvent;
 		private Counter meterBookmarkPlace;
 		private Counter meterBookmarkGet;
 		private Timer timerQuery;
 		private Timer timerAppend;
 
+		private final io.micrometer.core.instrument.Tags baseTags;
 		private final AtomicReference<Long> gaugeHighestEventPosition = new AtomicReference<>();
 
 		private final List<EventStreamEventuallyConsistentAppendListener> eventuallyConsistentSubscribers = new CopyOnWriteArrayList<>();
@@ -222,27 +221,25 @@ public class EventStoreImpl implements EventStore {
 			String tagPurposeValue = Optional.ofNullable(eventStreamId.purpose()).orElse(""); // null is not allowed
 			String tagTypedValue = String.valueOf(serde.isTyped());
 			
-			io.micrometer.core.instrument.Tags tags = io.micrometer.core.instrument.Tags
+			this.baseTags = io.micrometer.core.instrument.Tags
 					.of("context", tagContextValue, "purpose", tagPurposeValue, "typed", tagTypedValue, "storage", eventStorage.name());
-			
-			// prepare counters for metering
-			this.meterAppend = meterRegistry.counter("sliceworkz.eventstore.append", tags);
-			this.meterAppendEvent = meterRegistry.counter("sliceworkz.eventstore.append.event", tags);
-			this.meterQuery = meterRegistry.counter("sliceworkz.eventstore.query", tags);
-			this.meterQueryEvent = meterRegistry.counter("sliceworkz.eventstore.query.event", tags);
-			this.meterAppendOptimisticLock = meterRegistry.counter("sliceworkz.eventstore.append.optimisticlock", tags);
-			this.meterGetEvent = meterRegistry.counter("sliceworkz.eventstore.get.event", tags);
-			this.meterBookmarkPlace = meterRegistry.counter("sliceworkz.eventstore.bookmark.place", tags);
-			this.meterBookmarkGet= meterRegistry.counter("sliceworkz.eventstore.bookmark.get", tags);
 
-			this.timerQuery = meterRegistry.timer("sliceworkz.eventstore.query.duration", tags);
-			this.timerAppend = meterRegistry.timer("sliceworkz.eventstore.append.duration", tags);
+			// prepare counters for metering
+			this.meterAppend = meterRegistry.counter("sliceworkz.eventstore.append", baseTags);
+			this.meterQuery = meterRegistry.counter("sliceworkz.eventstore.query", baseTags);
+			this.meterAppendOptimisticLock = meterRegistry.counter("sliceworkz.eventstore.append.optimisticlock", baseTags);
+			this.meterGetEvent = meterRegistry.counter("sliceworkz.eventstore.get.event", baseTags);
+			this.meterBookmarkPlace = meterRegistry.counter("sliceworkz.eventstore.bookmark.place", baseTags);
+			this.meterBookmarkGet= meterRegistry.counter("sliceworkz.eventstore.bookmark.get", baseTags);
+
+			this.timerQuery = meterRegistry.timer("sliceworkz.eventstore.query.duration", baseTags);
+			this.timerAppend = meterRegistry.timer("sliceworkz.eventstore.append.duration", baseTags);
 
 			// register gauge for highest event position
-			meterRegistry.gauge("sliceworkz.eventstore.append.position", tags, gaugeHighestEventPosition, ref->{Long val = ref.get(); return val != null ? val.doubleValue() : Double.NaN;});
+			meterRegistry.gauge("sliceworkz.eventstore.append.position", baseTags, gaugeHighestEventPosition, ref->{Long val = ref.get(); return val != null ? val.doubleValue() : Double.NaN;});
 
 			// increment number of stream objects created
-			meterRegistry.counter("sliceworkz.eventstore.stream.create", tags).increment();
+			meterRegistry.counter("sliceworkz.eventstore.stream.create", baseTags).increment();
 		}
 		
 		@Override
@@ -277,7 +274,7 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		private Stream<Event<EVENT_TYPE>> enrichAfterQuery ( StoredEvent storedEvent, QueryDirection direction ) {
-			meterQueryEvent.increment(); // one event more seen coming from storage
+			meterRegistry.counter("sliceworkz.eventstore.query.event", baseTags.and("eventtype", storedEvent.type().name())).increment();
 			return enrich(storedEvent, direction);
 		}
 
@@ -302,7 +299,7 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		private EventToStore reduce ( EphemeralEvent<? extends EVENT_TYPE> event, EventStreamId streamToAppendTo ) {
-			meterAppendEvent.increment(); // one event more sent to storage for appending
+			meterRegistry.counter("sliceworkz.eventstore.append.event", baseTags.and("eventtype", event.type().name())).increment();
 			Tags tags = event.tags(); 
 			TypeAndSerializedPayload data = serde.serialize(event.data());
 			return new EventToStore(streamToAppendTo, data.type(), data.immutablePayload(), data.erasablePayload(), tags, event.idempotencyKey());

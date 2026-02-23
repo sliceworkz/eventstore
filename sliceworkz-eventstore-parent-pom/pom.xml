@@ -44,7 +44,7 @@
 		<testcontainers.postgresql.version>1.21.4</testcontainers.postgresql.version>
 	    <awaitility.version>4.3.0</awaitility.version>
 
-		<maven.maven-surefire-plugin.version>3.5.4</maven.maven-surefire-plugin.version>
+		<maven.maven-surefire-plugin.version>3.5.5</maven.maven-surefire-plugin.version>
 		<maven.maven-compiler-plugin.version>3.15.0</maven.maven-compiler-plugin.version>
 		<maven.maven-source-plugin.version>3.4.0</maven.maven-source-plugin.version>
 		<maven.maven-javadoc-plugin.version>3.12.0</maven.maven-javadoc-plugin.version>

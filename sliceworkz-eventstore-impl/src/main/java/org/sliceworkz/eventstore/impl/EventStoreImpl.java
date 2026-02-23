@@ -270,30 +270,17 @@ public class EventStoreImpl implements EventStore {
 			QueryDirection direction = query.isBackwards() ? QueryDirection.BACKWARD : QueryDirection.FORWARD;
 			EventFilter originalFilter = query.filter();
 			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), cursor, limit, direction)
-				.flatMap(se->enrichMultiAfterQuery(se, direction))
+				.flatMap(se->enrichAfterQuery(se, direction))
 				.filter(e->originalFilter.matches(e)));
 		}
 
-		private Stream<Event<EVENT_TYPE>> enrichMultiAfterQuery ( StoredEvent storedEvent, QueryDirection direction ) {
+		private Stream<Event<EVENT_TYPE>> enrichAfterQuery ( StoredEvent storedEvent, QueryDirection direction ) {
 			meterQueryEvent.increment(); // one event more seen coming from storage
-			return enrichMulti(storedEvent, direction);
-		}
-
-		private Event<EVENT_TYPE> enrichAfterAppend ( StoredEvent storedEvent ) {
-			// not metered, as this is used for appended events
-			return enrich(storedEvent);
+			return enrich(storedEvent, direction);
 		}
 
 		@SuppressWarnings("unchecked")
-		private Event<EVENT_TYPE> enrich ( StoredEvent storedEvent ) {
-			// not metered, depends on the usage
-			TypeAndPayload typeAndPayload = serde.deserialize(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.immutableData(), storedEvent.erasableData())).getFirst();
-			EVENT_TYPE data = (EVENT_TYPE)typeAndPayload.eventData();
-			return new Event<>(storedEvent.stream(), typeAndPayload.type(), storedEvent.type(), storedEvent.reference(), data, storedEvent.tags(), storedEvent.timestamp());
-		}
-
-		@SuppressWarnings("unchecked")
-		private Stream<Event<EVENT_TYPE>> enrichMulti ( StoredEvent storedEvent, QueryDirection direction ) {
+		private Stream<Event<EVENT_TYPE>> enrich ( StoredEvent storedEvent, QueryDirection direction ) {
 			List<TypeAndPayload> results = serde.deserialize(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.immutableData(), storedEvent.erasableData()));
 			// For backward queries, reverse the upcasted sub-events so they appear in descending order,
 			// consistent with the overall backward traversal of stored events.
@@ -357,7 +344,7 @@ public class EventStoreImpl implements EventStore {
 			// append events to the eventstore (with optimistic locking)
 			List<Event<EVENT_TYPE>> appendedEvents;
 			try {
-				appendedEvents = timerAppend.record(()->eventStorage.append(appendCriteria, Optional.of(streamToAppendTo), reduce(events, streamToAppendTo)).stream().map(this::enrichAfterAppend).toList());
+				appendedEvents = timerAppend.record(()->eventStorage.append(appendCriteria, Optional.of(streamToAppendTo), reduce(events, streamToAppendTo)).stream().flatMap(se->enrich(se, QueryDirection.FORWARD)).toList());
 				meterAppend.increment();
 
 				// update highest event position gauge

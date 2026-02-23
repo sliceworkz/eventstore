@@ -440,10 +440,10 @@ public class EventStoreImpl implements EventStore {
 		@Override
 		public List<Event<EVENT_TYPE>> getEventById(EventId eventId) {
 			meterGetEvent.increment();
-			// filters out events that can not be read by this stream, then upcasts via enrichMulti
+			// filters out events that can not be read by this stream, then upcasts via enrich
 			return eventStorage.getEventById(eventId)
 				.filter(e->eventStreamId.canRead(e.stream()))
-				.map(e->enrichMulti(e, QueryDirection.FORWARD))
+				.map(e->enrich(e, QueryDirection.FORWARD))
 				.map(s->s.toList())
 				.orElse(List.of());
 		}

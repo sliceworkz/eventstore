@@ -287,14 +287,14 @@ public class EventStoreImpl implements EventStore {
 		@SuppressWarnings("unchecked")
 		private Event<EVENT_TYPE> enrich ( StoredEvent storedEvent ) {
 			// not metered, depends on the usage
-			TypeAndPayload typeAndPayload = serde.deserialize(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.immutableData(), storedEvent.erasableData()));
+			TypeAndPayload typeAndPayload = serde.deserialize(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.immutableData(), storedEvent.erasableData())).getFirst();
 			EVENT_TYPE data = (EVENT_TYPE)typeAndPayload.eventData();
 			return new Event<>(storedEvent.stream(), typeAndPayload.type(), storedEvent.type(), storedEvent.reference(), data, storedEvent.tags(), storedEvent.timestamp());
 		}
 
 		@SuppressWarnings("unchecked")
 		private Stream<Event<EVENT_TYPE>> enrichMulti ( StoredEvent storedEvent, QueryDirection direction ) {
-			List<TypeAndPayload> results = serde.deserializeMulti(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.immutableData(), storedEvent.erasableData()));
+			List<TypeAndPayload> results = serde.deserialize(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.immutableData(), storedEvent.erasableData()));
 			// For backward queries, reverse the upcasted sub-events so they appear in descending order,
 			// consistent with the overall backward traversal of stored events.
 			if ( direction == QueryDirection.BACKWARD ) {

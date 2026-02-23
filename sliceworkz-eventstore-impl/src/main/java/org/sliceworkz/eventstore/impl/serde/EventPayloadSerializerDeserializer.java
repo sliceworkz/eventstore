@@ -78,39 +78,25 @@ public interface EventPayloadSerializerDeserializer {
 	TypeAndSerializedPayload serialize(Object payload);
 
 	/**
-	 * Deserializes a JSON representation back to a domain event object.
-	 * <p>
-	 * Merges immutable and erasable data (if present) to reconstruct the complete event object.
-	 * For typed mode, the event type name is used to determine the target Java class.
-	 * For raw mode, returns a Jackson JsonNode.
-	 *
-	 * @param serialized the serialized event including type and separated payloads
-	 * @return the deserialized event type and data object
-	 * @throws RuntimeException if deserialization fails or type mapping is not found
-	 */
-	TypeAndPayload deserialize(TypeAndSerializedPayload serialized);
-
-	/**
 	 * Deserializes a JSON representation back to zero or more domain event objects.
+	 * <p>
+	 * Merges immutable and erasable data (if present) to reconstruct the complete event object(s).
+	 * For typed mode, the event type name is used to determine the target Java class.
+	 * For raw mode, returns a Jackson JsonNode wrapped in a singleton list.
 	 * <p>
 	 * This method supports multi-event upcasting where a single historical event can produce
 	 * zero or more current events. This is useful for:
 	 * <ul>
 	 *   <li><b>Event splitting:</b> One legacy event becomes multiple current events</li>
 	 *   <li><b>Event filtering:</b> Obsolete legacy events produce zero current events</li>
-	 *   <li><b>Standard upcasting:</b> One legacy event becomes one current event (default)</li>
+	 *   <li><b>Standard deserialization:</b> One stored event becomes one current event</li>
 	 * </ul>
-	 * <p>
-	 * The default implementation delegates to {@link #deserialize(TypeAndSerializedPayload)} and
-	 * wraps the result in a singleton list.
 	 *
 	 * @param serialized the serialized event including type and separated payloads
 	 * @return a list of deserialized event types and data objects (may be empty, never null)
 	 * @throws RuntimeException if deserialization fails or type mapping is not found
 	 */
-	default List<TypeAndPayload> deserializeMulti(TypeAndSerializedPayload serialized) {
-		return List.of(deserialize(serialized));
-	}
+	List<TypeAndPayload> deserialize(TypeAndSerializedPayload serialized);
 
 	/**
 	 * Checks whether this serializer/deserializer can deserialize events of the given type name.

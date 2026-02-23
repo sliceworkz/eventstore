@@ -56,33 +56,14 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 	private final Map<EventType, Set<EventType>> mostRecentMultiTypes = new HashMap<>(); // for interface hierarchies, this maps interface->set of interface-implementing event types
 	
 	@Override
-	public TypeAndPayload deserialize ( TypeAndSerializedPayload serialized ) {
-		TypeAndPayload result;
-		try {
-			EventDeserializer deserializer = deserializers.get(serialized.type().name());
-			if ( deserializer == null  ) {
-				throw new RuntimeException("No mapping found for event type '" + serialized.type().name() + "'");
-			}
-			result = new TypeAndPayload(deserializer.eventType(), deserializer.deserialize(serialized.immutablePayload(), serialized.erasablePayload()));
-		} catch (Exception e) {
-			if ( deserializers.keySet().isEmpty() ) {
-				throw new RuntimeException("Failed to deserialize event data for type '%s', no EventType mappings configured. Pass the Event root Class when creating the EventStream".formatted(serialized.type().name()) , e);
-			} else {
-				throw new RuntimeException("Failed to deserialize event data for type '%s', known mappings for %s".formatted(serialized.type().name(), deserializers.keySet()) , e);
-			}
-		}
-		return result;
-	}
-
-	@Override
-	public List<TypeAndPayload> deserializeMulti ( TypeAndSerializedPayload serialized ) {
+	public List<TypeAndPayload> deserialize ( TypeAndSerializedPayload serialized ) {
 		List<TypeAndPayload> result;
 		try {
 			EventDeserializer deserializer = deserializers.get(serialized.type().name());
 			if ( deserializer == null  ) {
 				throw new RuntimeException("No mapping found for event type '" + serialized.type().name() + "'");
 			}
-			result = deserializer.deserializeMulti(serialized.immutablePayload(), serialized.erasablePayload());
+			result = deserializer.deserialize(serialized.immutablePayload(), serialized.erasablePayload());
 		} catch (Exception e) {
 			if ( deserializers.keySet().isEmpty() ) {
 				throw new RuntimeException("Failed to deserialize event data for type '%s', no EventType mappings configured. Pass the Event root Class when creating the EventStream".formatted(serialized.type().name()) , e);
@@ -221,11 +202,8 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 	
 	
 	interface EventDeserializer {
-		Object deserialize ( String immutablePayload, String erasablePayload );
+		List<TypeAndPayload> deserialize ( String immutablePayload, String erasablePayload );
 		EventType eventType ( );
-		default List<TypeAndPayload> deserializeMulti ( String immutablePayload, String erasablePayload ) {
-			return List.of(new TypeAndPayload(eventType(), deserialize(immutablePayload, erasablePayload)));
-		}
 	}
 	
 	class InstantiationEventDeserializer implements EventDeserializer {
@@ -239,10 +217,10 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		}
 
 		@Override
-		public Object deserialize ( String immutablePayload, String erasablePayload ) {
+		public List<TypeAndPayload> deserialize ( String immutablePayload, String erasablePayload ) {
 			Object object;
 			try {
-				
+
 				if ( erasablePayload == null ) {
 					object = immutableDataMapper.readValue(immutablePayload, eventClass);
 				} else {
@@ -261,8 +239,8 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 				throw new RuntimeException(e);
 			} catch (JsonProcessingException e) {
 				throw new RuntimeException(e);
-			} 
-			return object;
+			}
+			return List.of(new TypeAndPayload(eventType, object));
 		}
 
 		@Override
@@ -283,31 +261,22 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		}
 
 		@Override
-		public Object deserialize ( String immutablePayload, String erasablePayload ) {
-			// Single-event path: delegate to deserializeMulti and return the first result.
-			// This path is not used for upcasted events during queries (which use deserializeMulti),
-			// but may be called for non-query scenarios (e.g., after append).
-			List<TypeAndPayload> results = deserializeMulti(immutablePayload, erasablePayload);
-			return results.isEmpty() ? null : results.getFirst().eventData();
+		public List<TypeAndPayload> deserialize ( String immutablePayload, String erasablePayload ) {
+			Object historicalEvent = deser.deserialize(immutablePayload, erasablePayload).getFirst().eventData();
+			List<Object> upcastedEvents = upcaster.upcast(historicalEvent);
+			return upcastedEvents.stream()
+					.map(e -> new TypeAndPayload(EventType.of(e), e))
+					.toList();
 		}
 
 		@Override
 		public EventType eventType() {
-			// For upcasters, the event type is determined per-event in deserializeMulti.
+			// For upcasters, the event type is determined per-event in deserialize.
 			// This fallback returns the first target type from targetTypes(), or null if empty.
 			return upcaster.targetTypes().stream()
 					.map(EventType::of)
 					.findFirst()
 					.orElse(null);
-		}
-
-		@Override
-		public List<TypeAndPayload> deserializeMulti ( String immutablePayload, String erasablePayload ) {
-			Object historicalEvent = deser.deserialize(immutablePayload, erasablePayload);
-			List<Object> upcastedEvents = upcaster.upcast(historicalEvent);
-			return upcastedEvents.stream()
-					.map(e -> new TypeAndPayload(EventType.of(e), e))
-					.toList();
 		}
 
 	}

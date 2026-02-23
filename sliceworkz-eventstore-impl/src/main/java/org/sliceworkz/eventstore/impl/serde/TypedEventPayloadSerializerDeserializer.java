@@ -203,7 +203,6 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 	
 	interface EventDeserializer {
 		List<TypeAndPayload> deserialize ( String immutablePayload, String erasablePayload );
-		EventType eventType ( );
 	}
 	
 	class InstantiationEventDeserializer implements EventDeserializer {
@@ -243,11 +242,6 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 			return List.of(new TypeAndPayload(eventType, object));
 		}
 
-		@Override
-		public EventType eventType() {
-			return eventType;
-		}
-		
 	}
 	
 	class InstantiationAndUpcastEventDeserializer implements EventDeserializer {
@@ -267,16 +261,6 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 			return upcastedEvents.stream()
 					.map(e -> new TypeAndPayload(EventType.of(e), e))
 					.toList();
-		}
-
-		@Override
-		public EventType eventType() {
-			// For upcasters, the event type is determined per-event in deserialize.
-			// This fallback returns the first target type from targetTypes(), or null if empty.
-			return upcaster.targetTypes().stream()
-					.map(EventType::of)
-					.findFirst()
-					.orElse(null);
 		}
 
 	}

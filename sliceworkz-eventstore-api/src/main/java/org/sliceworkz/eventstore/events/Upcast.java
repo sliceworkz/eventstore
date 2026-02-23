@@ -17,6 +17,9 @@
  */
 package org.sliceworkz.eventstore.events;
 
+import java.util.List;
+import java.util.Set;
+
 /**
  * Transforms a historical event to its current domain event representation.
  * <p>
@@ -47,7 +50,7 @@ package org.sliceworkz.eventstore.events;
  *   <li><b>Type Safety:</b> Generic parameters ensure compile-time verification of event types</li>
  * </ul>
  *
- * <h2>Basic Example:</h2>
+ * <h2>Basic Example - One-to-One Upcast:</h2>
  * <pre>{@code
  * // Legacy event (stored in database)
  * sealed interface CustomerHistoricalEvent {
@@ -65,75 +68,62 @@ package org.sliceworkz.eventstore.events;
  *     implements Upcast<CustomerHistoricalEvent.CustomerRegistered, CustomerEvent.CustomerRegisteredV2> {
  *
  *     @Override
- *     public CustomerEvent.CustomerRegisteredV2 upcast(CustomerHistoricalEvent.CustomerRegistered historical) {
- *         // Transform String to Name value object
- *         return new CustomerEvent.CustomerRegisteredV2(new Name(historical.name()));
+ *     public List<CustomerEvent.CustomerRegisteredV2> upcast(CustomerHistoricalEvent.CustomerRegistered historical) {
+ *         return List.of(new CustomerEvent.CustomerRegisteredV2(new Name(historical.name())));
  *     }
  *
  *     @Override
- *     public Class<CustomerEvent.CustomerRegisteredV2> targetType() {
- *         return CustomerEvent.CustomerRegisteredV2.class;
+ *     public Set<Class<? extends CustomerEvent.CustomerRegisteredV2>> targetTypes() {
+ *         return Set.of(CustomerEvent.CustomerRegisteredV2.class);
  *     }
  * }
  * }</pre>
  *
- * <h2>Advanced Example - Adding New Fields:</h2>
+ * <h2>Example - Splitting One Event Into Multiple:</h2>
  * <pre>{@code
- * // Legacy: event without email field
- * @LegacyEvent(upcast = CustomerRegisteredUpcaster.class)
- * record CustomerRegistered(String customerId, String name) implements CustomerHistoricalEvent {}
+ * // Legacy event that combined customer and address data
+ * @LegacyEvent(upcast = FullCustomerRegisteredUpcaster.class)
+ * record FullCustomerRegistered(String name, String street, String city) implements CustomerHistoricalEvent {}
  *
- * // Current: event with required email field
- * record CustomerRegisteredV2(String customerId, Name name, Email email) implements CustomerEvent {}
+ * // Current events: split into two separate concerns
+ * record CustomerRegisteredV2(Name name) implements CustomerEvent {}
+ * record AddressRecorded(String street, String city) implements CustomerEvent {}
  *
- * // Upcaster: provide default for missing field
- * public class CustomerRegisteredUpcaster
- *     implements Upcast<CustomerHistoricalEvent.CustomerRegistered, CustomerEvent.CustomerRegisteredV2> {
+ * public class FullCustomerRegisteredUpcaster
+ *     implements Upcast<CustomerHistoricalEvent.FullCustomerRegistered, CustomerEvent> {
  *
  *     @Override
- *     public CustomerEvent.CustomerRegisteredV2 upcast(CustomerHistoricalEvent.CustomerRegistered historical) {
- *         return new CustomerEvent.CustomerRegisteredV2(
- *             historical.customerId(),
- *             new Name(historical.name()),
- *             Email.unknown() // default value for new required field
+ *     public List<CustomerEvent> upcast(CustomerHistoricalEvent.FullCustomerRegistered historical) {
+ *         return List.of(
+ *             new CustomerEvent.CustomerRegisteredV2(new Name(historical.name())),
+ *             new CustomerEvent.AddressRecorded(historical.street(), historical.city())
  *         );
  *     }
  *
  *     @Override
- *     public Class<CustomerEvent.CustomerRegisteredV2> targetType() {
- *         return CustomerEvent.CustomerRegisteredV2.class;
+ *     public Set<Class<? extends CustomerEvent>> targetTypes() {
+ *         return Set.of(CustomerEvent.CustomerRegisteredV2.class, CustomerEvent.AddressRecorded.class);
  *     }
  * }
  * }</pre>
  *
- * <h2>Advanced Example - Relaxing Validation:</h2>
+ * <h2>Example - Filtering Out Events (0 Events):</h2>
  * <pre>{@code
- * // Current Name value object with strict validation
- * public record Name(String value) {
- *     public Name {
- *         if (value == null || value.length() < 3 || value.length() > 20) {
- *             throw new IllegalArgumentException("Name must be 3-20 characters");
- *         }
- *     }
+ * // Legacy event that is no longer relevant
+ * @LegacyEvent(upcast = ObsoleteEventUpcaster.class)
+ * record CustomerNoteAdded(String note) implements CustomerHistoricalEvent {}
  *
- *     // Lenient constructor for upcasting legacy data
- *     public static Name fromLegacy(String value) {
- *         return new Name(value == null || value.isEmpty() ? "Unknown" : value);
- *     }
- * }
- *
- * public class CustomerRegisteredUpcaster
- *     implements Upcast<CustomerHistoricalEvent.CustomerRegistered, CustomerEvent.CustomerRegisteredV2> {
+ * public class ObsoleteEventUpcaster
+ *     implements Upcast<CustomerHistoricalEvent.CustomerNoteAdded, CustomerEvent> {
  *
  *     @Override
- *     public CustomerEvent.CustomerRegisteredV2 upcast(CustomerHistoricalEvent.CustomerRegistered historical) {
- *         // Use lenient factory method to handle legacy data that doesn't meet new rules
- *         return new CustomerEvent.CustomerRegisteredV2(Name.fromLegacy(historical.name()));
+ *     public List<CustomerEvent> upcast(CustomerHistoricalEvent.CustomerNoteAdded historical) {
+ *         return List.of(); // filter out this legacy event
  *     }
  *
  *     @Override
- *     public Class<CustomerEvent.CustomerRegisteredV2> targetType() {
- *         return CustomerEvent.CustomerRegisteredV2.class;
+ *     public Set<Class<? extends CustomerEvent>> targetTypes() {
+ *         return Set.of();
  *     }
  * }
  * }</pre>
@@ -146,7 +136,7 @@ package org.sliceworkz.eventstore.events;
 public interface Upcast<HISTORICAL_EVENT,DOMAIN_EVENT> {
 
 	/**
-	 * Transforms a historical event instance to its current domain event representation.
+	 * Transforms a historical event instance to zero or more current domain event representations.
 	 * <p>
 	 * This method is called automatically by the event store framework during event deserialization
 	 * when a legacy event is read from storage. The implementation should be idempotent, stateless,
@@ -155,26 +145,38 @@ public interface Upcast<HISTORICAL_EVENT,DOMAIN_EVENT> {
 	 * Upcasters should handle cases where legacy data may not conform to current validation rules.
 	 * For example, if a new value object enforces length constraints, the upcaster should either
 	 * use a lenient constructor or provide sensible defaults for legacy data that violates the new rules.
-	 *
-	 * @param historicalEvent the legacy event instance to transform (never null)
-	 * @return the current domain event representation (must not be null)
-	 */
-	DOMAIN_EVENT upcast ( HISTORICAL_EVENT historicalEvent );
-
-	/**
-	 * Returns the target event type that this upcaster produces.
 	 * <p>
-	 * This method is used by the event store framework to:
+	 * Common return patterns:
 	 * <ul>
-	 *   <li>Enable filtering on upcasted event types in {@link org.sliceworkz.eventstore.query.EventQuery}</li>
-	 *   <li>Maintain type information for runtime type checking</li>
-	 *   <li>Support polymorphic event handling in projections</li>
+	 *   <li><b>One-to-one:</b> Return {@code List.of(newEvent)} for simple transformations or renames</li>
+	 *   <li><b>Splitting:</b> Return {@code List.of(event1, event2)} to split one historical event
+	 *       into multiple current events</li>
+	 *   <li><b>Filtering:</b> Return {@code List.of()} to exclude obsolete or irrelevant historical events</li>
 	 * </ul>
 	 * <p>
-	 * The returned class must match the {@code DOMAIN_EVENT} generic parameter.
+	 * All events in the returned list share the same {@link org.sliceworkz.eventstore.events.EventReference},
+	 * {@link Tags}, and timestamp from the original stored event.
 	 *
-	 * @return the Class object of the target event type (must not be null)
+	 * @param historicalEvent the legacy event instance to transform (never null)
+	 * @return a list of current domain event representations (may be empty, must not be null,
+	 *         individual elements must not be null)
 	 */
-	Class<DOMAIN_EVENT> targetType ( );
+	List<DOMAIN_EVENT> upcast ( HISTORICAL_EVENT historicalEvent );
+
+	/**
+	 * Returns all target event types that this upcaster can produce.
+	 * <p>
+	 * This method is used by the event store framework to expand queries so that legacy event types
+	 * are included when querying for any of the target types. For example, if a legacy event
+	 * {@code FullCustomerRegistered} can be upcasted to both {@code CustomerRegisteredV2} and
+	 * {@code AddressRecorded}, then querying for either of those types will also fetch the
+	 * legacy {@code FullCustomerRegistered} events.
+	 * <p>
+	 * For one-to-one upcasters, return a singleton set: {@code Set.of(MyEvent.class)}.
+	 * For filtering upcasters that produce no events, return an empty set: {@code Set.of()}.
+	 *
+	 * @return the set of all possible target event type classes (must not be null)
+	 */
+	Set<Class<? extends DOMAIN_EVENT>> targetTypes ( );
 
 }

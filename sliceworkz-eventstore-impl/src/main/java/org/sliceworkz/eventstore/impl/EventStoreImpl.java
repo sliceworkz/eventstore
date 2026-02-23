@@ -26,6 +26,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import org.slf4j.Logger;
@@ -265,28 +266,39 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		@Override
-		public Stream<Event<EVENT_TYPE>> query(EventQuery query, EventReference cursor, Limit limit ) {
+		public Stream<Event<EVENT_TYPE>> query(EventQuery query, EventReference cursor, Limit limit, Consumer<EventReference> storedEventCursorTracker ) {
 			meterQuery.increment(); // one query done
 			QueryDirection direction = query.isBackwards() ? QueryDirection.BACKWARD : QueryDirection.FORWARD;
-			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), cursor, limit, direction).map(this::enrichAfterQuery));
-		}
-		
-		private Event<EVENT_TYPE> enrichAfterQuery ( StoredEvent storedEvent ) {
-			meterQueryEvent.increment(); // one event more seen coming from storage
-			return enrich(storedEvent);
+			EventFilter originalFilter = query.filter();
+			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), cursor, limit, direction)
+				.peek(se -> storedEventCursorTracker.accept(se.reference()))
+				.flatMap(se->enrichAfterQuery(se, direction))
+				.filter(e->originalFilter.matches(e)));
 		}
 
-		private Event<EVENT_TYPE> enrichAfterAppend ( StoredEvent storedEvent ) {
-			// not metered, as this is used for appended events
-			return enrich(storedEvent);
+		private Stream<Event<EVENT_TYPE>> enrichAfterQuery ( StoredEvent storedEvent, QueryDirection direction ) {
+			meterQueryEvent.increment(); // one event more seen coming from storage
+			return enrich(storedEvent, direction);
 		}
-		
+
 		@SuppressWarnings("unchecked")
-		private Event<EVENT_TYPE> enrich ( StoredEvent storedEvent ) {
-			// not metered, depends on the usage
-			TypeAndPayload typeAndPayload = serde.deserialize(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.immutableData(), storedEvent.erasableData()));
-			EVENT_TYPE data = (EVENT_TYPE)typeAndPayload.eventData();
-			return new Event<>(storedEvent.stream(), typeAndPayload.type(), storedEvent.type(), storedEvent.reference(), data, storedEvent.tags(), storedEvent.timestamp());
+		private Stream<Event<EVENT_TYPE>> enrich ( StoredEvent storedEvent, QueryDirection direction ) {
+			List<TypeAndPayload> results = serde.deserialize(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.immutableData(), storedEvent.erasableData()));
+			// For backward queries, reverse the upcasted sub-events so they appear in descending order,
+			// consistent with the overall backward traversal of stored events.
+			if ( direction == QueryDirection.BACKWARD ) {
+				results = results.reversed();
+			}
+			EventReference baseRef = storedEvent.reference();
+			List<TypeAndPayload> finalResults = results;
+			return java.util.stream.IntStream.range(0, finalResults.size()).mapToObj(i -> {
+				TypeAndPayload typeAndPayload = finalResults.get(i);
+				EVENT_TYPE data = (EVENT_TYPE)typeAndPayload.eventData();
+				// Each sub-event gets a unique reference via the index, distinguishing upcasted events
+				// that originate from the same stored event. For single-event results, index is 0.
+				EventReference ref = baseRef.withIndex(direction == QueryDirection.BACKWARD ? finalResults.size() - 1 - i : i);
+				return new Event<>(storedEvent.stream(), typeAndPayload.type(), storedEvent.type(), ref, data, storedEvent.tags(), storedEvent.timestamp());
+			});
 		}
 
 		private EventToStore reduce ( EphemeralEvent<? extends EVENT_TYPE> event, EventStreamId streamToAppendTo ) {
@@ -334,7 +346,7 @@ public class EventStoreImpl implements EventStore {
 			// append events to the eventstore (with optimistic locking)
 			List<Event<EVENT_TYPE>> appendedEvents;
 			try {
-				appendedEvents = timerAppend.record(()->eventStorage.append(appendCriteria, Optional.of(streamToAppendTo), reduce(events, streamToAppendTo)).stream().map(this::enrichAfterAppend).toList());
+				appendedEvents = timerAppend.record(()->eventStorage.append(appendCriteria, Optional.of(streamToAppendTo), reduce(events, streamToAppendTo)).stream().flatMap(se->enrich(se, QueryDirection.FORWARD)).toList());
 				meterAppend.increment();
 
 				// update highest event position gauge
@@ -422,16 +434,14 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		@Override
-		public Optional<EventReference> queryReference(EventId id) {
+		public List<Event<EVENT_TYPE>> getEventById(EventId eventId) {
 			meterGetEvent.increment();
-			return eventStorage.getEventById(id).map(this::enrichAfterQuery).map(Event::reference);
-		}
-		
-		@Override
-		public Optional<Event<EVENT_TYPE>> getEventById(EventId eventId) {
-			meterGetEvent.increment();
-			// filters out events that can not be read by this stream
-			return eventStorage.getEventById(eventId).filter(e->eventStreamId.canRead(e.stream())).map(this::enrichAfterQuery);
+			// filters out events that can not be read by this stream, then upcasts via enrich
+			return eventStorage.getEventById(eventId)
+				.filter(e->eventStreamId.canRead(e.stream()))
+				.map(e->enrich(e, QueryDirection.FORWARD))
+				.map(s->s.toList())
+				.orElse(List.of());
 		}
 
 	}

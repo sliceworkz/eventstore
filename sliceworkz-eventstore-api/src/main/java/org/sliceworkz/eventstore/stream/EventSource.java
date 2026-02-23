@@ -17,7 +17,9 @@
  */
 package org.sliceworkz.eventstore.stream;
 
+import java.util.List;
 import java.util.Optional;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import org.sliceworkz.eventstore.events.Event;
@@ -113,10 +115,12 @@ import org.sliceworkz.eventstore.query.Limit;
 public interface EventSource<DOMAIN_EVENT_TYPE> {
 
 	/**
-	 * Queries events from the stream with full control over pagination.
+	 * Queries events from the stream with full control over pagination and raw cursor tracking.
 	 * <p>
-	 * This is the primary query method providing complete control over event retrieval.
-	 * The direction of traversal is determined by the query's direction ({@link EventQuery#backwards()}).
+	 * This method extends the standard query with a {@code storedEventCursorTracker} callback that
+	 * is invoked once for each stored event fetched from storage, <em>before</em> upcasting and
+	 * filtering. This enables callers to track the raw storage cursor even when upcasting
+	 * produces zero enriched events (e.g., when legacy events are filtered out by an upcaster).
 	 * <p>
 	 * The cursor reference enables pagination:
 	 * <ul>
@@ -130,11 +134,29 @@ public interface EventSource<DOMAIN_EVENT_TYPE> {
 	 * @param query the query criteria specifying which events to retrieve and in which direction
 	 * @param cursor optional reference for pagination (after for forward, before for backward), null to start from the beginning/end
 	 * @param limit maximum number of events to return (overrides the query's own limit)
+	 * @param storedEventCursorTracker callback invoked with each raw stored event's reference before upcasting, useful for advancing cursors past events that upcast to zero enriched events
 	 * @return a Stream of events matching the query criteria
 	 * @see EventQuery
 	 * @see Limit
 	 */
-	Stream<Event<DOMAIN_EVENT_TYPE>> query ( EventQuery query, EventReference cursor, Limit limit );
+	Stream<Event<DOMAIN_EVENT_TYPE>> query ( EventQuery query, EventReference cursor, Limit limit, Consumer<EventReference> storedEventCursorTracker );
+
+	/**
+	 * Queries events from the stream with full control over pagination.
+	 * <p>
+	 * This is a convenience overload that delegates to
+	 * {@link #query(EventQuery, EventReference, Limit, Consumer)} with a no-op cursor tracker.
+	 *
+	 * @param query the query criteria specifying which events to retrieve and in which direction
+	 * @param cursor optional reference for pagination (after for forward, before for backward), null to start from the beginning/end
+	 * @param limit maximum number of events to return (overrides the query's own limit)
+	 * @return a Stream of events matching the query criteria
+	 * @see EventQuery
+	 * @see Limit
+	 */
+	default Stream<Event<DOMAIN_EVENT_TYPE>> query ( EventQuery query, EventReference cursor, Limit limit ) {
+		return query(query, cursor, limit, ref -> {});
+	}
 
 	/**
 	 * Queries events from the stream starting from a specific cursor reference.
@@ -165,26 +187,18 @@ public interface EventSource<DOMAIN_EVENT_TYPE> {
 	}
 
 	/**
-	 * Retrieves the event reference for a specific event ID.
+	 * Retrieves events by their stored event ID.
 	 * <p>
-	 * This method is useful when you have an event ID and need to obtain its reference
-	 * (which includes position information) without retrieving the full event.
+	 * This method performs a direct lookup of an event by its ID and returns all events
+	 * that result from deserializing and upcasting the stored event. For non-upcasted events,
+	 * this returns a single-element list. For events that are upcasted into multiple sub-events,
+	 * all sub-events are returned with distinct references (differing by index).
+	 * Returns an empty list if no event with the given ID exists in this stream.
 	 *
-	 * @param id the event ID to look up
-	 * @return an Optional containing the EventReference if found, empty otherwise
+	 * @param eventId the unique identifier of the stored event to retrieve
+	 * @return a list of events produced from the stored event, or an empty list if not found
 	 */
-	Optional<EventReference> queryReference ( EventId id );
-
-	/**
-	 * Retrieves a specific event by its unique event ID.
-	 * <p>
-	 * This method performs a direct lookup of an event by its ID, returning the full
-	 * event with all metadata and data if it exists in this stream.
-	 *
-	 * @param eventId the unique identifier of the event to retrieve
-	 * @return an Optional containing the Event if found, empty otherwise
-	 */
-	Optional<Event<DOMAIN_EVENT_TYPE>> getEventById ( EventId eventId );
+	List<Event<DOMAIN_EVENT_TYPE>> getEventById ( EventId eventId );
 
 
 	/**

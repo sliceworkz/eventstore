@@ -71,24 +71,24 @@ public class ProjectorTest extends AbstractEventStoreTest {
 
 		ProjectorMetrics projectorMetrics = projector.run();
 		assertEquals(4, projection.counter()); // SecondDomainEvent type is left out by the query
-		assertEquals(2, projectorMetrics.queriesDone()); // 1 batch + 1 empty end-of-stream confirmation
+		assertEquals(1, projectorMetrics.queriesDone()); // 1 batch, stored events < batch limit so no extra query needed
 		assertEquals(4,  projectorMetrics.eventsStreamed());
 		assertEquals(4,  projectorMetrics.eventsHandled());
 
 		ProjectorMetrics accumulatedMetrics = projector.accumulatedMetrics();
-		assertEquals(2, accumulatedMetrics.queriesDone());
+		assertEquals(1, accumulatedMetrics.queriesDone());
 		assertEquals(4,  accumulatedMetrics.eventsStreamed());
 		assertEquals(4,  accumulatedMetrics.eventsHandled());
 
 
-		BatchAwareTestProjection batchAwareProjection = new BatchAwareTestProjection();	
+		BatchAwareTestProjection batchAwareProjection = new BatchAwareTestProjection();
 		var batchAwareProjector = Projector.from(es).towards(batchAwareProjection).build();
 
 		projectorMetrics = batchAwareProjector.run();
 		assertEquals(4, batchAwareProjection.counter()); // SecondDomainEvent type is left out by the query
 		assertEquals(1, batchAwareProjection.beforeTriggered()); // single batch
 		assertEquals(1, batchAwareProjection.afterTriggered());  // equal amount expected
-		assertEquals(0, batchAwareProjection.cancelTriggered());  
+		assertEquals(0, batchAwareProjection.cancelTriggered());
 	}
 	
 	@Test
@@ -513,12 +513,12 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		
 		ProjectorMetrics projectorMetrics = projector.runUntil(ref);
 		assertEquals(3, projection.counter()); // SecondDomainEvent type is left out by the query, until removes everything after four
-		assertEquals(2, projectorMetrics.queriesDone()); // 1 batch + 1 empty end-of-stream confirmation
+		assertEquals(1, projectorMetrics.queriesDone()); // 1 batch, stored events < batch limit so no extra query needed
 		assertEquals(3,  projectorMetrics.eventsStreamed()); // since we pass in until, we don't stream the extra events
 		assertEquals(3,  projectorMetrics.eventsHandled());
 
 		ProjectorMetrics accumulatedMetrics = projector.accumulatedMetrics();
-		assertEquals(2, accumulatedMetrics.queriesDone());
+		assertEquals(1, accumulatedMetrics.queriesDone());
 		assertEquals(3,  accumulatedMetrics.eventsStreamed());
 		assertEquals(3,  accumulatedMetrics.eventsHandled());
 	}
@@ -533,15 +533,15 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		append(alternativeStream, new FirstDomainEvent("1"), Tags.of("nr", "one"));
 
 		var projector = Projector.from(alternativeStream).towards(projection).build();
-		
+
 		ProjectorMetrics projectorMetrics = projector.run();
 		assertEquals(1, projection.counter());
-		assertEquals(2, projectorMetrics.queriesDone()); // 1 batch + 1 empty end-of-stream confirmation
+		assertEquals(1, projectorMetrics.queriesDone()); // 1 batch, stored events < batch limit so no extra query needed
 		assertEquals(1,  projectorMetrics.eventsStreamed());
 		assertEquals(1,  projectorMetrics.eventsHandled());
 
 		ProjectorMetrics accumulatedMetrics = projector.accumulatedMetrics();
-		assertEquals(2, accumulatedMetrics.queriesDone());
+		assertEquals(1, accumulatedMetrics.queriesDone());
 		assertEquals(1,  accumulatedMetrics.eventsStreamed());
 		assertEquals(1,  accumulatedMetrics.eventsHandled());
 
@@ -549,12 +549,12 @@ public class ProjectorTest extends AbstractEventStoreTest {
 
 		projectorMetrics = projector.run();
 		assertEquals(2, projection.counter()); // second event now also processed by projection
-		assertEquals(2, projectorMetrics.queriesDone()); // 1 batch + 1 empty end-of-stream confirmation
+		assertEquals(1, projectorMetrics.queriesDone()); // 1 batch, stored events < batch limit so no extra query needed
 		assertEquals(1,  projectorMetrics.eventsStreamed());
 		assertEquals(1,  projectorMetrics.eventsHandled());
 
 		accumulatedMetrics = projector.accumulatedMetrics();
-		assertEquals(4, accumulatedMetrics.queriesDone());
+		assertEquals(2, accumulatedMetrics.queriesDone());
 		assertEquals(2,  accumulatedMetrics.eventsStreamed());
 		assertEquals(2,  accumulatedMetrics.eventsHandled());
 	}
@@ -570,12 +570,12 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		
 		ProjectorMetrics projectorMetrics = projector.runUntil(refUntil);
 		assertEquals(2, projection.counter()); // SecondDomainEvent type is left out by the query, until removes everything after four
-		assertEquals(2, projectorMetrics.queriesDone()); // 1 batch + 1 empty end-of-stream confirmation
+		assertEquals(1, projectorMetrics.queriesDone()); // 1 batch, stored events < batch limit so no extra query needed
 		assertEquals(2,  projectorMetrics.eventsStreamed()); // since we pass "until", we don't stream the extra events
 		assertEquals(2,  projectorMetrics.eventsHandled());
 
 		ProjectorMetrics accumulatedMetrics = projector.accumulatedMetrics();
-		assertEquals(2, accumulatedMetrics.queriesDone());
+		assertEquals(1, accumulatedMetrics.queriesDone());
 		assertEquals(2,  accumulatedMetrics.eventsStreamed());
 		assertEquals(2,  accumulatedMetrics.eventsHandled());
 	}
@@ -603,7 +603,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		// initQuery finds the savepoint (ThirdDomainEvent), then eventQuery processes the 2 FirstDomainEvents after it
 		assertEquals(3, projection.counter()); // 1 from initQuery + 2 from eventQuery
 		assertEquals("savepoint:15", projection.lastSavepoint()); // savepoint was processed
-		assertEquals(3, metrics.queriesDone()); // 1 for initQuery + 1 eventQuery batch + 1 empty end-of-stream confirmation
+		assertEquals(2, metrics.queriesDone()); // 1 for initQuery + 1 eventQuery batch (stored events < batch limit, no extra query needed)
 		assertEquals(3, metrics.eventsHandled()); // 1 savepoint + 2 movements
 	}
 
@@ -625,7 +625,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		// No savepoint found, so all FirstDomainEvents are processed by the main eventQuery
 		assertEquals(3, projection.counter());
 		assertNull(projection.lastSavepoint()); // no savepoint was found
-		assertEquals(3, metrics.queriesDone()); // 1 for initQuery (empty) + 1 eventQuery batch + 1 empty end-of-stream confirmation
+		assertEquals(2, metrics.queriesDone()); // 1 for initQuery (empty) + 1 eventQuery batch (stored events < batch limit, no extra query needed)
 		assertEquals(3, metrics.eventsHandled());
 	}
 
@@ -651,7 +651,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		// With bookmarking, initQuery is ignored — all FirstDomainEvents are processed from the start
 		assertEquals(4, projection.counter()); // all 4 FirstDomainEvents (Third is excluded by eventQuery)
 		assertNull(projection.lastSavepoint()); // savepoint was NOT processed (initQuery skipped, Third not in eventQuery)
-		assertEquals(2, metrics.queriesDone()); // no initQuery, 1 eventQuery batch + 1 empty end-of-stream confirmation
+		assertEquals(1, metrics.queriesDone()); // no initQuery, 1 eventQuery batch (stored events < batch limit, no extra query needed)
 		assertEquals(4, metrics.eventsHandled());
 	}
 

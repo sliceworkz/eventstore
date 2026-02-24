@@ -18,6 +18,7 @@
 package org.sliceworkz.eventstore.projection;
 
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.slf4j.Logger;
@@ -327,8 +328,12 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 					queriesDone++;
 
 					AtomicReference<EventReference> rawCursor = new AtomicReference<>();
+					AtomicLong storedEventsCount = new AtomicLong(0);
 
-					lastRead = es.query(effectiveQuery, lastRead, limit, rawCursor::set).map(e->offerEventToProjection(e, projection, until, batch)).map(e->e.reference()).reduce((first, second) -> second).orElse(null);
+					lastRead = es.query(effectiveQuery, lastRead, limit, ref -> {
+						rawCursor.set(ref);
+						storedEventsCount.incrementAndGet();
+					}).map(e->offerEventToProjection(e, projection, until, batch)).map(e->e.reference()).reduce((first, second) -> second).orElse(null);
 
 					// if we still read enriched data, keep the reference
 					if ( lastRead != null ) {
@@ -342,6 +347,12 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 						// Do NOT set done — there may be more events beyond the vanished batch.
 					} else {
 						// No stored events returned at all — we are truly at end of stream.
+						done = true;
+					}
+
+					// If storage returned fewer events than the batch limit, we've exhausted the stream —
+					// no need for another query that would return zero results.
+					if ( !done && limit.isSet() && storedEventsCount.get() < limit.value() ) {
 						done = true;
 					}
 				} catch ( Throwable t ) {

@@ -506,14 +506,29 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 	}
 	
+	private NewEventsAppendedMonitor eventAppendedMonitor;
+	private BookmarkPlacedMonitor bookmarkPlacedMonitor;
+
 	public void start ( ) {
-		this.executorService.execute(new NewEventsAppendedMonitor("event-append-listener/" + name, listeners, monitoringDataSource));
-		this.executorService.execute(new BookmarkPlacedMonitor("bookmark-listener/" + name, listeners, monitoringDataSource));
+		eventAppendedMonitor = new NewEventsAppendedMonitor("event-append-listener/" + name, listeners, monitoringDataSource);
+		bookmarkPlacedMonitor = new BookmarkPlacedMonitor("bookmark-listener/" + name, listeners, monitoringDataSource);
+		this.executorService.execute(eventAppendedMonitor);
+		this.executorService.execute(bookmarkPlacedMonitor);
 	}
-	
+
 	public void stop ( ) {
 		this.stopped = true;
+		if (eventAppendedMonitor != null) eventAppendedMonitor.closeConnection();
+		if (bookmarkPlacedMonitor != null) bookmarkPlacedMonitor.closeConnection();
 		executorService.shutdown();
+		try {
+			if (!executorService.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
+				executorService.shutdownNow();
+			}
+		} catch (InterruptedException e) {
+			executorService.shutdownNow();
+			Thread.currentThread().interrupt();
+		}
 	}
 
 	@Override
@@ -897,17 +912,25 @@ public class PostgresEventStorageImpl implements EventStorage {
 	
 	
 	class NewEventsAppendedMonitor implements Runnable {
-		
+
 		private static final Logger LOGGER = LoggerFactory.getLogger(NewEventsAppendedMonitor.class);
-		
+
 		private String name;
 		private List<WeakReference<EventStoreListener>> listeners;
 		private DataSource monitoringDataSource;
-		
+		private volatile Connection activeRawConnection;
+
 		public NewEventsAppendedMonitor ( String name, List<WeakReference<EventStoreListener>> listeners, DataSource monitoringDataSource ) {
 			this.name = name;
 			this.listeners = listeners;
 			this.monitoringDataSource = monitoringDataSource;
+		}
+
+		void closeConnection() {
+			Connection raw = activeRawConnection;
+			if (raw != null) {
+				try { raw.close(); } catch (SQLException ignored) { }
+			}
 		}
 
 		@Override
@@ -915,20 +938,24 @@ public class PostgresEventStorageImpl implements EventStorage {
 			Thread.currentThread().setName(name);
 
 			LOGGER.info("starting ...");
-			
+
 			String listenStatement = "LISTEN %sevent_appended;".formatted(prefix);
-			
+
 			while ( !stopped ) {
 
-				try ( Connection monitorConnection = monitoringDataSource.getConnection(); Statement stmt = monitorConnection.createStatement() ){
+				Connection monitorConnection = null;
+				try {
+					monitorConnection = monitoringDataSource.getConnection();
+					Statement stmt = monitorConnection.createStatement();
 					// Ensure connection is in the right state for LISTEN
 					monitorConnection.setAutoCommit(true);
-					
+
 					stmt.execute(listenStatement);
 
 					LOGGER.debug("... listening for event appends.");
 
 					PGConnection pgConn = monitorConnection.unwrap(PGConnection.class);
+					activeRawConnection = (Connection) pgConn;
 
 					while ( !stopped ) { // loop using a single connnection without returning it to the pool
 					
@@ -961,25 +988,37 @@ public class PostgresEventStorageImpl implements EventStorage {
 						LOGGER.error(e.getMessage(), e);
 					}
 				} finally {
+					activeRawConnection = null;
+					if (monitorConnection != null) {
+						try { monitorConnection.close(); } catch (SQLException ignored) { }
+					}
 					LOGGER.debug("loop done.");
 				}
 			}
 		}
 	}
-	
-	
+
+
 	class BookmarkPlacedMonitor implements Runnable {
-		
+
 		private static final Logger LOGGER = LoggerFactory.getLogger(BookmarkPlacedMonitor.class);
-		
+
 		private String name;
 		private List<WeakReference<EventStoreListener>> listeners;
 		private DataSource monitoringDataSource;
-		
+		private volatile Connection activeRawConnection;
+
 		public BookmarkPlacedMonitor ( String name, List<WeakReference<EventStoreListener>> listeners, DataSource monitoringDataSource ) {
 			this.name = name;
 			this.listeners = listeners;
 			this.monitoringDataSource = monitoringDataSource;
+		}
+
+		void closeConnection() {
+			Connection raw = activeRawConnection;
+			if (raw != null) {
+				try { raw.close(); } catch (SQLException ignored) { }
+			}
 		}
 
 		@Override
@@ -987,28 +1026,32 @@ public class PostgresEventStorageImpl implements EventStorage {
 			Thread.currentThread().setName(name);
 
 			LOGGER.info("starting ...");
-			
+
 			String listenStatement = "LISTEN %sbookmark_placed;".formatted(prefix);
-			
+
 			JsonMapper jsonMapper = new JsonMapper ( );
-			
+
 			while ( !stopped ) {
 
-				try ( Connection monitorConnection = monitoringDataSource.getConnection(); Statement stmt = monitorConnection.createStatement() ){
+				Connection monitorConnection = null;
+				try {
+					monitorConnection = monitoringDataSource.getConnection();
+					Statement stmt = monitorConnection.createStatement();
 					// Ensure connection is in the right state for LISTEN
 					monitorConnection.setAutoCommit(true);
-					
+
 					stmt.execute(listenStatement);
 
 					LOGGER.debug("... listening for bookmark updates.");
 
 					PGConnection pgConn = monitorConnection.unwrap(PGConnection.class);
+					activeRawConnection = (Connection) pgConn;
 
 					while ( !stopped ) { // reuse single connection without returing in tot the pool
-					
+
 						LOGGER.debug("checking for notifications...");
-	
-						PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // wait at for new notifications, then ask new connection and start waiting again 
+
+						PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // wait at for new notifications, then ask new connection and start waiting again
 					    if (notifications != null) {
 					        for (PGNotification notification : notifications) {
 					            LOGGER.debug("Received: " + notification.getParameter());
@@ -1016,13 +1059,13 @@ public class PostgresEventStorageImpl implements EventStorage {
 									BookmarkPlacedPostgresNotification msg = jsonMapper.readValue(notification.getParameter(), BookmarkPlacedPostgresNotification.class);
 									BookmarkPlacedNotification bpn = msg.toNotification();
 									LOGGER.debug("notification: " + bpn);
-									
+
 									listeners.forEach(l->{
 								    	if ( l.get() != null  ) {
 								    		l.get().notify(bpn);
 								    	}
 								    });
-									
+
 								} catch (JsonProcessingException e) {
 									LOGGER.error("Failed to parse notification: " + e.getMessage());
 								}
@@ -1035,12 +1078,16 @@ public class PostgresEventStorageImpl implements EventStorage {
 						LOGGER.error(e.getMessage(), e);
 					}
 				} finally {
+					activeRawConnection = null;
+					if (monitorConnection != null) {
+						try { monitorConnection.close(); } catch (SQLException ignored) { }
+					}
 					LOGGER.debug("loop done.");
 				}
 			}
 		}
 	}
-	
+
 	record EventAppendedPostgresNotification ( String streamContext, String streamPurpose, long eventPosition, long eventTx, String eventId ) { 
 		public AppendsToEventStoreNotification toNotification ( ) {
 			return new AppendsToEventStoreNotification ( 

@@ -39,6 +39,12 @@ public class PostgresContainer {
 	
 
 	public static void start ( ) {
+		if ( !postgreSQLContainer.isRunning() ) {
+			postgreSQLContainer = new PostgreSQLContainer<>(POSTGRES_DOCKER_CONTAINER_IMAGE)
+				.withDatabaseName("integration-tests-db")
+				.withUsername("sa")
+				.withPassword("pwd");
+		}
 		postgreSQLContainer.start();
 	}
 
@@ -47,8 +53,12 @@ public class PostgresContainer {
 			postgreSQLContainer.stop();
 		}
 	}
-	
+
 	public static void cleanup ( ) {
+	    if ( DATASOURCE != null && !DATASOURCE.isClosed() ) {
+	        DATASOURCE.close();
+	    }
+	    DATASOURCE = null;
 	    if (postgreSQLContainer != null) {
 	        postgreSQLContainer.close();
 	    }
@@ -59,12 +69,14 @@ public class PostgresContainer {
 	
 	
 	public static DataSource dataSource ( ) {
-		HikariConfig config = new HikariConfig();
-		config.setUsername(postgreSQLContainer.getUsername());
-		config.setPassword(postgreSQLContainer.getPassword());
-		config.setJdbcUrl(postgreSQLContainer.getJdbcUrl());
-		
-		DATASOURCE = new HikariDataSource(config);
+		if ( DATASOURCE == null || DATASOURCE.isClosed() ) {
+			HikariConfig config = new HikariConfig();
+			config.setUsername(postgreSQLContainer.getUsername());
+			config.setPassword(postgreSQLContainer.getPassword());
+			config.setJdbcUrl(postgreSQLContainer.getJdbcUrl());
+
+			DATASOURCE = new HikariDataSource(config);
+		}
 		return DATASOURCE;
 	}
 	

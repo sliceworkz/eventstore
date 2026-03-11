@@ -105,6 +105,21 @@ class MultiTenantEventStoreTest {
 	}
 
 	@Test
+	void shouldThrowWhenTenantResolverReturnsNull ( ) {
+		MultiTenantEventStore multiTenantStore = MultiTenantEventStore.newBuilder()
+			.tenantResolver(() -> null)
+			.tenantEventStoreFactory(id -> new StubEventStore())
+			.build();
+
+		EventStreamId streamId = EventStreamId.forContext("test");
+
+		IllegalStateException ex = assertThrows(IllegalStateException.class, () ->
+			multiTenantStore.getEventStream(streamId)
+		);
+		assertEquals("TenantResolver returned null — cannot determine the current tenant", ex.getMessage());
+	}
+
+	@Test
 	void shouldAccessTenantDirectlyViaForTenant ( ) {
 		MultiTenantEventStore multiTenantStore = MultiTenantEventStore.newBuilder()
 			.tenantResolver(() -> TenantId.of("irrelevant"))

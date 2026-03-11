@@ -115,6 +115,9 @@ public class MultiTenantEventStore implements EventStore {
 	@Override
 	public <DOMAIN_EVENT_TYPE> EventStream<DOMAIN_EVENT_TYPE> getEventStream ( EventStreamId eventStreamId, Set<Class<?>> eventRootClasses, Set<Class<?>> historicalEventRootClasses ) {
 		TenantId tenantId = tenantResolver.resolve();
+		if ( tenantId == null ) {
+			throw new IllegalStateException("TenantResolver returned null — cannot determine the current tenant");
+		}
 		EventStore tenantStore = tenantStores.computeIfAbsent(tenantId, tenantEventStoreFactory);
 		return tenantStore.getEventStream(eventStreamId, eventRootClasses, historicalEventRootClasses);
 	}

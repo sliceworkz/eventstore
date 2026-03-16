@@ -90,25 +90,21 @@ CREATE TABLE IF NOT EXISTS events (
 
 ---- EVENT APPEND NOTIFICATIONS
 
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = current_schema() AND p.proname = 'notify_event_appended') THEN
-    CREATE FUNCTION notify_event_appended()
-    RETURNS trigger AS $fn$
-    BEGIN
-        PERFORM pg_notify('event_appended',
-            jsonb_build_object(
-                'streamContext', NEW.stream_context,
-                'streamPurpose', NEW.stream_purpose,
-                'eventPosition', NEW.event_position,
-                'eventTx', NEW.event_tx,
-                'eventId', NEW.event_id
-            )::text
-        );
-        RETURN NEW;
-    END;
-    $fn$ LANGUAGE plpgsql;
-  END IF;
-END $$;
+CREATE OR REPLACE FUNCTION notify_event_appended()
+RETURNS trigger AS $fn$
+BEGIN
+    PERFORM pg_notify('event_appended',
+        jsonb_build_object(
+            'streamContext', NEW.stream_context,
+            'streamPurpose', NEW.stream_purpose,
+            'eventPosition', NEW.event_position,
+            'eventTx', NEW.event_tx,
+            'eventId', NEW.event_id
+        )::text
+    );
+    RETURN NEW;
+END;
+$fn$ LANGUAGE plpgsql;
 
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.triggers WHERE trigger_schema = current_schema() AND event_object_table = 'events' AND trigger_name = 'table_insert_trigger') THEN
@@ -139,24 +135,20 @@ CREATE TABLE IF NOT EXISTS bookmarks (
   CREATE INDEX IF NOT EXISTS idx_bookmarks_event_id ON bookmarks(event_id);
 
 
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = current_schema() AND p.proname = 'notify_bookmark_placed') THEN
-    CREATE FUNCTION notify_bookmark_placed()
-    RETURNS trigger AS $fn$
-    BEGIN
-        PERFORM pg_notify('bookmark_placed',
-            jsonb_build_object(
-                'reader', NEW.reader,
-                'eventTx', NEW.event_tx,
-                'eventPosition', NEW.event_position,
-                'eventId', NEW.event_id
-            )::text
-        );
-        RETURN NEW;
-    END;
-    $fn$ LANGUAGE plpgsql;
-  END IF;
-END $$;
+CREATE OR REPLACE FUNCTION notify_bookmark_placed()
+RETURNS trigger AS $fn$
+BEGIN
+    PERFORM pg_notify('bookmark_placed',
+        jsonb_build_object(
+            'reader', NEW.reader,
+            'eventTx', NEW.event_tx,
+            'eventPosition', NEW.event_position,
+            'eventId', NEW.event_id
+        )::text
+    );
+    RETURN NEW;
+END;
+$fn$ LANGUAGE plpgsql;
 
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.triggers WHERE trigger_schema = current_schema() AND event_object_table = 'bookmarks' AND trigger_name = 'table_insert_or_update_trigger') THEN

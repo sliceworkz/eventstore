@@ -17,26 +17,27 @@
  */
 package org.sliceworkz.eventstore.events;
 
-import java.util.UUID;
-
 /**
  * Unique identifier for an event.
  * <p>
- * Each event in the store has a globally unique ID, typically a UUID. The EventId is part of
+ * Each event in the store has a globally unique ID, generated as a UUIDv7. The EventId is part of
  * the {@link EventReference} which combines the ID with the event's position in its stream.
  * <p>
  * Event IDs are immutable and are automatically generated when events are appended to a stream.
+ * Since version 0.8.0, IDs are generated using {@link UUIDv7} (time-ordered) instead of random UUID v4,
+ * which improves B-tree index performance for append-only workloads.
  *
  * <h2>Example Usage:</h2>
  * <pre>{@code
  * // Typically generated automatically when appending
- * EventId id = EventId.create();  // Generates a new UUID
+ * EventId id = EventId.create();  // Generates a new UUIDv7
  *
  * // Or create from existing ID string
  * EventId id = EventId.of("550e8400-e29b-41d4-a716-446655440000");
  * }</pre>
  *
  * @param value the unique identifier string (typically a UUID)
+ * @see UUIDv7
  * @see EventReference
  * @see Event
  */
@@ -60,14 +61,16 @@ public record EventId ( String value ) {
 	}
 
 	/**
-	 * Generates a new random EventId using a UUID.
+	 * Generates a new EventId using a UUIDv7 (time-ordered).
 	 * <p>
 	 * This is typically used internally when appending events to generate unique identifiers.
+	 * UUIDv7 provides monotonically increasing IDs that improve B-tree index locality.
 	 *
-	 * @return a new EventId with a randomly generated UUID as its value
+	 * @return a new EventId with a UUIDv7 as its value
+	 * @see UUIDv7#generate()
 	 */
 	public static EventId create ( ) {
-		return new EventId ( UUID.randomUUID().toString() );
+		return new EventId ( UUIDv7.generateString() );
 	}
 
 	/**

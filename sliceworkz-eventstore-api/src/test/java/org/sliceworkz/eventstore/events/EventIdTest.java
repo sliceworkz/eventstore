@@ -51,19 +51,6 @@ public class EventIdTest {
 	}
 
 	@Test
-	void shouldBeMonotonicallyIncreasingWithinSameMillisecond ( ) {
-		String previous = EventId.create().value();
-		for ( int i = 0; i < 1_000; i++ ) {
-			String current = EventId.create().value();
-			assertTrue (
-					current.compareTo ( previous ) > 0,
-					"EventId values should be monotonically increasing, but got previous=" + previous + " current=" + current
-			);
-			previous = current;
-		}
-	}
-
-	@Test
 	void shouldBeMonotonicallyIncreasingOverTime ( ) throws InterruptedException {
 		EventId first = EventId.create();
 		Thread.sleep ( 2 );

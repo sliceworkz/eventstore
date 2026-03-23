@@ -37,9 +37,6 @@
 	<packaging>jar</packaging>
 	
 	<dependencies>
-		<dependency>
-			<groupId>com.github.f4b6a3</groupId>
-			<artifactId>uuid-creator</artifactId>
-		</dependency>
+
 	</dependencies>
 </project>

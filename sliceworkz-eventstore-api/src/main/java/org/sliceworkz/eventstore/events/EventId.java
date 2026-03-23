@@ -17,7 +17,6 @@
  */
 package org.sliceworkz.eventstore.events;
 
-import java.security.SecureRandom;
 import java.util.UUID;
 
 /**
@@ -30,9 +29,9 @@ import java.util.UUID;
  * Since version 0.8.0, IDs are generated using UUIDv7 (time-ordered) instead of random UUID v4,
  * which improves B-tree index performance for append-only workloads.
  * <p>
- * The default {@link #create()} method uses a simple RFC 9562 UUIDv7 generator suitable for
- * in-memory and testing use. Storage implementations may generate their own EventIds using
- * more robust generators (e.g., monotonic counters, database-native UUIDv7).
+ * The default {@link #create()} method generates a random UUIDv4, suitable for in-memory
+ * and testing use. Storage implementations may generate their own EventIds using more robust
+ * generators (e.g., UUIDv7 with monotonic counters, database-native UUIDv7).
  *
  * <h2>Example Usage:</h2>
  * <pre>{@code
@@ -48,8 +47,6 @@ import java.util.UUID;
  * @see Event
  */
 public record EventId ( String value ) {
-
-	private static final SecureRandom RANDOM = new SecureRandom();
 
 	/**
 	 * Constructs an EventId with validation.
@@ -69,17 +66,16 @@ public record EventId ( String value ) {
 	}
 
 	/**
-	 * Generates a new EventId using a simple UUIDv7 (time-ordered).
+	 * Generates a new EventId using a random UUIDv4.
 	 * <p>
-	 * This uses a basic RFC 9562 UUIDv7 with random bits, suitable for in-memory storage
-	 * and testing. It does not guarantee monotonicity within the same millisecond.
-	 * Production storage implementations (e.g., PostgreSQL) should generate their own
-	 * EventIds using more robust UUIDv7 generators.
+	 * Suitable for in-memory storage and testing. Production storage implementations
+	 * (e.g., PostgreSQL) should generate their own EventIds using UUIDv7 generators
+	 * for better B-tree index locality.
 	 *
-	 * @return a new EventId with a UUIDv7 as its value
+	 * @return a new EventId with a random UUID as its value
 	 */
 	public static EventId create ( ) {
-		return new EventId ( generateUUIDv7().toString() );
+		return new EventId ( UUID.randomUUID().toString() );
 	}
 
 	/**
@@ -94,19 +90,5 @@ public record EventId ( String value ) {
 		return ( value == null || "".equals(value.strip()) ) ? null : new EventId ( value );
 	}
 
-	private static UUID generateUUIDv7 ( ) {
-		long timestamp = System.currentTimeMillis();
-		long randomHigh = RANDOM.nextLong();
-		long randomLow = RANDOM.nextLong();
-
-		long msb = ( timestamp << 16 )
-				| ( 0x7L << 12 )
-				| ( randomHigh & 0x0FFFL );
-
-		long lsb = ( 0b10L << 62 )
-				| ( randomLow & 0x3FFFFFFFFFFFFFFFL );
-
-		return new UUID ( msb, lsb );
-	}
 
 }

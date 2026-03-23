@@ -19,7 +19,6 @@ package org.sliceworkz.eventstore.events;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -30,32 +29,12 @@ import org.junit.jupiter.api.Test;
 public class EventIdTest {
 
 	@Test
-	void shouldGenerateValidUUIDv7WithVersion7 ( ) {
-		UUID uuid = UUID.fromString ( EventId.create().value() );
-		assertEquals ( 7, uuid.version() );
-	}
-
-	@Test
-	void shouldGenerateValidUUIDv7WithVariant2 ( ) {
-		UUID uuid = UUID.fromString ( EventId.create().value() );
-		assertEquals ( 2, uuid.variant() );
-	}
-
-	@Test
 	void shouldGenerateUniqueIds ( ) {
 		Set<String> ids = new HashSet<>();
 		for ( int i = 0; i < 10_000; i++ ) {
 			ids.add ( EventId.create().value() );
 		}
 		assertEquals ( 10_000, ids.size() );
-	}
-
-	@Test
-	void shouldBeMonotonicallyIncreasingOverTime ( ) throws InterruptedException {
-		EventId first = EventId.create();
-		Thread.sleep ( 2 );
-		EventId second = EventId.create();
-		assertTrue ( second.value().compareTo ( first.value() ) > 0 );
 	}
 
 	@Test

@@ -17,6 +17,8 @@
  */
 package org.sliceworkz.eventstore.events;
 
+import com.github.f4b6a3.uuid.UuidCreator;
+
 /**
  * Unique identifier for an event.
  * <p>
@@ -24,8 +26,11 @@ package org.sliceworkz.eventstore.events;
  * the {@link EventReference} which combines the ID with the event's position in its stream.
  * <p>
  * Event IDs are immutable and are automatically generated when events are appended to a stream.
- * Since version 0.8.0, IDs are generated using {@link UUIDv7} (time-ordered) instead of random UUID v4,
- * which improves B-tree index performance for append-only workloads.
+ * Since version 0.8.0, IDs are generated using UUIDv7 (time-ordered) instead of random UUID v4,
+ * which improves B-tree index performance for append-only workloads. The UUIDv7 generation uses
+ * the <a href="https://github.com/f4b6a3/uuid-creator">uuid-creator</a> library with RFC 9562
+ * Method 2 monotonic counter, providing strict ordering within the same millisecond and clock
+ * drift protection.
  *
  * <h2>Example Usage:</h2>
  * <pre>{@code
@@ -37,7 +42,6 @@ package org.sliceworkz.eventstore.events;
  * }</pre>
  *
  * @param value the unique identifier string (typically a UUID)
- * @see UUIDv7
  * @see EventReference
  * @see Event
  */
@@ -65,12 +69,14 @@ public record EventId ( String value ) {
 	 * <p>
 	 * This is typically used internally when appending events to generate unique identifiers.
 	 * UUIDv7 provides monotonically increasing IDs that improve B-tree index locality.
+	 * <p>
+	 * Uses RFC 9562 Method 2 (monotonic counter, +1 increment) via the uuid-creator library,
+	 * which guarantees strict ordering within the same millisecond and handles clock drift.
 	 *
 	 * @return a new EventId with a UUIDv7 as its value
-	 * @see UUIDv7#generate()
 	 */
 	public static EventId create ( ) {
-		return new EventId ( UUIDv7.generateString() );
+		return new EventId ( UuidCreator.getTimeOrderedEpochPlus1().toString() );
 	}
 
 	/**

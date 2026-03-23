@@ -39,6 +39,8 @@ import java.util.stream.Stream;
 
 import javax.sql.DataSource;
 
+import com.github.f4b6a3.uuid.UuidCreator;
+
 import org.postgresql.PGConnection;
 import org.postgresql.PGNotification;
 import org.slf4j.Logger;
@@ -719,7 +721,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	
 			for ( EventToStore event: events ) {
 				
-				EventId id = EventId.create();
+				EventId id = new EventId ( UuidCreator.getTimeOrderedEpochPlus1().toString() );
 				ids.add(id);
 				
 				// Add to-be-appended-event parameters first

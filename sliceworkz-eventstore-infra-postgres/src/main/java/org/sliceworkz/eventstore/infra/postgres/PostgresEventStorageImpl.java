@@ -558,9 +558,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 		if (reference != null ) {
 			if (includeReference) {
 				if ( direction == QueryDirection.FORWARD ) {
-					sqlBuilder.append(" AND ((event_tx>?::xid8) OR (event_tx = ?::xid8 AND event_position > ?))");
+					sqlBuilder.append(" AND ((event_tx>?::xid8) OR (event_tx = ?::xid8 AND event_position >= ?))");
 				} else {
-					sqlBuilder.append(" AND ((event_tx<?::xid8) OR (event_tx = ?::xid8 AND event_position < ?))");
+					sqlBuilder.append(" AND ((event_tx<?::xid8) OR (event_tx = ?::xid8 AND event_position <= ?))");
 				}
 			} else {
 				if ( direction == QueryDirection.FORWARD ) {

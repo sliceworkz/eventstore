@@ -124,12 +124,15 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	private final List<WeakReference<EventStoreListener>> listeners = new CopyOnWriteArrayList<>();
 	private final ExecutorService executorService;
-	private boolean stopped;
+	private volatile boolean stopped;
 
 	private static final JsonMapper JSONMAPPER = new JsonMapper();
 
 	private static final int THIRTY_SECONDS = 30*1000;
 	public static final int WAIT_FOR_NOTIFICATIONS_TIMEOUT = THIRTY_SECONDS;
+
+	private static final long INITIAL_RETRY_DELAY_MS = 1_000;
+	private static final long MAX_RETRY_DELAY_MS = 30_000;
 
 	private static final int MAX_PREFIX_LENGTH = 32;
 
@@ -555,9 +558,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 		if (reference != null ) {
 			if (includeReference) {
 				if ( direction == QueryDirection.FORWARD ) {
-					sqlBuilder.append(" AND ((event_tx>?::xid8) OR (event_tx = ?::xid8 AND event_position > ?))");
+					sqlBuilder.append(" AND ((event_tx>?::xid8) OR (event_tx = ?::xid8 AND event_position >= ?))");
 				} else {
-					sqlBuilder.append(" AND ((event_tx<?::xid8) OR (event_tx = ?::xid8 AND event_position < ?))");
+					sqlBuilder.append(" AND ((event_tx<?::xid8) OR (event_tx = ?::xid8 AND event_position <= ?))");
 				}
 			} else {
 				if ( direction == QueryDirection.FORWARD ) {
@@ -920,6 +923,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			
 			String listenStatement = "LISTEN %sevent_appended;".formatted(prefix);
 			
+			long retryDelayMs = INITIAL_RETRY_DELAY_MS;
 			while ( !stopped ) {
 
 				try ( Connection monitorConnection = monitoringDataSource.getConnection(); Statement stmt = monitorConnection.createStatement() ){
@@ -931,6 +935,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 					LOGGER.debug("... listening for event appends.");
 
 					PGConnection pgConn = monitorConnection.unwrap(PGConnection.class);
+
+					retryDelayMs = INITIAL_RETRY_DELAY_MS;
 
 					while ( !stopped ) { // loop using a single connnection without returning it to the pool
 					
@@ -945,10 +951,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 									EventAppendedPostgresNotification msg = JSONMAPPER.readValue(notification.getParameter(), EventAppendedPostgresNotification.class);
 									AppendsToEventStoreNotification aesn = msg.toNotification();
 									
-									listeners.forEach(l->{
-								    	if ( l.get() != null ) {
-								    		l.get().notify(aesn);
-								    	}
+									listeners.forEach(l -> {
+										EventStoreListener listener = l.get();
+										if (listener != null) {
+											listener.notify(aesn);
+										}
 									});
 									
 								} catch (JsonProcessingException e) {
@@ -961,6 +968,13 @@ public class PostgresEventStorageImpl implements EventStorage {
 				} catch (SQLException e) {
 					if ( !stopped ) {
 						LOGGER.error(e.getMessage(), e);
+						try {
+							Thread.sleep(retryDelayMs);
+							retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_DELAY_MS);
+						} catch (InterruptedException ie) {
+							Thread.currentThread().interrupt();
+							return;
+						}
 					}
 				} finally {
 					LOGGER.debug("loop done.");
@@ -994,6 +1008,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			
 			JsonMapper jsonMapper = new JsonMapper ( );
 			
+			long retryDelayMs = INITIAL_RETRY_DELAY_MS;
 			while ( !stopped ) {
 
 				try ( Connection monitorConnection = monitoringDataSource.getConnection(); Statement stmt = monitorConnection.createStatement() ){
@@ -1005,6 +1020,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 					LOGGER.debug("... listening for bookmark updates.");
 
 					PGConnection pgConn = monitorConnection.unwrap(PGConnection.class);
+
+					retryDelayMs = INITIAL_RETRY_DELAY_MS;
 
 					while ( !stopped ) { // reuse single connection without returing in tot the pool
 					
@@ -1019,11 +1036,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 									BookmarkPlacedNotification bpn = msg.toNotification();
 									LOGGER.debug("notification: " + bpn);
 									
-									listeners.forEach(l->{
-								    	if ( l.get() != null  ) {
-								    		l.get().notify(bpn);
-								    	}
-								    });
+									listeners.forEach(l -> {
+										EventStoreListener listener = l.get();
+										if (listener != null) {
+											listener.notify(bpn);
+										}
+									});
 									
 								} catch (JsonProcessingException e) {
 									LOGGER.error("Failed to parse notification: " + e.getMessage());
@@ -1035,6 +1053,13 @@ public class PostgresEventStorageImpl implements EventStorage {
 				} catch (SQLException e) {
 					if ( !stopped ) {
 						LOGGER.error(e.getMessage(), e);
+						try {
+							Thread.sleep(retryDelayMs);
+							retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_DELAY_MS);
+						} catch (InterruptedException ie) {
+							Thread.currentThread().interrupt();
+							return;
+						}
 					}
 				} finally {
 					LOGGER.debug("loop done.");
@@ -1134,6 +1159,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 						
 						int rowsAffected = stmt.executeUpdate();
 						if (rowsAffected == 0) {
+							writeConnection.rollback();
 							throw new EventStorageException("Failed to update bookmark for reader: " + reader);
 						}
 						writeConnection.commit();
@@ -1166,10 +1192,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 				try ( PreparedStatement stmt = writeConnection.prepareStatement(sql) ) {
 					stmt.setString(1, reader.toString());
 					
-					int rowsAffected = stmt.executeUpdate();
-					if (rowsAffected == 0) {
-						throw new EventStorageException("Failed to remove bookmark for reader: " + reader);
-					}
+					stmt.executeUpdate();
 					writeConnection.commit();
 				}
 			} catch (SQLException e) {

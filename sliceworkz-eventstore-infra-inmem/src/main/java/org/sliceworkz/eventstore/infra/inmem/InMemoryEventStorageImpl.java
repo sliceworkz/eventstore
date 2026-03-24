@@ -161,87 +161,22 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	 */
 	@Override
 	public synchronized Stream<StoredEvent> query(EventQuery query, Optional<EventStreamId> stream, EventReference after, Limit limit, QueryDirection direction ) {
-		return queryAfter(query, stream, after, limit, direction);
-	}
-
-	/**
-	 * Queries events starting from (and including) the specified reference.
-	 * <p>
-	 * This is a convenience method that delegates to {@link #queryFromOrAfter(EventQuery, Optional, Limit, EventReference, boolean, QueryDirection)}
-	 * with includeReference set to true.
-	 *
-	 * @param query the event query specifying which events to retrieve
-	 * @param streamId optional stream ID to filter events
-	 * @param from the reference to start from (inclusive)
-	 * @param limit soft limit on the number of results
-	 * @param direction the direction to traverse the event log
-	 * @return a Stream of StoredEvent instances matching the criteria
-	 */
-	public synchronized Stream<StoredEvent> queryFrom (EventQuery query, Optional<EventStreamId> streamId, EventReference from, Limit limit, QueryDirection direction ) {
-		return queryFromOrAfter(query, streamId, limit, from, true, direction);
-	}
-
-	/**
-	 * Queries events starting after (excluding) the specified reference.
-	 * <p>
-	 * This is a convenience method that delegates to {@link #queryFromOrAfter(EventQuery, Optional, Limit, EventReference, boolean, QueryDirection)}
-	 * with includeReference set to false.
-	 *
-	 * @param query the event query specifying which events to retrieve
-	 * @param streamId optional stream ID to filter events
-	 * @param after the reference to start after (exclusive)
-	 * @param limit soft limit on the number of results
-	 * @param direction the direction to traverse the event log
-	 * @return a Stream of StoredEvent instances matching the criteria
-	 */
-	public synchronized Stream<StoredEvent> queryAfter (EventQuery query, Optional<EventStreamId> streamId, EventReference after, Limit limit, QueryDirection direction ) {
-		return queryFromOrAfter(query, streamId, limit, after, false, direction);
-	}
-
-	/**
-	 * Core query method supporting both inclusive and exclusive reference-based queries.
-	 * <p>
-	 * This method provides the underlying implementation for both {@link #queryFrom(EventQuery, Optional, EventReference, Limit, QueryDirection)}
-	 * and {@link #queryAfter(EventQuery, Optional, EventReference, Limit, QueryDirection)} by allowing control over whether
-	 * the reference event itself is included in the results.
-	 * <p>
-	 * The method handles:
-	 * <ul>
-	 *   <li>Bidirectional traversal (forward/backward) of the event log</li>
-	 *   <li>Position-based skipping to start from the correct event</li>
-	 *   <li>Stream filtering based on the provided stream ID</li>
-	 *   <li>Event matching based on the query criteria</li>
-	 *   <li>Enforcement of both soft and absolute limits</li>
-	 * </ul>
-	 *
-	 * @param query the event query specifying which events to retrieve
-	 * @param streamId optional stream ID to filter events
-	 * @param limit soft limit on the number of results
-	 * @param reference the reference event to position from, or null to start from the beginning
-	 * @param includeReference true to include the reference event in results, false to start after it
-	 * @param direction the direction to traverse the event log (FORWARD or BACKWARD)
-	 * @return a Stream of StoredEvent instances matching the criteria
-	 * @throws EventStorageException if the result exceeds the configured absolute limit
-	 * @see #queryFrom(EventQuery, Optional, EventReference, Limit, QueryDirection)
-	 * @see #queryAfter(EventQuery, Optional, EventReference, Limit, QueryDirection)
-	 */
-	public synchronized Stream<StoredEvent> queryFromOrAfter (EventQuery query, Optional<EventStreamId> streamId, Limit limit, EventReference reference, boolean includeReference, QueryDirection direction ) {
 		Stream<StoredEvent> on;
-		
+
 		switch ( direction ) {
 			case BACKWARD:
 				on = eventlog.reversed().stream();
 				break;
 			case FORWARD:
 			default:
-				on = eventlog.stream(); 
+				on = eventlog.stream();
 		}
-		
-		if ( reference != null ) {
+
+		if ( after != null ) {
 			if ( direction == QueryDirection.FORWARD ) {
-				on = on.skip(reference.position()-(includeReference?1:0));  // skip until the position in the stream, including the referenced/current one as first or not
+				on = on.skip(after.position());
 			} else {
-				on = on.skip(eventlog.size()-reference.position()+(includeReference?0:1));  // skip until the position in the stream, including the referenced/current one as first or not
+				on = on.skip(eventlog.size()-after.position()+1);
 			}
 		}
 		
@@ -295,7 +230,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 			// we query the stream with the event filter from the last event known as our reference
 			// we only need to fetch max 1 event to prove a locking issue
 			EventQuery lockingQuery = new EventQuery(appendCriteria.eventFilter(), EventQuery.Direction.FORWARD, Limit.none());
-			Stream<StoredEvent> newEventStream = queryAfter(lockingQuery, streamId, appendCriteria.expectedLastEventReference().orElse(null), Limit.to(1), QueryDirection.FORWARD);
+			Stream<StoredEvent> newEventStream = query(lockingQuery, streamId, appendCriteria.expectedLastEventReference().orElse(null), Limit.to(1), QueryDirection.FORWARD);
 
 			List<StoredEvent> newEvents = newEventStream.toList();
 

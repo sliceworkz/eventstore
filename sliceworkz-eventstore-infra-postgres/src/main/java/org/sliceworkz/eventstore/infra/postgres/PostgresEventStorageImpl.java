@@ -525,55 +525,35 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	@Override
 	public Stream<StoredEvent> query(EventQuery query, Optional<EventStreamId> stream, EventReference after, Limit limit, QueryDirection direction ) {
-		return queryAfter(query, stream, after, limit, direction);
-	}
-	
-	public Stream<StoredEvent> queryFrom(EventQuery query, Optional<EventStreamId> streamId, EventReference from, Limit limit, QueryDirection direction) {
-		return queryFromOrAfter(query, streamId, limit, from, true, direction);
-	}
-	
-	public Stream<StoredEvent> queryAfter(EventQuery query, Optional<EventStreamId> streamId, EventReference after, Limit limit, QueryDirection direction) {
-		return queryFromOrAfter(query, streamId, limit, after, false, direction);
-	}
-	
-	public Stream<StoredEvent> queryFromOrAfter(EventQuery query, Optional<EventStreamId> streamId, Limit limit, EventReference reference, boolean includeReference, QueryDirection direction ) {
 		// Handle the case where query matches none - return empty stream
 		if (query.isMatchNone()) {
 			return Stream.empty();
 		}
-		
+
 		StringBuilder sqlBuilder = new StringBuilder();
 		sqlBuilder.append(
 			"""
-				SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags 
-				FROM %sevents 
-				WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot()) 
+				SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags
+				FROM %sevents
+				WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 			""".formatted(prefix)
 			);
 		// pg_snapshot_xmin(pg_current_snapshot()) makes sure we don't read data committed by transaction that were started
 		// after ones that are still running (race condition which would drop some events otherwise)
-		// great insight found in the blogpost by Oskar Dudycz (https://event-driven.io/en/ordering_in_postgres_outbox/)  
-		
+		// great insight found in the blogpost by Oskar Dudycz (https://event-driven.io/en/ordering_in_postgres_outbox/)
+
 		List<Object> parameters = new ArrayList<>();
-		
-		// Add position filtering if reference is provided
-		if (reference != null ) {
-			if (includeReference) {
-				if ( direction == QueryDirection.FORWARD ) {
-					sqlBuilder.append(" AND ((event_tx>?::xid8) OR (event_tx = ?::xid8 AND event_position >= ?))");
-				} else {
-					sqlBuilder.append(" AND ((event_tx<?::xid8) OR (event_tx = ?::xid8 AND event_position <= ?))");
-				}
+
+		// Add position filtering if reference is provided (exclusive - events after the reference)
+		if (after != null ) {
+			if ( direction == QueryDirection.FORWARD ) {
+				sqlBuilder.append(" AND ((event_tx>?::xid8) OR (event_tx = ?::xid8 AND event_position > ?))");
 			} else {
-				if ( direction == QueryDirection.FORWARD ) {
-					sqlBuilder.append(" AND ((event_tx>?::xid8) OR (event_tx = ?::xid8 AND event_position > ?))");
-				} else {
-					sqlBuilder.append(" AND ((event_tx<?::xid8) OR (event_tx = ?::xid8 AND event_position < ?))");
-				}
+				sqlBuilder.append(" AND ((event_tx<?::xid8) OR (event_tx = ?::xid8 AND event_position < ?))");
 			}
-			parameters.add(Long.toUnsignedString(reference.tx()));
-			parameters.add(Long.toUnsignedString(reference.tx()));
-			parameters.add(reference.position());
+			parameters.add(Long.toUnsignedString(after.tx()));
+			parameters.add(Long.toUnsignedString(after.tx()));
+			parameters.add(after.position());
 		}
 		
 		if ( query.until() != null ) {

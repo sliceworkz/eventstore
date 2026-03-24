@@ -945,10 +945,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 									EventAppendedPostgresNotification msg = JSONMAPPER.readValue(notification.getParameter(), EventAppendedPostgresNotification.class);
 									AppendsToEventStoreNotification aesn = msg.toNotification();
 									
-									listeners.forEach(l->{
-								    	if ( l.get() != null ) {
-								    		l.get().notify(aesn);
-								    	}
+									listeners.forEach(l -> {
+										EventStoreListener listener = l.get();
+										if (listener != null) {
+											listener.notify(aesn);
+										}
 									});
 									
 								} catch (JsonProcessingException e) {
@@ -1019,11 +1020,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 									BookmarkPlacedNotification bpn = msg.toNotification();
 									LOGGER.debug("notification: " + bpn);
 									
-									listeners.forEach(l->{
-								    	if ( l.get() != null  ) {
-								    		l.get().notify(bpn);
-								    	}
-								    });
+									listeners.forEach(l -> {
+										EventStoreListener listener = l.get();
+										if (listener != null) {
+											listener.notify(bpn);
+										}
+									});
 									
 								} catch (JsonProcessingException e) {
 									LOGGER.error("Failed to parse notification: " + e.getMessage());

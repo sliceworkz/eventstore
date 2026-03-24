@@ -187,10 +187,10 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		
 		Stream<StoredEvent> result = on;
 
-		if ( streamId.isPresent() ) {
-			result = result.filter(e->streamId.get().canRead(e.stream()));
+		if ( stream.isPresent() ) {
+			result = result.filter(e->stream.get().canRead(e.stream()));
 		} else {
-			// no streamId specified, considering all streams present in the store
+			// no stream specified, considering all streams present in the store
 		}
 		
 		result = result.filter(query::matches);

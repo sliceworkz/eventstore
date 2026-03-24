@@ -566,14 +566,14 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 		
 		// Add stream filtering
-		if (streamId.isPresent()) {
-			if (!streamId.get().isAnyContext()) {
+		if (stream.isPresent()) {
+			if (!stream.get().isAnyContext()) {
 				sqlBuilder.append(" AND stream_context = ?");
-				parameters.add(streamId.get().context());
+				parameters.add(stream.get().context());
 			}
-			if (!streamId.get().isAnyPurpose()) {
+			if (!stream.get().isAnyPurpose()) {
 				sqlBuilder.append(" AND stream_purpose = ?");
-				parameters.add(streamId.get().purpose());
+				parameters.add(stream.get().purpose());
 			}
 		}
 		

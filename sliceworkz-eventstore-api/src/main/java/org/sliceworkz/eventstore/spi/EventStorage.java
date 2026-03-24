@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -78,11 +78,11 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  *
  *     @Override
  *     public Stream<StoredEvent> query(EventQuery query, Optional<EventStreamId> stream,
- *                                      EventReference from, Limit limit, QueryDirection direction) {
+ *                                      EventReference after, Limit limit, QueryDirection direction) {
  *         // 1. Filter events by stream (if specified)
  *         // 2. Apply event type filters from query
  *         // 3. Apply tag filters from query
- *         // 4. Filter events after 'from' reference
+ *         // 4. Filter events after 'after' reference
  *         // 5. Apply limit and direction
  *         // 6. Return stream of StoredEvent records
  *     }
@@ -144,7 +144,7 @@ public interface EventStorage {
 	 * <ul>
 	 *   <li><b>query</b> - Defines which events to retrieve based on types and tags</li>
 	 *   <li><b>stream</b> - Optional stream filter; if present, only events from matching streams are returned</li>
-	 *   <li><b>from</b> - Starting reference point; events after this reference are returned</li>
+	 *   <li><b>after</b> - Starting reference point; events after this reference are returned</li>
 	 *   <li><b>limit</b> - Maximum number of events to return (or unlimited)</li>
 	 *   <li><b>queryDirection</b> - Direction of traversal (FORWARD or BACKWARD)</li>
 	 * </ul>
@@ -157,7 +157,7 @@ public interface EventStorage {
 	 *
 	 * @param query the event query defining type and tag filters
 	 * @param stream optional stream identifier to filter events by stream
-	 * @param from the reference point to start querying from (events after this reference)
+	 * @param after the reference point to start querying after (exclusive - events after this reference)
 	 * @param limit maximum number of events to return
 	 * @param queryDirection the direction of query traversal (FORWARD or BACKWARD)
 	 * @return a stream of stored events matching the query criteria
@@ -166,7 +166,7 @@ public interface EventStorage {
 	 * @see QueryDirection
 	 * @see StoredEvent
 	 */
-	Stream<StoredEvent> query ( EventQuery query, Optional<EventStreamId> stream, EventReference from, Limit limit, QueryDirection queryDirection );
+	Stream<StoredEvent> query ( EventQuery query, Optional<EventStreamId> stream, EventReference after, Limit limit, QueryDirection queryDirection );
 
 	/**
 	 * Queries events from storage in forward (chronological) direction.
@@ -502,7 +502,7 @@ public interface EventStorage {
 	 * @see StoredEvent
 	 * @see #append(AppendCriteria, Optional, List)
 	 */
-	public record EventToStore ( EventStreamId stream, EventType type, String immutableData, String erasableData, Tags tags ) {
+	public record EventToStore ( EventStreamId stream, EventType type, String immutableData, String erasableData, Tags tags, String idempotencyKey ) {
 
 		/**
 		 * Converts this event to a stored event by assigning a reference and timestamp.

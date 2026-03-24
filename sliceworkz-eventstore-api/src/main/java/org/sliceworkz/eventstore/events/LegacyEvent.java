@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -76,15 +76,15 @@ import java.lang.annotation.Target;
  * public class CustomerRegisteredUpcaster
  *     implements Upcast<CustomerHistoricalEvent.CustomerRegistered, CustomerEvent.CustomerRegisteredV2> {
  *
- *     public CustomerEvent.CustomerRegisteredV2 upcast(CustomerHistoricalEvent.CustomerRegistered legacy) {
- *         return new CustomerEvent.CustomerRegisteredV2(
+ *     public List<CustomerEvent.CustomerRegisteredV2> upcast(CustomerHistoricalEvent.CustomerRegistered legacy) {
+ *         return List.of(new CustomerEvent.CustomerRegisteredV2(
  *             new Name(legacy.name()),
  *             Email.unknown() // provide default for new required field
- *         );
+ *         ));
  *     }
  *
- *     public Class<CustomerEvent.CustomerRegisteredV2> targetType() {
- *         return CustomerEvent.CustomerRegisteredV2.class;
+ *     public Set<Class<? extends CustomerEvent.CustomerRegisteredV2>> targetTypes() {
+ *         return Set.of(CustomerEvent.CustomerRegisteredV2.class);
  *     }
  * }
  *

@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -18,7 +18,6 @@
 package org.sliceworkz.eventstore.projection;
 
 import org.sliceworkz.eventstore.events.EventHandler;
-import org.sliceworkz.eventstore.events.EventWithMetaDataHandler;
 import org.sliceworkz.eventstore.query.EventQuery;
 
 /**

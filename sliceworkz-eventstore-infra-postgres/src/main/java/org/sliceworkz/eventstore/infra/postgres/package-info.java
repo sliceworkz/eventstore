@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -34,9 +34,8 @@
  *
  * <h2>Quick Start:</h2>
  * <pre>{@code
- * // Using default configuration from db.properties
+ * // Using default configuration from db.properties (default mode is ENSURE)
  * EventStore eventStore = PostgresEventStorage.newBuilder()
- *     .initializeDatabase()
  *     .buildStore();
  * }</pre>
  *
@@ -73,13 +72,12 @@
  *     .dataSource(dataSource)
  *     .prefix("tenant1_")
  *     .resultLimit(10000)
- *     .initializeDatabase()
  *     .buildStore();
  * }</pre>
  *
  * <h2>Database Schema:</h2>
  * <p>
- * When {@code initializeDatabase()} is called, the following structures are created:
+ * The following database structures are managed by the event store:
  * <ul>
  *   <li><strong>{@code PREFIX_events}</strong>: Main event storage table with columns for stream, type, data, tags, and timestamp</li>
  *   <li><strong>{@code PREFIX_bookmarks}</strong>: Event processor position tracking</li>

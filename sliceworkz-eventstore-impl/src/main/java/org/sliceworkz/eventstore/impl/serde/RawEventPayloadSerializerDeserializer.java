@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -17,6 +17,7 @@
  */
 package org.sliceworkz.eventstore.impl.serde;
 
+import java.util.List;
 import java.util.Set;
 
 import org.sliceworkz.eventstore.events.EventType;
@@ -39,29 +40,29 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 public class RawEventPayloadSerializerDeserializer extends AbstractEventPayloadSerializerDeserializer {
 	
 	@Override
-	public TypeAndPayload deserialize ( TypeAndSerializedPayload serialized ) {
+	public List<TypeAndPayload> deserialize ( TypeAndSerializedPayload serialized ) {
 		JsonNode object;
 		try {
-			
+
 			if ( serialized.erasablePayload() == null ) {
 				object = immutableDataMapper.readTree(serialized.immutablePayload());
 			} else {
 				// reconstruct the full object by merging
 				ObjectNode nodeImmutableData = (ObjectNode) immutableDataMapper.readTree(serialized.immutablePayload());
 				ObjectNode nodeErasableData = (ObjectNode) erasableDataMapper.readTree(serialized.erasablePayload());
-				
+
 				// Merge erasable data into immutable data
 				deepMerge(nodeImmutableData, nodeErasableData);
-				
+
 				object = nodeImmutableData; // with erasable merged in
 			}
-			
+
 		} catch (JsonMappingException e) {
 			throw new RuntimeException("Failed to deserialize event data: JsonMappingException", e);
 		} catch (JsonProcessingException e) {
 			throw new RuntimeException("Failed to deserialize event data: JsonProcessingException", e);
 		}
-		return new TypeAndPayload(serialized.type(), object);
+		return List.of(new TypeAndPayload(serialized.type(), object));
 	}
 
 	@Override

@@ -2,7 +2,7 @@
 <!--
 
     Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
-    Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+    Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU Lesser General Public License as published by
@@ -22,7 +22,7 @@
 	<modelVersion>4.0.0</modelVersion>
 	<groupId>org.sliceworkz</groupId>
 	<artifactId>sliceworkz-eventstore</artifactId>
-	<version>0.5.1</version>
+	<version>0.8.0-SNAPSHOT</version>
 	
 	<name>${project.artifactId}</name>
 	<description>DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)</description>
@@ -36,10 +36,10 @@
 		<maven.minimal-version>3.6.3</maven.minimal-version>
 		
 		<maven.maven-pgp-plugin.version>3.2.8</maven.maven-pgp-plugin.version>
-		<maven.maven-versions-plugin.version>2.20.1</maven.maven-versions-plugin.version>
+		<maven.maven-versions-plugin.version>2.21.0</maven.maven-versions-plugin.version>
 		<maven.maven-enforcer-plugin.version>3.6.2</maven.maven-enforcer-plugin.version>
 		<maven.mycila-license-plugin.version>5.0.0</maven.mycila-license-plugin.version>
-		<maven.maven-central-publishing-plugin.version>0.9.0</maven.maven-central-publishing-plugin.version>
+		<maven.maven-central-publishing-plugin.version>0.10.0</maven.maven-central-publishing-plugin.version>
 		
 		<maven.compiler.release>21</maven.compiler.release>
 	</properties>
@@ -147,7 +147,7 @@
 						<project.description>a Java/Postgres DCB Eventstore implementation</project.description>
 					    <owner>Sliceworkz / XTi</owner>
 					    <email>info@sliceworkz.org</email>
-					    <year>2025</year>
+					    <year>2025-2026</year>
 					</properties>
 					<licenseSets>
 						<licenseSet>

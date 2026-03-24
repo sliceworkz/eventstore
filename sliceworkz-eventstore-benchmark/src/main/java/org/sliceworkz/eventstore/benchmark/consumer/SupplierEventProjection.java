@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -74,7 +74,7 @@ public class SupplierEventProjection implements BatchAwareProjection<SupplierEve
 			insertStatement.setLong(2, eventWithMeta.reference().position());
 			insertStatement.setString(3, Thread.currentThread().getName());
 			insertStatement.addBatch();
-			long idx = eventsProcessed.incrementAndGet();
+			eventsProcessed.incrementAndGet();
 		} catch (SQLException e) {
 			LOGGER.error("Failed to insert event", e);
 			throw new RuntimeException("Failed to insert event", e);

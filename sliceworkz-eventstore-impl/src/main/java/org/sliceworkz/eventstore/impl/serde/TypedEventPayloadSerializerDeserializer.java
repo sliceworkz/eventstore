@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -21,6 +21,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -51,18 +52,18 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloadSerializerDeserializer {
 
 	private final Map<String,EventDeserializer> deserializers = new HashMap<>();
-	private final Map<EventType, EventType> mostRecentTypes = new HashMap<>();
+	private final Map<EventType, Set<EventType>> mostRecentTypes = new HashMap<>();
 	private final Map<EventType, Set<EventType>> mostRecentMultiTypes = new HashMap<>(); // for interface hierarchies, this maps interface->set of interface-implementing event types
 	
 	@Override
-	public TypeAndPayload deserialize ( TypeAndSerializedPayload serialized ) {
-		TypeAndPayload result;
+	public List<TypeAndPayload> deserialize ( TypeAndSerializedPayload serialized ) {
+		List<TypeAndPayload> result;
 		try {
 			EventDeserializer deserializer = deserializers.get(serialized.type().name());
 			if ( deserializer == null  ) {
 				throw new RuntimeException("No mapping found for event type '" + serialized.type().name() + "'");
 			}
-			result = new TypeAndPayload(deserializer.eventType(), deserializer.deserialize(serialized.immutablePayload(), serialized.erasablePayload())); 
+			result = deserializer.deserialize(serialized.immutablePayload(), serialized.erasablePayload());
 		} catch (Exception e) {
 			if ( deserializers.keySet().isEmpty() ) {
 				throw new RuntimeException("Failed to deserialize event data for type '%s', no EventType mappings configured. Pass the Event root Class when creating the EventStream".formatted(serialized.type().name()) , e);
@@ -87,30 +88,34 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		return this;
 	}
 
+	@SuppressWarnings("unchecked")
 	private void registerEventType ( String eventName, Class<?> clazz, boolean assumeUpcasters ) {
 		String key = eventName;
 		if ( deserializers.containsKey(key) ) {
 			throw new IllegalArgumentException("duplicate event name " + key);
 		}
-		
+
 		EventType eventType = EventType.ofType(eventName);
 		EventDeserializer eventDeserializer = new InstantiationEventDeserializer(clazz, eventType);
 
 		// when we need to upcast an historical legacy event
 		if ( clazz.isAnnotationPresent(LegacyEvent.class)) {
-			
+
 			if ( !assumeUpcasters ) {
 				throw new RuntimeException("Event type %s should not be annotated as a @LegacyEvent, or moved to the legacy Event types".formatted(clazz));
 			}
-			
+
 			LegacyEvent annotation = clazz.getAnnotation(LegacyEvent.class);
-			Upcast upcast;
+			Upcast<Object, Object> upcast;
 			try {
-				
-				upcast = (Upcast) annotation.upcast().getDeclaredConstructor().newInstance(new Object[0]);
-				
-				mostRecentTypes.put(eventType, EventType.of(upcast.targetType()));
-				
+
+				upcast = (Upcast<Object, Object>) annotation.upcast().getDeclaredConstructor().newInstance(new Object[0]);
+
+				Set<EventType> targets = upcast.targetTypes().stream()
+						.map(EventType::of)
+						.collect(Collectors.toSet());
+				mostRecentTypes.put(eventType, targets);
+
 			} catch (NoSuchMethodException e) {
 				throw new RuntimeException(e);
 			} catch (InvocationTargetException e) {
@@ -120,16 +125,16 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 			} catch (IllegalAccessException e) {
 				throw new RuntimeException(e);
 			}
-			eventDeserializer = new InstantiationAndUpcastEventDeserializer(eventDeserializer, upcast); 
-			
+			eventDeserializer = new InstantiationAndUpcastEventDeserializer(eventDeserializer, upcast);
+
 		} else {
 			if  ( assumeUpcasters ) {
 				throw new RuntimeException("legacy Event type %s should be annotated as a @LegacyEvent and configured with an Upcaster".formatted(clazz));
 			}
-			mostRecentTypes.put(eventType, eventType); // no upcasting needed
+			mostRecentTypes.put(eventType, Set.of(eventType)); // no upcasting needed
 		}
-		
-		
+
+
 		deserializers.put(key, eventDeserializer);
 	}
 	
@@ -197,8 +202,7 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 	
 	
 	interface EventDeserializer {
-		Object deserialize ( String immutablePayload, String erasablePayload );
-		EventType eventType ( );
+		List<TypeAndPayload> deserialize ( String immutablePayload, String erasablePayload );
 	}
 	
 	class InstantiationEventDeserializer implements EventDeserializer {
@@ -212,10 +216,10 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		}
 
 		@Override
-		public Object deserialize ( String immutablePayload, String erasablePayload ) {
+		public List<TypeAndPayload> deserialize ( String immutablePayload, String erasablePayload ) {
 			Object object;
 			try {
-				
+
 				if ( erasablePayload == null ) {
 					object = immutableDataMapper.readValue(immutablePayload, eventClass);
 				} else {
@@ -234,37 +238,29 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 				throw new RuntimeException(e);
 			} catch (JsonProcessingException e) {
 				throw new RuntimeException(e);
-			} 
-			return object;
+			}
+			return List.of(new TypeAndPayload(eventType, object));
 		}
 
-		@Override
-		public EventType eventType() {
-			return eventType;
-		}
-		
 	}
 	
 	class InstantiationAndUpcastEventDeserializer implements EventDeserializer {
 
 		private final Upcast<Object,Object> upcaster;
 		private final EventDeserializer deser;
-		private final EventType eventType;
 
 		public InstantiationAndUpcastEventDeserializer ( EventDeserializer deser, Upcast<Object,Object> upcaster ) {
 			this.deser = deser;
 			this.upcaster = upcaster;
-			this.eventType = EventType.of(upcaster.targetType());
-		}
-		
-		@Override
-		public Object deserialize ( String immutablePayload, String erasablePayload ) {
-			return upcaster.upcast(deser.deserialize(immutablePayload, erasablePayload));
 		}
 
 		@Override
-		public EventType eventType() {
-			return eventType;
+		public List<TypeAndPayload> deserialize ( String immutablePayload, String erasablePayload ) {
+			Object historicalEvent = deser.deserialize(immutablePayload, erasablePayload).getFirst().eventData();
+			List<Object> upcastedEvents = upcaster.upcast(historicalEvent);
+			return upcastedEvents.stream()
+					.map(e -> new TypeAndPayload(EventType.of(e), e))
+					.toList();
 		}
 
 	}
@@ -274,7 +270,10 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		// return all types that are upcasted to the currentType, and include the currentType itself as well
 		Set<EventType> currentConcreteEventTypes = concreteEventTypesFor(currentTypes); // explode to concrete implementations if interfaces are passed
 		Set<EventType> result = new HashSet<>(currentConcreteEventTypes); // we always include "current types", legacy types are optional - only if they are present
-		result.addAll(mostRecentTypes.entrySet().stream().filter(e->currentConcreteEventTypes.contains(e.getValue())).map(e->e.getKey()).collect(Collectors.toSet()));
+		result.addAll(mostRecentTypes.entrySet().stream()
+				.filter(e -> e.getValue().stream().anyMatch(currentConcreteEventTypes::contains))
+				.map(Map.Entry::getKey)
+				.collect(Collectors.toSet()));
 		return result;
 	}
 	

@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -25,7 +25,7 @@
  * <h2>Query Components:</h2>
  * <ul>
  *   <li>{@link org.sliceworkz.eventstore.query.EventQuery} - Complete query specification combining filters and time bounds</li>
- *   <li>{@link org.sliceworkz.eventstore.query.EventQueryItem} - Single matching rule combining event types and tags</li>
+ *   <li>{@link org.sliceworkz.eventstore.query.EventFilterItem} - Single matching rule combining event types and tags</li>
  *   <li>{@link org.sliceworkz.eventstore.query.EventTypesFilter} - Filters events by their type (class)</li>
  *   <li>{@link org.sliceworkz.eventstore.query.Limit} - Limits the number of events returned</li>
  * </ul>

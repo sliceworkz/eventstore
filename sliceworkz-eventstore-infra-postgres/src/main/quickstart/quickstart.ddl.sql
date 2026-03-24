@@ -1,6 +1,6 @@
 --
 -- Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
--- Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+-- Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
 --
 -- This program is free software: you can redistribute it and/or modify
 -- it under the terms of the GNU Lesser General Public License as published by
@@ -21,16 +21,15 @@
 ----
 ---- Eventstore database schema DDL
 ----
----- 
+----
 ---- "PREFIX" can be removed or replaced to allow multiple eventstores next to each other in one database schema
----- 
+----
 
 
 
 ---- EVENTS
 
-DROP TABLE IF EXISTS events CASCADE;
-CREATE TABLE events (
+CREATE TABLE IF NOT EXISTS events (
       -- Primary key and positioning
       event_position BIGSERIAL PRIMARY KEY,
 
@@ -39,8 +38,11 @@ CREATE TABLE events (
 
       -- Event identification
       event_id UUID NOT NULL UNIQUE,
-      
-      -- Stream identification  
+
+      -- Idempotency key
+      idempotency_key TEXT UNIQUE,
+
+      -- Stream identification
       stream_context TEXT NOT NULL,
       stream_purpose TEXT NOT NULL DEFAULT '',
 
@@ -56,34 +58,31 @@ CREATE TABLE events (
 
       -- Tags as string array
       event_tags TEXT[] DEFAULT '{}'
-      
+
   ) WITH (FILLFACTOR = 100);
 
 
 	-- Compact BRIN index on event_position
-	CREATE INDEX idx_events_position_brin ON events USING BRIN (event_position);
+	CREATE INDEX IF NOT EXISTS idx_events_position_brin ON events USING BRIN (event_position);
 
 	-- Allows efficient filtering on multiple dimensions
 	-- Primary index for your most common query pattern
 	-- B-tree handles equality (=) and IN clauses efficiently
-	DROP INDEX IF EXISTS idx_events_stream_type_position;
-	CREATE INDEX idx_events_stream_type_position ON events (
-	    stream_context, 
-	    stream_purpose, 
+	CREATE INDEX IF NOT EXISTS idx_events_stream_type_position ON events (
+	    stream_context,
+	    stream_purpose,
 	    event_type,
 	    event_tx,
 	    event_position  -- for ordering
 	);
-	
+
 	-- Separate GIN index ONLY for tag filtering
-	DROP INDEX IF EXISTS idx_events_tags;
-	CREATE INDEX idx_events_tags ON events USING GIN (event_tags);
-	
+	CREATE INDEX IF NOT EXISTS idx_events_tags ON events USING GIN (event_tags);
+
 	-- Keep stream position index for stream reads
-	DROP INDEX IF EXISTS idx_events_stream_position;
-	CREATE INDEX idx_events_stream_position ON events (
-	    stream_context, 
-	    stream_purpose, 
+	CREATE INDEX IF NOT EXISTS idx_events_stream_position ON events (
+	    stream_context,
+	    stream_purpose,
 	    event_tx,
 	    event_position
 	);
@@ -91,32 +90,39 @@ CREATE TABLE events (
 
 ---- EVENT APPEND NOTIFICATIONS
 
-CREATE OR REPLACE FUNCTION notify_event_appended()
-RETURNS trigger AS $$
-BEGIN
-    PERFORM pg_notify('event_appended',
-        jsonb_build_object(
-            'streamContext', NEW.stream_context,
-            'streamPurpose', NEW.stream_purpose,
-            'eventPosition', NEW.event_position,
-            'eventTx', NEW.event_tx,
-            'eventId', NEW.event_id
-        )::text
-    );
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = current_schema() AND p.proname = 'notify_event_appended') THEN
+    CREATE FUNCTION notify_event_appended()
+    RETURNS trigger AS $fn$
+    BEGIN
+        PERFORM pg_notify('event_appended',
+            jsonb_build_object(
+                'streamContext', NEW.stream_context,
+                'streamPurpose', NEW.stream_purpose,
+                'eventPosition', NEW.event_position,
+                'eventTx', NEW.event_tx,
+                'eventId', NEW.event_id
+            )::text
+        );
+        RETURN NEW;
+    END;
+    $fn$ LANGUAGE plpgsql;
+  END IF;
+END $$;
 
-CREATE OR REPLACE TRIGGER table_insert_trigger
-    AFTER INSERT ON events
-    FOR EACH ROW
-    EXECUTE FUNCTION notify_event_appended();
-    
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.triggers WHERE trigger_schema = current_schema() AND event_object_table = 'events' AND trigger_name = 'table_insert_trigger') THEN
+    CREATE TRIGGER table_insert_trigger
+        AFTER INSERT ON events
+        FOR EACH ROW
+        EXECUTE FUNCTION notify_event_appended();
+  END IF;
+END $$;
 
 
----- BOOKMARKING 
-    
-DROP TABLE IF EXISTS bookmarks CASCADE;  
+
+---- BOOKMARKING
+
 CREATE TABLE IF NOT EXISTS bookmarks (
       reader TEXT PRIMARY KEY,
       event_position BIGINT NOT NULL,
@@ -132,24 +138,31 @@ CREATE TABLE IF NOT EXISTS bookmarks (
 
   CREATE INDEX IF NOT EXISTS idx_bookmarks_event_id ON bookmarks(event_id);
 
-    
-CREATE OR REPLACE FUNCTION notify_bookmark_placed()
-RETURNS trigger AS $$
-BEGIN
-    PERFORM pg_notify('bookmark_placed',
-        jsonb_build_object(
-            'reader', NEW.reader,
-            'eventTx', NEW.event_tx,
-            'eventPosition', NEW.event_position,
-            'eventId', NEW.event_id
-        )::text
-    );
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE TRIGGER table_insert_or_update_trigger
-    AFTER INSERT OR UPDATE ON bookmarks
-    FOR EACH ROW
-    EXECUTE FUNCTION notify_bookmark_placed();
-    
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = current_schema() AND p.proname = 'notify_bookmark_placed') THEN
+    CREATE FUNCTION notify_bookmark_placed()
+    RETURNS trigger AS $fn$
+    BEGIN
+        PERFORM pg_notify('bookmark_placed',
+            jsonb_build_object(
+                'reader', NEW.reader,
+                'eventTx', NEW.event_tx,
+                'eventPosition', NEW.event_position,
+                'eventId', NEW.event_id
+            )::text
+        );
+        RETURN NEW;
+    END;
+    $fn$ LANGUAGE plpgsql;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.triggers WHERE trigger_schema = current_schema() AND event_object_table = 'bookmarks' AND trigger_name = 'table_insert_or_update_trigger') THEN
+    CREATE TRIGGER table_insert_or_update_trigger
+        AFTER INSERT OR UPDATE ON bookmarks
+        FOR EACH ROW
+        EXECUTE FUNCTION notify_bookmark_placed();
+  END IF;
+END $$;

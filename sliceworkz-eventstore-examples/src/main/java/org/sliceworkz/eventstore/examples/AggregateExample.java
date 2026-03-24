@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -19,7 +19,6 @@ package org.sliceworkz.eventstore.examples;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
@@ -119,7 +118,7 @@ public class AggregateExample {
 						// ... for this customer ...
 						Tags.of("customer", customerId)),
 						// ... since we last read this customer
-						Optional.ofNullable(lastEventReference)),
+						lastEventReference),
 				
 				// and of course don't forget to tag the new Events with this customerId ...
 				events.stream().<EphemeralEvent<? extends CustomerEvent>>map(

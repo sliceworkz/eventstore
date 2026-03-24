@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -17,6 +17,7 @@
  */
 package org.sliceworkz.eventstore.impl;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -25,6 +26,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import org.slf4j.Logger;
@@ -39,8 +41,9 @@ import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.impl.serde.EventPayloadSerializerDeserializer;
 import org.sliceworkz.eventstore.impl.serde.EventPayloadSerializerDeserializer.TypeAndPayload;
 import org.sliceworkz.eventstore.impl.serde.EventPayloadSerializerDeserializer.TypeAndSerializedPayload;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
-import org.sliceworkz.eventstore.query.EventQueryItem;
+import org.sliceworkz.eventstore.query.EventFilterItem;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
@@ -115,14 +118,15 @@ public class EventStoreImpl implements EventStore {
 	private final EventStorage eventStorage;
 
 	/**
-	 * Executor service using virtual threads for asynchronously notifying eventually consistent subscribers.
-	 * Named threads help with debugging and monitoring.
+	 * Executor service using virtual threads for asynchronously notifying eventually consistent subscribers
+	 * about new event appends. Named threads help with debugging and monitoring.
 	 */
 	private final ExecutorService executorServiceForEventAppends;
 
 	/**
-	 * Executor service using virtual threads for asynchronously notifying eventually consistent subscribers.
-	 * Named threads help with debugging and monitoring.
+	 * Executor service using virtual threads for asynchronously notifying eventually consistent subscribers
+	 * about bookmark updates. This uses a single-threaded executor to ensure bookmark notifications are
+	 * processed sequentially. Named threads help with debugging and monitoring.
 	 */
 	private final ExecutorService executorServiceForBookmarkUpdates;
 
@@ -192,16 +196,15 @@ public class EventStoreImpl implements EventStore {
 		private final EventPayloadSerializerDeserializer serde;
 
 		private Counter meterAppend;
-		private Counter meterAppendEvent;
 		private Counter meterAppendOptimisticLock;
 		private Counter meterQuery;
-		private Counter meterQueryEvent;
 		private Counter meterGetEvent;
 		private Counter meterBookmarkPlace;
 		private Counter meterBookmarkGet;
 		private Timer timerQuery;
 		private Timer timerAppend;
 
+		private final io.micrometer.core.instrument.Tags baseTags;
 		private final AtomicReference<Long> gaugeHighestEventPosition = new AtomicReference<>();
 
 		private final List<EventStreamEventuallyConsistentAppendListener> eventuallyConsistentSubscribers = new CopyOnWriteArrayList<>();
@@ -218,27 +221,25 @@ public class EventStoreImpl implements EventStore {
 			String tagPurposeValue = Optional.ofNullable(eventStreamId.purpose()).orElse(""); // null is not allowed
 			String tagTypedValue = String.valueOf(serde.isTyped());
 			
-			io.micrometer.core.instrument.Tags tags = io.micrometer.core.instrument.Tags
+			this.baseTags = io.micrometer.core.instrument.Tags
 					.of("context", tagContextValue, "purpose", tagPurposeValue, "typed", tagTypedValue, "storage", eventStorage.name());
-			
-			// prepare counters for metering
-			this.meterAppend = meterRegistry.counter("sliceworkz.eventstore.append", tags);
-			this.meterAppendEvent = meterRegistry.counter("sliceworkz.eventstore.append.event", tags);
-			this.meterQuery = meterRegistry.counter("sliceworkz.eventstore.query", tags);
-			this.meterQueryEvent = meterRegistry.counter("sliceworkz.eventstore.query.event", tags);
-			this.meterAppendOptimisticLock = meterRegistry.counter("sliceworkz.eventstore.append.optimisticlock", tags);
-			this.meterGetEvent = meterRegistry.counter("sliceworkz.eventstore.get.event", tags);
-			this.meterBookmarkPlace = meterRegistry.counter("sliceworkz.eventstore.bookmark.place", tags);
-			this.meterBookmarkGet= meterRegistry.counter("sliceworkz.eventstore.bookmark.get", tags);
 
-			this.timerQuery = meterRegistry.timer("sliceworkz.eventstore.query.duration", tags);
-			this.timerAppend = meterRegistry.timer("sliceworkz.eventstore.append.duration", tags);
+			// prepare counters for metering
+			this.meterAppend = meterRegistry.counter("sliceworkz.eventstore.append", baseTags);
+			this.meterQuery = meterRegistry.counter("sliceworkz.eventstore.query", baseTags);
+			this.meterAppendOptimisticLock = meterRegistry.counter("sliceworkz.eventstore.append.optimisticlock", baseTags);
+			this.meterGetEvent = meterRegistry.counter("sliceworkz.eventstore.get.event", baseTags);
+			this.meterBookmarkPlace = meterRegistry.counter("sliceworkz.eventstore.bookmark.place", baseTags);
+			this.meterBookmarkGet= meterRegistry.counter("sliceworkz.eventstore.bookmark.get", baseTags);
+
+			this.timerQuery = meterRegistry.timer("sliceworkz.eventstore.query.duration", baseTags);
+			this.timerAppend = meterRegistry.timer("sliceworkz.eventstore.append.duration", baseTags);
 
 			// register gauge for highest event position
-			meterRegistry.gauge("sliceworkz.eventstore.append.position", tags, gaugeHighestEventPosition, ref->{Long val = ref.get(); return val != null ? val.doubleValue() : Double.NaN;});
+			meterRegistry.gauge("sliceworkz.eventstore.append.position", baseTags, gaugeHighestEventPosition, ref->{Long val = ref.get(); return val != null ? val.doubleValue() : Double.NaN;});
 
 			// increment number of stream objects created
-			meterRegistry.counter("sliceworkz.eventstore.stream.create", tags).increment();
+			meterRegistry.counter("sliceworkz.eventstore.stream.create", baseTags).increment();
 		}
 		
 		@Override
@@ -262,40 +263,46 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		@Override
-		public Stream<Event<EVENT_TYPE>> query(EventQuery query, EventReference after, Limit limit ) {
+		public Stream<Event<EVENT_TYPE>> query(EventQuery query, EventReference cursor, Limit limit, Consumer<EventReference> storedEventCursorTracker ) {
 			meterQuery.increment(); // one query done
-			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), after, limit, QueryDirection.FORWARD).map(this::enrichAfterQuery));
+			QueryDirection direction = query.isBackwards() ? QueryDirection.BACKWARD : QueryDirection.FORWARD;
+			EventFilter originalFilter = query.filter();
+			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), cursor, limit, direction)
+				.peek(se -> storedEventCursorTracker.accept(se.reference()))
+				.flatMap(se->enrichAfterQuery(se, direction))
+				.filter(e->originalFilter.matches(e)));
 		}
 
-		@Override
-		public Stream<Event<EVENT_TYPE>> queryBackwards(EventQuery query, EventReference before, Limit limit) {
-			meterQuery.increment(); // one query done
-			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), before, limit, QueryDirection.BACKWARD).map(this::enrichAfterQuery));
-		}
-		
-		private Event<EVENT_TYPE> enrichAfterQuery ( StoredEvent storedEvent ) {
-			meterQueryEvent.increment(); // one event more seen coming from storage
-			return enrich(storedEvent);
+		private Stream<Event<EVENT_TYPE>> enrichAfterQuery ( StoredEvent storedEvent, QueryDirection direction ) {
+			meterRegistry.counter("sliceworkz.eventstore.query.event", baseTags.and("eventtype", storedEvent.type().name())).increment();
+			return enrich(storedEvent, direction);
 		}
 
-		private Event<EVENT_TYPE> enrichAfterAppend ( StoredEvent storedEvent ) {
-			// not metered, as this is used for appended events
-			return enrich(storedEvent);
-		}
-		
 		@SuppressWarnings("unchecked")
-		private Event<EVENT_TYPE> enrich ( StoredEvent storedEvent ) {
-			// not metered, depends on the usage
-			TypeAndPayload typeAndPayload = serde.deserialize(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.immutableData(), storedEvent.erasableData()));
-			EVENT_TYPE data = (EVENT_TYPE)typeAndPayload.eventData();
-			return new Event<>(storedEvent.stream(), typeAndPayload.type(), storedEvent.type(), storedEvent.reference(), data, storedEvent.tags(), storedEvent.timestamp());
+		private Stream<Event<EVENT_TYPE>> enrich ( StoredEvent storedEvent, QueryDirection direction ) {
+			List<TypeAndPayload> results = serde.deserialize(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.immutableData(), storedEvent.erasableData()));
+			// For backward queries, reverse the upcasted sub-events so they appear in descending order,
+			// consistent with the overall backward traversal of stored events.
+			if ( direction == QueryDirection.BACKWARD ) {
+				results = results.reversed();
+			}
+			EventReference baseRef = storedEvent.reference();
+			List<TypeAndPayload> finalResults = results;
+			return java.util.stream.IntStream.range(0, finalResults.size()).mapToObj(i -> {
+				TypeAndPayload typeAndPayload = finalResults.get(i);
+				EVENT_TYPE data = (EVENT_TYPE)typeAndPayload.eventData();
+				// Each sub-event gets a unique reference via the index, distinguishing upcasted events
+				// that originate from the same stored event. For single-event results, index is 0.
+				EventReference ref = baseRef.withIndex(direction == QueryDirection.BACKWARD ? finalResults.size() - 1 - i : i);
+				return new Event<>(storedEvent.stream(), typeAndPayload.type(), storedEvent.type(), ref, data, storedEvent.tags(), storedEvent.timestamp());
+			});
 		}
 
 		private EventToStore reduce ( EphemeralEvent<? extends EVENT_TYPE> event, EventStreamId streamToAppendTo ) {
-			meterAppendEvent.increment(); // one event more sent to storage for appending
+			meterRegistry.counter("sliceworkz.eventstore.append.event", baseTags.and("eventtype", event.type().name())).increment();
 			Tags tags = event.tags(); 
 			TypeAndSerializedPayload data = serde.serialize(event.data());
-			return new EventToStore(streamToAppendTo, data.type(), data.immutablePayload(), data.erasablePayload(), tags);
+			return new EventToStore(streamToAppendTo, data.type(), data.immutablePayload(), data.erasablePayload(), tags, event.idempotencyKey());
 		}
 
 		private List<EventToStore> reduce ( List<? extends EphemeralEvent<? extends EVENT_TYPE>> events, EventStreamId streamToAppendTo ) {
@@ -322,11 +329,21 @@ public class EventStoreImpl implements EventStore {
 			if ( !unAppendable.isEmpty() ) {
 				throw new IllegalArgumentException("cannot append event type '%s' via this stream".formatted(unAppendable.getFirst()));
 			}
+			
+			if ( events.size() == 0 ) {
+				return Collections.emptyList();
+			}
+			
+			if ( events.size() > 1 ) {
+				if ( events.stream().filter(e->e.idempotencyKey()!=null).findAny().isPresent()) {
+					throw new IllegalArgumentException("cannot append multiple events in combination with an idempotency key");
+				}
+			}
 
 			// append events to the eventstore (with optimistic locking)
 			List<Event<EVENT_TYPE>> appendedEvents;
 			try {
-				appendedEvents = timerAppend.record(()->eventStorage.append(appendCriteria, Optional.of(streamToAppendTo), reduce(events, streamToAppendTo)).stream().map(this::enrichAfterAppend).toList());
+				appendedEvents = timerAppend.record(()->eventStorage.append(appendCriteria, Optional.of(streamToAppendTo), reduce(events, streamToAppendTo)).stream().flatMap(se->enrich(se, QueryDirection.FORWARD)).toList());
 				meterAppend.increment();
 
 				// update highest event position gauge
@@ -352,14 +369,15 @@ public class EventStoreImpl implements EventStore {
 		 */
 		private EventQuery includeLegacyEventTypes ( EventQuery query ) {
 			if ( query.items() == null ) {
-				return new EventQuery(null, query.until());
+				return query; // match-all, nothing to modify
 			} else {
-				return new EventQuery(query.items().stream().map(this::includeLegacyEventTypes).toList(), query.until());
+				EventFilter newFilter = new EventFilter(query.items().stream().map(this::includeLegacyEventTypes).toList(), query.until());
+				return new EventQuery(newFilter, query.direction(), query.limit());
 			}
 		}
 
-		private EventQueryItem includeLegacyEventTypes ( EventQueryItem queryItem ) {
-			return new EventQueryItem(includeLegacyEventTypes(queryItem.eventTypes()), queryItem.tags());
+		private EventFilterItem includeLegacyEventTypes ( EventFilterItem queryItem ) {
+			return new EventFilterItem(includeLegacyEventTypes(queryItem.eventTypes()), queryItem.tags());
 		}
 
 		private EventTypesFilter includeLegacyEventTypes ( EventTypesFilter typesFilter ) {
@@ -413,16 +431,14 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		@Override
-		public Optional<EventReference> queryReference(EventId id) {
+		public List<Event<EVENT_TYPE>> getEventById(EventId eventId) {
 			meterGetEvent.increment();
-			return eventStorage.getEventById(id).map(this::enrichAfterQuery).map(Event::reference);
-		}
-		
-		@Override
-		public Optional<Event<EVENT_TYPE>> getEventById(EventId eventId) {
-			meterGetEvent.increment();
-			// filters out events that can not be read by this stream
-			return eventStorage.getEventById(eventId).filter(e->eventStreamId.canRead(e.stream())).map(this::enrichAfterQuery);
+			// filters out events that can not be read by this stream, then upcasts via enrich
+			return eventStorage.getEventById(eventId)
+				.filter(e->eventStreamId.canRead(e.stream()))
+				.map(e->enrich(e, QueryDirection.FORWARD))
+				.map(s->s.toList())
+				.orElse(List.of());
 		}
 
 	}

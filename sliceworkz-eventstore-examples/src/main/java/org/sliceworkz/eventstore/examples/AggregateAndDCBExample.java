@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -18,7 +18,6 @@
 package org.sliceworkz.eventstore.examples;
 
 import java.util.List;
-import java.util.Optional;
 
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
@@ -95,7 +94,7 @@ public class AggregateAndDCBExample {
         	        EventTypesFilter.of(StudentDomainEvent.class),
 	                Tags.of("student", student.studentId)
 	            ),
-	            Optional.ofNullable(student.lastEventReference())
+	            student.lastEventReference()
 	        ),
 	        events.stream()
 	            .<EphemeralEvent<? extends LearningDomainEvent>>map(e -> Event.of(e, Tags.of("student", student.studentId)))
@@ -123,7 +122,7 @@ public class AggregateAndDCBExample {
 	                EventTypesFilter.of(CourseDomainEvent.class),
 	                Tags.of("course", course.courseId)
 	            ),
-	            Optional.ofNullable(course.lastEventReference())
+	            course.lastEventReference()
 	        ),
 	        events.stream()
 	            .<EphemeralEvent<? extends LearningDomainEvent>>map(e -> Event.of(e, Tags.of("course", course.courseId)))
@@ -142,7 +141,7 @@ public class AggregateAndDCBExample {
 
         if ( dm.canSubscribe() ) {
             stream.append(
-                    AppendCriteria.of(dm.getEventQuery(), Optional.ofNullable(lastRef)),
+                    AppendCriteria.of(dm.getEventQuery(), lastRef),
                     Event.of(
                         new StudentSubscribedToCourse(studentId, courseId),
                         Tags.of(Tag.of("student", studentId), Tag.of("course", courseId))

@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -162,7 +162,7 @@ public class EventQueryTest {
 		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1")).until(e3_event1TagsA1.reference());
 		
 		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, ()-> q1.combineWith(q2) );
-		assertEquals("can't combine two EventQuery that don't share the same until value (both different values)", e.getMessage());
+		assertEquals("can't combine two EventFilter that don't share the same until value (both different values)", e.getMessage());
 	}
 	
 	@Test
@@ -171,7 +171,7 @@ public class EventQueryTest {
 		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1")).until(e3_event1TagsA1.reference());
 		
 		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, ()-> q1.combineWith(q2) );
-		assertEquals("can't combine two EventQuery don't share the same until value (one was not set)", e.getMessage());
+		assertEquals("can't combine two EventFilter that don't share the same until value (one was not set)", e.getMessage());
 	}
 
 	@Test
@@ -215,6 +215,141 @@ public class EventQueryTest {
 		assertEquals(e3_event1TagsA1.reference(), q.until());
 	}
 	
+	@Test
+	void testBackwardsDefaultsToForward ( ) {
+		EventQuery q = EventQuery.matchAll();
+		assertEquals(EventQuery.Direction.FORWARD, q.direction());
+		assertFalse(q.isBackwards());
+	}
+
+	@Test
+	void testBackwards ( ) {
+		EventQuery q = EventQuery.matchAll().backwards();
+		assertEquals(EventQuery.Direction.BACKWARD, q.direction());
+		assertTrue(q.isBackwards());
+	}
+
+	@Test
+	void testBackwardsPreservesOtherFields ( ) {
+		EventQuery q = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.of("A", "1"))
+				.until(e3_event1TagsA1.reference())
+				.backwards();
+		assertTrue(q.isBackwards());
+		assertEquals(e3_event1TagsA1.reference(), q.until());
+		assertFalse(q.isMatchAll());
+		assertFalse(q.isMatchNone());
+		assertTrue(q.matches(e3_event1TagsA1));
+		assertFalse(q.matches(e4_event2TagsA1));
+	}
+
+	@Test
+	void testLimitDefaultsToNone ( ) {
+		EventQuery q = EventQuery.matchAll();
+		assertEquals(Limit.none(), q.limit());
+	}
+
+	@Test
+	void testLimitWithLong ( ) {
+		EventQuery q = EventQuery.matchAll().limit(5);
+		assertEquals(Limit.to(5), q.limit());
+	}
+
+	@Test
+	void testLimitWithLimitObject ( ) {
+		EventQuery q = EventQuery.matchAll().limit(Limit.to(10));
+		assertEquals(Limit.to(10), q.limit());
+	}
+
+	@Test
+	void testBackwardsAndLimit ( ) {
+		EventQuery q = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())
+				.backwards()
+				.limit(1);
+		assertTrue(q.isBackwards());
+		assertEquals(Limit.to(1), q.limit());
+		// matching still works as before
+		assertTrue(q.matches(e1_event1NoTags));
+		assertFalse(q.matches(e2_event2NoTags));
+	}
+
+	@Test
+	void testFilter ( ) {
+		EventQuery q = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.of("A", "1"))
+				.until(e4_event2TagsA1.reference())
+				.backwards()
+				.limit(1);
+
+		EventFilter filter = q.filter();
+
+		// filter contains items and until
+		assertEquals(q.items(), filter.items());
+		assertEquals(q.until(), filter.until());
+
+		// matching behavior is identical to the query
+		assertTrue(filter.matches(e3_event1TagsA1));
+		assertFalse(filter.matches(e5_event1TagsA1B1));
+	}
+
+	@Test
+	void testFilterMatchAll ( ) {
+		EventFilter filter = EventQuery.matchAll().filter();
+		assertTrue(filter.isMatchAll());
+		assertFalse(filter.isMatchNone());
+		assertTrue(filter.matches(e1_event1NoTags));
+	}
+
+	@Test
+	void testFilterMatchNone ( ) {
+		EventFilter filter = EventQuery.matchNone().filter();
+		assertTrue(filter.isMatchNone());
+		assertFalse(filter.isMatchAll());
+		assertFalse(filter.matches(e1_event1NoTags));
+	}
+
+	@Test
+	void testCombineWithSameDirection ( ) {
+		EventQuery q1 = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).backwards();
+		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1")).backwards();
+
+		EventQuery combined = q1.combineWith(q2);
+		assertTrue(combined.isBackwards());
+	}
+
+	@Test
+	void testCombineWithDifferentDirectionThrows ( ) {
+		EventQuery q1 = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).backwards();
+		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1"));
+
+		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> q1.combineWith(q2));
+		assertEquals("can't combine two EventQuery with different directions", e.getMessage());
+	}
+
+	@Test
+	void testCombineWithDifferentLimitThrows ( ) {
+		EventQuery q1 = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).limit(1);
+		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1")).limit(5);
+
+		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> q1.combineWith(q2));
+		assertEquals("can't combine two EventQuery with different limits", e.getMessage());
+	}
+
+	@Test
+	void testUntilPreservesDirectionAndLimit ( ) {
+		EventQuery q = EventQuery.matchAll().backwards().limit(3).until(e4_event2TagsA1.reference());
+		assertTrue(q.isBackwards());
+		assertEquals(Limit.to(3), q.limit());
+		assertEquals(e4_event2TagsA1.reference(), q.until());
+	}
+
+	@Test
+	void testUntilIfEarlierPreservesDirectionAndLimit ( ) {
+		EventQuery q = EventQuery.matchAll().backwards().limit(3);
+		q = q.untilIfEarlier(e3_event1TagsA1.reference());
+		assertTrue(q.isBackwards());
+		assertEquals(Limit.to(3), q.limit());
+		assertEquals(e3_event1TagsA1.reference(), q.until());
+	}
+
 	private StoredEvent storedEvent ( Event<?> e ) {
 		try {
 			return new StoredEvent(e.stream(), EventType.of(e.data()), e.reference(), new JsonMapper().writeValueAsString(e.data()), null, e.tags(), e.timestamp() );

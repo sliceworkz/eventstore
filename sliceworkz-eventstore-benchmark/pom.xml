@@ -2,7 +2,7 @@
 <!--
 
     Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
-    Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+    Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU Lesser General Public License as published by
@@ -25,7 +25,7 @@
 	<parent>
 		<groupId>org.sliceworkz</groupId>
 		<artifactId>sliceworkz-eventstore-parent-pom</artifactId>
-		<version>0.5.1</version>
+		<version>0.8.0-SNAPSHOT</version>
 		<relativePath>../sliceworkz-eventstore-parent-pom</relativePath>
 	</parent>
 
@@ -39,9 +39,9 @@
 	<properties>
 		<maven.deploy.skip>true</maven.deploy.skip>
 		
-		<javalin.version>6.7.0</javalin.version>
-		<logback.version>1.5.21</logback.version>
-		<loki-logback.version>2.0.1</loki-logback.version>
+		<javalin.version>7.1.0</javalin.version>
+		<logback.version>1.5.32</logback.version>
+		<loki-logback.version>2.0.3</loki-logback.version>
 		
 	</properties>
 	
@@ -108,7 +108,7 @@
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-shade-plugin</artifactId>
-				<version>3.6.1</version>
+				<version>3.6.2</version>
 				<executions>
 					<execution>
 						<phase>package</phase>

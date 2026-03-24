@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -35,8 +35,9 @@ public class EventReferenceTest {
 		assertNotNull(r.id());
 		assertEquals(123, r.position());
 		assertEquals(456, r.tx());
+		assertEquals(0, r.index());
 	}
-	
+
 	@Test
 	void testWithIdAndPosition (  ) {
 		EventId id = EventId.create();
@@ -45,6 +46,30 @@ public class EventReferenceTest {
 		assertEquals(id, r.id());
 		assertEquals(123, r.position());
 		assertEquals(456, r.tx());
+		assertEquals(0, r.index());
+	}
+
+	@Test
+	void testWithIdAndPositionAndIndex (  ) {
+		EventId id = EventId.create();
+		EventReference r = EventReference.of(id, 123, 456, 2);
+		assertNotNull(r);
+		assertEquals(id, r.id());
+		assertEquals(123, r.position());
+		assertEquals(456, r.tx());
+		assertEquals(2, r.index());
+	}
+
+	@Test
+	void testWithIndex (  ) {
+		EventId id = EventId.create();
+		EventReference r = EventReference.of(id, 10, 10);
+		EventReference r2 = r.withIndex(3);
+		assertEquals(id, r2.id());
+		assertEquals(10, r2.position());
+		assertEquals(10, r2.tx());
+		assertEquals(3, r2.index());
+		assertEquals(0, r.index()); // original unchanged
 	}
 
 	@Test
@@ -62,14 +87,21 @@ public class EventReferenceTest {
 	}
 
 	@Test
+	void testWithNegativeIndex (  ) {
+		EventId id = EventId.create();
+		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, ()->EventReference.of(id, 1, 1, -1));
+		assertEquals(e.getMessage(), "index -1 is invalid, should be 0 or larger");
+	}
+
+	@Test
 	void testHappenedBefore (  ) {
-		EventReference pos_1_tx_1 = new EventReference(EventId.create(), 1, 1);
-		EventReference pos_2_tx_2 = new EventReference(EventId.create(), 2, 2);
-		EventReference pos_2_tx_3 = new EventReference(EventId.create(), 2, 3);
-		EventReference pos_3_tx_5 = new EventReference(EventId.create(), 3, 5);
-		EventReference pos_3_tx_6 = new EventReference(EventId.create(), 3, 6);
-		EventReference pos_4_tx_4 = new EventReference(EventId.create(), 4, 4);
-		EventReference pos_5_tx_7 = new EventReference(EventId.create(), 5, 7);
+		EventReference pos_1_tx_1 = EventReference.of(EventId.create(), 1, 1);
+		EventReference pos_2_tx_2 = EventReference.of(EventId.create(), 2, 2);
+		EventReference pos_2_tx_3 = EventReference.of(EventId.create(), 2, 3);
+		EventReference pos_3_tx_5 = EventReference.of(EventId.create(), 3, 5);
+		EventReference pos_3_tx_6 = EventReference.of(EventId.create(), 3, 6);
+		EventReference pos_4_tx_4 = EventReference.of(EventId.create(), 4, 4);
+		EventReference pos_5_tx_7 = EventReference.of(EventId.create(), 5, 7);
 		
 		assertFalse(pos_1_tx_1.happenedBefore(pos_1_tx_1));
 		assertTrue(pos_1_tx_1.happenedBefore(pos_2_tx_2));
@@ -131,13 +163,13 @@ public class EventReferenceTest {
 
 	@Test
 	void testHappenedAfter (  ) {
-		EventReference pos_1_tx_1 = new EventReference(EventId.create(), 1, 1);
-		EventReference pos_2_tx_2 = new EventReference(EventId.create(), 2, 2);
-		EventReference pos_2_tx_3 = new EventReference(EventId.create(), 2, 3);
-		EventReference pos_3_tx_5 = new EventReference(EventId.create(), 3, 5);
-		EventReference pos_3_tx_6 = new EventReference(EventId.create(), 3, 6);
-		EventReference pos_4_tx_4 = new EventReference(EventId.create(), 4, 4);
-		EventReference pos_5_tx_7 = new EventReference(EventId.create(), 5, 7);
+		EventReference pos_1_tx_1 = EventReference.of(EventId.create(), 1, 1);
+		EventReference pos_2_tx_2 = EventReference.of(EventId.create(), 2, 2);
+		EventReference pos_2_tx_3 = EventReference.of(EventId.create(), 2, 3);
+		EventReference pos_3_tx_5 = EventReference.of(EventId.create(), 3, 5);
+		EventReference pos_3_tx_6 = EventReference.of(EventId.create(), 3, 6);
+		EventReference pos_4_tx_4 = EventReference.of(EventId.create(), 4, 4);
+		EventReference pos_5_tx_7 = EventReference.of(EventId.create(), 5, 7);
 		
 		assertFalse(pos_1_tx_1.happenedAfter(pos_1_tx_1));
 		assertFalse(pos_1_tx_1.happenedAfter(pos_2_tx_2));
@@ -197,9 +229,49 @@ public class EventReferenceTest {
 	}
 	
 	@Test
+	void testHappenedBeforeWithIndex (  ) {
+		EventId id = EventId.create();
+		EventReference idx0 = EventReference.of(id, 5, 5, 0);
+		EventReference idx1 = EventReference.of(id, 5, 5, 1);
+		EventReference idx2 = EventReference.of(id, 5, 5, 2);
+
+		// same tx, same position, different index
+		assertTrue(idx0.happenedBefore(idx1));
+		assertTrue(idx0.happenedBefore(idx2));
+		assertTrue(idx1.happenedBefore(idx2));
+		assertFalse(idx0.happenedBefore(idx0));
+		assertFalse(idx1.happenedBefore(idx0));
+		assertFalse(idx2.happenedBefore(idx1));
+
+		// index is tertiary: tx and position still take precedence
+		EventReference nextPos = EventReference.of(EventId.create(), 6, 5, 0);
+		assertTrue(idx2.happenedBefore(nextPos));
+		assertFalse(nextPos.happenedBefore(idx2));
+
+		EventReference nextTx = EventReference.of(EventId.create(), 5, 6, 0);
+		assertTrue(idx2.happenedBefore(nextTx));
+		assertFalse(nextTx.happenedBefore(idx2));
+	}
+
+	@Test
+	void testHappenedAfterWithIndex (  ) {
+		EventId id = EventId.create();
+		EventReference idx0 = EventReference.of(id, 5, 5, 0);
+		EventReference idx1 = EventReference.of(id, 5, 5, 1);
+		EventReference idx2 = EventReference.of(id, 5, 5, 2);
+
+		assertFalse(idx0.happenedAfter(idx0));
+		assertFalse(idx0.happenedAfter(idx1));
+		assertTrue(idx1.happenedAfter(idx0));
+		assertTrue(idx2.happenedAfter(idx0));
+		assertTrue(idx2.happenedAfter(idx1));
+		assertFalse(idx1.happenedAfter(idx2));
+	}
+
+	@Test
 	void testNone ( ) {
 		EventReference r = EventReference.none();
 		assertNull(r);
 	}
-	
+
 }

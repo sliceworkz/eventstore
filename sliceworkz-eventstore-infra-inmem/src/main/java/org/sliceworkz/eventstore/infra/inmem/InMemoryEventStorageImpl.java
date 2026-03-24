@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -22,10 +22,12 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -44,8 +46,6 @@ import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.json.JsonMapper;
-
-import io.micrometer.core.instrument.MeterRegistry;
 
 /**
  * Thread-safe in-memory implementation of the {@link EventStorage} interface.
@@ -98,38 +98,39 @@ public class InMemoryEventStorageImpl implements EventStorage {
 
 	private String name;
 	private List<StoredEvent> eventlog = new CopyOnWriteArrayList<>();
+	private Set<String> idempotencyKeys = new HashSet<>();
 	private List<WeakReference<EventStoreListener>> listeners = new CopyOnWriteArrayList<>();
 	private Map<String,EventReference> bookmarks = new HashMap<>();
 	private JsonMapper jsonMapper;
 	private Limit absoluteLimit;
-	private MeterRegistry meterRegistry;
 
 	/**
-	 * Constructs a new in-memory event storage instance with the specified absolute query limit and observability support.
+	 * Constructs a new in-memory event storage instance with the specified name and absolute query limit.
 	 * <p>
 	 * This constructor is package-private and should not be called directly. Instead, use the
 	 * {@link InMemoryEventStorage.Builder} to create instances.
 	 * <p>
 	 * The constructor initializes:
 	 * <ul>
-	 *   <li>A unique name based on the object's identity hash code</li>
-	 *   <li>An empty event log backed by a {@link LinkedList}</li>
+	 *   <li>An empty event log backed by a {@link CopyOnWriteArrayList}</li>
 	 *   <li>An empty list of event listeners</li>
 	 *   <li>An empty bookmark map</li>
 	 *   <li>A Jackson {@link JsonMapper} with auto-discovered modules for event serialization validation</li>
-	 *   <li>A Micrometer meter registry for collecting metrics about storage operations</li>
 	 * </ul>
 	 *
+	 * @param name the unique name for this storage instance; must not be null or blank
 	 * @param absoluteLimit the absolute limit on query results, or {@link Limit#none()} for no limit
-	 * @param meterRegistry the Micrometer meter registry for collecting observability metrics
+	 * @throws IllegalArgumentException if name is null or blank
 	 * @see InMemoryEventStorage.Builder#build()
 	 */
-	public InMemoryEventStorageImpl ( Limit absoluteLimit, MeterRegistry meterRegistry ) {
-		this.name = "inmem-%s".formatted(System.identityHashCode(this)); // unique name in case different objects are used
+	public InMemoryEventStorageImpl ( String name, Limit absoluteLimit ) {
+		if ( name == null || "".equals(name.strip())) {
+			throw new IllegalArgumentException("name must not be empty");
+		}
+		this.name = name;
 		this.jsonMapper = new JsonMapper();
 		this.jsonMapper.findAndRegisterModules();
 		this.absoluteLimit = absoluteLimit;
-		this.meterRegistry = meterRegistry;
 	}
 
 	/**
@@ -160,87 +161,22 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	 */
 	@Override
 	public synchronized Stream<StoredEvent> query(EventQuery query, Optional<EventStreamId> stream, EventReference after, Limit limit, QueryDirection direction ) {
-		return queryAfter(query, stream, after, limit, direction);
-	}
-
-	/**
-	 * Queries events starting from (and including) the specified reference.
-	 * <p>
-	 * This is a convenience method that delegates to {@link #queryFromOrAfter(EventQuery, Optional, Limit, EventReference, boolean, QueryDirection)}
-	 * with includeReference set to true.
-	 *
-	 * @param query the event query specifying which events to retrieve
-	 * @param streamId optional stream ID to filter events
-	 * @param from the reference to start from (inclusive)
-	 * @param limit soft limit on the number of results
-	 * @param direction the direction to traverse the event log
-	 * @return a Stream of StoredEvent instances matching the criteria
-	 */
-	public synchronized Stream<StoredEvent> queryFrom (EventQuery query, Optional<EventStreamId> streamId, EventReference from, Limit limit, QueryDirection direction ) {
-		return queryFromOrAfter(query, streamId, limit, from, true, direction);
-	}
-
-	/**
-	 * Queries events starting after (excluding) the specified reference.
-	 * <p>
-	 * This is a convenience method that delegates to {@link #queryFromOrAfter(EventQuery, Optional, Limit, EventReference, boolean, QueryDirection)}
-	 * with includeReference set to false.
-	 *
-	 * @param query the event query specifying which events to retrieve
-	 * @param streamId optional stream ID to filter events
-	 * @param after the reference to start after (exclusive)
-	 * @param limit soft limit on the number of results
-	 * @param direction the direction to traverse the event log
-	 * @return a Stream of StoredEvent instances matching the criteria
-	 */
-	public synchronized Stream<StoredEvent> queryAfter (EventQuery query, Optional<EventStreamId> streamId, EventReference after, Limit limit, QueryDirection direction ) {
-		return queryFromOrAfter(query, streamId, limit, after, false, direction);
-	}
-
-	/**
-	 * Core query method supporting both inclusive and exclusive reference-based queries.
-	 * <p>
-	 * This method provides the underlying implementation for both {@link #queryFrom(EventQuery, Optional, EventReference, Limit, QueryDirection)}
-	 * and {@link #queryAfter(EventQuery, Optional, EventReference, Limit, QueryDirection)} by allowing control over whether
-	 * the reference event itself is included in the results.
-	 * <p>
-	 * The method handles:
-	 * <ul>
-	 *   <li>Bidirectional traversal (forward/backward) of the event log</li>
-	 *   <li>Position-based skipping to start from the correct event</li>
-	 *   <li>Stream filtering based on the provided stream ID</li>
-	 *   <li>Event matching based on the query criteria</li>
-	 *   <li>Enforcement of both soft and absolute limits</li>
-	 * </ul>
-	 *
-	 * @param query the event query specifying which events to retrieve
-	 * @param streamId optional stream ID to filter events
-	 * @param limit soft limit on the number of results
-	 * @param reference the reference event to position from, or null to start from the beginning
-	 * @param includeReference true to include the reference event in results, false to start after it
-	 * @param direction the direction to traverse the event log (FORWARD or BACKWARD)
-	 * @return a Stream of StoredEvent instances matching the criteria
-	 * @throws EventStorageException if the result exceeds the configured absolute limit
-	 * @see #queryFrom(EventQuery, Optional, EventReference, Limit, QueryDirection)
-	 * @see #queryAfter(EventQuery, Optional, EventReference, Limit, QueryDirection)
-	 */
-	public synchronized Stream<StoredEvent> queryFromOrAfter (EventQuery query, Optional<EventStreamId> streamId, Limit limit, EventReference reference, boolean includeReference, QueryDirection direction ) {
 		Stream<StoredEvent> on;
-		
+
 		switch ( direction ) {
 			case BACKWARD:
 				on = eventlog.reversed().stream();
 				break;
 			case FORWARD:
 			default:
-				on = eventlog.stream(); 
+				on = eventlog.stream();
 		}
-		
-		if ( reference != null ) {
+
+		if ( after != null ) {
 			if ( direction == QueryDirection.FORWARD ) {
-				on = on.skip(reference.position()-(includeReference?1:0));  // skip until the position in the stream, including the referenced/current one as first or not
+				on = on.skip(after.position());
 			} else {
-				on = on.skip(eventlog.size()-reference.position()+(includeReference?0:1));  // skip until the position in the stream, including the referenced/current one as first or not
+				on = on.skip(eventlog.size()-after.position()+1);
 			}
 		}
 		
@@ -251,10 +187,10 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		
 		Stream<StoredEvent> result = on;
 
-		if ( streamId.isPresent() ) {
-			result = result.filter(e->streamId.get().canRead(e.stream()));
+		if ( stream.isPresent() ) {
+			result = result.filter(e->stream.get().canRead(e.stream()));
 		} else {
-			// no streamId specified, considering all streams present in the store
+			// no stream specified, considering all streams present in the store
 		}
 		
 		result = result.filter(query::matches);
@@ -291,21 +227,22 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		// otherwise, we'll need to be aware of any optimistic locking issues
 		} else {
 			
-			// we query the stream with the same filter from the last event known as our reference
+			// we query the stream with the event filter from the last event known as our reference
 			// we only need to fetch max 1 event to prove a locking issue
-			Stream<StoredEvent> newEventStream = queryAfter(appendCriteria.eventQuery(), streamId, appendCriteria.expectedLastEventReference().orElse(null), Limit.to(1), QueryDirection.FORWARD);
-			
+			EventQuery lockingQuery = new EventQuery(appendCriteria.eventFilter(), EventQuery.Direction.FORWARD, Limit.none());
+			Stream<StoredEvent> newEventStream = query(lockingQuery, streamId, appendCriteria.expectedLastEventReference().orElse(null), Limit.to(1), QueryDirection.FORWARD);
+
 			List<StoredEvent> newEvents = newEventStream.toList();
-			
+
 			// if there are no new events in the stream ...
 			if ( newEvents.isEmpty() ) {
-				
+
 				// we can safely append to the event log
 				result = addAndNotifyListeners(events);
-				
+
 			} else {
 				// new events means an optimistic lock !
-				throw new OptimisticLockingException(appendCriteria.eventQuery(), appendCriteria.expectedLastEventReference());
+				throw new OptimisticLockingException(appendCriteria.eventFilter(), appendCriteria.expectedLastEventReference());
 			}				
 		}
 		
@@ -333,7 +270,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	}
 	
 	private List<StoredEvent> addAndNotifyListeners ( List<EventToStore> events ) {
-		var addedEvents = events.stream().map(this::addEventToEventLog).toList();
+		var addedEvents = events.stream().map(this::addEventToEventLog).filter(e->e!=null).toList();
 		
 		// notify each Listener about the appends, but if multiple Events were appended, only notify about the last one
 		addedEvents.stream()
@@ -353,6 +290,14 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	}
 	
 	private StoredEvent addEventToEventLog ( EventToStore event ) {
+		
+		if ( event.idempotencyKey() != null ) {
+			if ( idempotencyKeys.contains(event.idempotencyKey())) {
+				return null;
+			}
+			idempotencyKeys.add(event.idempotencyKey());
+		}
+		
 		int posAndTxAsWell = eventlog.size()+1;
 		EventReference reference = EventReference.create(posAndTxAsWell, posAndTxAsWell);
 		StoredEvent storedEvent = event.positionAt(reference, LocalDateTime.now());

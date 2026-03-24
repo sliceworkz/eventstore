@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -16,6 +16,9 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 package org.sliceworkz.eventstore.examples;
+
+import java.util.List;
+import java.util.Set;
 
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.Event;
@@ -149,31 +152,30 @@ public class UpcastingExample {
 	public static class CustomerRegisteredUpcaster implements Upcast<CustomerHistoricalEvent.CustomerRegistered, CustomerEvent.CustomerRegisteredV2> {
 
 		@Override
-		public CustomerEvent.CustomerRegisteredV2 upcast(CustomerHistoricalEvent.CustomerRegistered historicalEvent) {
+		public List<CustomerEvent.CustomerRegisteredV2> upcast(CustomerHistoricalEvent.CustomerRegistered historicalEvent) {
 			// using the constructor, not the "of" utility method to allow historical values that don't adhere to the new length business rules
-			return new CustomerEvent.CustomerRegisteredV2(new CustomerEvent.Name(historicalEvent.name()));
+			return List.of(new CustomerEvent.CustomerRegisteredV2(new CustomerEvent.Name(historicalEvent.name())));
 		}
 
 		@Override
-		public Class<CustomerRegisteredV2> targetType() {
-			return CustomerRegisteredV2.class;
+		public Set<Class<? extends CustomerRegisteredV2>> targetTypes() {
+			return Set.of(CustomerRegisteredV2.class);
 		}
-		
+
 	}
-	
+
 	public static class CustomerNameChangedUpcaster implements Upcast<CustomerHistoricalEvent.CustomerNameChanged, CustomerEvent.CustomerRenamed> {
 
 		@Override
-		public CustomerEvent.CustomerRenamed upcast(CustomerHistoricalEvent.CustomerNameChanged historicalEvent) {
+		public List<CustomerEvent.CustomerRenamed> upcast(CustomerHistoricalEvent.CustomerNameChanged historicalEvent) {
 			// using the constructor, not the "of" utility method to allow historical values that don't adhere to the new length business rules
-			return new CustomerEvent.CustomerRenamed(new CustomerEvent.Name(historicalEvent.name()));
+			return List.of(new CustomerEvent.CustomerRenamed(new CustomerEvent.Name(historicalEvent.name())));
 		}
-		
+
 		@Override
-		public Class<CustomerRenamed> targetType() {
-			return CustomerRenamed.class;
+		public Set<Class<? extends CustomerRenamed>> targetTypes() {
+			return Set.of(CustomerRenamed.class);
 		}
-		
 
 	}
 

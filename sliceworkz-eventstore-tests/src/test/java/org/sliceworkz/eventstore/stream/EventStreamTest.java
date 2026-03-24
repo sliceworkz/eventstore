@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -18,6 +18,7 @@
 package org.sliceworkz.eventstore.stream;
 
 import static org.awaitility.Awaitility.await;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -31,6 +32,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -122,8 +124,9 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		// first append via the first stream instance ...
 		s1.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none()));
 		s1.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none()));
-		waitBecauseOfEventualConsistency();
-		
+		BooleanSupplier bothEventualListenersReceivedBothAppends = () -> s1ecal.count() >= 2 && s2ecal.count() >= 2;
+		waitBecauseOfEventualConsistency(bothEventualListenersReceivedBothAppends);
+
 		assertEquals(2, s1cal.count());
 		assertEquals(2, s1ecal.count());
 
@@ -135,9 +138,9 @@ public class EventStreamTest extends AbstractEventStoreTest {
 
 		// ... now append via the other stream instance on the same logical stream
 		s2.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none()));
-		
-		waitBecauseOfEventualConsistency();
-		
+		BooleanSupplier bothEventualListenersReceivedThirdAppend = () -> s1ecal.count() >= 3 && s2ecal.count() >= 3;
+		waitBecauseOfEventualConsistency(bothEventualListenersReceivedThirdAppend);
+
 		assertEquals(2, s1cal.count());
 		assertEquals(3, s1ecal.count());
 
@@ -150,8 +153,9 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		
 		// ... and now append on another logical stream
 		s3.append(AppendCriteria.none(), Event.of(new AnotherDomainEvent("1"), Tags.none()));
-		waitBecauseOfEventualConsistency();
-		
+		BooleanSupplier s3EventualListenerNotified = () -> s3ecal.count() >= 1;
+		waitBecauseOfEventualConsistency(s3EventualListenerNotified);
+
 		assertEquals(2, s1cal.count());  // other stream, shouldn't be notified
 		assertEquals(3, s1ecal.count()); // other stream, shouldn't be notified
 
@@ -180,31 +184,53 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		EventId eventId = events.getFirst().reference().id();
 
 		// check we can find it via getEvent on the same stream
-		Optional<Event<MockDomainEvent>> retrieved = es.getEventById(eventId);
-		assertTrue(retrieved.isPresent());
-		assertEquals(eventId, retrieved.get().reference().id());
+		List<Event<MockDomainEvent>> retrieved = es.getEventById(eventId);
+		assertFalse(retrieved.isEmpty());
+		assertEquals(eventId, retrieved.getFirst().reference().id());
 		// or from a query on the same
 		assertTrue(es.query(EventQuery.matchAll()).map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());
-		
-		
+
+
 		// check we can find it via getEvent on a generic stream
 		EventStreamId generic = EventStreamId.anyContext().anyPurpose();
 		EventStream<MockDomainEvent> genericStream = eventStore().getEventStream(generic, MockDomainEvent.class);
 		retrieved = genericStream.getEventById(eventId);
-		assertTrue(retrieved.isPresent());
-		assertEquals(eventId, retrieved.get().reference().id());
+		assertFalse(retrieved.isEmpty());
+		assertEquals(eventId, retrieved.getFirst().reference().id());
 		// or from a query on the same
 		assertTrue(genericStream.query(EventQuery.matchAll()).map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());
 
-		
+
 		// check we can't get it via another stream
 		EventStreamId other = EventStreamId.forContext("test2").withPurpose("test2");
 		EventStream<MockDomainEvent> otherStream = eventStore().getEventStream(other, MockDomainEvent.class);
-		Optional<Event<MockDomainEvent>> notRetrieved = otherStream.getEventById(eventId);
-		assertFalse(notRetrieved.isPresent());
+		List<Event<MockDomainEvent>> notRetrieved = otherStream.getEventById(eventId);
+		assertTrue(notRetrieved.isEmpty());
 		// and neither from a query on the same
 		assertFalse(otherStream.query(EventQuery.matchAll()).map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());
 
+	}
+
+	@Test
+	void testAppendWithIdempotency ( ) {
+		
+		MockEventuallyConsistentAppendListener appendListener = new MockEventuallyConsistentAppendListener();
+		es.subscribe(appendListener);
+		
+		List<Event<MockDomainEvent>> events = es.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FirstDomainEvent("1"), Tags.none()).withIdempotencyKey("some-idempotency-key")));
+		assertEquals(1, events.size());
+
+		waitBecauseOfEventualConsistency(()->appendListener.count()>=1);
+		
+		assertEquals(1, appendListener.count()); // we expect one notification on our appendlistener
+		assertEquals(events.getLast().reference(), appendListener.lastReference());
+
+		events = es.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FirstDomainEvent("2"), Tags.none()).withIdempotencyKey("some-idempotency-key")));
+		assertEquals(0, events.size());
+
+		waitBecauseOfEventualConsistency(()->appendListener.count()>=1);
+		
+		assertEquals(1, appendListener.count()); // we expect one notification on our appendlistener
 	}
 	
 	
@@ -220,41 +246,56 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		List<Event<MockDomainEvent>> events = es.append(AppendCriteria.none(), List.of(e1, e2));
 		assertEquals(2, events.size());
 
-		waitBecauseOfEventualConsistency();
-		
-		// could be one or two events, depending whether the second gets processed before the first was offered to the appendListener or not. 
+		BooleanSupplier listenerReceivedLastEvent = () -> events.getLast().reference().equals(appendListener.lastReference());
+		waitBecauseOfEventualConsistency(listenerReceivedLastEvent);
+
+		// could be one or two events, depending whether the second gets processed before the first was offered to the appendListener or not.
 		assertEquals(events.getLast().reference(), appendListener.lastReference());
 		
 		
 		EventId eventId = events.getFirst().reference().id();
 
 		// check we can find it via getEvent on the same stream
-		Optional<Event<MockDomainEvent>> retrieved = es.getEventById(eventId);
-		assertTrue(retrieved.isPresent());
-		assertEquals(eventId, retrieved.get().reference().id());
+		List<Event<MockDomainEvent>> retrieved = es.getEventById(eventId);
+		assertFalse(retrieved.isEmpty());
+		assertEquals(eventId, retrieved.getFirst().reference().id());
 		// or from a query on the same
 		assertTrue(es.query(EventQuery.matchAll()).map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());
-		
-		
+
+
 		// check we can find it via getEvent on a generic stream
 		EventStreamId generic = EventStreamId.anyContext().anyPurpose();
 		EventStream<MockDomainEvent> genericStream = eventStore().getEventStream(generic, MockDomainEvent.class);
 		retrieved = genericStream.getEventById(eventId);
-		assertTrue(retrieved.isPresent());
-		assertEquals(eventId, retrieved.get().reference().id());
+		assertFalse(retrieved.isEmpty());
+		assertEquals(eventId, retrieved.getFirst().reference().id());
 		// or from a query on the same
 		assertTrue(genericStream.query(EventQuery.matchAll()).map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());
 
-		
+
 		// check we can't get it via another stream
 		EventStreamId other = EventStreamId.forContext("test2").withPurpose("test2");
 		EventStream<MockDomainEvent> otherStream = eventStore().getEventStream(other, MockDomainEvent.class);
-		Optional<Event<MockDomainEvent>> notRetrieved = otherStream.getEventById(eventId);
-		assertFalse(notRetrieved.isPresent());
+		List<Event<MockDomainEvent>> notRetrieved = otherStream.getEventById(eventId);
+		assertTrue(notRetrieved.isEmpty());
 		// and neither from a query on the same
 		assertFalse(otherStream.query(EventQuery.matchAll()).map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());
 
 	}
+
+	@Test
+	void testAppendMultipleWithIdempotency ( ) {
+		
+		// if at least one of the events carries an idempotency key, this is not possible
+		EphemeralEvent<MockDomainEvent> e1 = Event.<MockDomainEvent>of(new FirstDomainEvent("1"), Tags.none());
+		EphemeralEvent<MockDomainEvent> e2 = Event.<MockDomainEvent>of(new SecondDomainEvent("2"), Tags.none()).withIdempotencyKey("idempotency-key");
+		
+		IllegalArgumentException iae = assertThrows(IllegalArgumentException.class, ()->
+			es.append(AppendCriteria.none(), List.of(e1, e2))
+		);
+		assertEquals("cannot append multiple events in combination with an idempotency key", iae.getMessage());
+	}
+
 	
 	@Test
 	void testAppendWithConcreteEventClass ( ) {
@@ -279,6 +320,15 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		// should be ok
 		specialEs.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FourthDomainEventWithErasableParts("1", "someName"), Tags.none())));
 
+	}
+
+	@Test
+	void testAppendEmptyEventList ( ) {
+		List<Event<MockDomainEvent>> events = assertDoesNotThrow(
+			() -> es.append(AppendCriteria.none(), Collections.emptyList())
+		);
+		assertEquals(0, events.size());
+		assertEquals(0, es.query(EventQuery.matchAll()).count());
 	}
 
 	@Test

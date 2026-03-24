@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -28,6 +28,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
@@ -38,6 +39,8 @@ import java.util.stream.Stream;
 
 import javax.sql.DataSource;
 
+import com.github.f4b6a3.uuid.UuidCreator;
+
 import org.postgresql.PGConnection;
 import org.postgresql.PGNotification;
 import org.slf4j.Logger;
@@ -47,8 +50,9 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
-import org.sliceworkz.eventstore.query.EventQueryItem;
+import org.sliceworkz.eventstore.query.EventFilterItem;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageException;
@@ -120,12 +124,15 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	private final List<WeakReference<EventStoreListener>> listeners = new CopyOnWriteArrayList<>();
 	private final ExecutorService executorService;
-	private boolean stopped;
+	private volatile boolean stopped;
 
 	private static final JsonMapper JSONMAPPER = new JsonMapper();
 
 	private static final int THIRTY_SECONDS = 30*1000;
 	public static final int WAIT_FOR_NOTIFICATIONS_TIMEOUT = THIRTY_SECONDS;
+
+	private static final long INITIAL_RETRY_DELAY_MS = 1_000;
+	private static final long MAX_RETRY_DELAY_MS = 30_000;
 
 	private static final int MAX_PREFIX_LENGTH = 32;
 
@@ -181,28 +188,80 @@ public class PostgresEventStorageImpl implements EventStorage {
 		return prefix;
 	}
 	
+	/**
+	 * Validates that all required database objects exist and are correctly defined.
+	 * <p>
+	 * This is equivalent to using {@link DatabaseInitMode#VALIDATE}. No objects are created
+	 * or modified. Throws {@link EventStorageException} if any required object is missing
+	 * or malformed.
+	 *
+	 * @return this instance for method chaining
+	 * @throws EventStorageException if the schema is invalid
+	 */
+	public PostgresEventStorageImpl validateDatabase ( ) {
+		checkDatabase();
+		return this;
+	}
+
+	/**
+	 * Creates missing database objects if they do not exist, leaving existing objects untouched,
+	 * then validates the schema.
+	 * <p>
+	 * This is equivalent to using {@link DatabaseInitMode#ENSURE}. It is safe to run repeatedly.
+	 * If an existing object has an incompatible definition, the subsequent validation will
+	 * detect and report it.
+	 *
+	 * @return this instance for method chaining
+	 * @throws EventStorageException if schema creation or validation fails
+	 */
+	public PostgresEventStorageImpl ensureDatabase ( ) {
+		LOGGER.info("Ensuring database schema for prefix '{}'", prefix);
+		executeSqlScript("ensure-schema.sql");
+		checkDatabase();
+		return this;
+	}
+
+	/**
+	 * Drops all event store objects and recreates them from scratch, then validates the schema.
+	 * <p>
+	 * This is equivalent to using {@link DatabaseInitMode#INITIALIZE}.
+	 * <p>
+	 * <strong>Warning:</strong> This is destructive — all existing event data will be lost.
+	 *
+	 * @return this instance for method chaining
+	 * @throws EventStorageException if schema initialization or validation fails
+	 */
 	public PostgresEventStorageImpl initializeDatabase ( ) {
-		try (InputStream inputStream = getClass().getClassLoader().getResourceAsStream("initialisation.sql")) {
+		LOGGER.info("Initializing database schema for prefix '{}' (drop and recreate)", prefix);
+		executeSqlScript("drop-schema.sql");
+		executeSqlScript("ensure-schema.sql");
+		checkDatabase();
+		return this;
+	}
+
+	private void executeSqlScript ( String scriptName ) {
+		try (InputStream inputStream = getClass().getClassLoader().getResourceAsStream(scriptName)) {
 			if (inputStream == null) {
-				throw new EventStorageException("Could not find initialisation.sql in classpath");
+				throw new EventStorageException("Could not find %s in classpath".formatted(scriptName));
 			}
 
 			String sql = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
 			sql = sql.replaceAll("PREFIX_", prefix);
 
 			try ( Connection writeConnection = dataSource.getConnection() ) {
+				writeConnection.setAutoCommit(false);
 				try (Statement statement = writeConnection.createStatement()) {
 					statement.execute(sql);
 				}
+				writeConnection.commit();
 			}
 
 		} catch (IOException | SQLException e) {
-			throw new EventStorageException("Failed to initialize database", e);
+			throw new EventStorageException("Failed to execute database script: %s".formatted(scriptName), e);
 		}
-		return this;
 	}
 
-	public PostgresEventStorageImpl checkDatabase ( ) {
+	PostgresEventStorageImpl checkDatabase ( ) {
 		LOGGER.info("Starting database schema validation for prefix '{}'", prefix);
 
 		try ( Connection readConnection = dataSource.getConnection() ) {
@@ -466,55 +525,35 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	@Override
 	public Stream<StoredEvent> query(EventQuery query, Optional<EventStreamId> stream, EventReference after, Limit limit, QueryDirection direction ) {
-		return queryAfter(query, stream, after, limit, direction);
-	}
-	
-	public Stream<StoredEvent> queryFrom(EventQuery query, Optional<EventStreamId> streamId, EventReference from, Limit limit, QueryDirection direction) {
-		return queryFromOrAfter(query, streamId, limit, from, true, direction);
-	}
-	
-	public Stream<StoredEvent> queryAfter(EventQuery query, Optional<EventStreamId> streamId, EventReference after, Limit limit, QueryDirection direction) {
-		return queryFromOrAfter(query, streamId, limit, after, false, direction);
-	}
-	
-	public Stream<StoredEvent> queryFromOrAfter(EventQuery query, Optional<EventStreamId> streamId, Limit limit, EventReference reference, boolean includeReference, QueryDirection direction ) {
 		// Handle the case where query matches none - return empty stream
 		if (query.isMatchNone()) {
 			return Stream.empty();
 		}
-		
+
 		StringBuilder sqlBuilder = new StringBuilder();
 		sqlBuilder.append(
 			"""
-				SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags 
-				FROM %sevents 
-				WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot()) 
+				SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags
+				FROM %sevents
+				WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 			""".formatted(prefix)
 			);
 		// pg_snapshot_xmin(pg_current_snapshot()) makes sure we don't read data committed by transaction that were started
 		// after ones that are still running (race condition which would drop some events otherwise)
-		// great insight found in the blogpost by Oskar Dudycz (https://event-driven.io/en/ordering_in_postgres_outbox/)  
-		
+		// great insight found in the blogpost by Oskar Dudycz (https://event-driven.io/en/ordering_in_postgres_outbox/)
+
 		List<Object> parameters = new ArrayList<>();
-		
-		// Add position filtering if reference is provided
-		if (reference != null ) {
-			if (includeReference) {
-				if ( direction == QueryDirection.FORWARD ) {
-					sqlBuilder.append(" AND ((event_tx>?::xid8) OR (event_tx = ?::xid8 AND event_position > ?))");
-				} else {
-					sqlBuilder.append(" AND ((event_tx<?::xid8) OR (event_tx = ?::xid8 AND event_position < ?))");
-				}
+
+		// Add position filtering if reference is provided (exclusive - events after the reference)
+		if (after != null ) {
+			if ( direction == QueryDirection.FORWARD ) {
+				sqlBuilder.append(" AND ((event_tx>?::xid8) OR (event_tx = ?::xid8 AND event_position > ?))");
 			} else {
-				if ( direction == QueryDirection.FORWARD ) {
-					sqlBuilder.append(" AND ((event_tx>?::xid8) OR (event_tx = ?::xid8 AND event_position > ?))");
-				} else {
-					sqlBuilder.append(" AND ((event_tx<?::xid8) OR (event_tx = ?::xid8 AND event_position < ?))");
-				}
+				sqlBuilder.append(" AND ((event_tx<?::xid8) OR (event_tx = ?::xid8 AND event_position < ?))");
 			}
-			parameters.add(Long.toUnsignedString(reference.tx()));
-			parameters.add(Long.toUnsignedString(reference.tx()));
-			parameters.add(reference.position());
+			parameters.add(Long.toUnsignedString(after.tx()));
+			parameters.add(Long.toUnsignedString(after.tx()));
+			parameters.add(after.position());
 		}
 		
 		if ( query.until() != null ) {
@@ -527,20 +566,20 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 		
 		// Add stream filtering
-		if (streamId.isPresent()) {
-			if (!streamId.get().isAnyContext()) {
+		if (stream.isPresent()) {
+			if (!stream.get().isAnyContext()) {
 				sqlBuilder.append(" AND stream_context = ?");
-				parameters.add(streamId.get().context());
+				parameters.add(stream.get().context());
 			}
-			if (!streamId.get().isAnyPurpose()) {
+			if (!stream.get().isAnyPurpose()) {
 				sqlBuilder.append(" AND stream_purpose = ?");
-				parameters.add(streamId.get().purpose());
+				parameters.add(stream.get().purpose());
 			}
 		}
 		
-		// Add EventQuery filtering (event types and tags)
+		// Add EventFilter filtering (event types and tags)
 		if (!query.isMatchAll()) {
-			addEventQueryFiltering(sqlBuilder, parameters, query);
+			addEventFilterFiltering(sqlBuilder, parameters, query.filter());
 		}
 		
 		// Order by position
@@ -582,15 +621,15 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 	}
 	
-	private void addEventQueryFiltering(StringBuilder sqlBuilder, List<Object> parameters, EventQuery query) {
-		if (query.items() == null || query.items().isEmpty()) {
+	private void addEventFilterFiltering(StringBuilder sqlBuilder, List<Object> parameters, EventFilter filter) {
+		if (filter.items() == null || filter.items().isEmpty()) {
 			return; // matchAll case is already handled
 		}
-		
+
 		sqlBuilder.append(" AND (");
 		boolean first = true;
-		
-		for (EventQueryItem item : query.items()) {
+
+		for (EventFilterItem item : filter.items()) {
 			if (!first) {
 				sqlBuilder.append(" OR ");
 			}
@@ -646,130 +685,147 @@ public class PostgresEventStorageImpl implements EventStorage {
 	
 	@Override
 	public List<StoredEvent> append(AppendCriteria appendCriteria, Optional<EventStreamId> streamId, List<EventToStore> events) {
-		// Build conditional insert with optimistic locking check
-		StringBuilder sqlBuilder = new StringBuilder();
-		sqlBuilder.append("INSERT INTO %sevents (event_id, stream_context, stream_purpose, event_type, event_data, event_erasable_data, event_tags) SELECT * FROM ( VALUES ".formatted(prefix));
-		for ( int i = 0; i < events.size(); i++ ) {
-			if ( i > 0 ) {
-				sqlBuilder.append(", ");
-			}
-			sqlBuilder.append("(?::uuid, ?, ?, ?, ?::jsonb, ?::jsonb, ?)");
-		}
-		sqlBuilder.append(")");
+		List<StoredEvent> storedEvents = new ArrayList<>();
 
-		List<Object> parameters = new ArrayList<>();
-		
-		List<EventId> ids = new ArrayList<>();
-
-		for ( EventToStore event: events ) {
+		if ( events.size() != 0 ) {
 			
-			EventId id = EventId.create();
-			ids.add(id);
-			
-			// Add to-be-appended-event parameters first
-			parameters.add(id.value());
-			parameters.add(event.stream().context());
-			parameters.add(event.stream().purpose());
-			parameters.add(event.type().name());
-	
-			parameters.add(event.immutableData());
-			parameters.add(event.erasableData());
-			
-			// Convert tags to array
-			String[] tagsArray = event.tags().toStrings().toArray(new String[event.tags().tags().size()]);
-			parameters.add(tagsArray);
-		}
-		
-		if ( ! appendCriteria.isNone() ) {
-
-			// Now add the optimistic locking conditions
-			sqlBuilder.append(
-					"""
-				WHERE NOT EXISTS (
-					SELECT 1 FROM %sevents 
-					WHERE 1=1 """.formatted(prefix));
-			
-			
-			// Add stream filtering
-			if (streamId.isPresent()) {
-				if (!streamId.get().isAnyContext()) {
-					sqlBuilder.append(" AND stream_context = ?");
-					parameters.add(streamId.get().context());
+			// Build conditional insert with optimistic locking check
+			StringBuilder sqlBuilder = new StringBuilder();
+			sqlBuilder.append("INSERT INTO %sevents (event_id, idempotency_key, stream_context, stream_purpose, event_type, event_data, event_erasable_data, event_tags) SELECT * FROM ( VALUES ".formatted(prefix));
+			for ( int i = 0; i < events.size(); i++ ) {
+				if ( i > 0 ) {
+					sqlBuilder.append(", ");
 				}
-				if (!streamId.get().isAnyPurpose()) {
-					sqlBuilder.append(" AND stream_purpose = ?");
-					parameters.add(streamId.get().purpose());
-				}
+				sqlBuilder.append("(?::uuid, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?) ");
 			}
-			
-			if ( appendCriteria.expectedLastEventReference() != null && appendCriteria.expectedLastEventReference().isPresent()  ) {
-				
-				// Add position filtering - check for events after the expected last event
-				sqlBuilder.append(" AND event_position > ?");
-				parameters.add(appendCriteria.expectedLastEventReference().get().position());
-			}
-		
-		
-			// Add EventQuery filtering for the consistency boundary
-			if (!appendCriteria.eventQuery().isMatchAll()) {
-				addEventQueryFiltering(sqlBuilder, parameters, appendCriteria.eventQuery());
-			}
-			
 			sqlBuilder.append(") ");
-		}
-		
-		sqlBuilder.append("RETURNING event_position, event_timestamp, event_tx::text");
-		
-		
-		try ( Connection writeConnection = dataSource.getConnection()) {
-			writeConnection.setAutoCommit(false);
+	
+			List<Object> parameters = new ArrayList<>();
 			
-			try ( PreparedStatement stmt = writeConnection.prepareStatement(sqlBuilder.toString()) ) {
-				// Set parameters
-				for (int i = 0; i < parameters.size(); i++) {
-					Object param = parameters.get(i);
-					if (param instanceof String[]) {
-						stmt.setArray(i + 1, writeConnection.createArrayOf("text", (String[]) param));
+			List<EventId> ids = new ArrayList<>();
+	
+			for ( EventToStore event: events ) {
+				
+				EventId id = new EventId ( UuidCreator.getTimeOrderedEpochPlus1().toString() );
+				ids.add(id);
+				
+				// Add to-be-appended-event parameters first
+				parameters.add(id.value());
+				parameters.add(event.idempotencyKey());
+				parameters.add(event.stream().context());
+				parameters.add(event.stream().purpose());
+				parameters.add(event.type().name());
+		
+				parameters.add(event.immutableData());
+				parameters.add(event.erasableData());
+				
+				// Convert tags to array
+				String[] tagsArray = event.tags().toStrings().toArray(new String[event.tags().tags().size()]);
+				parameters.add(tagsArray);
+			}
+			
+			if ( ! appendCriteria.isNone() ) {
+	
+				// Now add the optimistic locking conditions
+				sqlBuilder.append(
+						"""
+					WHERE NOT EXISTS (
+						SELECT 1 FROM %sevents 
+						WHERE 1=1 """.formatted(prefix));
+				
+				
+				// Add stream filtering
+				if (streamId.isPresent()) {
+					if (!streamId.get().isAnyContext()) {
+						sqlBuilder.append(" AND stream_context = ?");
+						parameters.add(streamId.get().context());
+					}
+					if (!streamId.get().isAnyPurpose()) {
+						sqlBuilder.append(" AND stream_purpose = ?");
+						parameters.add(streamId.get().purpose());
+					}
+				}
+				
+				if ( appendCriteria.expectedLastEventReference() != null && appendCriteria.expectedLastEventReference().isPresent()  ) {
+					
+					// Add position filtering - check for events after the expected last event
+					sqlBuilder.append(" AND event_position > ?");
+					parameters.add(appendCriteria.expectedLastEventReference().get().position());
+				}
+			
+			
+				// Add EventFilter filtering for the consistency boundary
+				EventFilter lockingFilter = appendCriteria.eventFilter();
+				if (!lockingFilter.isMatchAll()) {
+					addEventFilterFiltering(sqlBuilder, parameters, lockingFilter);
+				}
+				
+				sqlBuilder.append(") ");
+			}
+			
+			sqlBuilder.append("RETURNING event_position, event_timestamp, event_tx::text");
+			
+			
+			try ( Connection writeConnection = dataSource.getConnection()) {
+				writeConnection.setAutoCommit(false);
+				
+				try ( PreparedStatement stmt = writeConnection.prepareStatement(sqlBuilder.toString()) ) {
+					// Set parameters
+					for (int i = 0; i < parameters.size(); i++) {
+						Object param = parameters.get(i);
+						if (param instanceof String[]) {
+							stmt.setArray(i + 1, writeConnection.createArrayOf("text", (String[]) param));
+						} else {
+							stmt.setObject(i + 1, param);
+						}
+					}
+					
+					try (ResultSet rs = stmt.executeQuery()) {
+
+						Iterator<EventToStore> it = events.iterator();
+						Iterator<EventId> idIterator = ids.iterator();
+
+						while (rs.next()) {
+							long position = rs.getLong("event_position");
+							long tx = Long.parseUnsignedLong(rs.getString("event_tx"));
+							Timestamp timestamp = rs.getTimestamp("event_timestamp");
+
+							EventToStore e = it.next();
+							EventId id = idIterator.next();
+
+							EventReference reference = EventReference.of(id, position, tx);
+							storedEvents.add(e.positionAt(reference, timestamp.toLocalDateTime()));
+						}
+
+						if ( storedEvents.size() != events.size() ) {
+							// Insert failed due to optimistic locking conflict
+							writeConnection.rollback();
+							throw new OptimisticLockingException(appendCriteria.eventFilter(), appendCriteria.expectedLastEventReference());
+						}
+					}
+					writeConnection.commit();
+
+				} catch (SQLException e) {
+					try {
+						writeConnection.rollback();
+					} catch (SQLException rollbackEx) {
+						e.addSuppressed(rollbackEx);
+					}
+
+					// idempotency issue
+					if ( e.getMessage().contains("idempotency_key")) {
+						return Collections.emptyList();
 					} else {
-						stmt.setObject(i + 1, param);
+						throw new EventStorageException("SQLException during append", e);
 					}
 				}
 				
-				List<StoredEvent> storedEvents = new ArrayList<>();
-				
-				try (ResultSet rs = stmt.executeQuery()) {
-					
-					Iterator<EventToStore> it = events.iterator();
-					Iterator<EventId> idIterator = ids.iterator();
-					
-					while (rs.next()) {
-						long position = rs.getLong("event_position");
-						long tx = Long.parseUnsignedLong(rs.getString("event_tx"));
-						Timestamp timestamp = rs.getTimestamp("event_timestamp");
-						
-						EventToStore e = it.next();
-						EventId id = idIterator.next();
-						
-						EventReference reference = EventReference.of(id, position, tx);
-						storedEvents.add(e.positionAt(reference, timestamp.toLocalDateTime()));
-					}
-					
-					if ( storedEvents.size() != events.size() ) {
-						// Insert failed due to optimistic locking conflict
-						throw new OptimisticLockingException(appendCriteria.eventQuery(), appendCriteria.expectedLastEventReference());
-					}
-				}
-				writeConnection.commit();
-				
-				return storedEvents;
 			} catch (SQLException e) {
-				writeConnection.rollback();
 				throw new EventStorageException("SQLException during append", e);
 			}
-			
-		} catch (SQLException e) {
-			throw new EventStorageException("SQLException during append", e);
 		}
+		
+		return storedEvents;
 			
 	}
 
@@ -854,6 +910,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			
 			String listenStatement = "LISTEN %sevent_appended;".formatted(prefix);
 			
+			long retryDelayMs = INITIAL_RETRY_DELAY_MS;
 			while ( !stopped ) {
 
 				try ( Connection monitorConnection = monitoringDataSource.getConnection(); Statement stmt = monitorConnection.createStatement() ){
@@ -865,6 +922,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 					LOGGER.debug("... listening for event appends.");
 
 					PGConnection pgConn = monitorConnection.unwrap(PGConnection.class);
+
+					retryDelayMs = INITIAL_RETRY_DELAY_MS;
 
 					while ( !stopped ) { // loop using a single connnection without returning it to the pool
 					
@@ -879,10 +938,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 									EventAppendedPostgresNotification msg = JSONMAPPER.readValue(notification.getParameter(), EventAppendedPostgresNotification.class);
 									AppendsToEventStoreNotification aesn = msg.toNotification();
 									
-									listeners.forEach(l->{
-								    	if ( l.get() != null ) {
-								    		l.get().notify(aesn);
-								    	}
+									listeners.forEach(l -> {
+										EventStoreListener listener = l.get();
+										if (listener != null) {
+											listener.notify(aesn);
+										}
 									});
 									
 								} catch (JsonProcessingException e) {
@@ -895,6 +955,13 @@ public class PostgresEventStorageImpl implements EventStorage {
 				} catch (SQLException e) {
 					if ( !stopped ) {
 						LOGGER.error(e.getMessage(), e);
+						try {
+							Thread.sleep(retryDelayMs);
+							retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_DELAY_MS);
+						} catch (InterruptedException ie) {
+							Thread.currentThread().interrupt();
+							return;
+						}
 					}
 				} finally {
 					LOGGER.debug("loop done.");
@@ -928,6 +995,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			
 			JsonMapper jsonMapper = new JsonMapper ( );
 			
+			long retryDelayMs = INITIAL_RETRY_DELAY_MS;
 			while ( !stopped ) {
 
 				try ( Connection monitorConnection = monitoringDataSource.getConnection(); Statement stmt = monitorConnection.createStatement() ){
@@ -939,6 +1007,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 					LOGGER.debug("... listening for bookmark updates.");
 
 					PGConnection pgConn = monitorConnection.unwrap(PGConnection.class);
+
+					retryDelayMs = INITIAL_RETRY_DELAY_MS;
 
 					while ( !stopped ) { // reuse single connection without returing in tot the pool
 					
@@ -953,11 +1023,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 									BookmarkPlacedNotification bpn = msg.toNotification();
 									LOGGER.debug("notification: " + bpn);
 									
-									listeners.forEach(l->{
-								    	if ( l.get() != null  ) {
-								    		l.get().notify(bpn);
-								    	}
-								    });
+									listeners.forEach(l -> {
+										EventStoreListener listener = l.get();
+										if (listener != null) {
+											listener.notify(bpn);
+										}
+									});
 									
 								} catch (JsonProcessingException e) {
 									LOGGER.error("Failed to parse notification: " + e.getMessage());
@@ -969,6 +1040,13 @@ public class PostgresEventStorageImpl implements EventStorage {
 				} catch (SQLException e) {
 					if ( !stopped ) {
 						LOGGER.error(e.getMessage(), e);
+						try {
+							Thread.sleep(retryDelayMs);
+							retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_DELAY_MS);
+						} catch (InterruptedException ie) {
+							Thread.currentThread().interrupt();
+							return;
+						}
 					}
 				} finally {
 					LOGGER.debug("loop done.");
@@ -1068,6 +1146,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 						
 						int rowsAffected = stmt.executeUpdate();
 						if (rowsAffected == 0) {
+							writeConnection.rollback();
 							throw new EventStorageException("Failed to update bookmark for reader: " + reader);
 						}
 						writeConnection.commit();
@@ -1100,10 +1179,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 				try ( PreparedStatement stmt = writeConnection.prepareStatement(sql) ) {
 					stmt.setString(1, reader.toString());
 					
-					int rowsAffected = stmt.executeUpdate();
-					if (rowsAffected == 0) {
-						throw new EventStorageException("Failed to remove bookmark for reader: " + reader);
-					}
+					stmt.executeUpdate();
 					writeConnection.commit();
 				}
 			} catch (SQLException e) {

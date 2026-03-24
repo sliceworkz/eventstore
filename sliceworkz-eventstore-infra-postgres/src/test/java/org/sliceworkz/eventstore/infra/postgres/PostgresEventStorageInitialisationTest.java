@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -37,40 +37,75 @@ public class PostgresEventStorageInitialisationTest {
 		.prefix("inittwice_")
 		.dataSource(PostgresContainer.dataSource())
 		.initializeDatabase()
-		.checkDatabase(true)
 		.build();
 
 		((PostgresEventStorageImpl)storage).stop();
-		
+
 		// second time, should drop/create once again
-		
+
 		storage = PostgresEventStorage.newBuilder()
 		.name("unit-test")
 		.prefix("inittwice_")
 		.dataSource(PostgresContainer.dataSource())
 		.initializeDatabase()
-		.checkDatabase(true)
 		.build();
 
 		((PostgresEventStorageImpl)storage).stop();
-		
+
 		PostgresContainer.closeDataSource();
 	}
-	
-	
+
 	@Test
-	public void testCheckDatabase ( ) {
+	public void testEnsureDatabase ( ) {
+		// first time: ensure creates everything
+		EventStorage storage = PostgresEventStorage.newBuilder()
+		.name("unit-test")
+		.prefix("ensure_")
+		.dataSource(PostgresContainer.dataSource())
+		.ensureDatabase()
+		.build();
+
+		((PostgresEventStorageImpl)storage).stop();
+
+		// second time: ensure leaves existing objects untouched
+		storage = PostgresEventStorage.newBuilder()
+		.name("unit-test")
+		.prefix("ensure_")
+		.dataSource(PostgresContainer.dataSource())
+		.ensureDatabase()
+		.build();
+
+		((PostgresEventStorageImpl)storage).stop();
+
+		PostgresContainer.closeDataSource();
+	}
+
+	@Test
+	public void testValidateDatabase ( ) {
 		EventStorageException e = assertThrows ( EventStorageException.class, () -> {
 			PostgresEventStorage.newBuilder()
 			.name("unit-test")
 			.prefix("check_")
 			.dataSource(PostgresContainer.dataSource())
-			//.initializeDatabase() // not init, check should fail!
-			.checkDatabase(true)
+			.validateDatabase()
 			.build();
 		});
 		assertEquals("Required table 'check_events' does not exist", e.getMessage());
-		
+
+		PostgresContainer.closeDataSource();
+	}
+
+	@Test
+	public void testDefaultModeIsEnsure ( ) {
+		// default mode (ENSURE) should create schema on empty database
+		EventStorage storage = PostgresEventStorage.newBuilder()
+		.name("unit-test")
+		.prefix("defaultmode_")
+		.dataSource(PostgresContainer.dataSource())
+		.build();
+
+		((PostgresEventStorageImpl)storage).stop();
+
 		PostgresContainer.closeDataSource();
 	}
 

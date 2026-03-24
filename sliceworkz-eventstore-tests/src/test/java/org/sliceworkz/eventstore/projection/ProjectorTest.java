@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -71,24 +71,24 @@ public class ProjectorTest extends AbstractEventStoreTest {
 
 		ProjectorMetrics projectorMetrics = projector.run();
 		assertEquals(4, projection.counter()); // SecondDomainEvent type is left out by the query
-		assertEquals(1, projectorMetrics.queriesDone());
+		assertEquals(1, projectorMetrics.queriesDone()); // 1 batch, stored events < batch limit so no extra query needed
 		assertEquals(4,  projectorMetrics.eventsStreamed());
 		assertEquals(4,  projectorMetrics.eventsHandled());
 
 		ProjectorMetrics accumulatedMetrics = projector.accumulatedMetrics();
 		assertEquals(1, accumulatedMetrics.queriesDone());
-		assertEquals(4,  accumulatedMetrics.eventsStreamed()); 
+		assertEquals(4,  accumulatedMetrics.eventsStreamed());
 		assertEquals(4,  accumulatedMetrics.eventsHandled());
-		
-		
-		BatchAwareTestProjection batchAwareProjection = new BatchAwareTestProjection();	
+
+
+		BatchAwareTestProjection batchAwareProjection = new BatchAwareTestProjection();
 		var batchAwareProjector = Projector.from(es).towards(batchAwareProjection).build();
 
 		projectorMetrics = batchAwareProjector.run();
 		assertEquals(4, batchAwareProjection.counter()); // SecondDomainEvent type is left out by the query
 		assertEquals(1, batchAwareProjection.beforeTriggered()); // single batch
 		assertEquals(1, batchAwareProjection.afterTriggered());  // equal amount expected
-		assertEquals(0, batchAwareProjection.cancelTriggered());  
+		assertEquals(0, batchAwareProjection.cancelTriggered());
 	}
 	
 	@Test
@@ -97,7 +97,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		var batchAwareProjector = Projector.from(es).towards(batchAwareProjection).build();
 
 		ProjectorException e = assertThrows (ProjectorException.class, ()->{
-			ProjectorMetrics projectorMetrics = batchAwareProjector.run();
+			batchAwareProjector.run();
 		});
 		assertEquals("UNIT TEST FAKED PROBLEM WITH EVENT PROCESSING", e.getCause().getMessage());
 		
@@ -115,7 +115,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		// new re-run to check whether we start over from last batch
 		
 		e = assertThrows (ProjectorException.class, ()->{
-			ProjectorMetrics projectorMetrics = batchAwareProjector.run();
+			batchAwareProjector.run();
 		});
 		assertEquals("UNIT TEST FAKED PROBLEM WITH EVENT PROCESSING", e.getCause().getMessage());
 		
@@ -139,7 +139,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		var batchAwareProjector = Projector.from(es).towards(batchAwareProjection).inBatchesOf(2).build();
 
 		ProjectorException e = assertThrows (ProjectorException.class, ()->{
-			ProjectorMetrics projectorMetrics = batchAwareProjector.run();
+			batchAwareProjector.run();
 		});
 		assertEquals("UNIT TEST FAKED PROBLEM WITH EVENT PROCESSING", e.getCause().getMessage());
 		assertEquals(4, e.getEventReference().position());
@@ -158,7 +158,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		// new re-run to check whether we start over from last batch
 		
 		e = assertThrows (ProjectorException.class, ()->{
-			ProjectorMetrics projectorMetrics = batchAwareProjector.run();
+			batchAwareProjector.run();
 		});
 		assertEquals("UNIT TEST FAKED PROBLEM WITH EVENT PROCESSING", e.getCause().getMessage());
 		assertEquals(4, e.getEventReference().position());
@@ -513,13 +513,13 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		
 		ProjectorMetrics projectorMetrics = projector.runUntil(ref);
 		assertEquals(3, projection.counter()); // SecondDomainEvent type is left out by the query, until removes everything after four
-		assertEquals(1, projectorMetrics.queriesDone());
+		assertEquals(1, projectorMetrics.queriesDone()); // 1 batch, stored events < batch limit so no extra query needed
 		assertEquals(3,  projectorMetrics.eventsStreamed()); // since we pass in until, we don't stream the extra events
 		assertEquals(3,  projectorMetrics.eventsHandled());
-	
+
 		ProjectorMetrics accumulatedMetrics = projector.accumulatedMetrics();
 		assertEquals(1, accumulatedMetrics.queriesDone());
-		assertEquals(3,  accumulatedMetrics.eventsStreamed()); 
+		assertEquals(3,  accumulatedMetrics.eventsStreamed());
 		assertEquals(3,  accumulatedMetrics.eventsHandled());
 	}
 
@@ -533,29 +533,29 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		append(alternativeStream, new FirstDomainEvent("1"), Tags.of("nr", "one"));
 
 		var projector = Projector.from(alternativeStream).towards(projection).build();
-		
+
 		ProjectorMetrics projectorMetrics = projector.run();
-		assertEquals(1, projection.counter()); 
-		assertEquals(1, projectorMetrics.queriesDone());
-		assertEquals(1,  projectorMetrics.eventsStreamed()); 
+		assertEquals(1, projection.counter());
+		assertEquals(1, projectorMetrics.queriesDone()); // 1 batch, stored events < batch limit so no extra query needed
+		assertEquals(1,  projectorMetrics.eventsStreamed());
 		assertEquals(1,  projectorMetrics.eventsHandled());
 
 		ProjectorMetrics accumulatedMetrics = projector.accumulatedMetrics();
 		assertEquals(1, accumulatedMetrics.queriesDone());
-		assertEquals(1,  accumulatedMetrics.eventsStreamed()); 
+		assertEquals(1,  accumulatedMetrics.eventsStreamed());
 		assertEquals(1,  accumulatedMetrics.eventsHandled());
 
 		append(alternativeStream, new FirstDomainEvent("2"), Tags.of("nr", "two"));
 
 		projectorMetrics = projector.run();
-		assertEquals(2, projection.counter()); // second event now also processed by projection 
-		assertEquals(1, projectorMetrics.queriesDone());
-		assertEquals(1,  projectorMetrics.eventsStreamed()); 
+		assertEquals(2, projection.counter()); // second event now also processed by projection
+		assertEquals(1, projectorMetrics.queriesDone()); // 1 batch, stored events < batch limit so no extra query needed
+		assertEquals(1,  projectorMetrics.eventsStreamed());
 		assertEquals(1,  projectorMetrics.eventsHandled());
 
 		accumulatedMetrics = projector.accumulatedMetrics();
 		assertEquals(2, accumulatedMetrics.queriesDone());
-		assertEquals(2,  accumulatedMetrics.eventsStreamed()); 
+		assertEquals(2,  accumulatedMetrics.eventsStreamed());
 		assertEquals(2,  accumulatedMetrics.eventsHandled());
 	}
 	
@@ -570,16 +570,180 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		
 		ProjectorMetrics projectorMetrics = projector.runUntil(refUntil);
 		assertEquals(2, projection.counter()); // SecondDomainEvent type is left out by the query, until removes everything after four
-		assertEquals(1, projectorMetrics.queriesDone());
-		assertEquals(2,  projectorMetrics.eventsStreamed()); // since we pass "until", we don't stream the extra events 
+		assertEquals(1, projectorMetrics.queriesDone()); // 1 batch, stored events < batch limit so no extra query needed
+		assertEquals(2,  projectorMetrics.eventsStreamed()); // since we pass "until", we don't stream the extra events
 		assertEquals(2,  projectorMetrics.eventsHandled());
-	
+
 		ProjectorMetrics accumulatedMetrics = projector.accumulatedMetrics();
 		assertEquals(1, accumulatedMetrics.queriesDone());
-		assertEquals(2,  accumulatedMetrics.eventsStreamed()); 
+		assertEquals(2,  accumulatedMetrics.eventsStreamed());
 		assertEquals(2,  accumulatedMetrics.eventsHandled());
 	}
 
+
+	@Test
+	void testProjectorWithInitQuery ( ) {
+		// Set up a stream simulating stock keeping with a savepoint
+		EventStreamId stream = EventStreamId.forContext("app").withPurpose("initquery");
+		EventStream<MockDomainEvent> initEs = eventStore().getEventStream(stream, MockDomainEvent.class);
+
+		// Append: First("10"), First("5"), Third("savepoint:15"), First("3"), First("7")
+		// Using First as "stock added", Third as "savepoint/stock counted", Second is unrelated
+		append(initEs, new FirstDomainEvent("10"), Tags.none());
+		append(initEs, new FirstDomainEvent("5"), Tags.none());
+		append(initEs, new ThirdDomainEvent("savepoint:15"), Tags.none());
+		append(initEs, new FirstDomainEvent("3"), Tags.none());
+		append(initEs, new FirstDomainEvent("7"), Tags.none());
+
+		InitQueryProjection projection = new InitQueryProjection();
+		var projector = Projector.from(initEs).towards(projection).build();
+
+		ProjectorMetrics metrics = projector.run();
+
+		// initQuery finds the savepoint (ThirdDomainEvent), then eventQuery processes the 2 FirstDomainEvents after it
+		assertEquals(3, projection.counter()); // 1 from initQuery + 2 from eventQuery
+		assertEquals("savepoint:15", projection.lastSavepoint()); // savepoint was processed
+		assertEquals(2, metrics.queriesDone()); // 1 for initQuery + 1 eventQuery batch (stored events < batch limit, no extra query needed)
+		assertEquals(3, metrics.eventsHandled()); // 1 savepoint + 2 movements
+	}
+
+	@Test
+	void testProjectorWithInitQueryNoSavepointExists ( ) {
+		// Set up a stream with no savepoint events
+		EventStreamId stream = EventStreamId.forContext("app").withPurpose("initquery-nosavepoint");
+		EventStream<MockDomainEvent> initEs = eventStore().getEventStream(stream, MockDomainEvent.class);
+
+		append(initEs, new FirstDomainEvent("10"), Tags.none());
+		append(initEs, new FirstDomainEvent("5"), Tags.none());
+		append(initEs, new FirstDomainEvent("3"), Tags.none());
+
+		InitQueryProjection projection = new InitQueryProjection();
+		var projector = Projector.from(initEs).towards(projection).build();
+
+		ProjectorMetrics metrics = projector.run();
+
+		// No savepoint found, so all FirstDomainEvents are processed by the main eventQuery
+		assertEquals(3, projection.counter());
+		assertNull(projection.lastSavepoint()); // no savepoint was found
+		assertEquals(2, metrics.queriesDone()); // 1 for initQuery (empty) + 1 eventQuery batch (stored events < batch limit, no extra query needed)
+		assertEquals(3, metrics.eventsHandled());
+	}
+
+	@Test
+	void testProjectorWithInitQueryAndBookmarkingIgnoresInitQuery ( ) {
+		// When bookmarking is enabled, initQuery should be ignored
+		EventStreamId stream = EventStreamId.forContext("app").withPurpose("initquery-bookmark");
+		EventStream<MockDomainEvent> initEs = eventStore().getEventStream(stream, MockDomainEvent.class);
+
+		append(initEs, new FirstDomainEvent("10"), Tags.none());
+		append(initEs, new FirstDomainEvent("5"), Tags.none());
+		append(initEs, new ThirdDomainEvent("savepoint:15"), Tags.none());
+		append(initEs, new FirstDomainEvent("3"), Tags.none());
+		append(initEs, new FirstDomainEvent("7"), Tags.none());
+
+		InitQueryProjection projection = new InitQueryProjection();
+		var projector = Projector.from(initEs).towards(projection)
+				.bookmarkProgress().withReader("initquery-test-reader").readBeforeEachExecution().done()
+				.build();
+
+		ProjectorMetrics metrics = projector.run();
+
+		// With bookmarking, initQuery is ignored — all FirstDomainEvents are processed from the start
+		assertEquals(4, projection.counter()); // all 4 FirstDomainEvents (Third is excluded by eventQuery)
+		assertNull(projection.lastSavepoint()); // savepoint was NOT processed (initQuery skipped, Third not in eventQuery)
+		assertEquals(1, metrics.queriesDone()); // no initQuery, 1 eventQuery batch (stored events < batch limit, no extra query needed)
+		assertEquals(4, metrics.eventsHandled());
+	}
+
+	@Test
+	void testProjectorWithInitQueryMultipleRuns ( ) {
+		// Verify initQuery only runs once (on first run), subsequent runs continue from cursor
+		EventStreamId stream = EventStreamId.forContext("app").withPurpose("initquery-multirun");
+		EventStream<MockDomainEvent> initEs = eventStore().getEventStream(stream, MockDomainEvent.class);
+
+		append(initEs, new FirstDomainEvent("10"), Tags.none());
+		append(initEs, new ThirdDomainEvent("savepoint:10"), Tags.none());
+		append(initEs, new FirstDomainEvent("5"), Tags.none());
+
+		InitQueryProjection projection = new InitQueryProjection();
+		var projector = Projector.from(initEs).towards(projection).build();
+
+		// First run: initQuery finds savepoint, then processes 1 movement after it
+		ProjectorMetrics metrics1 = projector.run();
+		assertEquals(2, projection.counter()); // savepoint + 1 movement
+		assertEquals("savepoint:10", projection.lastSavepoint());
+
+		// Add more events
+		append(initEs, new FirstDomainEvent("3"), Tags.none());
+
+		// Second run: should continue from last cursor, no initQuery
+		ProjectorMetrics metrics2 = projector.run();
+		assertEquals(3, projection.counter()); // 1 new movement added
+		assertEquals(1, metrics2.eventsHandled()); // only the new event
+	}
+
+	@Test
+	void testProjectorBackwardsWithLimitEnforcesTotalLimit ( ) {
+		// 6 events in the stream: First("1"), Second("2"), Third("3"), First("4"), Second("5"), Third("6")
+		// A backwards query with limit(1) for FirstDomainEvent should only process the LAST FirstDomainEvent,
+		// not traverse the entire stream backwards.
+
+		BackwardsLimitProjection projection = new BackwardsLimitProjection();
+		var projector = Projector.from(es).towards(projection).build();
+
+		ProjectorMetrics metrics = projector.run();
+		assertEquals(1, projection.counter()); // only the most recent FirstDomainEvent
+		assertEquals("4", projection.lastValue()); // First("4") is the newest FirstDomainEvent
+		assertEquals(1, metrics.eventsStreamed());
+		assertEquals(1, metrics.eventsHandled());
+	}
+
+	@Test
+	void testProjectorBackwardsWithLimitReturnsMostRecentEventReference ( ) {
+		// mostRecentEventReference should point to the newest event (the first returned in a backwards query),
+		// not the oldest. This is critical for optimistic locking.
+
+		BackwardsLimitProjection projection = new BackwardsLimitProjection();
+		var projector = Projector.from(es).towards(projection).build();
+
+		// Get the reference of First("4") — the newest FirstDomainEvent (position 4)
+		EventReference refFour = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).findFirst().get().reference();
+
+		ProjectorMetrics metrics = projector.run();
+		assertEquals(refFour, metrics.mostRecentEventReference());
+		assertEquals(refFour, metrics.lastEventReference()); // with limit(1), both point to the same event
+	}
+
+	@Test
+	void testProjectorBackwardsWithLimitGreaterThanOne ( ) {
+		// 6 events: First("1")@1, Second("2")@2, Third("3")@3, First("4")@4, Second("5")@5, Third("6")@6
+		// Backwards query for First+Third with limit(3) should process the 3 newest matches:
+		//   Third("6")@6, First("4")@4, Third("3")@3
+		// mostRecentEventReference should be @6 (newest), lastEventReference should be @3 (cursor)
+
+		BackwardsLimit3Projection projection = new BackwardsLimit3Projection();
+		var projector = Projector.from(es).towards(projection).build();
+
+		EventReference refThree = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "three"))).findFirst().get().reference();
+		EventReference refSix = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "six"))).findFirst().get().reference();
+
+		ProjectorMetrics metrics = projector.run();
+		assertEquals(3, projection.counter());
+		assertEquals(3, metrics.eventsStreamed());
+		assertEquals(3, metrics.eventsHandled());
+		assertEquals(refSix, metrics.mostRecentEventReference()); // newest event processed
+		assertEquals(refThree, metrics.lastEventReference()); // cursor: last event in backwards traversal
+	}
+
+	@Test
+	void testProjectorForwardMostRecentEqualsLast ( ) {
+		// For forward queries, mostRecentEventReference should always equal lastEventReference.
+		TestProjection projection = new TestProjection();
+		var projector = Projector.from(es).towards(projection).build();
+
+		ProjectorMetrics metrics = projector.run();
+		assertEquals(metrics.lastEventReference(), metrics.mostRecentEventReference());
+	}
 
 	private List<Event<MockDomainEvent>> append ( EventStream<MockDomainEvent> es, MockDomainEvent event, Tags tags ) {
 		return es.append(AppendCriteria.none(), Collections.singletonList(Event.of(event, tags)));
@@ -707,6 +871,89 @@ public class ProjectorTest extends AbstractEventStoreTest {
 			return cancelTriggered;
 		}
 		
+	}
+
+	class BackwardsLimit3Projection implements ProjectionWithoutMetaData<MockDomainEvent> {
+
+		private int counter;
+
+		@Override
+		public void when(MockDomainEvent event) {
+			counter++;
+		}
+
+		@Override
+		public EventQuery eventQuery() {
+			return EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class, ThirdDomainEvent.class), Tags.none()).backwards().limit(3);
+		}
+
+		public int counter ( ) {
+			return counter;
+		}
+
+	}
+
+	class BackwardsLimitProjection implements ProjectionWithoutMetaData<MockDomainEvent> {
+
+		private int counter;
+		private String lastValue;
+
+		@Override
+		public void when(MockDomainEvent event) {
+			counter++;
+			if ( event instanceof FirstDomainEvent f ) {
+				lastValue = f.value();
+			}
+		}
+
+		@Override
+		public EventQuery eventQuery() {
+			return EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).backwards().limit(1);
+		}
+
+		public int counter ( ) {
+			return counter;
+		}
+
+		public String lastValue ( ) {
+			return lastValue;
+		}
+
+	}
+
+	class InitQueryProjection implements Projection<MockDomainEvent> {
+
+		private int counter;
+		private String lastSavepoint;
+
+		@Override
+		public EventQuery initQuery() {
+			// Find the last savepoint (ThirdDomainEvent) — backwards, limit 1
+			return EventQuery.forEvents(EventTypesFilter.of(ThirdDomainEvent.class), Tags.none()).backwards().limit(1);
+		}
+
+		@Override
+		public EventQuery eventQuery() {
+			// Only process movements (FirstDomainEvent) — savepoints are handled by initQuery
+			return EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none());
+		}
+
+		@Override
+		public void when(Event<MockDomainEvent> event) {
+			counter++;
+			if ( event.data() instanceof ThirdDomainEvent t ) {
+				lastSavepoint = t.value();
+			}
+		}
+
+		public int counter ( ) {
+			return counter;
+		}
+
+		public String lastSavepoint ( ) {
+			return lastSavepoint;
+		}
+
 	}
 
 	@Override

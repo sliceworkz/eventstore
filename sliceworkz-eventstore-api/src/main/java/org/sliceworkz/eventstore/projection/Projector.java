@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -18,6 +18,8 @@
 package org.sliceworkz.eventstore.projection;
 
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -274,48 +276,83 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		private long eventsHandled = 0;
 		private long queriesDone = 0;
 		private EventReference currentEventReference; // required for identifying a poison event
+		private EventReference mostRecentEventReference; // chronologically newest event seen (for optimistic locking)
 
 		protected ProjectorRunResult execute ( EventReference until, boolean singleBatch ) {
 			boolean done = false;
-			
-			if ( ( bookmarkReadFrequency == BookmarkReadFrequency.BEFORE_EACH_EXECUTION) || 
+
+			if ( ( bookmarkReadFrequency == BookmarkReadFrequency.BEFORE_EACH_EXECUTION) ||
 				 ((bookmarkReadFrequency == BookmarkReadFrequency.BEFORE_FIRST_EXECUTION) && (lastEventReference==null) )
 				) {
 				readBookmark();
 			}
-			
+
+			// Run initQuery on first execution only, if present and bookmarking is not enabled.
+			// The initQuery enables the savepoint pattern: a backward query with limit 1 finds the most recent
+			// savepoint event, initializing the read model without replaying the entire stream.
+			// The main eventQuery then starts from that savepoint's reference.
+			// On subsequent run() calls, lastEventReference is already set, so initQuery is skipped.
+			if ( bookmarkReader == null && lastEventReference == null && projection.initQuery() != null && !projection.initQuery().isMatchNone() ) {
+				EventQuery initQuery = projection.initQuery();
+				queriesDone++;
+				es.query(initQuery).forEach(e -> {
+					eventsStreamed++;
+					eventsHandled++;
+					if ( mostRecentEventReference == null || e.reference().happenedAfter(mostRecentEventReference) ) {
+						mostRecentEventReference = e.reference();
+					}
+					projection.when(e);
+					lastEventReference = Optional.of(e.reference());
+				});
+			}
+
 			ProjectorException exception = null;
-			
+
 			Optional<EventReference> lastReadAtStart = lastEventReference;
-			
+
 			// in order to avoid memory issues, we'll loop in batches om MAX_EVENTS_PER_QUERY, until no more events are found in the stream
-			Limit limit = Limit.to(maxEventsPerQuery);
-	
-			
+			Limit limit =  Limit.to(maxEventsPerQuery).orIfLower(projection.eventQuery().limit());
+
+
 			EventQuery effectiveQuery = projection.eventQuery().untilIfEarlier ( until );
-			
+
+			Limit queryTotalLimit = projection.eventQuery().limit();
+
 			EventReference lastRead = lastEventReference==null?null:lastEventReference.orElse(null);
-			
+
 			while ( !done ) {
 
 				Batch batch = new Batch(projection);
 				try {
-					
+
 					queriesDone++;
-					long eventsStreamBeforeThisIteration = eventsStreamed;
-					
-					lastRead = es.query(effectiveQuery, lastRead, limit).map(e->offerEventToProjection(e, projection, until, batch)).map(e->e.reference()).reduce((first, second) -> second).orElse(null);
-					
-					// if we still read data, keep the reference
+
+					AtomicReference<EventReference> rawCursor = new AtomicReference<>();
+					AtomicLong storedEventsCount = new AtomicLong(0);
+
+					lastRead = es.query(effectiveQuery, lastRead, limit, ref -> {
+						rawCursor.set(ref);
+						storedEventsCount.incrementAndGet();
+					}).map(e->offerEventToProjection(e, projection, until, batch)).map(e->e.reference()).reduce((first, second) -> second).orElse(null);
+
+					// if we still read enriched data, keep the reference
 					if ( lastRead != null ) {
-						lastEventReference = Optional.of(lastRead); 
+						lastEventReference = Optional.of(lastRead);
+					} else if ( rawCursor.get() != null ) {
+						// Storage returned stored events but upcasting produced zero enriched events
+						// (e.g., all events in this batch were filtered out by an upcaster returning List.of()).
+						// Advance the cursor past these vanished events to avoid re-querying them.
+						lastRead = rawCursor.get();
+						lastEventReference = Optional.of(lastRead);
+						// Do NOT set done — there may be more events beyond the vanished batch.
 					} else {
-						// otherwise, we were at the end of the stream
+						// No stored events returned at all — we are truly at end of stream.
 						done = true;
 					}
-					
-					// if we got less events than we could, we reached the end of the stream
-					if ( eventsStreamed - eventsStreamBeforeThisIteration < maxEventsPerQuery ) {
+
+					// If storage returned fewer events than the batch limit, we've exhausted the stream —
+					// no need for another query that would return zero results.
+					if ( !done && limit.isSet() && storedEventsCount.get() < limit.value() ) {
 						done = true;
 					}
 				} catch ( Throwable t ) {
@@ -325,7 +362,11 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 				} finally {
 					batch.stopBatchIfNeeded(lastEventReference);
 				}
-				
+
+				if ( queryTotalLimit.isSet() && eventsStreamed >= queryTotalLimit.value() ) {
+					break;
+				}
+
 				if ( singleBatch ) {
 					break;
 				}
@@ -341,11 +382,14 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 			}
 			
 			
-			return new ProjectorRunResult ( new ProjectorMetrics ( eventsStreamed, eventsHandled, queriesDone, lastEventReference==null?null:lastEventReference.orElse(null)), exception );
+			return new ProjectorRunResult ( new ProjectorMetrics ( eventsStreamed, eventsHandled, queriesDone, lastEventReference==null?null:lastEventReference.orElse(null), mostRecentEventReference), exception );
 		}
 	
 		private Event<CONSUMED_EVENT_TYPE> offerEventToProjection ( Event<CONSUMED_EVENT_TYPE> e, Projection<CONSUMED_EVENT_TYPE> projection, EventReference until, Batch batch ) {
 			this.eventsStreamed++;
+			if ( mostRecentEventReference == null || e.reference().happenedAfter(mostRecentEventReference) ) {
+				mostRecentEventReference = e.reference();
+			}
 			if ( until == null || !e.reference().happenedAfter(until) ) {
 				if ( projection.eventQuery().matches(e) ) {
 					batch.startBatchIfNeeded(e);
@@ -418,30 +462,42 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 	 * @param eventsStreamed the total number of events streamed from the event source
 	 * @param eventsHandled the number of events actually processed by the projection handler
 	 * @param queriesDone the number of batch queries executed against the event source
-	 * @param lastEventReference the reference to the last event processed, or null if no events were processed
+	 * @param lastEventReference the reference to the last event processed (cursor position), or null if no events were processed
+	 * @param mostRecentEventReference the chronologically newest event reference seen during processing, or null if no events were processed.
+	 *        For forward queries this equals lastEventReference. For backward queries this is the first event returned (the newest),
+	 *        which is the correct reference for optimistic locking via {@link org.sliceworkz.eventstore.stream.AppendCriteria}.
 	 */
-	public record ProjectorMetrics ( long eventsStreamed, long eventsHandled, long queriesDone, EventReference lastEventReference) {
+	public record ProjectorMetrics ( long eventsStreamed, long eventsHandled, long queriesDone, EventReference lastEventReference, EventReference mostRecentEventReference) {
 
 		/**
 		 * Combines these metrics with another set of metrics.
 		 * <p>
 		 * Used internally to accumulate metrics across multiple projection runs.
-		 * The lastEventReference from the other metrics is used (as it's the most recent).
+		 * The lastEventReference from the other metrics is used (as it's the most recent run).
+		 * The mostRecentEventReference is the chronologically newest across both.
 		 *
 		 * @param other the metrics to add to these metrics
 		 * @return a new ProjectorMetrics with combined values
 		 */
 		public ProjectorMetrics add ( ProjectorMetrics other) {
-			return new ProjectorMetrics(this.eventsStreamed+other.eventsStreamed, this.eventsHandled + other.eventsHandled, this.queriesDone + other.queriesDone, other.lastEventReference );
+			EventReference newestMostRecent;
+			if ( this.mostRecentEventReference == null ) {
+				newestMostRecent = other.mostRecentEventReference;
+			} else if ( other.mostRecentEventReference == null ) {
+				newestMostRecent = this.mostRecentEventReference;
+			} else {
+				newestMostRecent = other.mostRecentEventReference.happenedAfter(this.mostRecentEventReference) ? other.mostRecentEventReference : this.mostRecentEventReference;
+			}
+			return new ProjectorMetrics(this.eventsStreamed+other.eventsStreamed, this.eventsHandled + other.eventsHandled, this.queriesDone + other.queriesDone, other.lastEventReference, newestMostRecent );
 		}
 
 		/**
-		 * Creates empty metrics with all counts at zero and no last event reference.
+		 * Creates empty metrics with all counts at zero and no event references.
 		 *
 		 * @return empty ProjectorMetrics
 		 */
 		public static ProjectorMetrics empty ( ) {
-			return new ProjectorMetrics(0, 0, 0, null);
+			return new ProjectorMetrics(0, 0, 0, null, null);
 		}
 
 		/**
@@ -453,7 +509,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		 * @return ProjectorMetrics with zero counts and the specified reference
 		 */
 		public static ProjectorMetrics skipUntil ( EventReference lastEventReference ) {
-			return new ProjectorMetrics(0, 0, 0, lastEventReference);
+			return new ProjectorMetrics(0, 0, 0, lastEventReference, null);
 		}
 
 	}
@@ -516,6 +572,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		private EventSource<EVENT_TYPE> eventSource;
 		private Projection<EVENT_TYPE> projection;
 		private EventReference after;
+		private boolean subscribe;
 		private int maxEventsPerQuery = DEFAULT_MAX_EVENTS_PER_QUERY;
 
 		private BookmarkBuilder bookmarkBuilder = new BookmarkBuilder(this);
@@ -528,6 +585,31 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		 */
 		public Builder<EVENT_TYPE> from ( EventSource<EVENT_TYPE> eventSource ) {
 			this.eventSource = eventSource;
+			return this;
+		}
+
+		/**
+		 * Configures the projector to automatically subscribe to the event source for eventually consistent updates.
+		 * <p>
+		 * When enabled, the projector will automatically re-run whenever new events are appended to the event source,
+		 * enabling near-real-time projection updates without manual polling. This is useful for:
+		 * <ul>
+		 *   <li>Live dashboards and read models that need to reflect recent changes quickly</li>
+		 *   <li>Reactive projections that respond to events as they arrive</li>
+		 *   <li>Systems where projection staleness needs to be minimized</li>
+		 * </ul>
+		 * <p>
+		 * Note that the updates are <em>eventually consistent</em> - there may be a small delay between
+		 * event append and projection update. The subscription mechanism is optimized for efficiency
+		 * and may batch multiple events before triggering a projection run.
+		 * <p>
+		 * Without this setting, projections only update when explicitly triggered via {@link Projector#run()}.
+		 *
+		 * @return this builder for method chaining
+		 * @see EventStreamEventuallyConsistentAppendListener
+		 */
+		public Builder<EVENT_TYPE> subscribe ( ) {
+			this.subscribe = true;
 			return this;
 		}
 
@@ -603,7 +685,15 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		 * @return a new Projector configured with the builder's settings
 		 */
 		public Projector<EVENT_TYPE> build ( ) {
-			return new Projector<>(eventSource, projection, after, maxEventsPerQuery, bookmarkBuilder.readerName, bookmarkBuilder.tags, bookmarkBuilder.bookmarkReadFrequency);
+			if ( bookmarkBuilder.readerName != null && projection.initQuery() != null && !projection.initQuery().isMatchNone() ) {
+				LOGGER.warn("Projection has initQuery but bookmarking is enabled — initQuery will be ignored. Remove bookmarking for live-model use, or remove initQuery for full replay.");
+			}
+			Projector<EVENT_TYPE> projector = new Projector<>(eventSource, projection, after, maxEventsPerQuery, bookmarkBuilder.readerName, bookmarkBuilder.tags, bookmarkBuilder.bookmarkReadFrequency);
+			if ( subscribe ) {
+				// subscribe for eventually consistent updates about event appends, so the projector will automatically trigger projection updates
+				eventSource.subscribe(projector);
+			}
+			return projector;
 		}
 
 		/**
@@ -680,7 +770,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		public class BookmarkBuilder {
 
 			private Builder<EVENT_TYPE> parent;
-			private BookmarkReadFrequency bookmarkReadFrequency = BookmarkReadFrequency.BEFORE_EACH_EXECUTION;
+			private BookmarkReadFrequency bookmarkReadFrequency = BookmarkReadFrequency.MANUAL_TRIGGER;
 			private String readerName = null; // by default, no bookmarking is done
 			private Tags tags = Tags.none();
 
@@ -973,9 +1063,25 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 
 	}
 
+	/**
+	 * Handles notifications of newly appended events when the projector is subscribed to an event source.
+	 * <p>
+	 * This method is called by the event source when new events are appended, triggering an automatic
+	 * projection run to process the new events. It implements the {@link EventStreamEventuallyConsistentAppendListener}
+	 * interface to enable reactive, near-real-time projection updates.
+	 * <p>
+	 * The method runs the projection and returns the reference of the last processed event. This allows
+	 * the event source to track which events have been successfully processed by this projector.
+	 * <p>
+	 * This method is only invoked if the projector was configured with {@link Builder#subscribe()}.
+	 *
+	 * @param atLeastUntil the reference indicating events have been appended at least up to this point
+	 * @return the reference of the last event processed by this projection run, or null if no events were processed
+	 * @see Builder#subscribe()
+	 */
 	@Override
 	public EventReference eventsAppended(EventReference atLeastUntil) {
 		return run().lastEventReference();
 	}
-	
+
 }

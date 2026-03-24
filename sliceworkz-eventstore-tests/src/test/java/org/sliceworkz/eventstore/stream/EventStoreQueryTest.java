@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -354,8 +354,8 @@ public class EventStoreQueryTest {
 	private Stream<Event<Object>> queryReversed ( EventQuery eventQuery, Limit limit ) {
 		return queryReversed(eventQuery, limit, null);
 	}
-	private Stream<Event<Object>> queryReversed ( EventQuery eventQuery, Limit limit, Event<?> after ) {
-		return eventStore.getEventStream(EventStreamId.forContext("app").withPurpose("domain"), BankDomainEvent.class).queryBackwards(eventQuery, after==null?null:after.reference(), limit);
+	private Stream<Event<Object>> queryReversed ( EventQuery eventQuery, Limit limit, Event<?> before ) {
+		return eventStore.getEventStream(EventStreamId.forContext("app").withPurpose("domain"), BankDomainEvent.class).query(eventQuery.backwards(), before==null?null:before.reference(), limit);
 	}
 
 	private long queryOther ( EventQuery eventQuery ) {

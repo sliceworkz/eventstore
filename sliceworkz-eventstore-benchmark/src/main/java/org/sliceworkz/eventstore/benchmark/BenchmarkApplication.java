@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -49,7 +49,6 @@ import org.sliceworkz.eventstore.infra.postgres.DataSourceFactory;
 import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
 import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.query.EventQuery;
-import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -80,17 +79,15 @@ public class BenchmarkApplication {
 		
 		// Javalin framework for REST
 		var javalin = Javalin.create(config -> {
-			config.useVirtualThreads = true; // Enables virtual threads for all request handling
+			config.concurrency.useVirtualThreads = true; // Enables virtual threads for all request handling
+			if ( prometheusMeterRegistry != null ) {
+				// Expose metrics endpoint for Prometheus to scrape
+				config.routes.get("/metrics", ctx -> {
+					ctx.contentType("text/plain; version=0.0.4")
+						.result(prometheusMeterRegistry.scrape());
+				});
+			}
 		});
-
-		if ( prometheusMeterRegistry != null ) {
-	       // Expose metrics endpoint for Prometheus to scrape
-	        javalin.get("/metrics", ctx -> {
-	            ctx.contentType("text/plain; version=0.0.4")
-	            	.result(prometheusMeterRegistry.scrape());
-	        });
-		
-		}
 		javalin.start(7072);
 		
 		//EventStore eventStore = InMemoryEventStorage.newBuilder().buildStore();
@@ -107,7 +104,7 @@ public class BenchmarkApplication {
 			@Override
 			public EventReference eventsAppended(EventReference atLeastUntil) {
 				System.err.println("-------> " + atLeastUntil);
-				System.err.println(supplier42Stream.getEventById(atLeastUntil.id()).get());
+				System.err.println(supplier42Stream.getEventById(atLeastUntil.id()));
 				return atLeastUntil;
 			}
 		});
@@ -120,26 +117,24 @@ public class BenchmarkApplication {
 		Projector<CustomerEvent> customerProjector = Projector.<CustomerEvent>newBuilder()
 			.from(customerStream)
 			.towards(customerProjection)
+			.subscribe()
 			.bookmarkProgress()
 				.withReader("customer-projector")
 				.readBeforeFirstExecution()
 				.done()
 			.build();
-		customerStream.subscribe(customerProjector);
-
 		
 
 		SupplierEventProjection supplierProjection = new SupplierEventProjection(dataSource);
 		Projector<SupplierEvent> supplierProjector = Projector.<SupplierEvent>newBuilder()
 			.from(supplierStream)
 			.towards(supplierProjection)
+			.subscribe()
 			.bookmarkProgress()
 				.withReader("supplier-projector")
 				.readBeforeFirstExecution()
 				.done()
 			.build();
-		customerStream.subscribe(supplierProjector);
-		
 		
 		CustomerEventProducer cep = new CustomerEventProducer(customerStream, EVENTS_PER_PRODUCER_INSTANCE, MS_WAIT_BETWEEN_EVENTS);
 		SupplierEventProducer sep = new SupplierEventProducer(supplierStream, EVENTS_PER_PRODUCER_INSTANCE, MS_WAIT_BETWEEN_EVENTS);
@@ -180,10 +175,10 @@ public class BenchmarkApplication {
 		long produceDurationMs = stopProduce.toEpochMilli() - start.toEpochMilli();
 		
 		EventStream<Object> allStream = eventStore.getEventStream(EventStreamId.anyContext().anyPurpose());
-		allStream.queryBackwards(EventQuery.matchAll(),Limit.to(10)).forEach(System.out::println);
+		allStream.query(EventQuery.matchAll().backwards().limit(10)).forEach(System.out::println);
 
 		long position = 0;
-		EventReference at = allStream.queryBackwards(EventQuery.matchAll(),Limit.to(1)).map(Event::reference).findFirst().orElse(null);
+		EventReference at = allStream.query(EventQuery.matchAll().backwards().limit(1)).map(Event::reference).findFirst().orElse(null);
 		if(at != null ) {
 			position = at.position();
 		}

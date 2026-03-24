@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -22,15 +22,21 @@ import java.util.UUID;
 /**
  * Unique identifier for an event.
  * <p>
- * Each event in the store has a globally unique ID, typically a UUID. The EventId is part of
+ * Each event in the store has a globally unique ID, generated as a UUIDv7. The EventId is part of
  * the {@link EventReference} which combines the ID with the event's position in its stream.
  * <p>
  * Event IDs are immutable and are automatically generated when events are appended to a stream.
+ * Since version 0.8.0, IDs are generated using UUIDv7 (time-ordered) instead of random UUID v4,
+ * which improves B-tree index performance for append-only workloads.
+ * <p>
+ * The default {@link #create()} method generates a random UUIDv4, suitable for in-memory
+ * and testing use. Storage implementations may generate their own EventIds using more robust
+ * generators (e.g., UUIDv7 with monotonic counters, database-native UUIDv7).
  *
  * <h2>Example Usage:</h2>
  * <pre>{@code
  * // Typically generated automatically when appending
- * EventId id = EventId.create();  // Generates a new UUID
+ * EventId id = EventId.create();  // Generates a new UUIDv7
  *
  * // Or create from existing ID string
  * EventId id = EventId.of("550e8400-e29b-41d4-a716-446655440000");
@@ -60,11 +66,13 @@ public record EventId ( String value ) {
 	}
 
 	/**
-	 * Generates a new random EventId using a UUID.
+	 * Generates a new EventId using a random UUIDv4.
 	 * <p>
-	 * This is typically used internally when appending events to generate unique identifiers.
+	 * Suitable for in-memory storage and testing. Production storage implementations
+	 * (e.g., PostgreSQL) should generate their own EventIds using UUIDv7 generators
+	 * for better B-tree index locality.
 	 *
-	 * @return a new EventId with a randomly generated UUID as its value
+	 * @return a new EventId with a random UUID as its value
 	 */
 	public static EventId create ( ) {
 		return new EventId ( UUID.randomUUID().toString() );
@@ -81,5 +89,6 @@ public record EventId ( String value ) {
 	public static EventId of ( String value ) {
 		return ( value == null || "".equals(value.strip()) ) ? null : new EventId ( value );
 	}
+
 
 }

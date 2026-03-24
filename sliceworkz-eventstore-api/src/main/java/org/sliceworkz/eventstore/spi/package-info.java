@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -55,10 +55,9 @@
  *     .build();
  * EventStore eventStore = EventStoreFactory.get().eventStore(storage);
  *
- * // Using PostgreSQL storage
+ * // Using PostgreSQL storage (default mode ENSURE creates schema if missing)
  * EventStorage storage = PostgresEventStorage.newBuilder()
  *     .prefix("tenant1_")
- *     .initializeDatabase()
  *     .build();
  * EventStore eventStore = EventStoreFactory.get().eventStore(storage);
  * }</pre>

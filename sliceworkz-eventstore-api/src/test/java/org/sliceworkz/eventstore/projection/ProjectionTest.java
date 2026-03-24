@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -28,6 +28,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
+import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.projection.ProjectionTest.MockDomainEvent;
 import org.sliceworkz.eventstore.projection.ProjectionTest.MockDomainEvent.FirstDomainEvent;
@@ -39,6 +40,7 @@ public class ProjectionTest {
 	
 	List<Event<MockDomainEvent>> mockEvents;
 	
+	@SuppressWarnings("unchecked")
 	@BeforeEach
 	void setUp ( ) {
 		EventStreamId mockStream = EventStreamId.forContext("unit").withPurpose("test");
@@ -46,8 +48,8 @@ public class ProjectionTest {
 		EventReference ref2 = EventReference.create(2, 2);
 		LocalDateTime now = LocalDateTime.now();
 		this.mockEvents = Arrays.asList(new Event[] {
-				Event.of(new FirstDomainEvent(), Tags.none()).positionAt(mockStream, ref1, now), 
-				Event.of(new SecondDomainEvent(), Tags.none()).positionAt(mockStream,  ref2, now)});
+				Event.of(mockStream, ref1, EventType.of(new FirstDomainEvent()), EventType.of(new FirstDomainEvent()), new FirstDomainEvent(), Tags.none(), now),
+				Event.of(mockStream, ref2, EventType.of(new SecondDomainEvent()), EventType.of(new SecondDomainEvent()), new SecondDomainEvent(), Tags.none(), now)});
 	}
 	
 	

@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -18,7 +18,6 @@
 package org.sliceworkz.eventstore.examples;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.stream.Stream;
 
 import org.sliceworkz.eventstore.EventStore;
@@ -73,14 +72,14 @@ public class OptimisticLockExample {
 		// An extra (conditional) append is done, notice we still hold the same lastEventReference without changing it
 		stream.append(AppendCriteria.of(
 				EventQuery.forEvents(EventTypesFilter.any(), Tags.of("customer", "123")), 
-				Optional.of(lastEventReference)),
+				lastEventReference),
 				Event.of(new CustomerNameChanged("123", "Marc"), Tags.of(Tag.of("customer", "123"))));
 
 		// Another conditional append is not possible using the (outdated) lastEventReference ...
 		try {
 			stream.append(AppendCriteria.of(
 								EventQuery.forEvents(EventTypesFilter.any(), Tags.of("customer", "123")), 
-								Optional.of(lastEventReference)), Event.of(new CustomerNameChanged("123", "John"), Tags.of("customer", "123")));
+								lastEventReference), Event.of(new CustomerNameChanged("123", "John"), Tags.of("customer", "123")));
 		} catch (OptimisticLockingException e) {
 			// ... as a new fact about this customer exists, that is found by the optimistic-lock query linked to the append AppendCriteria
 		}

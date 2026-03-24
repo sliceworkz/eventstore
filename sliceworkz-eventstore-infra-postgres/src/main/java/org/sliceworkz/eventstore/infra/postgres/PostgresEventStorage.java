@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -73,13 +73,10 @@ import io.micrometer.core.instrument.Metrics;
  *
  * <h2>Basic Usage Example:</h2>
  * <pre>{@code
- * // Using default configuration from db.properties file
- * EventStorage storage = PostgresEventStorage.newBuilder()
- *     .initializeDatabase()
- *     .build();
- * EventStore eventStore = EventStoreFactory.get().eventStore(storage);
+ * // Using default configuration from db.properties file (default mode is ENSURE)
+ * EventStore eventStore = PostgresEventStorage.newBuilder().buildStore();
  *
- * // Or use convenience method
+ * // Test environment: fresh schema every time
  * EventStore eventStore = PostgresEventStorage.newBuilder()
  *     .initializeDatabase()
  *     .buildStore();
@@ -97,7 +94,7 @@ import io.micrometer.core.instrument.Metrics;
  *     .monitoringDataSource(monitoringDataSource)
  *     .prefix("tenant1_")
  *     .resultLimit(10000)
- *     .initializeDatabase()
+ *     .databaseInitMode(DatabaseInitMode.VALIDATE)
  *     .build();
  * EventStore eventStore = EventStoreFactory.get().eventStore(storage);
  * }</pre>
@@ -131,8 +128,7 @@ public interface PostgresEventStorage {
 	 *   <li><strong>prefix</strong>: "" (no prefix)</li>
 	 *   <li><strong>dataSource</strong>: Auto-configured from db.properties if not provided</li>
 	 *   <li><strong>monitoringDataSource</strong>: Defaults to same as dataSource, or separate non-pooled from db.properties</li>
-	 *   <li><strong>initializeDatabase</strong>: false (database schema not created automatically)</li>
-	 *   <li><strong>checkDatabase</strong>: true (database schema checked upon startup, after initialization if the latter is enabled)</li>
+	 *   <li><strong>databaseInitMode</strong>: {@link DatabaseInitMode#ENSURE} (create missing objects, validate)</li>
 	 *   <li><strong>resultLimit</strong>: none (no absolute limit)</li>
 	 * </ul>
 	 * <p>
@@ -140,22 +136,22 @@ public interface PostgresEventStorage {
 	 *
 	 * @see #build()
 	 * @see #buildStore()
+	 * @see DatabaseInitMode
 	 */
 	public static class Builder {
-		
+
 		private String prefix = "";
 		private String name = "psql";
 		private DataSource dataSource;
 		private DataSource monitoringDataSource;
-		private boolean initializeDatabase = false;
-		private boolean checkDatabase = true;
+		private DatabaseInitMode databaseInitMode = DatabaseInitMode.ENSURE;
 		private Limit limit = Limit.none();
 		private MeterRegistry meterRegistry = Metrics.globalRegistry;
 
 		private Builder ( ) {
-			
+
 		}
-		
+
 		static Builder newBuilder ( ) {
 			return new Builder ( );
 		}
@@ -271,119 +267,92 @@ public interface PostgresEventStorage {
 		}
 
 		/**
-		 * Enables automatic database schema initialization when the storage is built.
+		 * Sets the database initialization mode.
 		 * <p>
-		 * Equivalent to calling {@link #initializeDatabase(boolean) initializeDatabase(true)}.
+		 * Controls how the database schema is handled during startup. See {@link DatabaseInitMode}
+		 * for a description of each mode. The default is {@link DatabaseInitMode#ENSURE}.
 		 * <p>
-		 * When enabled, the builder will execute the initialization SQL script to create all
-		 * required database tables, indexes, triggers, and functions. This should typically be
-		 * enabled on first deployment or when setting up test environments.
-		 * <p>
-		 * The initialization is idempotent and safe to run multiple times. Existing tables
-		 * and data will not be affected.
-		 * <p>
-		 * <strong>Note:</strong> Ensure the database user has sufficient privileges to create
-		 * tables, functions, and triggers.
+		 * <strong>Example usage:</strong>
+		 * <pre>{@code
+		 * // Default: create missing objects, validate
+		 * EventStorage storage = PostgresEventStorage.newBuilder().build();
 		 *
-		 * @return this Builder for method chaining
-		 * @see #initializeDatabase(boolean)
-		 */
-		public Builder initializeDatabase ( ) {
-			return initializeDatabase(true);
-		}
-		
-		/**
-		 * Controls automatic database schema initialization when the storage is built.
-		 * <p>
-		 * When set to {@code true}, the builder will execute the initialization SQL script to
-		 * create all required database tables, indexes, triggers, and functions. This should
-		 * typically be enabled on first deployment or when setting up test environments.
-		 * <p>
-		 * The initialization is idempotent and safe to run multiple times. Existing tables
-		 * and data will not be affected.
-		 * <p>
-		 * Tables and structures created include:
-		 * <ul>
-		 *   <li>{@code PREFIX_events}: Main event storage table</li>
-		 *   <li>{@code PREFIX_bookmarks}: Event consumer position tracking</li>
-		 *   <li>Indexes on frequently queried columns</li>
-		 *   <li>Triggers for NOTIFY on event appends and bookmark updates</li>
-		 * </ul>
-		 * <p>
-		 * <strong>Note:</strong> Ensure the database user has sufficient privileges to create
-		 * tables, functions, and triggers.
+		 * // Production: trust the DBA, skip all checks
+		 * EventStorage storage = PostgresEventStorage.newBuilder()
+		 *     .databaseInitMode(DatabaseInitMode.NONE)
+		 *     .build();
 		 *
-		 * @param value {@code true} to initialize the database, {@code false} to skip initialization
+		 * // Startup validation only
+		 * EventStorage storage = PostgresEventStorage.newBuilder()
+		 *     .databaseInitMode(DatabaseInitMode.VALIDATE)
+		 *     .build();
+		 *
+		 * // Test environment: fresh schema every time
+		 * EventStorage storage = PostgresEventStorage.newBuilder()
+		 *     .databaseInitMode(DatabaseInitMode.INITIALIZE)
+		 *     .build();
+		 * }</pre>
+		 *
+		 * @param mode the database initialization mode
 		 * @return this Builder for method chaining
+		 * @see DatabaseInitMode
 		 */
-		public Builder initializeDatabase ( boolean value ) {
-			this.initializeDatabase = value;
+		public Builder databaseInitMode ( DatabaseInitMode mode ) {
+			this.databaseInitMode = mode;
 			return this;
 		}
 
 		/**
-		 * Controls automatic database schema validation when the storage is built.
+		 * Sets the database initialization mode to {@link DatabaseInitMode#VALIDATE}.
 		 * <p>
-		 * When set to {@code true} (the default), the builder will validate that all required
-		 * database objects exist and are properly formed before the storage instance is returned.
-		 * This provides early detection of schema issues and prevents runtime failures.
+		 * Validates that all required database objects exist and are correctly defined.
+		 * No objects are created or modified.
 		 * <p>
-		 * The validation checks include:
-		 * <ul>
-		 *   <li><strong>Tables:</strong> {@code PREFIX_events} and {@code PREFIX_bookmarks} exist</li>
-		 *   <li><strong>Columns:</strong> All required columns exist with correct types and nullability</li>
-		 *   <li><strong>Indexes:</strong> All performance-critical indexes are present</li>
-		 *   <li><strong>Functions:</strong> PostgreSQL notification functions exist</li>
-		 *   <li><strong>Triggers:</strong> Event and bookmark notification triggers are properly configured</li>
-		 *   <li><strong>Constraints:</strong> Foreign key constraints are in place</li>
-		 * </ul>
-		 * <p>
-		 * If any required database object is missing or malformed, an
-		 * {@link org.sliceworkz.eventstore.spi.EventStorageException} is thrown with a detailed
-		 * explanation of what is wrong. All validation activity is logged at DEBUG level for
-		 * troubleshooting.
-		 * <p>
-		 * <strong>When to disable:</strong><br>
-		 * Schema validation can be disabled ({@code checkDatabase(false)}) in scenarios where:
-		 * <ul>
-		 *   <li>You want to defer validation to a later time</li>
-		 *   <li>The database user lacks permissions to query information_schema tables</li>
-		 *   <li>You're using a custom schema that intentionally differs from the standard</li>
-		 *   <li>You need to minimize startup time in performance-critical scenarios</li>
-		 * </ul>
-		 * <p>
-		 * <strong>Execution order:</strong><br>
-		 * If both {@link #initializeDatabase()} and {@code checkDatabase()} are enabled, the
-		 * initialization runs first, followed immediately by validation to ensure the schema
-		 * was created correctly.
-		 * <p>
-		 * <strong>Example usage:</strong>
-		 * <pre>{@code
-		 * // Validate existing schema (default behavior)
-		 * EventStorage storage = PostgresEventStorage.newBuilder()
-		 *     .checkDatabase(true)  // explicit, but this is the default
-		 *     .build();
+		 * This is a convenience method equivalent to
+		 * {@code databaseInitMode(DatabaseInitMode.VALIDATE)}.
 		 *
-		 * // Initialize and validate in one step
-		 * EventStorage storage = PostgresEventStorage.newBuilder()
-		 *     .initializeDatabase()
-		 *     .checkDatabase(true)  // validates the newly created schema
-		 *     .build();
-		 *
-		 * // Skip validation (not recommended for production)
-		 * EventStorage storage = PostgresEventStorage.newBuilder()
-		 *     .checkDatabase(false)
-		 *     .build();
-		 * }</pre>
-		 *
-		 * @param value {@code true} to validate the database schema (default), {@code false} to skip validation
 		 * @return this Builder for method chaining
-		 * @throws org.sliceworkz.eventstore.spi.EventStorageException if validation is enabled and schema is invalid
-		 * @see #initializeDatabase(boolean)
-		 * @see PostgresEventStorageImpl#checkDatabase()
+		 * @see DatabaseInitMode#VALIDATE
+		 * @see #databaseInitMode(DatabaseInitMode)
 		 */
-		public Builder checkDatabase ( boolean value ) {
-			this.checkDatabase = value;
+		public Builder validateDatabase ( ) {
+			this.databaseInitMode = DatabaseInitMode.VALIDATE;
+			return this;
+		}
+
+		/**
+		 * Sets the database initialization mode to {@link DatabaseInitMode#ENSURE}.
+		 * <p>
+		 * Creates missing database objects if they do not exist, leaving existing objects
+		 * untouched, then validates the schema. This is the default mode.
+		 * <p>
+		 * This is a convenience method equivalent to
+		 * {@code databaseInitMode(DatabaseInitMode.ENSURE)}.
+		 *
+		 * @return this Builder for method chaining
+		 * @see DatabaseInitMode#ENSURE
+		 * @see #databaseInitMode(DatabaseInitMode)
+		 */
+		public Builder ensureDatabase ( ) {
+			this.databaseInitMode = DatabaseInitMode.ENSURE;
+			return this;
+		}
+
+		/**
+		 * Sets the database initialization mode to {@link DatabaseInitMode#INITIALIZE}.
+		 * <p>
+		 * Drops all event store objects and recreates them from scratch.
+		 * <strong>Warning:</strong> This is destructive — all existing event data will be lost.
+		 * <p>
+		 * This is a convenience method equivalent to
+		 * {@code databaseInitMode(DatabaseInitMode.INITIALIZE)}.
+		 *
+		 * @return this Builder for method chaining
+		 * @see DatabaseInitMode#INITIALIZE
+		 * @see #databaseInitMode(DatabaseInitMode)
+		 */
+		public Builder initializeDatabase ( ) {
+			this.databaseInitMode = DatabaseInitMode.INITIALIZE;
 			return this;
 		}
 
@@ -414,14 +383,19 @@ public interface PostgresEventStorage {
 		 * settings. If no custom DataSource was provided, it will be automatically created from
 		 * the {@code db.properties} file using {@link DataSourceFactory}.
 		 * <p>
-		 * If {@link #initializeDatabase()} was called, the database schema will be initialized
-		 * before returning the storage instance.
+		 * The configured {@link DatabaseInitMode} determines how the database schema is handled:
+		 * <ul>
+		 *   <li>{@link DatabaseInitMode#NONE}: No schema operations</li>
+		 *   <li>{@link DatabaseInitMode#VALIDATE}: Schema validation only</li>
+		 *   <li>{@link DatabaseInitMode#ENSURE}: Create missing objects, then validate (default)</li>
+		 *   <li>{@link DatabaseInitMode#INITIALIZE}: Drop and recreate all objects, then validate</li>
+		 * </ul>
 		 * <p>
 		 * The returned EventStorage can be passed to {@link EventStoreFactory#eventStore(EventStorage)}
 		 * to create an EventStore instance.
 		 *
 		 * @return a configured EventStorage instance backed by PostgreSQL
-		 * @throws RuntimeException if database configuration cannot be loaded or schema initialization fails
+		 * @throws RuntimeException if database configuration cannot be loaded or schema operations fail
 		 * @see #buildStore()
 		 * @see EventStoreFactory#eventStore(EventStorage)
 		 */
@@ -436,7 +410,7 @@ public interface PostgresEventStorage {
 					monitoringDataSource = dataSource;
 				}
 			}
-			
+
 			if ( dataSource != null && dataSource instanceof HikariDataSource hds ) {
 				try {
 					hds.setMetricRegistry(meterRegistry);
@@ -451,13 +425,13 @@ public interface PostgresEventStorage {
 					// already set
 				}
 			}
-			
+
 			var result = new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix);
-			if ( initializeDatabase ) {
-				result.initializeDatabase();
-			}
-			if ( checkDatabase ) {
-				result.checkDatabase();
+			switch ( databaseInitMode ) {
+				case NONE       -> { }
+				case VALIDATE   -> result.validateDatabase();
+				case ENSURE     -> result.ensureDatabase();
+				case INITIALIZE -> result.initializeDatabase();
 			}
 			// if we didn't fail until here, then we can start the executor threads
 			result.start();

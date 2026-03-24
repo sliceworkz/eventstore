@@ -1,6 +1,6 @@
 /*
  * Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
- * Copyright © 2025 Sliceworkz / XTi (info@sliceworkz.org)
+ * Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -170,7 +170,7 @@ public record Event<DOMAIN_EVENT_TYPE> ( EventStreamId stream, EventType type, E
 	 * @param timestamp the timestamp when this event was persisted
 	 * @return a new Event instance
 	 */
-	public static final <DOMAIN_EVENT_TYPE> Event<DOMAIN_EVENT_TYPE> of ( EventStreamId stream, EventReference reference, EventType type, EventType storedType, DOMAIN_EVENT_TYPE data, Tags tags, LocalDateTime timestamp ) {
+	public static final <DOMAIN_EVENT_TYPE> Event<DOMAIN_EVENT_TYPE> of ( EventStreamId stream, EventReference reference, EventType type, EventType storedType, DOMAIN_EVENT_TYPE data, Tags tags, LocalDateTime timestamp) {
 		return new Event<DOMAIN_EVENT_TYPE>(stream, type, storedType, reference, data, tags, timestamp);
 	}
 

@@ -252,6 +252,13 @@ public class PostgresEventStorageImpl implements EventStorage {
 				writeConnection.setAutoCommit(false);
 				try (Statement statement = writeConnection.createStatement()) {
 					statement.execute(sql);
+				} catch (SQLException e) {
+					try {
+						writeConnection.rollback();
+					} catch (SQLException rollbackEx) {
+						e.addSuppressed(rollbackEx);
+					}
+					throw e;
 				}
 				writeConnection.commit();
 			}
@@ -599,6 +606,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 		
 		try ( Connection readConnection = dataSource.getConnection() ) {
+			readConnection.setAutoCommit(true);
 			try (PreparedStatement stmt = readConnection.prepareStatement(sqlBuilder.toString())) {
 				// Set parameters
 				for (int i = 0; i < parameters.size(); i++) {
@@ -839,6 +847,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			""".formatted(prefix);
 			
 			try ( Connection readConnection = dataSource.getConnection() ) {
+				readConnection.setAutoCommit(true);
 				try (PreparedStatement stmt = readConnection.prepareStatement(sql)) {
 					stmt.setString(1, eventId.value());
 					
@@ -1081,11 +1090,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 	public Optional<EventReference> getBookmark(String reader) {
 		String sql = """
 			SELECT event_position, event_id, event_tx::text
-			FROM %sbookmarks 
+			FROM %sbookmarks
 			WHERE reader = ?
 		""".formatted(prefix);
-		
+
 		try ( Connection readConnection = dataSource.getConnection() ) {
+			readConnection.setAutoCommit(true);
 			try (PreparedStatement stmt = readConnection.prepareStatement(sql)) {
 				stmt.setString(1, reader);
 				

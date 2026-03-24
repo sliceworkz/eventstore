@@ -1159,6 +1159,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 						
 						int rowsAffected = stmt.executeUpdate();
 						if (rowsAffected == 0) {
+							writeConnection.rollback();
 							throw new EventStorageException("Failed to update bookmark for reader: " + reader);
 						}
 						writeConnection.commit();

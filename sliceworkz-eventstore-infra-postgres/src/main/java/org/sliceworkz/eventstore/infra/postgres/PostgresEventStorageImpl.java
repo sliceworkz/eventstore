@@ -249,9 +249,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 			sql = sql.replaceAll("PREFIX_", prefix);
 
 			try ( Connection writeConnection = dataSource.getConnection() ) {
+				writeConnection.setAutoCommit(false);
 				try (Statement statement = writeConnection.createStatement()) {
 					statement.execute(sql);
 				}
+				writeConnection.commit();
 			}
 
 		} catch (IOException | SQLException e) {
@@ -799,32 +801,37 @@ public class PostgresEventStorageImpl implements EventStorage {
 					}
 					
 					try (ResultSet rs = stmt.executeQuery()) {
-						
+
 						Iterator<EventToStore> it = events.iterator();
 						Iterator<EventId> idIterator = ids.iterator();
-						
+
 						while (rs.next()) {
 							long position = rs.getLong("event_position");
 							long tx = Long.parseUnsignedLong(rs.getString("event_tx"));
 							Timestamp timestamp = rs.getTimestamp("event_timestamp");
-							
+
 							EventToStore e = it.next();
 							EventId id = idIterator.next();
-							
+
 							EventReference reference = EventReference.of(id, position, tx);
 							storedEvents.add(e.positionAt(reference, timestamp.toLocalDateTime()));
 						}
-						
+
 						if ( storedEvents.size() != events.size() ) {
 							// Insert failed due to optimistic locking conflict
+							writeConnection.rollback();
 							throw new OptimisticLockingException(appendCriteria.eventFilter(), appendCriteria.expectedLastEventReference());
 						}
 					}
 					writeConnection.commit();
-					
+
 				} catch (SQLException e) {
-					writeConnection.rollback();
-					
+					try {
+						writeConnection.rollback();
+					} catch (SQLException rollbackEx) {
+						e.addSuppressed(rollbackEx);
+					}
+
 					// idempotency issue
 					if ( e.getMessage().contains("idempotency_key")) {
 						return Collections.emptyList();

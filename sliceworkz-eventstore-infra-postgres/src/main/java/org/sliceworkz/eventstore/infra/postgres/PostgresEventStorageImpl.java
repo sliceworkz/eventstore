@@ -124,7 +124,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	private final List<WeakReference<EventStoreListener>> listeners = new CopyOnWriteArrayList<>();
 	private final ExecutorService executorService;
-	private boolean stopped;
+	private volatile boolean stopped;
 
 	private static final JsonMapper JSONMAPPER = new JsonMapper();
 

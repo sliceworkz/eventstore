@@ -131,6 +131,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private static final int THIRTY_SECONDS = 30*1000;
 	public static final int WAIT_FOR_NOTIFICATIONS_TIMEOUT = THIRTY_SECONDS;
 
+	private static final long INITIAL_RETRY_DELAY_MS = 1_000;
+	private static final long MAX_RETRY_DELAY_MS = 30_000;
+
 	private static final int MAX_PREFIX_LENGTH = 32;
 
 	/**
@@ -920,6 +923,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			
 			String listenStatement = "LISTEN %sevent_appended;".formatted(prefix);
 			
+			long retryDelayMs = INITIAL_RETRY_DELAY_MS;
 			while ( !stopped ) {
 
 				try ( Connection monitorConnection = monitoringDataSource.getConnection(); Statement stmt = monitorConnection.createStatement() ){
@@ -931,6 +935,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 					LOGGER.debug("... listening for event appends.");
 
 					PGConnection pgConn = monitorConnection.unwrap(PGConnection.class);
+
+					retryDelayMs = INITIAL_RETRY_DELAY_MS;
 
 					while ( !stopped ) { // loop using a single connnection without returning it to the pool
 					
@@ -962,6 +968,13 @@ public class PostgresEventStorageImpl implements EventStorage {
 				} catch (SQLException e) {
 					if ( !stopped ) {
 						LOGGER.error(e.getMessage(), e);
+						try {
+							Thread.sleep(retryDelayMs);
+							retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_DELAY_MS);
+						} catch (InterruptedException ie) {
+							Thread.currentThread().interrupt();
+							return;
+						}
 					}
 				} finally {
 					LOGGER.debug("loop done.");
@@ -995,6 +1008,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			
 			JsonMapper jsonMapper = new JsonMapper ( );
 			
+			long retryDelayMs = INITIAL_RETRY_DELAY_MS;
 			while ( !stopped ) {
 
 				try ( Connection monitorConnection = monitoringDataSource.getConnection(); Statement stmt = monitorConnection.createStatement() ){
@@ -1006,6 +1020,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 					LOGGER.debug("... listening for bookmark updates.");
 
 					PGConnection pgConn = monitorConnection.unwrap(PGConnection.class);
+
+					retryDelayMs = INITIAL_RETRY_DELAY_MS;
 
 					while ( !stopped ) { // reuse single connection without returing in tot the pool
 					
@@ -1037,6 +1053,13 @@ public class PostgresEventStorageImpl implements EventStorage {
 				} catch (SQLException e) {
 					if ( !stopped ) {
 						LOGGER.error(e.getMessage(), e);
+						try {
+							Thread.sleep(retryDelayMs);
+							retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_DELAY_MS);
+						} catch (InterruptedException ie) {
+							Thread.currentThread().interrupt();
+							return;
+						}
 					}
 				} finally {
 					LOGGER.debug("loop done.");

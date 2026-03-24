@@ -1191,10 +1191,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 				try ( PreparedStatement stmt = writeConnection.prepareStatement(sql) ) {
 					stmt.setString(1, reader.toString());
 					
-					int rowsAffected = stmt.executeUpdate();
-					if (rowsAffected == 0) {
-						throw new EventStorageException("Failed to remove bookmark for reader: " + reader);
-					}
+					stmt.executeUpdate();
 					writeConnection.commit();
 				}
 			} catch (SQLException e) {

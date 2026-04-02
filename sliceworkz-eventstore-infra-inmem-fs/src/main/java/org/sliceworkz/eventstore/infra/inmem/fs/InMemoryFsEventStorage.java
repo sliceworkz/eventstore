@@ -61,8 +61,8 @@ import io.micrometer.core.instrument.Metrics;
  * <pre>
  * eventstore-data/
  *   events/
- *     1-1.json
- *     2-2.json
+ *     0000000001-0.json
+ *     0000000002-0.json
  *     ...
  *   bookmarks/
  *     my-projection.json

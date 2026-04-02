@@ -164,8 +164,16 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 			refNode.put("index", event.reference().index());
 			node.set("reference", refNode);
 
-			node.put("immutableData", event.immutableData());
-			node.put("erasableData", event.erasableData());
+			if ( event.immutableData() != null ) {
+				node.set("immutableData", objectMapper.readTree(event.immutableData()));
+			} else {
+				node.putNull("immutableData");
+			}
+			if ( event.erasableData() != null ) {
+				node.set("erasableData", objectMapper.readTree(event.erasableData()));
+			} else {
+				node.putNull("erasableData");
+			}
 
 			ArrayNode tagsArray = objectMapper.createArrayNode();
 			for ( Tag tag : event.tags().tags() ) {
@@ -178,7 +186,7 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 
 			node.put("timestamp", event.timestamp().toString());
 
-			String fileName = "%d-%d.json".formatted(event.reference().tx(), event.reference().position());
+			String fileName = "%010d-%d.json".formatted(event.reference().tx(), event.reference().index());
 			Path filePath = eventsDir.resolve(fileName);
 			Files.writeString(filePath, objectMapper.writeValueAsString(node));
 		} catch ( IOException e ) {
@@ -262,10 +270,10 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 					refNode.get("index").asInt());
 
 			String immutableData = node.has("immutableData") && !node.get("immutableData").isNull()
-					? node.get("immutableData").asText()
+					? node.get("immutableData").toString()
 					: null;
 			String erasableData = node.has("erasableData") && !node.get("erasableData").isNull()
-					? node.get("erasableData").asText()
+					? node.get("erasableData").toString()
 					: null;
 
 			Set<Tag> tagSet = new HashSet<>();

@@ -66,8 +66,8 @@ public class InMemoryFsEventStorageImplTest {
 		}
 
 		// Verify JSON files exist on disk
-		assertTrue(Files.exists(tempDir.resolve("events/1-1.json")));
-		assertTrue(Files.exists(tempDir.resolve("events/2-2.json")));
+		assertTrue(Files.exists(tempDir.resolve("events/0000000001-0.json")));
+		assertTrue(Files.exists(tempDir.resolve("events/0000000002-0.json")));
 
 		// Second instance: reload from disk
 		{
@@ -205,7 +205,7 @@ public class InMemoryFsEventStorageImplTest {
 		));
 
 		// Verify JSON file is human-readable
-		String json = Files.readString(tempDir.resolve("events/1-1.json"));
+		String json = Files.readString(tempDir.resolve("events/0000000001-0.json"));
 		assertTrue(json.contains("\"context\" : \"ctx\""));
 		assertTrue(json.contains("\"purpose\" : \"p\""));
 		assertTrue(json.contains("\"type\" : \"CustomerRegistered\""));

@@ -24,8 +24,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Collections;
 import java.util.List;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -42,13 +42,26 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
 
 public class InMemoryFsEventStorageImplTest {
 
+	private static boolean eventFileExists ( Path eventsDir, String prefix ) throws IOException {
+		try ( Stream<Path> paths = Files.list(eventsDir) ) {
+			return paths.anyMatch(p -> p.getFileName().toString().startsWith(prefix));
+		}
+	}
+
+	private static Path findEventFile ( Path eventsDir, String prefix ) throws IOException {
+		try ( Stream<Path> paths = Files.list(eventsDir) ) {
+			return paths.filter(p -> p.getFileName().toString().startsWith(prefix))
+					.findFirst().orElseThrow();
+		}
+	}
+
 	sealed interface TestEvent {
 		record CustomerRegistered ( String name ) implements TestEvent { }
 		record CustomerNameChanged ( String name ) implements TestEvent { }
 	}
 
 	@Test
-	void testEventRoundTrip ( @TempDir Path tempDir ) {
+	void testEventRoundTrip ( @TempDir Path tempDir ) throws IOException {
 		EventStreamId streamId = EventStreamId.forContext("customer").withPurpose("123");
 
 		// First instance: append events
@@ -65,9 +78,10 @@ public class InMemoryFsEventStorageImplTest {
 			));
 		}
 
-		// Verify JSON files exist on disk
-		assertTrue(Files.exists(tempDir.resolve("events/0000000001-0.json")));
-		assertTrue(Files.exists(tempDir.resolve("events/0000000002-0.json")));
+		// Verify JSON files exist on disk (filenames include dynamic timestamps)
+		Path eventsDir = tempDir.resolve("events");
+		assertTrue(eventFileExists(eventsDir, "0000000001-1-"));
+		assertTrue(eventFileExists(eventsDir, "0000000002-2-"));
 
 		// Second instance: reload from disk
 		{
@@ -205,7 +219,7 @@ public class InMemoryFsEventStorageImplTest {
 		));
 
 		// Verify JSON file is human-readable
-		String json = Files.readString(tempDir.resolve("events/0000000001-0.json"));
+		String json = Files.readString(findEventFile(tempDir.resolve("events"), "0000000001-1-"));
 		assertTrue(json.contains("\"context\" : \"ctx\""));
 		assertTrue(json.contains("\"purpose\" : \"p\""));
 		assertTrue(json.contains("\"type\" : \"CustomerRegistered\""));

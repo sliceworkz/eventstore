@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -58,6 +59,8 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
  * as JSON files on every write. On startup, previously persisted files are loaded back into memory.
  */
 class InMemoryFsEventStorageImpl implements EventStorage {
+
+	private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS");
 
 	private final EventStorage delegate;
 	private final Path eventsDir;
@@ -186,7 +189,7 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 
 			node.put("timestamp", event.timestamp().toString());
 
-			String fileName = "%010d-%d.json".formatted(event.reference().tx(), event.reference().index());
+			String fileName = "%010d-%d-%s.json".formatted(event.reference().tx(), event.reference().position(), TIMESTAMP_FORMAT.format(event.timestamp()));
 			Path filePath = eventsDir.resolve(fileName);
 			Files.writeString(filePath, objectMapper.writeValueAsString(node));
 		} catch ( IOException e ) {

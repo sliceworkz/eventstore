@@ -23,7 +23,7 @@
 	<parent>
 		<groupId>org.sliceworkz</groupId>
 		<artifactId>sliceworkz-eventstore</artifactId>
-		<version>0.7.4-SNAPSHOT</version>
+		<version>0.7.4</version>
 		<relativePath>../</relativePath>
 	</parent>
 	

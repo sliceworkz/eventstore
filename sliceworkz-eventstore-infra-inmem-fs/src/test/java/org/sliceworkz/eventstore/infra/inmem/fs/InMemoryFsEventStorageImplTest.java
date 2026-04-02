@@ -81,7 +81,7 @@ public class InMemoryFsEventStorageImplTest {
 		// Verify JSON files exist on disk (filenames include dynamic timestamps)
 		Path eventsDir = tempDir.resolve("events");
 		assertTrue(eventFileExists(eventsDir, "0000000001-00001-0-"));
-		assertTrue(eventFileExists(eventsDir, "0000000002-00002-0-"));
+		assertTrue(eventFileExists(eventsDir, "0000000001-00002-0-"));
 
 		// Second instance: reload from disk
 		{

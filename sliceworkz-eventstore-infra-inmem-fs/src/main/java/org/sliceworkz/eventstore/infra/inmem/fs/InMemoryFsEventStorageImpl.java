@@ -189,7 +189,7 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 
 			node.put("timestamp", event.timestamp().toString());
 
-			String fileName = "%010d-%05d-%s.json".formatted(event.reference().tx(), event.reference().position(), TIMESTAMP_FORMAT.format(event.timestamp()));
+			String fileName = "%010d-%05d-%d-%s.json".formatted(event.reference().tx(), event.reference().position(), event.reference().index(), TIMESTAMP_FORMAT.format(event.timestamp()));
 			Path filePath = eventsDir.resolve(fileName);
 			Files.writeString(filePath, objectMapper.writeValueAsString(node));
 		} catch ( IOException e ) {

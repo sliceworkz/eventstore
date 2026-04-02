@@ -103,6 +103,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	private Map<String,EventReference> bookmarks = new HashMap<>();
 	private JsonMapper jsonMapper;
 	private Limit absoluteLimit;
+	private long txCounter;
 
 	/**
 	 * Constructs a new in-memory event storage instance with the specified name and absolute query limit.
@@ -124,6 +125,10 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	 * @see InMemoryEventStorage.Builder#build()
 	 */
 	public InMemoryEventStorageImpl ( String name, Limit absoluteLimit ) {
+		this(name, absoluteLimit, List.of(), Map.of());
+	}
+
+	public InMemoryEventStorageImpl ( String name, Limit absoluteLimit, List<StoredEvent> initialEvents, Map<String, EventReference> initialBookmarks ) {
 		if ( name == null || "".equals(name.strip())) {
 			throw new IllegalArgumentException("name must not be empty");
 		}
@@ -131,6 +136,12 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		this.jsonMapper = new JsonMapper();
 		this.jsonMapper.findAndRegisterModules();
 		this.absoluteLimit = absoluteLimit;
+		this.eventlog.addAll(initialEvents);
+		this.bookmarks.putAll(initialBookmarks);
+		this.txCounter = initialEvents.stream()
+				.mapToLong(e -> e.reference().tx())
+				.max()
+				.orElse(0);
 	}
 
 	/**
@@ -270,7 +281,8 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	}
 	
 	private List<StoredEvent> addAndNotifyListeners ( List<EventToStore> events ) {
-		var addedEvents = events.stream().map(this::addEventToEventLog).filter(e->e!=null).toList();
+		long tx = ++txCounter;
+		var addedEvents = events.stream().map(e -> addEventToEventLog(e, tx)).filter(e->e!=null).toList();
 		
 		// notify each Listener about the appends, but if multiple Events were appended, only notify about the last one
 		addedEvents.stream()
@@ -289,17 +301,17 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		return addedEvents;
 	}
 	
-	private StoredEvent addEventToEventLog ( EventToStore event ) {
-		
+	private StoredEvent addEventToEventLog ( EventToStore event, long tx ) {
+
 		if ( event.idempotencyKey() != null ) {
 			if ( idempotencyKeys.contains(event.idempotencyKey())) {
 				return null;
 			}
 			idempotencyKeys.add(event.idempotencyKey());
 		}
-		
-		int posAndTxAsWell = eventlog.size()+1;
-		EventReference reference = EventReference.create(posAndTxAsWell, posAndTxAsWell);
+
+		long position = eventlog.size() + 1;
+		EventReference reference = EventReference.create(position, tx);
 		StoredEvent storedEvent = event.positionAt(reference, LocalDateTime.now());
 		eventlog.add(storedEvent);
 		return storedEvent;

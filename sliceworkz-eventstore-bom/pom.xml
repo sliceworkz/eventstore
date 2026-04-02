@@ -53,6 +53,11 @@
 			</dependency>		
 			<dependency>
 				<groupId>org.sliceworkz</groupId>
+				<artifactId>sliceworkz-eventstore-infra-inmem-fs</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>org.sliceworkz</groupId>
 				<artifactId>sliceworkz-eventstore-infra-postgres</artifactId>
 				<version>${project.version}</version>
 			</dependency>	

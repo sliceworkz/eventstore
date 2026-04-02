@@ -60,7 +60,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
  */
 class InMemoryFsEventStorageImpl implements EventStorage {
 
-	private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS");
+	private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd-HH-mm-ss-SSSS");
 
 	private final EventStorage delegate;
 	private final Path eventsDir;
@@ -189,7 +189,7 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 
 			node.put("timestamp", event.timestamp().toString());
 
-			String fileName = "%010d-%d-%s.json".formatted(event.reference().tx(), event.reference().position(), TIMESTAMP_FORMAT.format(event.timestamp()));
+			String fileName = "%010d-%05d-%s.json".formatted(event.reference().tx(), event.reference().position(), TIMESTAMP_FORMAT.format(event.timestamp()));
 			Path filePath = eventsDir.resolve(fileName);
 			Files.writeString(filePath, objectMapper.writeValueAsString(node));
 		} catch ( IOException e ) {

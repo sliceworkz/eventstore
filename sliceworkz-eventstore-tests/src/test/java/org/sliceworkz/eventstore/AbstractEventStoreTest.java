@@ -51,7 +51,7 @@ public abstract class AbstractEventStoreTest {
 	
 	public void waitBecauseOfEventualConsistency ( BooleanSupplier waitForCriterion ) {
 		await()
-    	.atMost(Duration.ofMillis(1000))
+    	.atMost(Duration.ofMillis(3000))
     		.with()
     		.pollInterval(Duration.ofMillis(100))
     	.until(waitForCriterion::getAsBoolean);

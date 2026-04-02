@@ -17,10 +17,15 @@
  */
 package org.sliceworkz.eventstore.infra.inmem;
 
+import java.util.List;
+import java.util.Map;
+
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
+import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
+import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Metrics;
@@ -144,6 +149,8 @@ public interface InMemoryEventStorage {
 		private Limit limit = Limit.none();
 		private MeterRegistry meterRegistry = Metrics.globalRegistry;
 		private String name = "inmem-%s".formatted(System.identityHashCode(this)); // default unique name in case different objects are used
+		private List<StoredEvent> initialEvents = List.of();
+		private Map<String, EventReference> initialBookmarks = Map.of();
 
 		
 		private Builder ( ) {
@@ -201,6 +208,34 @@ public interface InMemoryEventStorage {
 			this.meterRegistry = meterRegistry;
 			return this;
 		}
+
+		/**
+		 * Configures initial events to preload into the in-memory event storage at construction time.
+		 * <p>
+		 * This is useful for restoring previously persisted events, for example when wrapping the
+		 * in-memory storage with a file-persistence layer.
+		 *
+		 * @param initialEvents the list of stored events to preload (must not be null)
+		 * @return this Builder instance for method chaining
+		 */
+		public Builder initialEvents ( List<StoredEvent> initialEvents ) {
+			this.initialEvents = initialEvents;
+			return this;
+		}
+
+		/**
+		 * Configures initial bookmarks to preload into the in-memory event storage at construction time.
+		 * <p>
+		 * This is useful for restoring previously persisted bookmarks, for example when wrapping the
+		 * in-memory storage with a file-persistence layer.
+		 *
+		 * @param initialBookmarks a map of reader name to event reference (must not be null)
+		 * @return this Builder instance for method chaining
+		 */
+		public Builder initialBookmarks ( Map<String, EventReference> initialBookmarks ) {
+			this.initialBookmarks = initialBookmarks;
+			return this;
+		}
 		
 		/**
 		 * Creates a new builder instance for configuring an in-memory event storage.
@@ -231,7 +266,7 @@ public interface InMemoryEventStorage {
 		 * @see InMemoryEventStorageImpl
 		 */
 		public EventStorage build ( ) {
-			return new InMemoryEventStorageImpl(name, limit);
+			return new InMemoryEventStorageImpl(name, limit, initialEvents, initialBookmarks);
 		}
 
 		/**

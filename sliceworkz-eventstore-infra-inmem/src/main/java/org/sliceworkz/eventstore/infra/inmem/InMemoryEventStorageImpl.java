@@ -124,6 +124,10 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	 * @see InMemoryEventStorage.Builder#build()
 	 */
 	public InMemoryEventStorageImpl ( String name, Limit absoluteLimit ) {
+		this(name, absoluteLimit, List.of(), Map.of());
+	}
+
+	public InMemoryEventStorageImpl ( String name, Limit absoluteLimit, List<StoredEvent> initialEvents, Map<String, EventReference> initialBookmarks ) {
 		if ( name == null || "".equals(name.strip())) {
 			throw new IllegalArgumentException("name must not be empty");
 		}
@@ -131,6 +135,8 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		this.jsonMapper = new JsonMapper();
 		this.jsonMapper.findAndRegisterModules();
 		this.absoluteLimit = absoluteLimit;
+		this.eventlog.addAll(initialEvents);
+		this.bookmarks.putAll(initialBookmarks);
 	}
 
 	/**

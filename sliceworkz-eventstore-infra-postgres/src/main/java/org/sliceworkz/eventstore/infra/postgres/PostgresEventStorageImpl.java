@@ -33,6 +33,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Stream;
@@ -521,8 +522,16 @@ public class PostgresEventStorageImpl implements EventStorage {
 	}
 	
 	public void start ( ) {
-		this.executorService.execute(new NewEventsAppendedMonitor("event-append-listener/" + name, listeners, monitoringDataSource));
-		this.executorService.execute(new BookmarkPlacedMonitor("bookmark-listener/" + name, listeners, monitoringDataSource));
+		CountDownLatch eventMonitorReady = new CountDownLatch(1);
+		CountDownLatch bookmarkMonitorReady = new CountDownLatch(1);
+		this.executorService.execute(new NewEventsAppendedMonitor("event-append-listener/" + name, listeners, monitoringDataSource, eventMonitorReady));
+		this.executorService.execute(new BookmarkPlacedMonitor("bookmark-listener/" + name, listeners, monitoringDataSource, bookmarkMonitorReady));
+		try {
+			eventMonitorReady.await();
+			bookmarkMonitorReady.await();
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+		}
 	}
 	
 	public void stop ( ) {
@@ -898,17 +907,19 @@ public class PostgresEventStorageImpl implements EventStorage {
 	
 	
 	class NewEventsAppendedMonitor implements Runnable {
-		
+
 		private static final Logger LOGGER = LoggerFactory.getLogger(NewEventsAppendedMonitor.class);
-		
+
 		private String name;
 		private List<WeakReference<EventStoreListener>> listeners;
 		private DataSource monitoringDataSource;
-		
-		public NewEventsAppendedMonitor ( String name, List<WeakReference<EventStoreListener>> listeners, DataSource monitoringDataSource ) {
+		private CountDownLatch readyLatch;
+
+		public NewEventsAppendedMonitor ( String name, List<WeakReference<EventStoreListener>> listeners, DataSource monitoringDataSource, CountDownLatch readyLatch ) {
 			this.name = name;
 			this.listeners = listeners;
 			this.monitoringDataSource = monitoringDataSource;
+			this.readyLatch = readyLatch;
 		}
 
 		@Override
@@ -929,15 +940,16 @@ public class PostgresEventStorageImpl implements EventStorage {
 					stmt.execute(listenStatement);
 
 					LOGGER.debug("... listening for event appends.");
+					readyLatch.countDown();
 
 					PGConnection pgConn = monitorConnection.unwrap(PGConnection.class);
 
 					retryDelayMs = INITIAL_RETRY_DELAY_MS;
 
 					while ( !stopped ) { // loop using a single connnection without returning it to the pool
-					
+
 						LOGGER.debug("checking for notifications...");
-	
+
 						PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // wait at max so long for new notifications, then ask new connection and start waiting again
 						
 					    if (notifications != null) {
@@ -981,17 +993,19 @@ public class PostgresEventStorageImpl implements EventStorage {
 	
 	
 	class BookmarkPlacedMonitor implements Runnable {
-		
+
 		private static final Logger LOGGER = LoggerFactory.getLogger(BookmarkPlacedMonitor.class);
-		
+
 		private String name;
 		private List<WeakReference<EventStoreListener>> listeners;
 		private DataSource monitoringDataSource;
-		
-		public BookmarkPlacedMonitor ( String name, List<WeakReference<EventStoreListener>> listeners, DataSource monitoringDataSource ) {
+		private CountDownLatch readyLatch;
+
+		public BookmarkPlacedMonitor ( String name, List<WeakReference<EventStoreListener>> listeners, DataSource monitoringDataSource, CountDownLatch readyLatch ) {
 			this.name = name;
 			this.listeners = listeners;
 			this.monitoringDataSource = monitoringDataSource;
+			this.readyLatch = readyLatch;
 		}
 
 		@Override
@@ -1014,6 +1028,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 					stmt.execute(listenStatement);
 
 					LOGGER.debug("... listening for bookmark updates.");
+					readyLatch.countDown();
 
 					PGConnection pgConn = monitorConnection.unwrap(PGConnection.class);
 

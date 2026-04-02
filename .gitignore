@@ -16,3 +16,4 @@ buildNumber.properties
 nohup.out
 jte-classes
 db.properties
+eventstore-data/

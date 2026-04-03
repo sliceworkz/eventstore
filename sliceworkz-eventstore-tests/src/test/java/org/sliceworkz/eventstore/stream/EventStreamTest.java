@@ -21,6 +21,7 @@ import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -162,8 +163,14 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		assertEquals(1, s2cal.count());  // other stream, shouldn't be notified
 		assertEquals(3, s2ecal.count()); // other stream, shouldn't be notified
 
-		assertEquals(1, s3cal.count());  
-		assertEquals(1, s3ecal.count()); 
+		assertEquals(1, s3cal.count());
+		assertEquals(1, s3ecal.count());
+
+		// prevent premature GC: the EventStream instances are subscribed to the storage via WeakReference,
+		// so the JIT must not mark them as dead while we still expect async notifications
+		assertNotNull(s1);
+		assertNotNull(s2);
+		assertNotNull(s3);
 	}
 
 	@Test

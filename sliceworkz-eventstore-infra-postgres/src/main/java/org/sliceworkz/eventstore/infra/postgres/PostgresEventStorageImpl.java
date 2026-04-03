@@ -32,13 +32,10 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import javax.sql.DataSource;
@@ -127,7 +124,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private final Limit absoluteLimit;
 
 	private final List<WeakReference<EventStoreListener>> listeners = new CopyOnWriteArrayList<>();
-	private final Set<Long> locallyAppendedPositions = ConcurrentHashMap.newKeySet();
 	private final ExecutorService executorService;
 	private volatile boolean stopped;
 
@@ -824,37 +820,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 							throw new OptimisticLockingException(appendCriteria.eventFilter(), appendCriteria.expectedLastEventReference());
 						}
 					}
-
-					// Register positions BEFORE commit so the monitor can deduplicate
-					// pg_notify notifications that arrive after commit
-					List<Long> appendedPositions = storedEvents.stream()
-						.map(se -> se.reference().position()).toList();
-					locallyAppendedPositions.addAll(appendedPositions);
-
-					try {
-						writeConnection.commit();
-					} catch (SQLException commitEx) {
-						locallyAppendedPositions.removeAll(appendedPositions);
-						throw commitEx;
-					}
-
-					// Synchronously notify listeners (like InMemoryEventStorage does)
-					// to ensure listeners are notified while still strongly reachable
-					// on the caller's stack. The pg_notify duplicates will be suppressed
-					// by the monitor via locallyAppendedPositions.
-					storedEvents.stream()
-						.collect(Collectors.toMap(
-							StoredEvent::stream,
-							se -> new AppendsToEventStoreNotification(se.stream(), se.reference()),
-							(existing, replacement) -> replacement
-						))
-						.values()
-						.forEach(notification -> listeners.forEach(listener -> {
-							EventStoreListener l = listener.get();
-							if (l != null) {
-								l.notify(notification);
-							}
-						}));
+					writeConnection.commit();
 
 				} catch (SQLException e) {
 					try {
@@ -870,12 +836,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 						throw new EventStorageException("SQLException during append", e);
 					}
 				}
-
+				
 			} catch (SQLException e) {
 				throw new EventStorageException("SQLException during append", e);
 			}
 		}
-
+		
 		return storedEvents;
 			
 	}
@@ -991,15 +957,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 					            LOGGER.debug("Received: {}", notification.getParameter());
 					            try {
 									EventAppendedPostgresNotification msg = JSONMAPPER.readValue(notification.getParameter(), EventAppendedPostgresNotification.class);
-
-									// Skip if this event was already notified synchronously during local append
-									if (locallyAppendedPositions.remove(msg.eventPosition())) {
-										LOGGER.debug("Skipping duplicate notification for locally appended event at position {}", msg.eventPosition());
-										continue;
-									}
-
 									AppendsToEventStoreNotification aesn = msg.toNotification();
-
+									
 									listeners.forEach(l -> {
 										EventStoreListener listener = l.get();
 										if (listener != null) {

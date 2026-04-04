@@ -56,8 +56,7 @@ import org.sliceworkz.eventstore.events.EventReference;
  *
  * // Subscribe to bookmark update notifications
  * stream.subscribe((String reader, EventReference processedUntil) -> {
- *     System.out.println("Reader '" + reader + "' processed up to: " +
- *         processedUntil.id().value() + "/" + processedUntil.position());
+ *     System.out.println("Reader '" + reader + "' processed up to: " + processedUntil);
  *
  *     // Monitor processing progress
  *     metricsService.recordProcessingPosition(reader, processedUntil);

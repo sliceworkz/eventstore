@@ -274,4 +274,112 @@ public class EventReferenceTest {
 		assertNull(r);
 	}
 
+	@Test
+	void testToStringWithoutIndex (  ) {
+		EventId id = EventId.of("550e8400-e29b-41d4-a716-446655440000");
+		EventReference r = EventReference.of(id, 42, 10);
+		assertEquals("550e8400-e29b-41d4-a716-446655440000:10:42", r.toString());
+	}
+
+	@Test
+	void testToStringWithIndex (  ) {
+		EventId id = EventId.of("550e8400-e29b-41d4-a716-446655440000");
+		EventReference r = EventReference.of(id, 42, 10, 3);
+		assertEquals("550e8400-e29b-41d4-a716-446655440000:10:42:3", r.toString());
+	}
+
+	@Test
+	void testToStringWithIndexZeroOmitsIndex (  ) {
+		EventId id = EventId.of("550e8400-e29b-41d4-a716-446655440000");
+		EventReference r = EventReference.of(id, 42, 10, 0);
+		assertEquals("550e8400-e29b-41d4-a716-446655440000:10:42", r.toString());
+	}
+
+	@Test
+	void testFromStringWithoutIndex (  ) {
+		EventReference r = EventReference.fromString("550e8400-e29b-41d4-a716-446655440000:10:42");
+		assertEquals("550e8400-e29b-41d4-a716-446655440000", r.id().value());
+		assertEquals(10, r.tx());
+		assertEquals(42, r.position());
+		assertEquals(0, r.index());
+	}
+
+	@Test
+	void testFromStringWithIndex (  ) {
+		EventReference r = EventReference.fromString("550e8400-e29b-41d4-a716-446655440000:10:42:3");
+		assertEquals("550e8400-e29b-41d4-a716-446655440000", r.id().value());
+		assertEquals(10, r.tx());
+		assertEquals(42, r.position());
+		assertEquals(3, r.index());
+	}
+
+	@Test
+	void testFromStringRoundtripWithoutIndex (  ) {
+		EventId id = EventId.of("my-event-id");
+		EventReference original = EventReference.of(id, 100, 50);
+		EventReference parsed = EventReference.fromString(original.toString());
+		assertEquals(original, parsed);
+	}
+
+	@Test
+	void testFromStringRoundtripWithIndex (  ) {
+		EventId id = EventId.of("my-event-id");
+		EventReference original = EventReference.of(id, 100, 50, 7);
+		EventReference parsed = EventReference.fromString(original.toString());
+		assertEquals(original, parsed);
+	}
+
+	@Test
+	void testFromStringNull (  ) {
+		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> EventReference.fromString(null));
+		assertEquals("EventReference string cannot be null or blank", e.getMessage());
+	}
+
+	@Test
+	void testFromStringBlank (  ) {
+		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> EventReference.fromString("  "));
+		assertEquals("EventReference string cannot be null or blank", e.getMessage());
+	}
+
+	@Test
+	void testFromStringEmpty (  ) {
+		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> EventReference.fromString(""));
+		assertEquals("EventReference string cannot be null or blank", e.getMessage());
+	}
+
+	@Test
+	void testFromStringTooFewParts (  ) {
+		assertThrows(IllegalArgumentException.class, () -> EventReference.fromString("id:10"));
+	}
+
+	@Test
+	void testFromStringTooManyParts (  ) {
+		assertThrows(IllegalArgumentException.class, () -> EventReference.fromString("id:10:42:3:extra"));
+	}
+
+	@Test
+	void testFromStringInvalidTx (  ) {
+		assertThrows(IllegalArgumentException.class, () -> EventReference.fromString("my-id:abc:42"));
+	}
+
+	@Test
+	void testFromStringInvalidPosition (  ) {
+		assertThrows(IllegalArgumentException.class, () -> EventReference.fromString("my-id:10:abc"));
+	}
+
+	@Test
+	void testFromStringInvalidIndex (  ) {
+		assertThrows(IllegalArgumentException.class, () -> EventReference.fromString("my-id:10:42:abc"));
+	}
+
+	@Test
+	void testFromStringInvalidPositionZero (  ) {
+		assertThrows(IllegalArgumentException.class, () -> EventReference.fromString("my-id:10:0"));
+	}
+
+	@Test
+	void testFromStringInvalidNegativeIndex (  ) {
+		assertThrows(IllegalArgumentException.class, () -> EventReference.fromString("my-id:10:42:-1"));
+	}
+
 }

@@ -186,4 +186,53 @@ public record EventReference ( EventId id, long position, long tx, int index ) {
 		return new EventReference(this.id, this.position, this.tx, index);
 	}
 
+	/**
+	 * Returns a string representation of this EventReference in the format:
+	 * {@code <id>:<tx>:<position>:<index>}
+	 * <p>
+	 * If the index is 0, the {@code :<index>} suffix is omitted.
+	 *
+	 * @return the string representation
+	 */
+	@Override
+	public String toString ( ) {
+		if ( index == 0 ) {
+			return id.value() + ":" + tx + ":" + position;
+		}
+		return id.value() + ":" + tx + ":" + position + ":" + index;
+	}
+
+	/**
+	 * Parses an EventReference from its string representation.
+	 * <p>
+	 * Expected format: {@code <id>:<tx>:<position>} or {@code <id>:<tx>:<position>:<index>}
+	 * <p>
+	 * When the index part is omitted, it defaults to 0.
+	 *
+	 * @param value the string to parse
+	 * @return the parsed EventReference
+	 * @throws IllegalArgumentException if the value is null, blank, or cannot be parsed
+	 */
+	public static EventReference fromString ( String value ) {
+		if ( value == null || value.isBlank() ) {
+			throw new IllegalArgumentException("EventReference string cannot be null or blank");
+		}
+		String[] parts = value.split(":");
+		if ( parts.length < 3 || parts.length > 4 ) {
+			throw new IllegalArgumentException("Invalid EventReference format: '%s'. Expected <id>:<tx>:<position> or <id>:<tx>:<position>:<index>".formatted(value));
+		}
+		try {
+			EventId id = new EventId(parts[0]);
+			long tx = Long.parseLong(parts[1]);
+			long position = Long.parseLong(parts[2]);
+			int index = parts.length == 4 ? Integer.parseInt(parts[3]) : 0;
+			return new EventReference(id, position, tx, index);
+		} catch ( IllegalArgumentException e ) {
+			if ( e instanceof NumberFormatException ) {
+				throw new IllegalArgumentException("Invalid EventReference format: '%s'. Cannot parse numeric components".formatted(value), e);
+			}
+			throw e;
+		}
+	}
+
 }

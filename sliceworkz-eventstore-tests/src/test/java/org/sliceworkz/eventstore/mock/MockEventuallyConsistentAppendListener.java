@@ -22,8 +22,8 @@ import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendLis
 
 public class MockEventuallyConsistentAppendListener implements EventStreamEventuallyConsistentAppendListener {
 
-	private EventReference lastReference;
-	private int count;
+	private volatile EventReference lastReference;
+	private volatile int count;
 	
 	@Override
 	public synchronized EventReference  eventsAppended(EventReference atLeastUntil) {

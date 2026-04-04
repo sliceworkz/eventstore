@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -99,14 +100,14 @@ public class EventStreamTest extends AbstractEventStoreTest {
 	void testSubscribeListener ( ) {
 		EventStreamId stream = EventStreamId.forContext("app").withPurpose("default");
 		EventStreamId otherStream = EventStreamId.forContext("other").withPurpose("default");
-		
+
 		EventStream<MockDomainEvent> s1 = eventStore().getEventStream(stream, MockDomainEvent.class);
 		EventStream<MockDomainEvent> s2 = eventStore().getEventStream(stream, MockDomainEvent.class);
 		EventStream<OtherMockDomainEvent> s3 = eventStore().getEventStream(otherStream, OtherMockDomainEvent.class);
-		
+
 		MockConsistentAppendListener<MockDomainEvent> s1cal = new MockConsistentAppendListener<>();
 		MockEventuallyConsistentAppendListener s1ecal = new MockEventuallyConsistentAppendListener();
-		
+
 		s1.subscribe(s1cal);
 		s1.subscribe(s1ecal);
 
@@ -124,53 +125,60 @@ public class EventStreamTest extends AbstractEventStoreTest {
 
 		// first append via the first stream instance ...
 		s1.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none()));
-		s1.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none()));
-		BooleanSupplier bothEventualListenersReceivedBothAppends = () -> s1ecal.count() >= 2 && s2ecal.count() >= 2;
-		waitBecauseOfEventualConsistency(bothEventualListenersReceivedBothAppends);
+		List<Event<MockDomainEvent>> secondAppend = s1.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none()));
+		EventReference secondAppendRef = secondAppend.getLast().reference();
+
+		// eventually consistent listeners are notified about the latest position (atLeastUntil),
+		// not per-event — the number of callbacks depends on timing, so we wait for the
+		// last reference rather than an exact count
+		BooleanSupplier bothEventualListenersNotifiedUpToSecondAppend = () ->
+			secondAppendRef.equals(s1ecal.lastReference()) && secondAppendRef.equals(s2ecal.lastReference());
+		waitBecauseOfEventualConsistency(bothEventualListenersNotifiedUpToSecondAppend);
 
 		assertEquals(2, s1cal.count());
-		assertEquals(2, s1ecal.count());
+		assertTrue(s1ecal.count() >= 1); // at least once, up to twice depending on timing
+		assertEquals(secondAppendRef, s1ecal.lastReference());
 
 		assertEquals(0, s2cal.count());  // consistent listener not notified by other stream instance
-		assertEquals(2, s2ecal.count()); // eventually consistent listener is notified
+		assertTrue(s2ecal.count() >= 1); // eventually consistent listener is notified
+		assertEquals(secondAppendRef, s2ecal.lastReference());
 
 		assertEquals(0, s3cal.count());  // other stream, shouldn't be notified
-		assertEquals(0, s3ecal.count()); // other stream, shouldn't be notified
+		assertNull(s3ecal.lastReference()); // other stream, shouldn't be notified
 
 		// ... now append via the other stream instance on the same logical stream
-		s2.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none()));
-		BooleanSupplier bothEventualListenersReceivedThirdAppend = () -> s1ecal.count() >= 3 && s2ecal.count() >= 3;
-		waitBecauseOfEventualConsistency(bothEventualListenersReceivedThirdAppend);
+		List<Event<MockDomainEvent>> thirdAppend = s2.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none()));
+		EventReference thirdAppendRef = thirdAppend.getLast().reference();
+
+		BooleanSupplier bothEventualListenersNotifiedUpToThirdAppend = () ->
+			thirdAppendRef.equals(s1ecal.lastReference()) && thirdAppendRef.equals(s2ecal.lastReference());
+		waitBecauseOfEventualConsistency(bothEventualListenersNotifiedUpToThirdAppend);
 
 		assertEquals(2, s1cal.count());
-		assertEquals(3, s1ecal.count());
+		assertEquals(thirdAppendRef, s1ecal.lastReference());
 
-		assertEquals(1, s2cal.count());  
-		assertEquals(3, s2ecal.count()); 
+		assertEquals(1, s2cal.count());
+		assertEquals(thirdAppendRef, s2ecal.lastReference());
 
 		assertEquals(0, s3cal.count());  // other stream, shouldn't be notified
-		assertEquals(0, s3ecal.count()); // other stream, shouldn't be notified
+		assertNull(s3ecal.lastReference()); // other stream, shouldn't be notified
 
-		
+
 		// ... and now append on another logical stream
-		s3.append(AppendCriteria.none(), Event.of(new AnotherDomainEvent("1"), Tags.none()));
-		BooleanSupplier s3EventualListenerNotified = () -> s3ecal.count() >= 1;
+		List<Event<OtherMockDomainEvent>> fourthAppend = s3.append(AppendCriteria.none(), Event.of(new AnotherDomainEvent("1"), Tags.none()));
+		EventReference fourthAppendRef = fourthAppend.getLast().reference();
+
+		BooleanSupplier s3EventualListenerNotified = () -> fourthAppendRef.equals(s3ecal.lastReference());
 		waitBecauseOfEventualConsistency(s3EventualListenerNotified);
 
 		assertEquals(2, s1cal.count());  // other stream, shouldn't be notified
-		assertEquals(3, s1ecal.count()); // other stream, shouldn't be notified
+		assertEquals(thirdAppendRef, s1ecal.lastReference()); // other stream, shouldn't be notified
 
 		assertEquals(1, s2cal.count());  // other stream, shouldn't be notified
-		assertEquals(3, s2ecal.count()); // other stream, shouldn't be notified
+		assertEquals(thirdAppendRef, s2ecal.lastReference()); // other stream, shouldn't be notified
 
 		assertEquals(1, s3cal.count());
-		assertEquals(1, s3ecal.count());
-
-		// prevent premature GC: the EventStream instances are subscribed to the storage via WeakReference,
-		// so the JIT must not mark them as dead while we still expect async notifications
-		assertNotNull(s1);
-		assertNotNull(s2);
-		assertNotNull(s3);
+		assertEquals(fourthAppendRef, s3ecal.lastReference());
 	}
 
 	@Test
@@ -396,8 +404,8 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		    	.pollInterval(Duration.ofMillis(100))
 		    .until(() -> l.lastReference()!=null && (5 == l.lastReference().position()));
 
-		assertEquals(5, l.lastReference().position()); // check that the listener has seen the last event 
-		assertTrue(l.counter() >= 3); // initial one (calling thread), third (first thread second loop), fourth and fifth separate or combined
+		assertEquals(5, l.lastReference().position()); // check that the listener has seen the last event
+		assertTrue(l.counter() >= 1); // at least one notification, but count depends on timing
 	}
 
 	

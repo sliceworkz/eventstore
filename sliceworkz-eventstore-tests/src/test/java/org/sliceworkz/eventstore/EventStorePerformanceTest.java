@@ -24,13 +24,19 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
+import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
+import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorageImpl;
+import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
 import org.sliceworkz.eventstore.mock.MockDomainEvent;
 import org.sliceworkz.eventstore.mock.MockDomainEvent.FirstDomainEvent;
 import org.sliceworkz.eventstore.spi.EventStorage;
@@ -39,88 +45,104 @@ import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamConsistentAppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
-public class EventStorePerformanceTest {
+class EventStorePerformanceTest {
 
-	private static final String UNITTEST_BOUNDEDCONTEXT = "pertest";
-	
-	EventStorage eventStorage;
-	
-	@BeforeEach
-	public void setUp ( ) {
-		this.eventStorage = createEventStorage();
-	}
-	
-	@AfterEach
-	public void tearDown ( ) {
-		destroyEventStorage(eventStorage);
-	}
-	
-	public EventStorage createEventStorage ( ) {
-		return InMemoryEventStorage.newBuilder().build();
-	}
-	
-	public void destroyEventStorage ( EventStorage storage ) {
-		
-	}
-	
-	@Test
-	void testAppendPerformance ( ) {
-		EventStream<MockDomainEvent> eventStream = createEventStream();
-		
-		List<? extends Event<? extends MockDomainEvent>> result = null;
-		
-//		
-//		try {
-//			Thread.sleep(20000);
-//		} catch (InterruptedException e) {
-//			e.printStackTrace();
-//		}
+	abstract static class Tests {
 
-		AtomicInteger counter = new AtomicInteger();
-		
-		eventStream.subscribe(new EventStreamConsistentAppendListener<MockDomainEvent>() {
-			
-			@Override
-			public void eventsAppended(List<? extends Event<MockDomainEvent>> events) {
-				counter.incrementAndGet();
-			}
-		});
-		
-		System.out.println("starting");
-		
-		Instant start = Instant.now();
-		
-		int COUNT = 10_000;
-		
-		for ( int i = 0; i < COUNT; i++ ) {
-			// append with no criteria (should always succeed)
-			EphemeralEvent<FirstDomainEvent> event = Event.of(new FirstDomainEvent("test1"), Tags.none());
-			result = eventStream.append(AppendCriteria.none(), Collections.singletonList(event));
+		private static final String UNITTEST_BOUNDEDCONTEXT = "pertest";
+
+		EventStorage eventStorage;
+
+		@BeforeEach
+		public void setUp ( ) {
+			this.eventStorage = createEventStorage();
 		}
 
-		Instant stop = Instant.now();
-		long ms = stop.toEpochMilli() - start.toEpochMilli();
-		double eventsPerSecond = (COUNT*1000/(double)ms);
-		
-		assertEquals(COUNT, result.iterator().next().reference().position());
-		
-		System.out.println("ms                : " + ms);
-		System.out.println("counter (async)   : " + counter.get());
-		System.out.println("appended event/sec: " + eventsPerSecond);
-		
-		
-//		while( true ) {
-//			try {
-//				Thread.sleep(10000);
-//			} catch (InterruptedException e) {
-//				e.printStackTrace();
-//			}
-//		}
-		
+		@AfterEach
+		public void tearDown ( ) {
+			destroyEventStorage(eventStorage);
+		}
+
+		abstract EventStorage createEventStorage ( );
+
+		void destroyEventStorage ( EventStorage storage ) {
+		}
+
+		@Test
+		void testAppendPerformance ( ) {
+			EventStream<MockDomainEvent> eventStream = createEventStream();
+
+			List<? extends Event<? extends MockDomainEvent>> result = null;
+
+			AtomicInteger counter = new AtomicInteger();
+
+			eventStream.subscribe(new EventStreamConsistentAppendListener<MockDomainEvent>() {
+
+				@Override
+				public void eventsAppended(List<? extends Event<MockDomainEvent>> events) {
+					counter.incrementAndGet();
+				}
+			});
+
+			System.out.println("starting");
+
+			Instant start = Instant.now();
+
+			int COUNT = 10_000;
+
+			for ( int i = 0; i < COUNT; i++ ) {
+				// append with no criteria (should always succeed)
+				EphemeralEvent<FirstDomainEvent> event = Event.of(new FirstDomainEvent("test1"), Tags.none());
+				result = eventStream.append(AppendCriteria.none(), Collections.singletonList(event));
+			}
+
+			Instant stop = Instant.now();
+			long ms = stop.toEpochMilli() - start.toEpochMilli();
+			double eventsPerSecond = (COUNT*1000/(double)ms);
+
+			assertEquals(COUNT, result.iterator().next().reference().position());
+
+			System.out.println("ms                : " + ms);
+			System.out.println("counter (async)   : " + counter.get());
+			System.out.println("appended event/sec: " + eventsPerSecond);
+		}
+
+		private EventStream<MockDomainEvent> createEventStream() {
+			return EventStoreFactory.get().eventStore(eventStorage).getEventStream(EventStreamId.forContext(UNITTEST_BOUNDEDCONTEXT), MockDomainEvent.class);
+		}
 	}
 
-	private EventStream<MockDomainEvent> createEventStream() {
-		return EventStoreFactory.get().eventStore(eventStorage).getEventStream(EventStreamId.forContext(UNITTEST_BOUNDEDCONTEXT), MockDomainEvent.class);
+	@Nested
+	class OnInMem extends Tests {
+		@Override
+		EventStorage createEventStorage ( ) {
+			return InMemoryEventStorage.newBuilder().build();
+		}
 	}
-	
+
+	@Nested
+	class OnPostgres extends Tests {
+
+		@BeforeAll
+		static void startContainer ( ) { PostgresContainer.start(); }
+
+		@AfterAll
+		static void stopContainer ( ) { PostgresContainer.stop(); PostgresContainer.cleanup(); }
+
+		@Override
+		EventStorage createEventStorage ( ) {
+			return PostgresEventStorage.newBuilder()
+					.name("unit-test")
+					.dataSource(PostgresContainer.dataSource())
+					.initializeDatabase()
+					.build();
+		}
+
+		@Override
+		void destroyEventStorage ( EventStorage storage ) {
+			((PostgresEventStorageImpl)storage).stop();
+			PostgresContainer.closeDataSource();
+		}
+	}
+
 }

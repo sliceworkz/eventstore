@@ -22,14 +22,20 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.Collections;
 
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
+import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
+import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorageImpl;
+import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
 import org.sliceworkz.eventstore.mock.MockDomainEvent;
 import org.sliceworkz.eventstore.mockdomain.MockDomainDuplicatedEvent.FirstDomainEvent;
 import org.sliceworkz.eventstore.query.EventQuery;
@@ -40,60 +46,95 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
-public class EventStoreLimitTest {
-	
-	private EventStorage eventStorage;
-	private EventStore eventStore;
-	private EventStreamId stream = EventStreamId.forContext("app").withPurpose("stream1");
-	
-	@BeforeEach
-	public void setUp ( ) {
-		this.eventStorage = createEventStorage();
-		this.eventStore = EventStoreFactory.get().eventStore(eventStorage);
-	}
-	
-	@AfterEach
-	public void tearDown ( ) {
-		destroyEventStorage(eventStorage);
-	}
-	
-	public EventStorage createEventStorage ( ) {
-		return InMemoryEventStorage.newBuilder().resultLimit(2).build(); // deliberately limiting strictly to max 2 results
-	}
-	
-	public void destroyEventStorage ( EventStorage storage ) {
-		
-	}
-	
-	private void storeEvent ( EventStreamId eventStreamId, MockDomainEvent event, Tags tags ) {
-		EventStream<MockDomainEvent> eventStream = eventStore.getEventStream(eventStreamId, MockDomainEvent.class);
-		EphemeralEvent<MockDomainEvent> e = Event.of(event, tags);
-		eventStream.append(AppendCriteria.none(), Collections.singletonList((e)));
-	}
-	
-	@Test
-	void testHardLimit ( ) {
-		storeEvent(stream, new MockDomainEvent.FirstDomainEvent("one"), Tags.of(Tag.of("mod2", "0"), Tag.of("mod3", "0")));
-		storeEvent(stream, new MockDomainEvent.FirstDomainEvent("one"), Tags.of(Tag.of("mod2", "1"), Tag.of("mod3", "1")));
-		storeEvent(stream, new MockDomainEvent.FirstDomainEvent("one"), Tags.of(Tag.of("mod2", "0"), Tag.of("mod3", "2")));
-		storeEvent(stream, new MockDomainEvent.SecondDomainEvent("one"), Tags.of(Tag.of("mod2", "1"), Tag.of("mod3", "0")));
-		storeEvent(stream, new MockDomainEvent.SecondDomainEvent("one"), Tags.of(Tag.of("mod2", "0"), Tag.of("mod3", "1")));
-		storeEvent(stream, new MockDomainEvent.SecondDomainEvent("one"), Tags.of(Tag.of("mod2", "1"), Tag.of("mod3", "2")));
-		storeEvent(stream, new MockDomainEvent.ThirdDomainEvent("one"), Tags.of(Tag.of("mod2", "0"), Tag.of("mod3", "0")));
-		storeEvent(stream, new MockDomainEvent.ThirdDomainEvent("one"), Tags.of(Tag.of("mod2", "1"), Tag.of("mod3", "1")));
-		
-		EventStorageException e = assertThrows(EventStorageException.class, ()->eventStore.getEventStream(stream).query(EventQuery.matchAll()));
-		assertEquals("query returned more results than the configured absolute limit of 2", e.getMessage());
+class EventStoreLimitTest {
 
-		e = assertThrows(EventStorageException.class, ()->eventStore.getEventStream(stream).query(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())));
-		assertEquals("query returned more results than the configured absolute limit of 2", e.getMessage());
+	abstract static class Tests {
 
-		e = assertThrows(EventStorageException.class, ()->eventStore.getEventStream(stream).query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("mod2", "0"))));
-		assertEquals("query returned more results than the configured absolute limit of 2", e.getMessage());
+		private EventStorage eventStorage;
+		private EventStore eventStore;
+		private EventStreamId stream = EventStreamId.forContext("app").withPurpose("stream1");
 
-		// these should all be ok
-		eventStore.getEventStream(stream).query(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.of("mod2", "1")));
-		eventStore.getEventStream(stream).query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("mod2", "2")));
+		@BeforeEach
+		public void setUp ( ) {
+			this.eventStorage = createEventStorage();
+			this.eventStore = EventStoreFactory.get().eventStore(eventStorage);
+		}
+
+		@AfterEach
+		public void tearDown ( ) {
+			destroyEventStorage(eventStorage);
+		}
+
+		abstract EventStorage createEventStorage ( );
+
+		void destroyEventStorage ( EventStorage storage ) {
+		}
+
+		private void storeEvent ( EventStreamId eventStreamId, MockDomainEvent event, Tags tags ) {
+			EventStream<MockDomainEvent> eventStream = eventStore.getEventStream(eventStreamId, MockDomainEvent.class);
+			EphemeralEvent<MockDomainEvent> e = Event.of(event, tags);
+			eventStream.append(AppendCriteria.none(), Collections.singletonList((e)));
+		}
+
+		@Test
+		void testHardLimit ( ) {
+			storeEvent(stream, new MockDomainEvent.FirstDomainEvent("one"), Tags.of(Tag.of("mod2", "0"), Tag.of("mod3", "0")));
+			storeEvent(stream, new MockDomainEvent.FirstDomainEvent("one"), Tags.of(Tag.of("mod2", "1"), Tag.of("mod3", "1")));
+			storeEvent(stream, new MockDomainEvent.FirstDomainEvent("one"), Tags.of(Tag.of("mod2", "0"), Tag.of("mod3", "2")));
+			storeEvent(stream, new MockDomainEvent.SecondDomainEvent("one"), Tags.of(Tag.of("mod2", "1"), Tag.of("mod3", "0")));
+			storeEvent(stream, new MockDomainEvent.SecondDomainEvent("one"), Tags.of(Tag.of("mod2", "0"), Tag.of("mod3", "1")));
+			storeEvent(stream, new MockDomainEvent.SecondDomainEvent("one"), Tags.of(Tag.of("mod2", "1"), Tag.of("mod3", "2")));
+			storeEvent(stream, new MockDomainEvent.ThirdDomainEvent("one"), Tags.of(Tag.of("mod2", "0"), Tag.of("mod3", "0")));
+			storeEvent(stream, new MockDomainEvent.ThirdDomainEvent("one"), Tags.of(Tag.of("mod2", "1"), Tag.of("mod3", "1")));
+
+			EventStorageException e = assertThrows(EventStorageException.class, ()->eventStore.getEventStream(stream).query(EventQuery.matchAll()));
+			assertEquals("query returned more results than the configured absolute limit of 2", e.getMessage());
+
+			e = assertThrows(EventStorageException.class, ()->eventStore.getEventStream(stream).query(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())));
+			assertEquals("query returned more results than the configured absolute limit of 2", e.getMessage());
+
+			e = assertThrows(EventStorageException.class, ()->eventStore.getEventStream(stream).query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("mod2", "0"))));
+			assertEquals("query returned more results than the configured absolute limit of 2", e.getMessage());
+
+			// these should all be ok
+			eventStore.getEventStream(stream).query(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.of("mod2", "1")));
+			eventStore.getEventStream(stream).query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("mod2", "2")));
+		}
+
+	}
+
+	@Nested
+	class OnInMem extends Tests {
+		@Override
+		EventStorage createEventStorage ( ) {
+			return InMemoryEventStorage.newBuilder().resultLimit(2).build();
+		}
+	}
+
+	@Nested
+	class OnPostgres extends Tests {
+
+		@BeforeAll
+		static void startContainer ( ) { PostgresContainer.start(); }
+
+		@AfterAll
+		static void stopContainer ( ) { PostgresContainer.stop(); PostgresContainer.cleanup(); }
+
+		@Override
+		EventStorage createEventStorage ( ) {
+			return PostgresEventStorage.newBuilder()
+					.name("unit-test")
+					.dataSource(PostgresContainer.dataSource())
+					.resultLimit(2)
+					.initializeDatabase()
+					.build();
+		}
+
+		@Override
+		void destroyEventStorage ( EventStorage storage ) {
+			((PostgresEventStorageImpl)storage).stop();
+			PostgresContainer.closeDataSource();
+		}
 	}
 
 }

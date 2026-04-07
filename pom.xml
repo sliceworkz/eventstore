@@ -56,13 +56,13 @@
 		<!-- examples -->
 		<module>sliceworkz-eventstore-examples</module>
 
-		<!-- tests, those same scenarios will be run inmem as wel as on postgres  -->
-		<module>sliceworkz-eventstore-tests</module>
-		
 		<!-- infra implementations -->
 		<module>sliceworkz-eventstore-infra-inmem</module>
 		<module>sliceworkz-eventstore-infra-inmem-fs</module>
 		<module>sliceworkz-eventstore-infra-postgres</module>
+
+		<!-- tests, those same scenarios will be run inmem as well as on postgres  -->
+		<module>sliceworkz-eventstore-tests</module>
 
 		<!-- benchmark tool -->
 		<module>sliceworkz-eventstore-benchmark</module>

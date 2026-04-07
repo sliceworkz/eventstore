@@ -25,8 +25,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.sliceworkz.eventstore.AbstractEventStoreTest;
+import org.sliceworkz.eventstore.EventStore;
+import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.LegacyEvent;
 import org.sliceworkz.eventstore.events.Tags;
@@ -43,7 +46,7 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  * Tests that the Projector correctly advances past events that upcast to zero enriched events,
  * avoiding infinite re-querying and ensuring bookmarks advance past vanished events.
  */
-public class ProjectorWithUpcastingTest extends AbstractEventStoreTest {
+public class ProjectorWithUpcastingTest {
 
 	// =========================================================================
 	// Domain model: original events as stored
@@ -108,11 +111,22 @@ public class ProjectorWithUpcastingTest extends AbstractEventStoreTest {
 	// Test infrastructure
 	// =========================================================================
 
+	private EventStorage eventStorage;
+	private EventStore eventStore;
 	EventStreamId streamId = EventStreamId.forContext("projector-upcast-test");
 
-	@Override
-	public EventStorage createEventStorage ( ) {
-		return InMemoryEventStorage.newBuilder().build();
+	@BeforeEach
+	public void setUp ( ) {
+		this.eventStorage = InMemoryEventStorage.newBuilder().build();
+		this.eventStore = EventStoreFactory.get().eventStore(eventStorage);
+	}
+
+	@AfterEach
+	public void tearDown ( ) {
+	}
+
+	public EventStore eventStore ( ) {
+		return eventStore;
 	}
 
 	private void appendOriginal ( EventStream<OriginalEvent> stream, OriginalEvent event ) {

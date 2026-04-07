@@ -55,17 +55,6 @@
 		
 		<dependency>
 			<groupId>org.sliceworkz</groupId>
-			<artifactId>sliceworkz-eventstore-tests</artifactId>
-			<type>test-jar</type>
-			<scope>test</scope>
-		</dependency>
-		<dependency>
-		    <groupId>org.awaitility</groupId>
-		    <artifactId>awaitility</artifactId>
-		    <scope>test</scope>
-		</dependency>
-		<dependency>
-			<groupId>org.sliceworkz</groupId>
 			<artifactId>sliceworkz-eventstore-impl</artifactId>
 			<scope>runtime</scope>
 		</dependency>
@@ -84,18 +73,6 @@
 	
 	<build>
 		<plugins>
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-jar-plugin</artifactId>
-				<version>${maven.maven-jar-plugin.version}</version>
-				<executions>
-					<execution>
-						<goals>
-							<goal>test-jar</goal>
-						</goals>
-					</execution>
-				</executions>
-			</plugin>
 			<plugin>
 				<groupId>com.google.code.maven-replacer-plugin</groupId>
 				<artifactId>replacer</artifactId>

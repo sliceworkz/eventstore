@@ -47,6 +47,11 @@
 		</dependency>
 		<dependency>
 			<groupId>org.sliceworkz</groupId>
+			<artifactId>sliceworkz-eventstore-infra-postgres</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.sliceworkz</groupId>
 			<artifactId>sliceworkz-eventstore-impl</artifactId>
 			<scope>test</scope>
 		</dependency>
@@ -56,23 +61,22 @@
 		    <artifactId>awaitility</artifactId>
 		</dependency>
 
+		<dependency>
+		    <groupId>org.postgresql</groupId>
+		    <artifactId>postgresql</artifactId>
+		    <scope>test</scope>
+		</dependency>
+		<dependency>
+		    <groupId>org.testcontainers</groupId>
+		    <artifactId>postgresql</artifactId>
+		    <scope>test</scope>
+		</dependency>
+		<dependency>
+		    <groupId>com.zaxxer</groupId>
+		    <artifactId>HikariCP</artifactId>
+		    <scope>test</scope>
+		</dependency>
+
 	</dependencies>
-	
-	<build>
-		<plugins>
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-jar-plugin</artifactId>
-				<version>${maven.maven-jar-plugin.version}</version>
-				<executions>
-					<execution>
-						<goals>
-							<goal>test-jar</goal>
-						</goals>
-					</execution>
-				</executions>
-			</plugin>
-		</plugins>
-	</build>
 	
 </project>

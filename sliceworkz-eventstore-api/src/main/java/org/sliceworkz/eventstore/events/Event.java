@@ -56,7 +56,7 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  * @param reference the unique reference containing ID and position in the stream
  * @param data the actual domain event data (typically a record implementing a sealed interface)
  * @param tags the tags attached to this event for querying and consistency boundaries
- * @param timestamp the time when this event was persisted to the store
+ * @param timestamp the time when this event was persisted to the store, always in UTC
  * @see EphemeralEvent
  * @see EventReference
  * @see Tags

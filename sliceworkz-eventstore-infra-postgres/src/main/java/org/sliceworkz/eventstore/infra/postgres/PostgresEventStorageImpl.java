@@ -27,7 +27,11 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.TimeZone;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
@@ -805,13 +809,13 @@ public class PostgresEventStorageImpl implements EventStorage {
 						while (rs.next()) {
 							long position = rs.getLong("event_position");
 							long tx = Long.parseUnsignedLong(rs.getString("event_tx"));
-							Timestamp timestamp = rs.getTimestamp("event_timestamp");
+							Timestamp timestamp = rs.getTimestamp("event_timestamp", Calendar.getInstance(TimeZone.getTimeZone("UTC")));
 
 							EventToStore e = it.next();
 							EventId id = idIterator.next();
 
 							EventReference reference = EventReference.of(id, position, tx);
-							storedEvents.add(e.positionAt(reference, timestamp.toLocalDateTime()));
+							storedEvents.add(e.positionAt(reference, timestamp.toInstant().atOffset(ZoneOffset.UTC).toLocalDateTime()));
 						}
 
 						if ( storedEvents.size() != events.size() ) {
@@ -882,26 +886,26 @@ public class PostgresEventStorageImpl implements EventStorage {
 		String streamContext = rs.getString("stream_context");
 		String streamPurpose = rs.getString("stream_purpose");
 		String eventTypeName = rs.getString("event_type");
-		Timestamp timestamp = rs.getTimestamp("event_timestamp");
+		Timestamp timestamp = rs.getTimestamp("event_timestamp", Calendar.getInstance(TimeZone.getTimeZone("UTC")));
 		String eventDataJson = rs.getString("event_data");
 		String eventErasableDataJson = rs.getString("event_erasable_data");
 		String[] tagsArray = null;
 		if (rs.getArray("event_tags") != null) {
 			tagsArray = (String[]) rs.getArray("event_tags").getArray();
 		}
-		
+
 		// Create EventReference
 		EventId eventId = new EventId(eventIdValue);
 		EventReference eventReference = EventReference.of(eventId, position, eventTx);
-		
+
 		// Create EventStreamId
 		EventStreamId streamId = new EventStreamId(streamContext, streamPurpose);
-		
-		
+
+
 		// Create Tags from tag array
 		Tags tags = Tags.parse(tagsArray);
-		
-		return new StoredEvent(streamId, EventType.ofType(eventTypeName), eventReference, eventDataJson, eventErasableDataJson, tags, timestamp.toLocalDateTime());
+
+		return new StoredEvent(streamId, EventType.ofType(eventTypeName), eventReference, eventDataJson, eventErasableDataJson, tags, timestamp.toInstant().atOffset(ZoneOffset.UTC).toLocalDateTime());
 	}
 
 	

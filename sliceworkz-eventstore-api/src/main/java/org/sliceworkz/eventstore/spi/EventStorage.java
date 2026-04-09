@@ -542,7 +542,7 @@ public interface EventStorage {
 	 * @param immutableData serialized event data that must be retained permanently
 	 * @param erasableData serialized event data that may be erased for privacy compliance
 	 * @param tags key-value pairs for dynamic event retrieval and consistency boundaries
-	 * @param timestamp the moment this event was stored
+	 * @param timestamp the moment this event was stored, always in UTC
 	 * @see EventToStore
 	 * @see EventReference
 	 * @see #query(EventQuery, Optional, EventReference, Limit, QueryDirection)

@@ -30,29 +30,16 @@
 	</parent>
 
 	<name>${project.artifactId}</name>
-	<description>DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres) - In-memory with filesystem persistence</description>
+	<description>DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres) - JSON serialization codecs</description>
 	<url>https://sliceworkz.github.io/eventstore</url>
 
-	<artifactId>sliceworkz-eventstore-infra-inmem-fs</artifactId>
+	<artifactId>sliceworkz-eventstore-serialization-json</artifactId>
 	<packaging>jar</packaging>
 
 	<dependencies>
 		<dependency>
 			<groupId>org.sliceworkz</groupId>
 			<artifactId>sliceworkz-eventstore-api</artifactId>
-		</dependency>
-		<dependency>
-			<groupId>org.sliceworkz</groupId>
-			<artifactId>sliceworkz-eventstore-serialization-json</artifactId>
-		</dependency>
-		<dependency>
-			<groupId>org.sliceworkz</groupId>
-			<artifactId>sliceworkz-eventstore-infra-inmem</artifactId>
-		</dependency>
-		<dependency>
-			<groupId>org.sliceworkz</groupId>
-			<artifactId>sliceworkz-eventstore-impl</artifactId>
-			<scope>runtime</scope>
 		</dependency>
 	</dependencies>
 

@@ -53,6 +53,9 @@
 		<module>sliceworkz-eventstore-api</module>
 		<module>sliceworkz-eventstore-impl</module>
 
+		<!-- serialization -->
+		<module>sliceworkz-eventstore-serialization-json</module>
+
 		<!-- examples -->
 		<module>sliceworkz-eventstore-examples</module>
 

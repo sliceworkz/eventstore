@@ -48,9 +48,14 @@
 			</dependency>		
 			<dependency>
 				<groupId>org.sliceworkz</groupId>
+				<artifactId>sliceworkz-eventstore-serialization-json</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>org.sliceworkz</groupId>
 				<artifactId>sliceworkz-eventstore-infra-inmem</artifactId>
 				<version>${project.version}</version>
-			</dependency>		
+			</dependency>
 			<dependency>
 				<groupId>org.sliceworkz</groupId>
 				<artifactId>sliceworkz-eventstore-infra-inmem-fs</artifactId>

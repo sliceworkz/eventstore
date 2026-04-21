@@ -40,7 +40,7 @@
 		<postgresql.jdbc.version>42.7.10</postgresql.jdbc.version>
 		<uuid-creator.version>6.1.1</uuid-creator.version>
 		<hikari.version>7.0.2</hikari.version>
-		<micrometer.version>1.16.3</micrometer.version>
+		<micrometer.version>1.16.5</micrometer.version>
 		<junit-jupiter.version>6.0.3</junit-jupiter.version>
 		<testcontainers.postgresql.version>1.21.4</testcontainers.postgresql.version>
 	    <awaitility.version>4.3.0</awaitility.version>

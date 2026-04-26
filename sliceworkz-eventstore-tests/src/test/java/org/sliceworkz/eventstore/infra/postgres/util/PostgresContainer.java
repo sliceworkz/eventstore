@@ -17,8 +17,8 @@
  */
 package org.sliceworkz.eventstore.infra.postgres.util;
 
-import java.sql.Connection;
-import java.sql.SQLException;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import javax.sql.DataSource;
 
@@ -27,66 +27,64 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 
+/**
+ * Test helper that manages PostgreSQL Testcontainers, parameterised by image tag so the same
+ * shared test scenarios can run against multiple PostgreSQL versions (e.g. PG17 and PG18).
+ * <p>
+ * Containers are started once per JVM per image — the first {@code start(image)} call boots
+ * the container, subsequent calls are no-ops. {@code stop} and {@code cleanup} are intentionally
+ * no-ops (containers stay alive for the duration of the JVM and are reaped by Testcontainers'
+ * Ryuk on shutdown). This halves CI time vs. starting/stopping a container per test class.
+ */
 public class PostgresContainer {
-	
-	public static final String POSTGRES_DOCKER_CONTAINER_IMAGE = "postgres:17";
-	
-	@SuppressWarnings("resource")
-	public static PostgreSQLContainer<?> postgreSQLContainer = new PostgreSQLContainer<>(POSTGRES_DOCKER_CONTAINER_IMAGE)
-		      .withDatabaseName("integration-tests-db")
-		      .withUsername("sa")
-		      .withPassword("pwd");
-	
 
-	public static void start ( ) {
-		postgreSQLContainer.start();
+	public static final String IMAGE_PG17 = "postgres:17";
+	public static final String IMAGE_PG18 = "postgres:18";
+
+	private static final Map<String, PostgreSQLContainer<?>> CONTAINERS = new ConcurrentHashMap<>();
+	private static final Map<String, HikariDataSource> DATASOURCES = new ConcurrentHashMap<>();
+
+	public static synchronized void start ( String image ) {
+		CONTAINERS.computeIfAbsent(image, img -> {
+			@SuppressWarnings("resource")
+			PostgreSQLContainer<?> container = new PostgreSQLContainer<>(img)
+				.withDatabaseName("integration-tests-db")
+				.withUsername("sa")
+				.withPassword("pwd");
+			container.start();
+			return container;
+		});
 	}
 
-	public static void stop ( ) {
-		if ( postgreSQLContainer != null ) {
-			postgreSQLContainer.stop();
+	public static void stop ( String image ) {
+		// no-op: container kept alive for JVM lifetime; reaped by Testcontainers' Ryuk on shutdown
+	}
+
+	public static void cleanup ( String image ) {
+		// no-op: see stop(...)
+	}
+
+	public static DataSource dataSource ( String image ) {
+		PostgreSQLContainer<?> container = CONTAINERS.get(image);
+		if ( container == null ) {
+			throw new IllegalStateException("PostgresContainer.start(\"" + image + "\") was not called");
 		}
-	}
-	
-	public static void cleanup ( ) {
-	    if (postgreSQLContainer != null) {
-	        postgreSQLContainer.close();
-	    }
-	}
-	
-	private static HikariDataSource DATASOURCE;
-
-	
-	
-	public static DataSource dataSource ( ) {
 		HikariConfig config = new HikariConfig();
-		config.setUsername(postgreSQLContainer.getUsername());
-		config.setPassword(postgreSQLContainer.getPassword());
-		config.setJdbcUrl(postgreSQLContainer.getJdbcUrl());
-		
-		DATASOURCE = new HikariDataSource(config);
-		return DATASOURCE;
-	}
-	
-	public static Connection connection ( ) {
-        try {
-			return DATASOURCE.getConnection();
-		} catch (SQLException e) {
-			throw new RuntimeException(e);
+		config.setUsername(container.getUsername());
+		config.setPassword(container.getPassword());
+		config.setJdbcUrl(container.getJdbcUrl());
+		HikariDataSource dataSource = new HikariDataSource(config);
+		HikariDataSource previous = DATASOURCES.put(image, dataSource);
+		if ( previous != null && !previous.isClosed() ) {
+			previous.close();
 		}
-	}
-	
-	public static void closeDataSource () {
-		DATASOURCE.close();
+		return dataSource;
 	}
 
-	void close ( Connection connection ) {
-        try {
-			if (!connection.isClosed()) {
-			    connection.close();
-			}
-		} catch (SQLException e) {
-			throw new RuntimeException(e);
+	public static void closeDataSource ( String image ) {
+		HikariDataSource dataSource = DATASOURCES.remove(image);
+		if ( dataSource != null && !dataSource.isClosed() ) {
+			dataSource.close();
 		}
 	}
 

@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
 import org.sliceworkz.eventstore.spi.EventStorage;
@@ -29,96 +30,127 @@ import org.sliceworkz.eventstore.spi.EventStorageException;
 
 // this test uses a different prefix per test, so one container can be started/stopped and reused for all tests
 public class PostgresEventStorageInitialisationTest {
-	
-	@Test
-	public void testInitializeTwice ( ) {
-		EventStorage storage = PostgresEventStorage.newBuilder()
-		.name("unit-test")
-		.prefix("inittwice_")
-		.dataSource(PostgresContainer.dataSource())
-		.initializeDatabase()
-		.build();
 
-		((PostgresEventStorageImpl)storage).stop();
+	abstract static class Tests {
 
-		// second time, should drop/create once again
+		final String image;
 
-		storage = PostgresEventStorage.newBuilder()
-		.name("unit-test")
-		.prefix("inittwice_")
-		.dataSource(PostgresContainer.dataSource())
-		.initializeDatabase()
-		.build();
+		Tests ( String image ) {
+			this.image = image;
+		}
 
-		((PostgresEventStorageImpl)storage).stop();
+		@Test
+		public void testInitializeTwice ( ) {
+			EventStorage storage = PostgresEventStorage.newBuilder()
+				.name("unit-test")
+				.prefix("inittwice_")
+				.dataSource(PostgresContainer.dataSource(image))
+				.initializeDatabase()
+				.build();
 
-		PostgresContainer.closeDataSource();
+			((PostgresEventStorageImpl)storage).stop();
+
+			// second time, should drop/create once again
+
+			storage = PostgresEventStorage.newBuilder()
+				.name("unit-test")
+				.prefix("inittwice_")
+				.dataSource(PostgresContainer.dataSource(image))
+				.initializeDatabase()
+				.build();
+
+			((PostgresEventStorageImpl)storage).stop();
+
+			PostgresContainer.closeDataSource(image);
+		}
+
+		@Test
+		public void testEnsureDatabase ( ) {
+			// first time: ensure creates everything
+			EventStorage storage = PostgresEventStorage.newBuilder()
+				.name("unit-test")
+				.prefix("ensure_")
+				.dataSource(PostgresContainer.dataSource(image))
+				.ensureDatabase()
+				.build();
+
+			((PostgresEventStorageImpl)storage).stop();
+
+			// second time: ensure leaves existing objects untouched
+			storage = PostgresEventStorage.newBuilder()
+				.name("unit-test")
+				.prefix("ensure_")
+				.dataSource(PostgresContainer.dataSource(image))
+				.ensureDatabase()
+				.build();
+
+			((PostgresEventStorageImpl)storage).stop();
+
+			PostgresContainer.closeDataSource(image);
+		}
+
+		@Test
+		public void testValidateDatabase ( ) {
+			EventStorageException e = assertThrows ( EventStorageException.class, () -> {
+				PostgresEventStorage.newBuilder()
+					.name("unit-test")
+					.prefix("check_")
+					.dataSource(PostgresContainer.dataSource(image))
+					.validateDatabase()
+					.build();
+			});
+			assertEquals("Required table 'check_events' does not exist", e.getMessage());
+
+			PostgresContainer.closeDataSource(image);
+		}
+
+		@Test
+		public void testDefaultModeIsEnsure ( ) {
+			// default mode (ENSURE) should create schema on empty database
+			EventStorage storage = PostgresEventStorage.newBuilder()
+				.name("unit-test")
+				.prefix("defaultmode_")
+				.dataSource(PostgresContainer.dataSource(image))
+				.build();
+
+			((PostgresEventStorageImpl)storage).stop();
+
+			PostgresContainer.closeDataSource(image);
+		}
 	}
 
-	@Test
-	public void testEnsureDatabase ( ) {
-		// first time: ensure creates everything
-		EventStorage storage = PostgresEventStorage.newBuilder()
-		.name("unit-test")
-		.prefix("ensure_")
-		.dataSource(PostgresContainer.dataSource())
-		.ensureDatabase()
-		.build();
+	@Nested
+	class OnPostgres17 extends Tests {
 
-		((PostgresEventStorageImpl)storage).stop();
+		OnPostgres17 ( ) { super(PostgresContainer.IMAGE_PG17); }
 
-		// second time: ensure leaves existing objects untouched
-		storage = PostgresEventStorage.newBuilder()
-		.name("unit-test")
-		.prefix("ensure_")
-		.dataSource(PostgresContainer.dataSource())
-		.ensureDatabase()
-		.build();
+		@BeforeAll
+		public static void setUpBeforeAll ( ) {
+			PostgresContainer.start(PostgresContainer.IMAGE_PG17);
+		}
 
-		((PostgresEventStorageImpl)storage).stop();
-
-		PostgresContainer.closeDataSource();
+		@AfterAll
+		public static void tearDownAfterAll ( ) {
+			PostgresContainer.stop(PostgresContainer.IMAGE_PG17);
+			PostgresContainer.cleanup(PostgresContainer.IMAGE_PG17);
+		}
 	}
 
-	@Test
-	public void testValidateDatabase ( ) {
-		EventStorageException e = assertThrows ( EventStorageException.class, () -> {
-			PostgresEventStorage.newBuilder()
-			.name("unit-test")
-			.prefix("check_")
-			.dataSource(PostgresContainer.dataSource())
-			.validateDatabase()
-			.build();
-		});
-		assertEquals("Required table 'check_events' does not exist", e.getMessage());
+	@Nested
+	class OnPostgres18 extends Tests {
 
-		PostgresContainer.closeDataSource();
-	}
+		OnPostgres18 ( ) { super(PostgresContainer.IMAGE_PG18); }
 
-	@Test
-	public void testDefaultModeIsEnsure ( ) {
-		// default mode (ENSURE) should create schema on empty database
-		EventStorage storage = PostgresEventStorage.newBuilder()
-		.name("unit-test")
-		.prefix("defaultmode_")
-		.dataSource(PostgresContainer.dataSource())
-		.build();
+		@BeforeAll
+		public static void setUpBeforeAll ( ) {
+			PostgresContainer.start(PostgresContainer.IMAGE_PG18);
+		}
 
-		((PostgresEventStorageImpl)storage).stop();
-
-		PostgresContainer.closeDataSource();
-	}
-
-	
-	@BeforeAll
-	public static void setUpBeforeAll ( ) {
-		PostgresContainer.start();
-	}
-
-	@AfterAll
-	public static void tearDownAfterAll ( ) {
-		PostgresContainer.stop();
-		PostgresContainer.cleanup();
+		@AfterAll
+		public static void tearDownAfterAll ( ) {
+			PostgresContainer.stop(PostgresContainer.IMAGE_PG18);
+			PostgresContainer.cleanup(PostgresContainer.IMAGE_PG18);
+		}
 	}
 
 }

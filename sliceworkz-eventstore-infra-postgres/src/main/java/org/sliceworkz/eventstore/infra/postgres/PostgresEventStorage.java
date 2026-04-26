@@ -17,10 +17,14 @@
  */
 package org.sliceworkz.eventstore.infra.postgres;
 
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.Properties;
 
 import javax.sql.DataSource;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.query.Limit;
@@ -139,6 +143,14 @@ public interface PostgresEventStorage {
 	 * @see DatabaseInitMode
 	 */
 	public static class Builder {
+
+		private static final Logger LOGGER = LoggerFactory.getLogger(Builder.class);
+
+		/**
+		 * Major PostgreSQL version from which the native {@code uuidv7()} function is available.
+		 * Servers reporting a lower major version use {@link PostgresLegacyEventStorageImpl}.
+		 */
+		static final int FIRST_NATIVE_UUIDV7_MAJOR_VERSION = 18;
 
 		private String prefix = "";
 		private String name = "psql";
@@ -426,7 +438,12 @@ public interface PostgresEventStorage {
 				}
 			}
 
-			var result = new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix);
+			boolean nativeUuidv7 = detectsNativeUuidv7Support(dataSource);
+
+			PostgresEventStorageImpl result = nativeUuidv7
+				? new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix)
+				: new PostgresLegacyEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix);
+
 			switch ( databaseInitMode ) {
 				case NONE       -> { }
 				case VALIDATE   -> result.validateDatabase();
@@ -460,7 +477,24 @@ public interface PostgresEventStorage {
 		public EventStore buildStore ( ) {
 			return EventStoreFactory.get().eventStore(build(), meterRegistry);
 		}
-		
+
+		/**
+		 * Borrows a connection to read the server major version and decides whether the
+		 * native {@code uuidv7()} function is available. Falls back to legacy on any error.
+		 */
+		private static boolean detectsNativeUuidv7Support ( DataSource dataSource ) {
+			try ( Connection connection = dataSource.getConnection() ) {
+				int majorVersion = connection.getMetaData().getDatabaseMajorVersion();
+				boolean native_ = majorVersion >= FIRST_NATIVE_UUIDV7_MAJOR_VERSION;
+				LOGGER.info("Detected PostgreSQL major version {} — using {} UUIDv7 generation",
+					majorVersion, native_ ? "server-side native" : "Java-side legacy");
+				return native_;
+			} catch (SQLException e) {
+				LOGGER.warn("Could not detect PostgreSQL major version, falling back to legacy Java-side UUIDv7 generation", e);
+				return false;
+			}
+		}
+
 	}
 
 }

@@ -161,19 +161,19 @@ class EventTimestampUtcTest {
 	}
 
 	@Nested
-	class OnPostgres extends Tests {
+	class OnPostgres17 extends Tests {
 
 		@BeforeAll
-		static void startContainer() { PostgresContainer.start(); }
+		static void startContainer() { PostgresContainer.start(PostgresContainer.IMAGE_PG17); }
 
 		@AfterAll
-		static void stopContainer() { PostgresContainer.stop(); PostgresContainer.cleanup(); }
+		static void stopContainer() { PostgresContainer.stop(PostgresContainer.IMAGE_PG17); PostgresContainer.cleanup(PostgresContainer.IMAGE_PG17); }
 
 		@Override
 		EventStorage createEventStorage() {
 			return PostgresEventStorage.newBuilder()
 					.name("unit-test")
-					.dataSource(PostgresContainer.dataSource())
+					.dataSource(PostgresContainer.dataSource(PostgresContainer.IMAGE_PG17))
 					.initializeDatabase()
 					.build();
 		}
@@ -181,7 +181,32 @@ class EventTimestampUtcTest {
 		@Override
 		void destroyEventStorage(EventStorage storage) {
 			((PostgresEventStorageImpl)storage).stop();
-			PostgresContainer.closeDataSource();
+			PostgresContainer.closeDataSource(PostgresContainer.IMAGE_PG17);
+		}
+	}
+
+	@Nested
+	class OnPostgres18 extends Tests {
+
+		@BeforeAll
+		static void startContainer() { PostgresContainer.start(PostgresContainer.IMAGE_PG18); }
+
+		@AfterAll
+		static void stopContainer() { PostgresContainer.stop(PostgresContainer.IMAGE_PG18); PostgresContainer.cleanup(PostgresContainer.IMAGE_PG18); }
+
+		@Override
+		EventStorage createEventStorage() {
+			return PostgresEventStorage.newBuilder()
+					.name("unit-test")
+					.dataSource(PostgresContainer.dataSource(PostgresContainer.IMAGE_PG18))
+					.initializeDatabase()
+					.build();
+		}
+
+		@Override
+		void destroyEventStorage(EventStorage storage) {
+			((PostgresEventStorageImpl)storage).stop();
+			PostgresContainer.closeDataSource(PostgresContainer.IMAGE_PG18);
 		}
 	}
 

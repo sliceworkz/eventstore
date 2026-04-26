@@ -43,8 +43,17 @@
 		</dependency>
 
 		<dependency>
+			<!--
+			  Only used by PostgresLegacyEventStorageImpl for Java-side uuidv7
+			  generation against PostgreSQL 13-17. Marked optional so applications
+			  that only target PostgreSQL 18+ (where uuidv7() is server-side) do
+			  not pull this dependency in transitively. The Builder fails fast
+			  with a clear message if a legacy server is detected but this
+			  dependency is missing from the application's classpath.
+			-->
 			<groupId>com.github.f4b6a3</groupId>
 			<artifactId>uuid-creator</artifactId>
+			<optional>true</optional>
 		</dependency>
 
 		<dependency>

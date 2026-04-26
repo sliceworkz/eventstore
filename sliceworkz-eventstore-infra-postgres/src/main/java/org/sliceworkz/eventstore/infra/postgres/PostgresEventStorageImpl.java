@@ -44,8 +44,6 @@ import java.util.stream.Stream;
 
 import javax.sql.DataSource;
 
-import com.github.f4b6a3.uuid.UuidCreator;
-
 import org.postgresql.PGConnection;
 import org.postgresql.PGNotification;
 import org.slf4j.Logger;
@@ -704,57 +702,79 @@ public class PostgresEventStorageImpl implements EventStorage {
 		sqlBuilder.append(")");
 	}
 	
+	/**
+	 * Returns the per-row VALUES fragment used in the INSERT statement of {@link #append}.
+	 * <p>
+	 * Default (PG18+) emits {@code uuidv7()} server-side so no event_id parameter is bound.
+	 * The legacy subclass overrides this together with {@link #bindEventIdParameter} to bind
+	 * a Java-generated UUIDv7 via a {@code ?::uuid} placeholder.
+	 * <p>
+	 * Internal extension point — override only in version-gated subclasses in this package.
+	 */
+	protected String appendValuesRowFragment ( ) {
+		return "(uuidv7(), ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?) ";
+	}
+
+	/**
+	 * Appends the event_id parameter for a single row in {@link #append} when needed.
+	 * <p>
+	 * Default (PG18+) is a no-op — the server generates the id via {@code uuidv7()}.
+	 * The legacy subclass overrides this to add a Java-generated UUIDv7 to the parameter list.
+	 * <p>
+	 * Internal extension point — override only in version-gated subclasses in this package.
+	 */
+	protected void bindEventIdParameter ( List<Object> parameters ) {
+		// no-op: server-side generation
+	}
+
 	@Override
 	public List<StoredEvent> append(AppendCriteria appendCriteria, Optional<EventStreamId> streamId, List<EventToStore> events) {
 		List<StoredEvent> storedEvents = new ArrayList<>();
 
 		if ( events.size() != 0 ) {
-			
+
 			// Build conditional insert with optimistic locking check
 			StringBuilder sqlBuilder = new StringBuilder();
 			sqlBuilder.append("INSERT INTO %sevents (event_id, idempotency_key, stream_context, stream_purpose, event_type, event_data, event_erasable_data, event_tags) SELECT * FROM ( VALUES ".formatted(prefix));
+			String valuesRowFragment = appendValuesRowFragment();
 			for ( int i = 0; i < events.size(); i++ ) {
 				if ( i > 0 ) {
 					sqlBuilder.append(", ");
 				}
-				sqlBuilder.append("(?::uuid, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?) ");
+				sqlBuilder.append(valuesRowFragment);
 			}
 			sqlBuilder.append(") ");
-	
+
 			List<Object> parameters = new ArrayList<>();
-			
-			List<EventId> ids = new ArrayList<>();
-	
+
 			for ( EventToStore event: events ) {
-				
-				EventId id = new EventId ( UuidCreator.getTimeOrderedEpochPlus1().toString() );
-				ids.add(id);
-				
+
+				bindEventIdParameter(parameters);
+
 				// Add to-be-appended-event parameters first
-				parameters.add(id.value());
 				parameters.add(event.idempotencyKey());
 				parameters.add(event.stream().context());
 				parameters.add(event.stream().purpose());
 				parameters.add(event.type().name());
-		
+
 				parameters.add(event.immutableData());
 				parameters.add(event.erasableData());
-				
+
 				// Convert tags to array
 				String[] tagsArray = event.tags().toStrings().toArray(new String[event.tags().tags().size()]);
 				parameters.add(tagsArray);
 			}
-			
+
 			if ( ! appendCriteria.isNone() ) {
-	
+
 				// Now add the optimistic locking conditions
 				sqlBuilder.append(
 						"""
 					WHERE NOT EXISTS (
-						SELECT 1 FROM %sevents 
+						SELECT 1 FROM %sevents
 						WHERE 1=1 """.formatted(prefix));
-				
-				
+
+
 				// Add stream filtering
 				if (streamId.isPresent()) {
 					if (!streamId.get().isAnyContext()) {
@@ -766,30 +786,30 @@ public class PostgresEventStorageImpl implements EventStorage {
 						parameters.add(streamId.get().purpose());
 					}
 				}
-				
+
 				if ( appendCriteria.expectedLastEventReference() != null && appendCriteria.expectedLastEventReference().isPresent()  ) {
-					
+
 					// Add position filtering - check for events after the expected last event
 					sqlBuilder.append(" AND event_position > ?");
 					parameters.add(appendCriteria.expectedLastEventReference().get().position());
 				}
-			
-			
+
+
 				// Add EventFilter filtering for the consistency boundary
 				EventFilter lockingFilter = appendCriteria.eventFilter();
 				if (!lockingFilter.isMatchAll()) {
 					addEventFilterFiltering(sqlBuilder, parameters, lockingFilter);
 				}
-				
+
 				sqlBuilder.append(") ");
 			}
-			
-			sqlBuilder.append("RETURNING event_position, event_timestamp, event_tx::text");
-			
-			
+
+			sqlBuilder.append("RETURNING event_position, event_timestamp, event_tx::text, event_id::text");
+
+
 			try ( Connection writeConnection = dataSource.getConnection()) {
 				writeConnection.setAutoCommit(false);
-				
+
 				try ( PreparedStatement stmt = writeConnection.prepareStatement(sqlBuilder.toString()) ) {
 					// Set parameters
 					for (int i = 0; i < parameters.size(); i++) {
@@ -800,19 +820,18 @@ public class PostgresEventStorageImpl implements EventStorage {
 							stmt.setObject(i + 1, param);
 						}
 					}
-					
+
 					try (ResultSet rs = stmt.executeQuery()) {
 
 						Iterator<EventToStore> it = events.iterator();
-						Iterator<EventId> idIterator = ids.iterator();
 
 						while (rs.next()) {
 							long position = rs.getLong("event_position");
 							long tx = Long.parseUnsignedLong(rs.getString("event_tx"));
 							Timestamp timestamp = rs.getTimestamp("event_timestamp", Calendar.getInstance(TimeZone.getTimeZone("UTC")));
+							EventId id = new EventId(rs.getString("event_id"));
 
 							EventToStore e = it.next();
-							EventId id = idIterator.next();
 
 							EventReference reference = EventReference.of(id, position, tx);
 							storedEvents.add(e.positionAt(reference, timestamp.toInstant().atOffset(ZoneOffset.UTC).toLocalDateTime()));

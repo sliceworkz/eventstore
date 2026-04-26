@@ -98,20 +98,18 @@ class ErasableEventDataTest {
 		}
 	}
 
-	@Nested
-	class OnPostgres extends Tests {
+	abstract static class OnPostgres extends Tests {
 
+		final String image;
 		DataSource dataSource;
 
-		@BeforeAll
-		static void startContainer ( ) { PostgresContainer.start(); }
-
-		@AfterAll
-		static void stopContainer ( ) { PostgresContainer.stop(); PostgresContainer.cleanup(); }
+		OnPostgres ( String image ) {
+			this.image = image;
+		}
 
 		@Override
 		EventStorage createEventStorage ( ) {
-			this.dataSource = PostgresContainer.dataSource();
+			this.dataSource = PostgresContainer.dataSource(image);
 			return PostgresEventStorage.newBuilder()
 					.name("unit-test")
 					.dataSource(dataSource)
@@ -122,7 +120,7 @@ class ErasableEventDataTest {
 		@Override
 		void destroyEventStorage ( EventStorage storage ) {
 			((PostgresEventStorageImpl)storage).stop();
-			PostgresContainer.closeDataSource();
+			PostgresContainer.closeDataSource(image);
 		}
 
 		// testcase that only runs against a postgres database, as it manipulates the data behind the eventstore to verify correct handling of the eventstore.
@@ -175,6 +173,30 @@ class ErasableEventDataTest {
 			assertEquals(eventWithoutReplacedInfo, retrievedAfterReplacedData.data());
 
 		}
+	}
+
+	@Nested
+	class OnPostgres17 extends OnPostgres {
+
+		OnPostgres17 ( ) { super(PostgresContainer.IMAGE_PG17); }
+
+		@BeforeAll
+		static void startContainer ( ) { PostgresContainer.start(PostgresContainer.IMAGE_PG17); }
+
+		@AfterAll
+		static void stopContainer ( ) { PostgresContainer.stop(PostgresContainer.IMAGE_PG17); PostgresContainer.cleanup(PostgresContainer.IMAGE_PG17); }
+	}
+
+	@Nested
+	class OnPostgres18 extends OnPostgres {
+
+		OnPostgres18 ( ) { super(PostgresContainer.IMAGE_PG18); }
+
+		@BeforeAll
+		static void startContainer ( ) { PostgresContainer.start(PostgresContainer.IMAGE_PG18); }
+
+		@AfterAll
+		static void stopContainer ( ) { PostgresContainer.stop(PostgresContainer.IMAGE_PG18); PostgresContainer.cleanup(PostgresContainer.IMAGE_PG18); }
 	}
 
 	public sealed interface CustomerEvent {

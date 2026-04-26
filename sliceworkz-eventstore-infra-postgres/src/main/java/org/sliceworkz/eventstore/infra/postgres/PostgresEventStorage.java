@@ -481,16 +481,23 @@ public interface PostgresEventStorage {
 		/**
 		 * Borrows a connection to read the server major version and decides whether the
 		 * native {@code uuidv7()} function is available. Falls back to legacy on any error.
+		 * Logs the chosen implementation explicitly in every branch — search the logs for
+		 * {@code uuidv7} to find which impl was selected.
 		 */
 		private static boolean detectsNativeUuidv7Support ( DataSource dataSource ) {
 			try ( Connection connection = dataSource.getConnection() ) {
 				int majorVersion = connection.getMetaData().getDatabaseMajorVersion();
-				boolean native_ = majorVersion >= FIRST_NATIVE_UUIDV7_MAJOR_VERSION;
-				LOGGER.info("Detected PostgreSQL major version {} — using {} UUIDv7 generation",
-					majorVersion, native_ ? "server-side native" : "Java-side legacy");
-				return native_;
+				if ( majorVersion >= FIRST_NATIVE_UUIDV7_MAJOR_VERSION ) {
+					LOGGER.info("PostgreSQL major version {} detected — using native server-side uuidv7() via {}",
+						majorVersion, PostgresEventStorageImpl.class.getSimpleName());
+					return true;
+				}
+				LOGGER.info("PostgreSQL major version {} detected — using Java-side uuidv7 generation via {}",
+					majorVersion, PostgresLegacyEventStorageImpl.class.getSimpleName());
+				return false;
 			} catch (SQLException e) {
-				LOGGER.warn("Could not detect PostgreSQL major version, falling back to legacy Java-side UUIDv7 generation", e);
+				LOGGER.warn("PostgreSQL version detection failed — falling back to Java-side uuidv7 generation via {}",
+					PostgresLegacyEventStorageImpl.class.getSimpleName(), e);
 				return false;
 			}
 		}

@@ -29,6 +29,7 @@ import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
+import org.sliceworkz.eventstore.spi.EventStorageException;
 
 import com.zaxxer.hikari.HikariDataSource;
 
@@ -102,6 +103,25 @@ import io.micrometer.core.instrument.Metrics;
  *     .build();
  * EventStore eventStore = EventStoreFactory.get().eventStore(storage);
  * }</pre>
+ *
+ * <h2>Optional uuid-creator Dependency (PostgreSQL 13-17 only)</h2>
+ * From PostgreSQL 18 onwards, event ids are generated server-side via the native
+ * {@code uuidv7()} function. On older versions the library generates ids in Java using
+ * {@code com.github.f4b6a3:uuid-creator}, which is therefore declared as an
+ * <strong>optional</strong> Maven dependency.
+ * <p>
+ * Applications certain they will only ever connect to PostgreSQL 18+ may simply omit
+ * this dependency from their build and the smaller dependency tree carries through.
+ * Applications that may connect to PostgreSQL 13-17 must declare it explicitly:
+ * <pre>{@code
+ * <dependency>
+ *     <groupId>com.github.f4b6a3</groupId>
+ *     <artifactId>uuid-creator</artifactId>
+ * </dependency>
+ * }</pre>
+ * If a legacy server is connected to but the dependency is missing, {@link Builder#build()}
+ * fails fast with an {@link org.sliceworkz.eventstore.spi.EventStorageException} explaining
+ * how to resolve it.
  *
  * @see EventStorage
  * @see EventStore
@@ -483,6 +503,10 @@ public interface PostgresEventStorage {
 		 * native {@code uuidv7()} function is available. Falls back to legacy on any error.
 		 * Logs the chosen implementation explicitly in every branch — search the logs for
 		 * {@code uuidv7} to find which impl was selected.
+		 * <p>
+		 * When the legacy path is selected, this also verifies that the optional
+		 * {@code com.github.f4b6a3:uuid-creator} dependency is on the classpath; if not
+		 * the build fails fast with an {@link EventStorageException} explaining how to add it.
 		 */
 		private static boolean detectsNativeUuidv7Support ( DataSource dataSource ) {
 			try ( Connection connection = dataSource.getConnection() ) {
@@ -492,13 +516,33 @@ public interface PostgresEventStorage {
 						majorVersion, PostgresEventStorageImpl.class.getSimpleName());
 					return true;
 				}
+				ensureLegacyUuidv7DependencyAvailable("PostgreSQL major version " + majorVersion);
 				LOGGER.info("PostgreSQL major version {} detected — using Java-side uuidv7 generation via {}",
 					majorVersion, PostgresLegacyEventStorageImpl.class.getSimpleName());
 				return false;
 			} catch (SQLException e) {
+				ensureLegacyUuidv7DependencyAvailable("PostgreSQL version detection failed");
 				LOGGER.warn("PostgreSQL version detection failed — falling back to Java-side uuidv7 generation via {}",
 					PostgresLegacyEventStorageImpl.class.getSimpleName(), e);
 				return false;
+			}
+		}
+
+		/**
+		 * Verifies that the optional uuid-creator dependency required by the legacy
+		 * implementation is available, throwing {@link EventStorageException} with a
+		 * clear remediation message otherwise.
+		 */
+		private static void ensureLegacyUuidv7DependencyAvailable ( String reason ) {
+			try {
+				Class.forName("com.github.f4b6a3.uuid.UuidCreator");
+			} catch (ClassNotFoundException e) {
+				throw new EventStorageException(
+					"%s — Java-side uuidv7 generation is required, but the optional 'com.github.f4b6a3:uuid-creator' dependency is missing from the classpath. "
+					.formatted(reason)
+					+ "Either add it to your application's build (see PostgresEventStorage Javadoc for the dependency snippet), "
+					+ "or upgrade the PostgreSQL server to version " + FIRST_NATIVE_UUIDV7_MAJOR_VERSION + "+ for native uuidv7() support."
+				);
 			}
 		}
 

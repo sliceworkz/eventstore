@@ -50,6 +50,11 @@
 			<artifactId>sliceworkz-eventstore-infra-postgres</artifactId>
 		</dependency>
 		<dependency>
+			<!-- needed for PostgresLegacyEventStorageImpl when running examples against PostgreSQL 13-17; not needed on PostgreSQL 18+ -->
+			<groupId>com.github.f4b6a3</groupId>
+			<artifactId>uuid-creator</artifactId>
+		</dependency>
+		<dependency>
 			<groupId>org.sliceworkz</groupId>
 			<artifactId>sliceworkz-eventstore-impl</artifactId>
 			<scope>runtime</scope>

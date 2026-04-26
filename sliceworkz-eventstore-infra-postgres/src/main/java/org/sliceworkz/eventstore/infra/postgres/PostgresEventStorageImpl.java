@@ -952,14 +952,15 @@ public class PostgresEventStorageImpl implements EventStorage {
 			LOGGER.info("starting ...");
 			
 			String listenStatement = "LISTEN %sevent_appended;".formatted(prefix);
-			
+			String unlistenStatement = "UNLISTEN %sevent_appended;".formatted(prefix);
+
 			long retryDelayMs = INITIAL_RETRY_DELAY_MS;
 			while ( !stopped ) {
 
 				try ( Connection monitorConnection = monitoringDataSource.getConnection(); Statement stmt = monitorConnection.createStatement() ){
 					// Ensure connection is in the right state for LISTEN
 					monitorConnection.setAutoCommit(true);
-					
+
 					stmt.execute(listenStatement);
 
 					LOGGER.debug("... listening for event appends.");
@@ -974,28 +975,35 @@ public class PostgresEventStorageImpl implements EventStorage {
 						LOGGER.debug("checking for notifications...");
 
 						PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // wait at max so long for new notifications, then ask new connection and start waiting again
-						
+
 					    if (notifications != null) {
 					        for (PGNotification notification : notifications) {
 					            LOGGER.debug("Received: {}", notification.getParameter());
 					            try {
 									EventAppendedPostgresNotification msg = JSONMAPPER.readValue(notification.getParameter(), EventAppendedPostgresNotification.class);
 									AppendsToEventStoreNotification aesn = msg.toNotification();
-									
+
 									listeners.forEach(l -> {
 										EventStoreListener listener = l.get();
 										if (listener != null) {
 											listener.notify(aesn);
 										}
 									});
-									
+
 								} catch (JsonProcessingException e) {
 									LOGGER.error("Failed to parse notification: " + e.getMessage());
 								}
 					        }
 					    }
 					}
-					
+
+					// drop the registration so the connection is hygienic when returned to the pool
+					try {
+						stmt.execute(unlistenStatement);
+					} catch (SQLException ue) {
+						LOGGER.debug("UNLISTEN failed: {}", ue.getMessage());
+					}
+
 				} catch (SQLException e) {
 					if ( !stopped ) {
 						LOGGER.error(e.getMessage(), e);
@@ -1038,16 +1046,17 @@ public class PostgresEventStorageImpl implements EventStorage {
 			LOGGER.info("starting ...");
 			
 			String listenStatement = "LISTEN %sbookmark_placed;".formatted(prefix);
-			
+			String unlistenStatement = "UNLISTEN %sbookmark_placed;".formatted(prefix);
+
 			JsonMapper jsonMapper = new JsonMapper ( );
-			
+
 			long retryDelayMs = INITIAL_RETRY_DELAY_MS;
 			while ( !stopped ) {
 
 				try ( Connection monitorConnection = monitoringDataSource.getConnection(); Statement stmt = monitorConnection.createStatement() ){
 					// Ensure connection is in the right state for LISTEN
 					monitorConnection.setAutoCommit(true);
-					
+
 					stmt.execute(listenStatement);
 
 					LOGGER.debug("... listening for bookmark updates.");
@@ -1058,10 +1067,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 					retryDelayMs = INITIAL_RETRY_DELAY_MS;
 
 					while ( !stopped ) { // reuse single connection without returing in tot the pool
-					
+
 						LOGGER.debug("checking for notifications...");
-	
-						PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // wait at for new notifications, then ask new connection and start waiting again 
+
+						PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // wait at for new notifications, then ask new connection and start waiting again
 					    if (notifications != null) {
 					        for (PGNotification notification : notifications) {
 					            LOGGER.debug("Received: " + notification.getParameter());
@@ -1069,19 +1078,26 @@ public class PostgresEventStorageImpl implements EventStorage {
 									BookmarkPlacedPostgresNotification msg = jsonMapper.readValue(notification.getParameter(), BookmarkPlacedPostgresNotification.class);
 									BookmarkPlacedNotification bpn = msg.toNotification();
 									LOGGER.debug("notification: " + bpn);
-									
+
 									listeners.forEach(l -> {
 										EventStoreListener listener = l.get();
 										if (listener != null) {
 											listener.notify(bpn);
 										}
 									});
-									
+
 								} catch (JsonProcessingException e) {
 									LOGGER.error("Failed to parse notification: " + e.getMessage());
 								}
 					        }
 					    }
+					}
+
+					// drop the registration so the connection is hygienic when returned to the pool
+					try {
+						stmt.execute(unlistenStatement);
+					} catch (SQLException ue) {
+						LOGGER.debug("UNLISTEN failed: {}", ue.getMessage());
 					}
 
 				} catch (SQLException e) {

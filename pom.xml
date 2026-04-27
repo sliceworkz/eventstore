@@ -96,6 +96,11 @@
 								<type>regex</type>
 								<version>.+-(alpha|beta).+</version>
 							</ignoreVersion>
+							<!-- Don't depend on release candidates -->
+							<ignoreVersion>
+								<type>regex</type>
+								<version>(?i).+-rc[-.]?\d+</version>
+							</ignoreVersion>
 			            </ignoreVersions>
 			    	</ruleSet>
 				</configuration>

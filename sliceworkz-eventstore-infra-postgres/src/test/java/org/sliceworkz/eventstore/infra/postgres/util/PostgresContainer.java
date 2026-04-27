@@ -22,7 +22,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import javax.sql.DataSource;
 
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -41,13 +41,13 @@ public class PostgresContainer {
 	public static final String IMAGE_PG17 = "postgres:17";
 	public static final String IMAGE_PG18 = "postgres:18";
 
-	private static final Map<String, PostgreSQLContainer<?>> CONTAINERS = new ConcurrentHashMap<>();
+	private static final Map<String, PostgreSQLContainer> CONTAINERS = new ConcurrentHashMap<>();
 	private static final Map<String, HikariDataSource> DATASOURCES = new ConcurrentHashMap<>();
 
 	public static synchronized void start ( String image ) {
 		CONTAINERS.computeIfAbsent(image, img -> {
 			@SuppressWarnings("resource")
-			PostgreSQLContainer<?> container = new PostgreSQLContainer<>(img)
+			PostgreSQLContainer container = new PostgreSQLContainer(img)
 				.withDatabaseName("integration-tests-db")
 				.withUsername("sa")
 				.withPassword("pwd");
@@ -65,7 +65,7 @@ public class PostgresContainer {
 	}
 
 	public static DataSource dataSource ( String image ) {
-		PostgreSQLContainer<?> container = CONTAINERS.get(image);
+		PostgreSQLContainer container = CONTAINERS.get(image);
 		if ( container == null ) {
 			throw new IllegalStateException("PostgresContainer.start(\"" + image + "\") was not called");
 		}

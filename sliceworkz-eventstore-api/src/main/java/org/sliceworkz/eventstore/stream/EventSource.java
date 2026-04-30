@@ -22,6 +22,7 @@ import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
+import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
@@ -292,5 +293,23 @@ public interface EventSource<DOMAIN_EVENT_TYPE> {
 	 * @return an Optional containing the previous bookmarked EventReference if one existed, empty otherwise
 	 */
 	Optional<EventReference> removeBookmark ( String reader );
+
+	/**
+	 * Retrieves all bookmarks currently held by the underlying event store, including the
+	 * metadata (tags and last-update timestamp) supplied when each bookmark was placed.
+	 * <p>
+	 * Bookmarks are addressed globally by reader name, so the returned list spans the entire
+	 * event store — it is not scoped to this stream. Use this for administrative inspection,
+	 * monitoring reader progress, or building a UI that lists active readers.
+	 * <p>
+	 * The returned list is a snapshot taken at call time and is not live; subsequent
+	 * {@link #placeBookmark(String, EventReference, Tags)} or {@link #removeBookmark(String)}
+	 * calls do not affect a list that was already returned. Order is unspecified.
+	 *
+	 * @return a snapshot list of all bookmarks; empty if none exist
+	 * @see Bookmark
+	 * @see #getBookmark(String)
+	 */
+	List<Bookmark> getBookmarks ( );
 
 }

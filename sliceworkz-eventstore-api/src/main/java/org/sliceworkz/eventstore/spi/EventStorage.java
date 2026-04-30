@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 
+import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
@@ -360,6 +361,25 @@ public interface EventStorage {
 	 * @see #getBookmark(String)
 	 */
 	void removeBookmark ( String reader );
+
+	/**
+	 * Retrieves all bookmarks currently held by this storage, including the metadata
+	 * (tags and last-update timestamp) supplied when each bookmark was placed.
+	 * <p>
+	 * Bookmarks are addressed globally by reader name, so the returned list spans the entire
+	 * storage — it is not scoped to any particular event stream. Use this for administrative
+	 * inspection, monitoring reader progress, or building a UI that lists active readers.
+	 * <p>
+	 * The returned list is a snapshot taken at call time and is not live; subsequent
+	 * {@link #bookmark(String, EventReference, Tags)} or {@link #removeBookmark(String)} calls do
+	 * not affect a list that was already returned. Order is unspecified.
+	 *
+	 * @return a snapshot list of all bookmarks; empty if none exist
+	 * @throws EventStorageException if an error occurs while reading bookmarks
+	 * @see Bookmark
+	 * @see #getBookmark(String)
+	 */
+	List<Bookmark> getBookmarks ( );
 
 	/**
 	 * Notification sent when new events are appended to the event store.

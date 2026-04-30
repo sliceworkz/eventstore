@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 
+import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
@@ -68,7 +69,7 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 		createDirectories();
 
 		List<StoredEvent> initialEvents = loadEvents();
-		Map<String, EventReference> initialBookmarks = loadBookmarks();
+		Map<String, Bookmark> initialBookmarks = loadBookmarks();
 
 		InMemoryEventStorage.Builder builder = InMemoryEventStorage.newBuilder()
 				.name(name)
@@ -126,9 +127,20 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 	}
 
 	@Override
+	public List<Bookmark> getBookmarks ( ) {
+		return delegate.getBookmarks();
+	}
+
+	@Override
 	public void bookmark ( String reader, EventReference eventReference, Tags tags ) {
 		delegate.bookmark(reader, eventReference, tags);
-		persistBookmark(reader, eventReference);
+		// after delegate.bookmark, the snapshot in the delegate carries the canonical metadata
+		// (effective tags, updatedAt assigned by the delegate); persist that snapshot to disk
+		Bookmark snapshot = delegate.getBookmarks().stream()
+				.filter(b -> b.reader().equals(reader))
+				.findFirst()
+				.orElseThrow(() -> new EventStorageException("bookmark snapshot missing for reader " + reader));
+		persistBookmark(snapshot);
 	}
 
 	@Override
@@ -149,13 +161,13 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 		}
 	}
 
-	private void persistBookmark ( String reader, EventReference reference ) {
+	private void persistBookmark ( Bookmark bookmark ) {
 		try {
-			String fileName = sanitizeFileName(reader) + ".json";
+			String fileName = sanitizeFileName(bookmark.reader()) + ".json";
 			Path filePath = bookmarksDir.resolve(fileName);
-			Files.writeString(filePath, bookmarkCodec.write(reader, reference));
+			Files.writeString(filePath, bookmarkCodec.write(bookmark.reader(), bookmark.reference(), bookmark.tags(), bookmark.updatedAt()));
 		} catch ( IOException e ) {
-			throw new EventStorageException("failed to persist bookmark for reader " + reader, e);
+			throw new EventStorageException("failed to persist bookmark for reader " + bookmark.reader(), e);
 		}
 	}
 
@@ -205,8 +217,8 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 		}
 	}
 
-	private Map<String, EventReference> loadBookmarks ( ) {
-		Map<String, EventReference> bookmarks = new HashMap<>();
+	private Map<String, Bookmark> loadBookmarks ( ) {
+		Map<String, Bookmark> bookmarks = new HashMap<>();
 		try {
 			if ( !Files.exists(bookmarksDir) ) {
 				return bookmarks;
@@ -225,10 +237,10 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 		return bookmarks;
 	}
 
-	private void readBookmark ( Path file, Map<String, EventReference> bookmarks ) {
+	private void readBookmark ( Path file, Map<String, Bookmark> bookmarks ) {
 		try {
 			JsonBookmark parsed = bookmarkCodec.read(Files.readString(file));
-			bookmarks.put(parsed.reader(), parsed.reference());
+			bookmarks.put(parsed.reader(), new Bookmark(parsed.reader(), parsed.reference(), parsed.tags(), parsed.updatedAt()));
 		} catch ( IOException e ) {
 			throw new EventStorageException("failed to read bookmark file " + file, e);
 		}

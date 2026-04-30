@@ -18,6 +18,7 @@
 package org.sliceworkz.eventstore.infra.inmem;
 
 import java.lang.ref.WeakReference;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -33,6 +34,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
@@ -101,7 +103,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	private List<StoredEvent> eventlog = new CopyOnWriteArrayList<>();
 	private Set<String> idempotencyKeys = new HashSet<>();
 	private List<WeakReference<EventStoreListener>> listeners = new CopyOnWriteArrayList<>();
-	private Map<String,EventReference> bookmarks = new HashMap<>();
+	private Map<String,Bookmark> bookmarks = new HashMap<>();
 	private JsonMapper jsonMapper;
 	private Limit absoluteLimit;
 	private long txCounter;
@@ -129,7 +131,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		this(name, absoluteLimit, List.of(), Map.of());
 	}
 
-	public InMemoryEventStorageImpl ( String name, Limit absoluteLimit, List<StoredEvent> initialEvents, Map<String, EventReference> initialBookmarks ) {
+	public InMemoryEventStorageImpl ( String name, Limit absoluteLimit, List<StoredEvent> initialEvents, Map<String, Bookmark> initialBookmarks ) {
 		if ( name == null || "".equals(name.strip())) {
 			throw new IllegalArgumentException("name must not be empty");
 		}
@@ -331,7 +333,12 @@ public class InMemoryEventStorageImpl implements EventStorage {
 
 	@Override
 	public synchronized Optional<EventReference> getBookmark(String reader) {
-		return Optional.ofNullable(bookmarks.get(reader));
+		return Optional.ofNullable(bookmarks.get(reader)).map(Bookmark::reference);
+	}
+
+	@Override
+	public synchronized List<Bookmark> getBookmarks() {
+		return List.copyOf(bookmarks.values());
 	}
 
 	@Override
@@ -341,11 +348,12 @@ public class InMemoryEventStorageImpl implements EventStorage {
 
 	@Override
 	public synchronized void bookmark(String reader, EventReference eventReference, Tags tags ) {
-		bookmarks.put(reader, eventReference);
+		Tags effectiveTags = tags == null ? Tags.none() : tags;
+		bookmarks.put(reader, new Bookmark(reader, eventReference, effectiveTags, Instant.now()));
 		BookmarkPlacedNotification notification = new BookmarkPlacedNotification(reader, eventReference);
 		listeners.forEach(l->{
 			if ( l.get() != null ) {
-				l.get().notify(notification);				
+				l.get().notify(notification);
 			}
 		});
 	}

@@ -17,9 +17,17 @@
  */
 package org.sliceworkz.eventstore.serialization.json;
 
+import java.time.Instant;
+
 import org.sliceworkz.eventstore.events.EventReference;
+import org.sliceworkz.eventstore.events.Tags;
 
 /**
- * Deserialized bookmark payload: the reader identifier and the event reference it points at.
+ * Deserialized bookmark payload: the reader identifier, the event reference it points at,
+ * and the metadata (tags, last-update timestamp) supplied when the bookmark was placed.
+ * <p>
+ * {@code tags} and {@code updatedAt} may be absent in legacy on-disk payloads written before
+ * the metadata extension; in that case the codec returns {@link Tags#none()} and an
+ * {@code updatedAt} of {@link Instant#EPOCH}.
  */
-public record JsonBookmark ( String reader, EventReference reference ) { }
+public record JsonBookmark ( String reader, EventReference reference, Tags tags, Instant updatedAt ) { }

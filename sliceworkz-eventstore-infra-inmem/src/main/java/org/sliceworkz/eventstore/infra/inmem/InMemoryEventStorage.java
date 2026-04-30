@@ -22,7 +22,7 @@ import java.util.Map;
 
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
-import org.sliceworkz.eventstore.events.EventReference;
+import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
@@ -150,7 +150,7 @@ public interface InMemoryEventStorage {
 		private MeterRegistry meterRegistry = Metrics.globalRegistry;
 		private String name = "inmem-%s".formatted(System.identityHashCode(this)); // default unique name in case different objects are used
 		private List<StoredEvent> initialEvents = List.of();
-		private Map<String, EventReference> initialBookmarks = Map.of();
+		private Map<String, Bookmark> initialBookmarks = Map.of();
 
 		
 		private Builder ( ) {
@@ -229,10 +229,10 @@ public interface InMemoryEventStorage {
 		 * This is useful for restoring previously persisted bookmarks, for example when wrapping the
 		 * in-memory storage with a file-persistence layer.
 		 *
-		 * @param initialBookmarks a map of reader name to event reference (must not be null)
+		 * @param initialBookmarks a map of reader name to bookmark (must not be null)
 		 * @return this Builder instance for method chaining
 		 */
-		public Builder initialBookmarks ( Map<String, EventReference> initialBookmarks ) {
+		public Builder initialBookmarks ( Map<String, Bookmark> initialBookmarks ) {
 			this.initialBookmarks = initialBookmarks;
 			return this;
 		}

@@ -27,6 +27,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -48,6 +49,7 @@ import org.postgresql.PGConnection;
 import org.postgresql.PGNotification;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
@@ -1152,7 +1154,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			readConnection.setAutoCommit(true);
 			try (PreparedStatement stmt = readConnection.prepareStatement(sql)) {
 				stmt.setString(1, reader);
-				
+
 				try (ResultSet rs = stmt.executeQuery()) {
 					if (rs.next()) {
 						long position = rs.getLong("event_position");
@@ -1168,8 +1170,47 @@ public class PostgresEventStorageImpl implements EventStorage {
 		} catch (SQLException e) {
 			throw new EventStorageException("Failed to close connection", e);
 		}
-		
+
 		return Optional.empty();
+	}
+
+	@Override
+	public List<Bookmark> getBookmarks() {
+		String sql = """
+			SELECT reader, event_position, event_id, event_tx::text, updated_at, updated_tags
+			FROM %sbookmarks
+		""".formatted(prefix);
+
+		List<Bookmark> bookmarks = new ArrayList<>();
+		try ( Connection readConnection = dataSource.getConnection() ) {
+			readConnection.setAutoCommit(true);
+			try ( PreparedStatement stmt = readConnection.prepareStatement(sql);
+			      ResultSet rs = stmt.executeQuery() ) {
+				while ( rs.next() ) {
+					String reader = rs.getString("reader");
+					long position = rs.getLong("event_position");
+					long tx = Long.parseUnsignedLong(rs.getString("event_tx"));
+					EventId eventId = new EventId(rs.getString("event_id"));
+					EventReference reference = EventReference.of(eventId, position, tx);
+
+					String[] tagsArray = new String[0];
+					if ( rs.getArray("updated_tags") != null ) {
+						tagsArray = (String[]) rs.getArray("updated_tags").getArray();
+					}
+					Tags tags = Tags.parse(tagsArray);
+
+					Timestamp updatedAtTs = rs.getTimestamp("updated_at", Calendar.getInstance(TimeZone.getTimeZone("UTC")));
+					Instant updatedAt = updatedAtTs != null ? updatedAtTs.toInstant() : Instant.EPOCH;
+
+					bookmarks.add(new Bookmark(reader, reference, tags, updatedAt));
+				}
+			} catch ( SQLException e ) {
+				throw new EventStorageException("Failed to list bookmarks", e);
+			}
+		} catch ( SQLException e ) {
+			throw new EventStorageException("Failed to close connection", e);
+		}
+		return bookmarks;
 	}
 
 	

@@ -33,6 +33,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.sliceworkz.Banner;
 import org.sliceworkz.eventstore.EventStore;
+import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventId;
@@ -201,6 +202,7 @@ public class EventStoreImpl implements EventStore {
 		private Counter meterGetEvent;
 		private Counter meterBookmarkPlace;
 		private Counter meterBookmarkGet;
+		private Counter meterBookmarkList;
 		private Timer timerQuery;
 		private Timer timerAppend;
 
@@ -231,6 +233,7 @@ public class EventStoreImpl implements EventStore {
 			this.meterGetEvent = meterRegistry.counter("sliceworkz.eventstore.get.event", baseTags);
 			this.meterBookmarkPlace = meterRegistry.counter("sliceworkz.eventstore.bookmark.place", baseTags);
 			this.meterBookmarkGet= meterRegistry.counter("sliceworkz.eventstore.bookmark.get", baseTags);
+			this.meterBookmarkList = meterRegistry.counter("sliceworkz.eventstore.bookmark.list", baseTags);
 
 			this.timerQuery = meterRegistry.timer("sliceworkz.eventstore.query.duration", baseTags);
 			this.timerAppend = meterRegistry.timer("sliceworkz.eventstore.append.duration", baseTags);
@@ -428,6 +431,12 @@ public class EventStoreImpl implements EventStore {
 		public Optional<EventReference> getBookmark(String reader) {
 			meterBookmarkGet.increment();
 			return eventStorage.getBookmark(reader.toString());
+		}
+
+		@Override
+		public List<Bookmark> getBookmarks() {
+			meterBookmarkList.increment();
+			return eventStorage.getBookmarks();
 		}
 
 		@Override

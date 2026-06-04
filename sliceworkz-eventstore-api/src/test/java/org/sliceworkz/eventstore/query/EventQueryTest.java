@@ -37,8 +37,8 @@ import org.sliceworkz.eventstore.query.EventQueryTest.MockDomainEvent.SecondDoma
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.json.JsonMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.json.JsonMapper;
 
 public class EventQueryTest {
 
@@ -352,8 +352,8 @@ public class EventQueryTest {
 
 	private StoredEvent storedEvent ( Event<?> e ) {
 		try {
-			return new StoredEvent(e.stream(), EventType.of(e.data()), e.reference(), new JsonMapper().writeValueAsString(e.data()), null, e.tags(), e.timestamp() );
-		} catch (JsonProcessingException ex) {
+			return new StoredEvent(e.stream(), EventType.of(e.data()), e.reference(), JsonMapper.builder().build().writeValueAsString(e.data()), null, e.tags(), e.timestamp() );
+		} catch (JacksonException ex) {
 			throw new RuntimeException(ex);
 		}
 	}

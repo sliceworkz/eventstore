@@ -31,9 +31,9 @@ import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.LegacyEvent;
 import org.sliceworkz.eventstore.events.Upcast;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonMappingException;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.DatabindException;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Typed mode implementation of {@link EventPayloadSerializerDeserializer} that maps events to/from Java objects.
@@ -234,9 +234,9 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 					object = immutableDataMapper.treeToValue(nodeImmutableData, eventClass);
 				}
 
-			} catch (JsonMappingException e) {
+			} catch (DatabindException e) {
 				throw new RuntimeException(e);
-			} catch (JsonProcessingException e) {
+			} catch (JacksonException e) {
 				throw new RuntimeException(e);
 			}
 			return List.of(new TypeAndPayload(eventType, object));

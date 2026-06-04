@@ -22,10 +22,10 @@ import java.util.Set;
 
 import org.sliceworkz.eventstore.events.EventType;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonMappingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.DatabindException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Raw mode implementation of {@link EventPayloadSerializerDeserializer} that works with JSON strings directly.
@@ -57,10 +57,10 @@ public class RawEventPayloadSerializerDeserializer extends AbstractEventPayloadS
 				object = nodeImmutableData; // with erasable merged in
 			}
 
-		} catch (JsonMappingException e) {
-			throw new RuntimeException("Failed to deserialize event data: JsonMappingException", e);
-		} catch (JsonProcessingException e) {
-			throw new RuntimeException("Failed to deserialize event data: JsonProcessingException", e);
+		} catch (DatabindException e) {
+			throw new RuntimeException("Failed to deserialize event data: DatabindException", e);
+		} catch (JacksonException e) {
+			throw new RuntimeException("Failed to deserialize event data: JacksonException", e);
 		}
 		return List.of(new TypeAndPayload(serialized.type(), object));
 	}

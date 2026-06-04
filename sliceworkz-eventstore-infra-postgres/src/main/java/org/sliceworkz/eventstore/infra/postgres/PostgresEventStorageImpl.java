@@ -65,8 +65,8 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.json.JsonMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * PostgreSQL-backed implementation of the {@link EventStorage} interface.
@@ -131,7 +131,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private final ExecutorService executorService;
 	private volatile boolean stopped;
 
-	private static final JsonMapper JSONMAPPER = new JsonMapper();
+	private static final JsonMapper JSONMAPPER = JsonMapper.builder().build();
 
 	private static final int THIRTY_SECONDS = 30*1000;
 	public static final int WAIT_FOR_NOTIFICATIONS_TIMEOUT = THIRTY_SECONDS;
@@ -992,7 +992,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 										}
 									});
 
-								} catch (JsonProcessingException e) {
+								} catch (JacksonException e) {
 									LOGGER.error("Failed to parse notification: " + e.getMessage());
 								}
 					        }
@@ -1050,7 +1050,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			String listenStatement = "LISTEN %sbookmark_placed;".formatted(prefix);
 			String unlistenStatement = "UNLISTEN %sbookmark_placed;".formatted(prefix);
 
-			JsonMapper jsonMapper = new JsonMapper ( );
+			JsonMapper jsonMapper = JsonMapper.builder().build();
 
 			long retryDelayMs = INITIAL_RETRY_DELAY_MS;
 			while ( !stopped ) {
@@ -1088,7 +1088,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 										}
 									});
 
-								} catch (JsonProcessingException e) {
+								} catch (JacksonException e) {
 									LOGGER.error("Failed to parse notification: " + e.getMessage());
 								}
 					        }

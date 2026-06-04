@@ -35,7 +35,7 @@
 	<packaging>pom</packaging>
 
 	<properties>
-		<jackson.version>2.21.3</jackson.version>
+		<jackson.version>3.1.4</jackson.version>
 		<slf4j.version>2.0.18</slf4j.version>
 		<postgresql.jdbc.version>42.7.11</postgresql.jdbc.version>
 		<uuid-creator.version>6.1.1</uuid-creator.version>
@@ -82,16 +82,12 @@
 			    <version>${slf4j.version}</version>
 			</dependency>
 
-			<!-- Jackson JSON processing -->
+			<!-- Jackson JSON processing (Jackson 3.x: groupId tools.jackson.core;
+			     java.time/JSR-310 support is built into jackson-databind, no separate module) -->
 			<dependency>
-			    <groupId>com.fasterxml.jackson.core</groupId>
+			    <groupId>tools.jackson.core</groupId>
 			    <artifactId>jackson-databind</artifactId>
 			    <version>${jackson.version}</version>
-			</dependency>
-			<dependency>
-			  <groupId>com.fasterxml.jackson.datatype</groupId>
-			  <artifactId>jackson-datatype-jsr310</artifactId>
-			  <version>${jackson.version}</version>
 			</dependency>
 
 			<!-- JUnit Testing -->
@@ -141,12 +137,8 @@
 	
 	<dependencies>
 		<dependency>
-			<groupId>com.fasterxml.jackson.core</groupId>
+			<groupId>tools.jackson.core</groupId>
 			<artifactId>jackson-databind</artifactId>
-		</dependency>
-		<dependency>
-		  <groupId>com.fasterxml.jackson.datatype</groupId>
-		  <artifactId>jackson-datatype-jsr310</artifactId>
 		</dependency>
 		
 		<dependency>

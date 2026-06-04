@@ -46,9 +46,10 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonMappingException;
-import com.fasterxml.jackson.databind.json.JsonMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.DatabindException;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Thread-safe in-memory implementation of the {@link EventStorage} interface.
@@ -136,8 +137,12 @@ public class InMemoryEventStorageImpl implements EventStorage {
 			throw new IllegalArgumentException("name must not be empty");
 		}
 		this.name = name;
-		this.jsonMapper = new JsonMapper();
-		this.jsonMapper.findAndRegisterModules();
+		// Jackson 3.x: immutable mapper built via builder; modules (incl. java.time) auto-register.
+		// FAIL_ON_UNKNOWN_PROPERTIES is re-enabled (Jackson 2.x default) so the round-trip
+		// validation in verifyPersistableJson keeps rejecting non-round-trippable events.
+		this.jsonMapper = JsonMapper.builder()
+				.enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+				.build();
 		this.absoluteLimit = absoluteLimit;
 		this.eventlog.addAll(initialEvents);
 		this.bookmarks.putAll(initialBookmarks);
@@ -276,9 +281,9 @@ public class InMemoryEventStorageImpl implements EventStorage {
 					jsonMapper.readValue(s, clz);
 				}
 			}
-		} catch (JsonMappingException e) {
+		} catch (DatabindException e) {
 			throw new RuntimeException("json mapping roundtrip test failed", e);
-		} catch (JsonProcessingException e) {
+		} catch (JacksonException e) {
 			throw new RuntimeException("json mapping roundtrip test failed", e);
 		}
 	}

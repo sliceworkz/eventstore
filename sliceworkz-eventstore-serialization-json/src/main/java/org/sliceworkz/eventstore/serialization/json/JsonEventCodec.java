@@ -17,7 +17,6 @@
  */
 package org.sliceworkz.eventstore.serialization.json;
 
-import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Set;
@@ -30,12 +29,13 @@ import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.SerializationFeature;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * JSON codec for {@link StoredEvent}.
@@ -76,11 +76,13 @@ public final class JsonEventCodec {
 	}
 
 	public static ObjectMapper defaultObjectMapper ( ) {
-		ObjectMapper mapper = new ObjectMapper();
-		mapper.registerModule(new JavaTimeModule());
-		mapper.enable(SerializationFeature.INDENT_OUTPUT);
-		mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
-		return mapper;
+		// Jackson 3.x: mappers are immutable and configured via a builder. java.time support
+		// is built into jackson-databind (no JavaTimeModule registration needed), and dates
+		// serialize as ISO-8601 strings by default (WRITE_DATES_AS_TIMESTAMPS is disabled by
+		// default, moved to DateTimeFeature).
+		return JsonMapper.builder()
+				.enable(SerializationFeature.INDENT_OUTPUT)
+				.build();
 	}
 
 	public String write ( StoredEvent event ) {
@@ -124,7 +126,7 @@ public final class JsonEventCodec {
 			node.put("timestamp", event.timestamp().toString());
 
 			return objectMapper.writeValueAsString(node);
-		} catch ( IOException e ) {
+		} catch ( JacksonException e ) {
 			throw new JsonCodecException("failed to serialize event", e);
 		}
 	}
@@ -169,7 +171,7 @@ public final class JsonEventCodec {
 			LocalDateTime timestamp = LocalDateTime.parse(node.get("timestamp").asText());
 
 			return new StoredEvent(stream, type, reference, immutableData, erasableData, tags, timestamp);
-		} catch ( IOException e ) {
+		} catch ( JacksonException e ) {
 			throw new JsonCodecException("failed to deserialize event", e);
 		}
 	}

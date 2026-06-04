@@ -24,11 +24,13 @@ import org.sliceworkz.eventstore.events.Erasable;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.PartlyErasable;
 
-import com.fasterxml.jackson.databind.MapperFeature;
-import com.fasterxml.jackson.databind.introspect.Annotated;
-import com.fasterxml.jackson.databind.introspect.JacksonAnnotationIntrospector;
-import com.fasterxml.jackson.databind.json.JsonMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.MapperFeature;
+import tools.jackson.databind.cfg.MapperConfig;
+import tools.jackson.databind.introspect.Annotated;
+import tools.jackson.databind.introspect.JacksonAnnotationIntrospector;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Abstract base class for event payload serializers/deserializers providing common Jackson-based functionality.
@@ -71,12 +73,25 @@ public abstract class AbstractEventPayloadSerializerDeserializer implements Even
 
 	
 	public AbstractEventPayloadSerializerDeserializer (  ) {
-		this.immutableDataMapper = JsonMapper.builder().build();
-		this.immutableDataMapper.findAndRegisterModules();
-		this.erasableDataMapper = JsonMapper.builder().disable(MapperFeature.DEFAULT_VIEW_INCLUSION).build();
-		this.erasableDataMapper.findAndRegisterModules();
+		// Jackson 3.x: mappers are immutable, so the custom annotation introspector that
+		// drives the immutable/erasable @JsonView split must be configured at build time
+		// (it can no longer be set per-serialize call). Modules (incl. java.time) are
+		// auto-registered, so findAndRegisterModules() is no longer needed.
+		// FAIL_ON_UNKNOWN_PROPERTIES is re-enabled explicitly: it defaulted to enabled in
+		// Jackson 2.x but is disabled by default in Jackson 3.x. The store relies on it to
+		// reject events whose serialized form cannot round-trip back onto the record (e.g. a
+		// derived getter that emits a property with no matching record component).
+		this.immutableDataMapper = JsonMapper.builder()
+				.annotationIntrospector(introspector)
+				.enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+				.build();
+		this.erasableDataMapper = JsonMapper.builder()
+				.annotationIntrospector(introspector)
+				.disable(MapperFeature.DEFAULT_VIEW_INCLUSION)
+				.enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+				.build();
 	}
-	
+
 	@Override
 	public TypeAndSerializedPayload serialize ( Object payload ) {
 		String immutableData = null;
@@ -84,12 +99,10 @@ public abstract class AbstractEventPayloadSerializerDeserializer implements Even
 		try {
 
 			immutableData = immutableDataMapper
-					.setAnnotationIntrospector(introspector)
 	                .writerWithView(JsonViewTags.ImmutableData.class)
 					.writeValueAsString(payload);
-			
+
 	        erasableData = erasableDataMapper
-					.setAnnotationIntrospector(introspector)
 	                .writerWithView(JsonViewTags.ErasableData.class)
 	                .writeValueAsString(payload);
 	        
@@ -123,9 +136,9 @@ public abstract class AbstractEventPayloadSerializerDeserializer implements Even
 	public static class ErasableAnnotationIntrospector extends JacksonAnnotationIntrospector {
 		
 		@Override
-		public Class<?>[] findViews(Annotated member) {
+		public Class<?>[] findViews(MapperConfig<?> config, Annotated member) {
 			// Check for explicit @JsonView first
-			Class<?>[] views = super.findViews(member);
+			Class<?>[] views = super.findViews(config, member);
 			if (views != null) {
 				return views;
 			}

@@ -33,7 +33,7 @@ import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
-import com.fasterxml.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 public class InMemoryEventStorageImplTest {
 	
@@ -71,7 +71,7 @@ public class InMemoryEventStorageImplTest {
 			)
 		);
 		assertEquals("Failed to deserialize event data for type 'ProblematicParsingRecord', known mappings for [ProblematicParsingRecord]", e.getMessage());
-		assertEquals("Unrecognized field \"derivedValueThatIsNotPartOfRecord\" (class org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImplTest$ProblematicParsing$ProblematicParsingRecord), not marked as ignorable (one known property: \"value\")", e.getCause().getCause().getMessage().split("\n")[0]);
+		assertEquals("Unrecognized property \"derivedValueThatIsNotPartOfRecord\" (class org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImplTest$ProblematicParsing$ProblematicParsingRecord), not marked as ignorable (one known property: \"value\")", e.getCause().getCause().getMessage().split("\n")[0]);
 	}
 	
 	sealed interface ProblematicParsing {
@@ -93,13 +93,13 @@ public class InMemoryEventStorageImplTest {
 	// more documentation of a pattern that a test
 	@Test
 	public void parseInvalidOldValue ( ) throws Exception {
-		String json = (new JsonMapper().writeValueAsString(new Name("someName")));
-		Name ok = new JsonMapper().readValue(json, Name.class);
+		String json = (JsonMapper.builder().build().writeValueAsString(new Name("someName")));
+		Name ok = JsonMapper.builder().build().readValue(json, Name.class);
 		assertNotNull(ok);
 		assertEquals("someName", ok.value());
-		
+
 		// old value which isn't valid anymore according to our current business rules
-		Name name = new JsonMapper().readValue("{\"value\":\"old\"}", Name.class);
+		Name name = JsonMapper.builder().build().readValue("{\"value\":\"old\"}", Name.class);
 		assertNotNull(name);
 		assertEquals("old", name.value());
 		IllegalArgumentException e = assertThrows(IllegalArgumentException.class,()->Name.of("old"));

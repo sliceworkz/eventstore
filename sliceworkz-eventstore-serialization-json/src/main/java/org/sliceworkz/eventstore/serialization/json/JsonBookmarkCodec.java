@@ -17,7 +17,6 @@
  */
 package org.sliceworkz.eventstore.serialization.json;
 
-import java.io.IOException;
 import java.time.Instant;
 import java.util.HashSet;
 import java.util.Set;
@@ -27,10 +26,11 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * JSON codec for reader bookmarks: a reader identifier paired with the
@@ -88,7 +88,7 @@ public final class JsonBookmarkCodec {
 			node.put("updatedAt", updatedAt.toString());
 
 			return objectMapper.writeValueAsString(node);
-		} catch ( IOException e ) {
+		} catch ( JacksonException e ) {
 			throw new JsonCodecException("failed to serialize bookmark for reader " + reader, e);
 		}
 	}
@@ -122,7 +122,7 @@ public final class JsonBookmarkCodec {
 					: Instant.EPOCH;
 
 			return new JsonBookmark(reader, reference, tags, updatedAt);
-		} catch ( IOException e ) {
+		} catch ( JacksonException e ) {
 			throw new JsonCodecException("failed to deserialize bookmark", e);
 		}
 	}

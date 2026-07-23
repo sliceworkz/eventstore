@@ -295,6 +295,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			checkIndex(readConnection, prefix + "idx_events_position_brin");
 			checkIndex(readConnection, prefix + "idx_events_stream_type_position");
 			checkIndex(readConnection, prefix + "idx_events_tags");
+			checkIndex(readConnection, prefix + "idx_events_stream_tags");
 			checkIndex(readConnection, prefix + "idx_events_stream_position");
 			checkIndex(readConnection, prefix + "idx_bookmarks_event_id");
 

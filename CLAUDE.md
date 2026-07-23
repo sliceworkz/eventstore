@@ -53,6 +53,7 @@ mvn clean install -DskipTests
 
 **EventStream:**
 - Identified by `EventStreamId` which consists of a context and optional purpose
+- Purpose is optional: `EventStreamId.forContext("x")` defaults purpose to `"default"`, so a context that needs only one stream can ignore purpose entirely. Set a purpose only to distinguish multiple streams within a context (e.g. per-instance, or separating event kinds)
 - Supports both reading (via `query()`) and writing (via `append()`)
 - Type-safe through generic parameter `<DOMAIN_EVENT_TYPE>`
 - Combines `EventSource` (reading) and `EventSink` (writing) interfaces
@@ -287,3 +288,5 @@ The key insight of DCB is that business decisions are based on querying relevant
 - Uses HikariCP for connection pooling
 - Separate DataSource for monitoring queries (optional, defaults to main DataSource)
 - Tests use Testcontainers for isolated PostgreSQL instances
+- Requires the `btree_gin` extension (a standard contrib extension, available on the major managed Postgres offerings). Schema initialization runs `CREATE EXTENSION IF NOT EXISTS btree_gin` and schema validation requires `idx_events_stream_tags`, a combined stream+tags GIN index that serves DCB reads scoping by stream *and* filtering by tags in one index. The B-tree indexes are retained for ordered stream replay (GIN cannot serve `ORDER BY`)
+- `stream_purpose` defaults to `'default'` in the DDL, matching `EventStreamId.DEFAULT_PURPOSE`. On a database created before this alignment (default was `''`), operators doing raw SQL inserts should run `ALTER TABLE <prefix>events ALTER COLUMN stream_purpose SET DEFAULT 'default';` — no data migration is needed since all events written through the library bind the purpose explicitly

@@ -5,12 +5,13 @@ run-name: "ci build - mvn package [${{ github.ref_name }}]"
 on:
   workflow_dispatch:
   push:
-    branches: [ "develop", "feature/*", "release/*" ]
+    branches: [ "develop", "feature/*", "release/*", "claude/maven-4-upgrade-7h2lge" ]
 
 jobs:
   build:
 
     runs-on: ubuntu-latest
+    container: maven:4.0.0-rc-5-eclipse-temurin-21
 
     steps:
     - uses: actions/checkout@v4

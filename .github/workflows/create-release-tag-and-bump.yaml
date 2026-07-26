@@ -12,6 +12,7 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    container: maven:4.0.0-rc-5-eclipse-temurin-21
     
     steps:
       - name: Checkout code
@@ -51,7 +52,7 @@ jobs:
       
       - name: Get current Maven version
         run: |
-          CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout --raw-streams)
           echo "Current version: $CURRENT_VERSION"
           
           # Validate version format (should be X.Y.Z-SNAPSHOT)

@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS events (
 
       -- Stream identification
       stream_context TEXT NOT NULL,
-      stream_purpose TEXT NOT NULL DEFAULT '',
+      stream_purpose TEXT NOT NULL DEFAULT 'default',
 
       -- Event metadata
       event_type TEXT NOT NULL,
@@ -78,6 +78,19 @@ CREATE TABLE IF NOT EXISTS events (
 
 	-- Separate GIN index ONLY for tag filtering
 	CREATE INDEX IF NOT EXISTS idx_events_tags ON events USING GIN (event_tags);
+
+	-- Combined stream + tags index: serves DCB reads that scope by stream AND filter by
+	-- tags in a single index (the B-tree indexes above cannot cover the tag containment,
+	-- and the tags-only GIN index above cannot cover the stream scope). Requires the
+	-- btree_gin extension to index the scalar stream columns alongside the tag array.
+	-- NB: GIN cannot serve ORDER BY event_position, so the B-tree indexes are kept for
+	-- ordered stream replay; this index is additive, for stream-scoped tag lookups.
+	CREATE EXTENSION IF NOT EXISTS btree_gin;
+	CREATE INDEX IF NOT EXISTS idx_events_stream_tags ON events USING GIN (
+	    stream_context,
+	    stream_purpose,
+	    event_tags
+	);
 
 	-- Keep stream position index for stream reads
 	CREATE INDEX IF NOT EXISTS idx_events_stream_position ON events (

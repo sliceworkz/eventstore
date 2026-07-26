@@ -26,10 +26,16 @@ package org.sliceworkz.eventstore.stream;
  *   <li><strong>purpose</strong>: An optional secondary identifier to distinguish multiple streams within the same context (e.g., customer ID, order number)</li>
  * </ul>
  * <p>
+ * <strong>Purpose is optional.</strong> If you don't need to distinguish multiple streams within a
+ * context, simply use {@link #forContext(String)} and ignore purpose: it defaults to the constant
+ * {@code "default"}, giving every context a single well-defined stream. Purpose only becomes relevant
+ * when a context needs more than one stream (e.g. per-instance streams, or separating event kinds).
+ * <p>
  * EventStreamId supports wildcards for querying multiple streams. Both context and purpose can be null,
  * which acts as a wildcard matching any value. This enables flexible stream queries:
  * <ul>
- *   <li>Specific stream: {@code EventStreamId.forContext("customer").withPurpose("123")}</li>
+ *   <li>Specific stream (default purpose): {@code EventStreamId.forContext("customer")}</li>
+ *   <li>Specific stream (explicit purpose): {@code EventStreamId.forContext("customer").withPurpose("123")}</li>
  *   <li>All streams in a context: {@code EventStreamId.forContext("customer").anyPurpose()}</li>
  *   <li>All streams across all contexts: {@code EventStreamId.anyContext()}</li>
  * </ul>

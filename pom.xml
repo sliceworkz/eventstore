@@ -18,62 +18,34 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 -->
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
-	<modelVersion>4.0.0</modelVersion>
+<project xmlns="http://maven.apache.org/POM/4.1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.1.0 https://maven.apache.org/xsd/maven-4.1.0.xsd" root="true">
+	
 	<groupId>org.sliceworkz</groupId>
 	<artifactId>sliceworkz-eventstore</artifactId>
 	<version>0.10.0-SNAPSHOT</version>
 	
 	<name>${project.artifactId}</name>
 	<description>DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)</description>
-	<url>https://sliceworkz.github.io/eventstore</url>
+	<url child.project.url.inherit.append.path="false">https://sliceworkz.github.io/eventstore</url>
 	
 	<packaging>pom</packaging>
 
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		
-		<maven.minimal-version>3.6.3</maven.minimal-version>
+		<maven.minimal-version>4.0.0-rc-5</maven.minimal-version>
 		
 		<maven.maven-pgp-plugin.version>3.2.8</maven.maven-pgp-plugin.version>
 		<maven.maven-versions-plugin.version>2.21.0</maven.maven-versions-plugin.version>
 		<maven.maven-enforcer-plugin.version>3.6.3</maven.maven-enforcer-plugin.version>
 		<maven.mycila-license-plugin.version>5.0.0</maven.mycila-license-plugin.version>
 		<maven.maven-central-publishing-plugin.version>0.11.0</maven.maven-central-publishing-plugin.version>
-		<maven.flatten-plugin.version>1.7.0</maven.flatten-plugin.version>
 
 		<maven.compiler.release>21</maven.compiler.release>
 
 		<!-- Publish only client-facing modules; opt-in per module below -->
 		<maven.deploy.skip>true</maven.deploy.skip>
 	</properties>
-	
-	<modules>
-		<!-- maven build constructs -->
-		<module>sliceworkz-eventstore-parent-pom</module>
-		<module>sliceworkz-eventstore-bom</module>
-		
-		<!-- project modules -->
-		<module>sliceworkz-eventstore-api</module>
-		<module>sliceworkz-eventstore-impl</module>
-
-		<!-- serialization -->
-		<module>sliceworkz-eventstore-serialization-json</module>
-
-		<!-- examples -->
-		<module>sliceworkz-eventstore-examples</module>
-
-		<!-- infra implementations -->
-		<module>sliceworkz-eventstore-infra-inmem</module>
-		<module>sliceworkz-eventstore-infra-inmem-fs</module>
-		<module>sliceworkz-eventstore-infra-postgres</module>
-
-		<!-- tests, those same scenarios will be run inmem as well as on postgres  -->
-		<module>sliceworkz-eventstore-tests</module>
-
-		<!-- benchmark tool -->
-		<module>sliceworkz-eventstore-benchmark</module>
-	</modules>
 	
 	<build>
 		<plugins>
@@ -156,44 +128,6 @@
 			    </configuration>
 			</plugin>
 
-			<!--
-				Produce a flattened, self-contained consumer POM for the published
-				(client-facing) modules: no parent reference and dependency versions
-				inlined, so consumers do not need the parent-pom / aggregator POMs.
-				This mirrors what the Maven 4.1.0 model gives natively on the
-				maven-4 branch. flattenMode 'ossrh' keeps the metadata Maven Central
-				requires (name, description, url, licenses, scm, developers); the BOM
-				module overrides flattenMode to 'bom' to preserve dependencyManagement.
-
-				NOTE: this relies on building with Maven 3. Maven 4 generates its own
-				consumer POM from the in-memory model (which still carries the parent
-				on this 4.0.0-model project) and relegates the flattened POM to a
-				secondary -build.pom, defeating the purpose. develop builds with Maven 3.
-			-->
-			<plugin>
-			    <groupId>org.codehaus.mojo</groupId>
-			    <artifactId>flatten-maven-plugin</artifactId>
-			    <version>${maven.flatten-plugin.version}</version>
-			    <configuration>
-					<flattenMode>ossrh</flattenMode>
-			    </configuration>
-			    <executions>
-					<execution>
-						<id>flatten</id>
-						<phase>process-resources</phase>
-						<goals>
-							<goal>flatten</goal>
-						</goals>
-					</execution>
-					<execution>
-						<id>flatten.clean</id>
-						<phase>clean</phase>
-						<goals>
-							<goal>clean</goal>
-						</goals>
-					</execution>
-			    </executions>
-			</plugin>
 
 			<plugin>
 			    <groupId>com.mycila</groupId>
@@ -328,7 +262,7 @@
 		</developer>
 	</developers>
 	
-	<scm>
+	<scm child.scm.connection.inherit.append.path="false" child.scm.developerConnection.inherit.append.path="false" child.scm.url.inherit.append.path="false">
 		<connection>https://github.com/sliceworkz/eventstore.git</connection>
 		<developerConnection>scm:git:git://github.com/sliceworkz/eventstore.git</developerConnection>
 		<url>https://github.com/sliceworkz/eventstore</url>

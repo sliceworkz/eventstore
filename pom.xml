@@ -206,6 +206,55 @@
 				</plugins>
 			</build>
 		</profile>
+
+		<!--
+			Deploy SNAPSHOT artifacts to the sliceworkz cloudrepo instead of Maven
+			Central. Activated by the build-and-deploy-snapshot-cloudrepo workflow.
+
+			The central-publishing-maven-plugin installs a lifecycle participant that,
+			by default, clears the maven-deploy-plugin's executions and takes over the
+			deploy phase. That participant stands down as soon as the central plugin has
+			an explicit execution binding the 'publish' goal ("Preexisting publish
+			related goal bindings found" in its log). We add exactly such an execution
+			here (phase 'none', so it never actually runs; skipPublishing as
+			belt-and-suspenders). With the participant standing down, the standard
+			maven-deploy-plugin stays active and honours the cloudrepo
+			distributionManagement below. The default (profile-inactive) build is
+			untouched, so releases to Maven Central keep working.
+		-->
+		<profile>
+			<id>cloudrepo</id>
+			<distributionManagement>
+				<repository>
+					<id>cloudrepo</id>
+					<url>https://xti.mycloudrepo.io/repositories/sliceworkz</url>
+				</repository>
+				<snapshotRepository>
+					<id>cloudrepo</id>
+					<url>https://xti.mycloudrepo.io/repositories/sliceworkz</url>
+				</snapshotRepository>
+			</distributionManagement>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.sonatype.central</groupId>
+						<artifactId>central-publishing-maven-plugin</artifactId>
+						<configuration>
+							<skipPublishing>true</skipPublishing>
+						</configuration>
+						<executions>
+							<execution>
+								<id>cloudrepo-stand-down</id>
+								<phase>none</phase>
+								<goals>
+									<goal>publish</goal>
+								</goals>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
 	</profiles>
 
 	<licenses>

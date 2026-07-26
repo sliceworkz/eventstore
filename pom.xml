@@ -40,8 +40,12 @@
 		<maven.maven-enforcer-plugin.version>3.6.3</maven.maven-enforcer-plugin.version>
 		<maven.mycila-license-plugin.version>5.0.0</maven.mycila-license-plugin.version>
 		<maven.maven-central-publishing-plugin.version>0.11.0</maven.maven-central-publishing-plugin.version>
-		
+		<maven.flatten-plugin.version>1.7.0</maven.flatten-plugin.version>
+
 		<maven.compiler.release>21</maven.compiler.release>
+
+		<!-- Publish only client-facing modules; opt-in per module below -->
+		<maven.deploy.skip>true</maven.deploy.skip>
 	</properties>
 	
 	<modules>
@@ -137,7 +141,46 @@
 					<deploymentName>eventstore-${project.version}</deploymentName>
 			    </configuration>
 			</plugin>
-      		
+
+			<!--
+				Produce a flattened, self-contained consumer POM for the published
+				(client-facing) modules: no parent reference and dependency versions
+				inlined, so consumers do not need the parent-pom / aggregator POMs.
+				This mirrors what the Maven 4.1.0 model gives natively on the
+				maven-4 branch. flattenMode 'ossrh' keeps the metadata Maven Central
+				requires (name, description, url, licenses, scm, developers); the BOM
+				module overrides flattenMode to 'bom' to preserve dependencyManagement.
+
+				NOTE: this relies on building with Maven 3. Maven 4 generates its own
+				consumer POM from the in-memory model (which still carries the parent
+				on this 4.0.0-model project) and relegates the flattened POM to a
+				secondary -build.pom, defeating the purpose. develop builds with Maven 3.
+			-->
+			<plugin>
+			    <groupId>org.codehaus.mojo</groupId>
+			    <artifactId>flatten-maven-plugin</artifactId>
+			    <version>${maven.flatten-plugin.version}</version>
+			    <configuration>
+					<flattenMode>ossrh</flattenMode>
+			    </configuration>
+			    <executions>
+					<execution>
+						<id>flatten</id>
+						<phase>process-resources</phase>
+						<goals>
+							<goal>flatten</goal>
+						</goals>
+					</execution>
+					<execution>
+						<id>flatten.clean</id>
+						<phase>clean</phase>
+						<goals>
+							<goal>clean</goal>
+						</goals>
+					</execution>
+			    </executions>
+			</plugin>
+
 			<plugin>
 			    <groupId>com.mycila</groupId>
 			    <artifactId>license-maven-plugin</artifactId>

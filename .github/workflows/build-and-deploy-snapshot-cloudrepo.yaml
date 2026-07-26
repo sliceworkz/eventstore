@@ -6,21 +6,18 @@ run-name: "build-and-deploy-snapshot-cloudrepo [${{ github.ref_name }}]"
 # selector in the GitHub UI (or the `ref` when dispatched through the API/CLI) —
 # the checkout below builds exactly that ref.
 #
-# Runs directly on the runner (no container) and installs Maven 4 explicitly.
-# Why not the maven:4.x container: in a job container GitHub sets HOME to
-# /github/home while the maven image bakes in MAVEN_CONFIG=/root/.m2, so the
-# ~/.m2/settings.xml that setup-java generates (with the cloudrepo credentials)
-# is not the settings.xml Maven loads — deploy then fails with HTTP 401. On the
-# runner host, setup-java's settings.xml and Maven agree, matching the proven
-# plugins release / ci.yaml credential flow.
+# Runs directly on the runner (no container) with the runner's preinstalled
+# Maven 3: develop is a Maven 3 project (4.0.0 model, enforcer >= 3.6.3), and
+# running on the host means setup-java's generated ~/.m2/settings.xml (with the
+# cloudrepo credentials) is the settings.xml Maven loads — a job container would
+# put it under /github/home while the maven image uses /root/.m2, causing an
+# HTTP 401 on deploy. Maven 3 also lets the flatten-maven-plugin produce the
+# self-contained consumer POMs (Maven 4's native consumer POM would override it).
 on:
   workflow_dispatch:
 
 permissions:
   contents: read
-
-env:
-  MAVEN_VERSION: 4.0.0-rc-5
 
 jobs:
   deploy:
@@ -42,18 +39,9 @@ jobs:
           server-username: CLOUDREPO_USERNAME
           server-password: CLOUDREPO_PASSWORD
 
-      - name: Install Maven ${{ env.MAVEN_VERSION }}
-        run: |
-          curl -fsSL "https://archive.apache.org/dist/maven/maven-4/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" \
-            | tar -xz -C "$HOME"
-          echo "$HOME/apache-maven-${MAVEN_VERSION}/bin" >> "$GITHUB_PATH"
-
-      - name: Verify Maven version
-        run: mvn -version
-
       - name: Verify SNAPSHOT version
         run: |
-          CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout --raw-streams)
+          CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
           echo "Current version: $CURRENT_VERSION"
           if [[ ! "$CURRENT_VERSION" =~ -SNAPSHOT$ ]]; then
             echo "Error: Version $CURRENT_VERSION is not a SNAPSHOT version"

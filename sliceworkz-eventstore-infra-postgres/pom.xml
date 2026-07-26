@@ -35,6 +35,11 @@
 
 	<artifactId>sliceworkz-eventstore-infra-postgres</artifactId>
 	<packaging>jar</packaging>
+
+	<properties>
+		<!-- client-facing: publish to the configured repository -->
+		<maven.deploy.skip>false</maven.deploy.skip>
+	</properties>
 	
 	<dependencies>
 		<dependency>

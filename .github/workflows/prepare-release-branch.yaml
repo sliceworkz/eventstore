@@ -16,6 +16,7 @@ on:
 jobs:
   version-bump:
     runs-on: ubuntu-latest
+    container: maven:4.0.0-rc-5-eclipse-temurin-21
     permissions:
       contents: write
         
@@ -41,7 +42,7 @@ jobs:
       - name: Extract current version
         id: current_version
         run: |
-          CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout | grep -v '\[')
+          CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout --raw-streams)
           echo "Current version: $CURRENT_VERSION"
           
           # Extract major and minor from version (assumes format X.Y.Z-SNAPSHOT or X.Y.Z)

@@ -40,6 +40,7 @@
 		<maven.maven-enforcer-plugin.version>3.6.3</maven.maven-enforcer-plugin.version>
 		<maven.mycila-license-plugin.version>5.0.0</maven.mycila-license-plugin.version>
 		<maven.maven-central-publishing-plugin.version>0.11.0</maven.maven-central-publishing-plugin.version>
+		<maven.maven-deploy-plugin.version>3.1.3</maven.maven-deploy-plugin.version>
 
 		<maven.compiler.release>21</maven.compiler.release>
 
@@ -125,6 +126,39 @@
 						<excludeArtifact>sliceworkz-eventstore-tests</excludeArtifact>
 						<excludeArtifact>sliceworkz-eventstore-benchmark</excludeArtifact>
 					</excludeArtifacts>
+			    </configuration>
+			    <!--
+			    	Bind 'publish' to the deploy phase EXPLICITLY. central-publishing
+			    	normally injects this binding from its lifecycle participant, but
+			    	Maven 4 does not honour that participant's model mutation, so the
+			    	deploy phase would otherwise run nothing. Declaring it here makes
+			    	the binding part of the POM (which Maven 4 does honour); it also
+			    	makes the participant stand down (see maven-deploy-plugin below).
+			    -->
+			    <executions>
+					<execution>
+						<id>injected-central-publishing</id>
+						<phase>deploy</phase>
+						<goals>
+							<goal>publish</goal>
+						</goals>
+					</execution>
+			    </executions>
+			</plugin>
+
+			<!--
+				Because the explicit 'publish' binding above makes the central
+				lifecycle participant stand down, it no longer clears the
+				maven-deploy-plugin. Disable it here so the Central build does not
+				also try (and fail) to deploy to a distributionManagement repo. The
+				cloudrepo profile re-enables it (honouring per-module maven.deploy.skip).
+			-->
+			<plugin>
+			    <groupId>org.apache.maven.plugins</groupId>
+			    <artifactId>maven-deploy-plugin</artifactId>
+			    <version>${maven.maven-deploy-plugin.version}</version>
+			    <configuration>
+					<skip>true</skip>
 			    </configuration>
 			</plugin>
 
@@ -242,6 +276,18 @@
 								</goals>
 							</execution>
 						</executions>
+					</plugin>
+					<!--
+						Re-enable maven-deploy-plugin (the base build disables it for the
+						Central path). Honour the per-module maven.deploy.skip so only the
+						client-facing modules are deployed to cloudrepo.
+					-->
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-deploy-plugin</artifactId>
+						<configuration>
+							<skip>${maven.deploy.skip}</skip>
+						</configuration>
 					</plugin>
 				</plugins>
 			</build>

@@ -139,6 +139,20 @@
 			    <configuration>
 					<publishingServerId>central</publishingServerId>
 					<deploymentName>eventstore-${project.version}</deploymentName>
+					<!--
+						central-publishing bundles the whole reactor and does NOT honour
+						maven.deploy.skip, so the build constructs (aggregator, parent-pom)
+						and non-client modules (examples, tests, benchmark) must be excluded
+						explicitly here to publish only the client-facing set to Central.
+					-->
+					<!-- matched against each artifact's artifactId (exact) -->
+					<excludeArtifacts>
+						<excludeArtifact>sliceworkz-eventstore</excludeArtifact>
+						<excludeArtifact>sliceworkz-eventstore-parent-pom</excludeArtifact>
+						<excludeArtifact>sliceworkz-eventstore-examples</excludeArtifact>
+						<excludeArtifact>sliceworkz-eventstore-tests</excludeArtifact>
+						<excludeArtifact>sliceworkz-eventstore-benchmark</excludeArtifact>
+					</excludeArtifacts>
 			    </configuration>
 			</plugin>
 

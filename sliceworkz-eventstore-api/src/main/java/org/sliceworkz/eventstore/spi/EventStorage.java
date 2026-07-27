@@ -536,7 +536,7 @@ public interface EventStorage {
 		 * @see StoredEvent
 		 */
 		public StoredEvent positionAt ( EventReference reference, LocalDateTime timestamp) {
-			return new StoredEvent(stream, type, reference, immutableData, erasableData, tags, timestamp);
+			return new StoredEvent(stream, type, reference, immutableData, erasableData, tags, timestamp, idempotencyKey);
 		}
 	}
 
@@ -563,11 +563,31 @@ public interface EventStorage {
 	 * @param erasableData serialized event data that may be erased for privacy compliance
 	 * @param tags key-value pairs for dynamic event retrieval and consistency boundaries
 	 * @param timestamp the moment this event was stored, always in UTC
+	 * @param idempotencyKey the idempotency key the event was appended with, or {@code null} if none;
+	 *                       scoped to the event stream (context and purpose)
 	 * @see EventToStore
 	 * @see EventReference
 	 * @see #query(EventQuery, Optional, EventReference, Limit, QueryDirection)
 	 */
-	public record StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String immutableData, String erasableData, Tags tags, LocalDateTime timestamp ) {
+	public record StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String immutableData, String erasableData, Tags tags, LocalDateTime timestamp, String idempotencyKey ) {
+
+		/**
+		 * Convenience constructor for stored events without an idempotency key.
+		 * <p>
+		 * Delegates to the canonical constructor with a {@code null} idempotency key. Retained so that
+		 * callers that never dealt with idempotency keys keep compiling unchanged.
+		 *
+		 * @param stream the event stream this event belongs to
+		 * @param type the event type identifying the kind of event
+		 * @param reference the unique reference (ID and position) of this event
+		 * @param immutableData serialized event data that must be retained permanently
+		 * @param erasableData serialized event data that may be erased for privacy compliance
+		 * @param tags key-value pairs for dynamic event retrieval and consistency boundaries
+		 * @param timestamp the moment this event was stored, always in UTC
+		 */
+		public StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String immutableData, String erasableData, Tags tags, LocalDateTime timestamp ) {
+			this(stream, type, reference, immutableData, erasableData, tags, timestamp, null);
+		}
 
 	}
 

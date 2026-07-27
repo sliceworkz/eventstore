@@ -39,8 +39,9 @@ CREATE TABLE IF NOT EXISTS PREFIX_events (
       -- Event identification
       event_id UUID NOT NULL UNIQUE,
 
-      -- Idempotency key
-      idempotency_key TEXT UNIQUE,
+      -- Idempotency key (uniqueness is scoped per stream via idx_events_stream_idempotency below,
+      -- not globally, so the same key on different streams does not collide)
+      idempotency_key TEXT,
 
       -- Stream identification
       stream_context TEXT NOT NULL,
@@ -99,6 +100,17 @@ CREATE TABLE IF NOT EXISTS PREFIX_events (
 	    event_tx,
 	    event_position
 	);
+
+	-- Idempotency: uniqueness of the idempotency key is scoped to the logical event stream
+	-- (context + purpose), NOT the whole table, so the same key used on two unrelated streams
+	-- does not collide and dedup behaviour does not depend on how storage instances / prefixes
+	-- are wired at runtime. Partial (keyless events - the majority - are not indexed) and named
+	-- so it can be validated and so its name surfaces in the unique-violation error.
+	CREATE UNIQUE INDEX IF NOT EXISTS PREFIX_idx_events_stream_idempotency ON PREFIX_events (
+	    stream_context,
+	    stream_purpose,
+	    idempotency_key
+	) WHERE idempotency_key IS NOT NULL;
 
 
 ---- EVENT APPEND NOTIFICATIONS

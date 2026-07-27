@@ -102,7 +102,10 @@ public class InMemoryEventStorageImpl implements EventStorage {
 
 	private String name;
 	private List<StoredEvent> eventlog = new CopyOnWriteArrayList<>();
-	private Set<String> idempotencyKeys = new HashSet<>();
+	// Idempotency dedup is scoped to the logical event stream (context + purpose), matching the
+	// Postgres backend's per-stream partial unique index, so the same key on two different streams
+	// does not collide and behaviour does not depend on how storage instances are wired at runtime.
+	private Set<IdempotencyScope> idempotencyKeys = new HashSet<>();
 	private List<WeakReference<EventStoreListener>> listeners = new CopyOnWriteArrayList<>();
 	private Map<String,Bookmark> bookmarks = new HashMap<>();
 	private JsonMapper jsonMapper;
@@ -312,10 +315,11 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	private StoredEvent addEventToEventLog ( EventToStore event, long tx ) {
 
 		if ( event.idempotencyKey() != null ) {
-			if ( idempotencyKeys.contains(event.idempotencyKey())) {
+			IdempotencyScope scope = new IdempotencyScope(event.stream(), event.idempotencyKey());
+			if ( idempotencyKeys.contains(scope)) {
 				return null;
 			}
-			idempotencyKeys.add(event.idempotencyKey());
+			idempotencyKeys.add(scope);
 		}
 
 		long position = eventlog.size() + 1;
@@ -409,6 +413,13 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	@Override
 	public String name() {
 		return name;
+	}
+
+	/**
+	 * Composite dedup key pairing the logical event stream with an idempotency key, so idempotency
+	 * is scoped per stream (context + purpose) rather than globally across the storage instance.
+	 */
+	private record IdempotencyScope ( EventStreamId stream, String idempotencyKey ) {
 	}
 
 }

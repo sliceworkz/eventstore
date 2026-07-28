@@ -74,6 +74,41 @@ class JsonEventCodecTest {
 	}
 
 	@Test
+	void roundTripsTheIdempotencyKey ( ) {
+		StoredEvent event = new StoredEvent(
+				EventStreamId.forContext("customer").withPurpose("123"),
+				EventType.ofType("CustomerRegistered"),
+				EventReference.of(EventId.of("id-1"), 1L, 1L, 0),
+				"{\"name\":\"John\"}",
+				null,
+				new Tags(Set.of(Tag.of("customer", "123"))),
+				LocalDateTime.parse("2026-04-19T12:34:56.789"),
+				"idem-key-1");
+
+		String json = codec.write(event);
+		StoredEvent restored = codec.read(json);
+
+		assertEquals("idem-key-1", restored.idempotencyKey());
+		assertEquals(event, restored);
+	}
+
+	@Test
+	void preservesNullIdempotencyKey ( ) {
+		StoredEvent event = new StoredEvent(
+				EventStreamId.forContext("ctx").withPurpose("p"),
+				EventType.ofType("NoKey"),
+				EventReference.of(EventId.of("id-3"), 3L, 3L, 0),
+				"{}",
+				null,
+				new Tags(Set.of()),
+				LocalDateTime.parse("2026-04-19T00:00:00"));
+
+		StoredEvent restored = codec.read(codec.write(event));
+
+		assertNull(restored.idempotencyKey());
+	}
+
+	@Test
 	void preservesNullImmutableAndErasableData ( ) {
 		StoredEvent event = new StoredEvent(
 				EventStreamId.forContext("ctx").withPurpose("p"),

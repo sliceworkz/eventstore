@@ -297,6 +297,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			checkIndex(readConnection, prefix + "idx_events_tags");
 			checkIndex(readConnection, prefix + "idx_events_stream_tags");
 			checkIndex(readConnection, prefix + "idx_events_stream_position");
+			checkIndex(readConnection, prefix + "idx_events_stream_idempotency");
 			checkIndex(readConnection, prefix + "idx_bookmarks_event_id");
 
 			LOGGER.info("Database schema validation completed successfully for prefix '{}'", prefix);
@@ -319,6 +320,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		checkColumn(connection, tableName, "event_position", "bigserial", false);
 		checkColumn(connection, tableName, "event_tx", "xid8", false);
 		checkColumn(connection, tableName, "event_id", "uuid", false);
+		checkColumn(connection, tableName, "idempotency_key", "text", true);
 		checkColumn(connection, tableName, "stream_context", "text", false);
 		checkColumn(connection, tableName, "stream_purpose", "text", false);
 		checkColumn(connection, tableName, "event_type", "text", false);
@@ -554,7 +556,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		StringBuilder sqlBuilder = new StringBuilder();
 		sqlBuilder.append(
 			"""
-				SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags
+				SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags, idempotency_key
 				FROM %sevents
 				WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 			""".formatted(prefix)
@@ -855,8 +857,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 						e.addSuppressed(rollbackEx);
 					}
 
-					// idempotency issue
-					if ( e.getMessage().contains("idempotency_key")) {
+					// idempotency conflict: a duplicate (stream, idempotency_key) is silently ignored.
+					// Detect via SQLState 23505 (unique_violation) on the stream-scoped idempotency index,
+					// rather than a substring match on the whole message: this survives the constraint/index
+					// rename and keeps an event_id uniqueness collision from being misrouted into this branch.
+					if ( "23505".equals(e.getSQLState()) && e.getMessage() != null && e.getMessage().contains("idempotency") ) {
 						return Collections.emptyList();
 					} else {
 						throw new EventStorageException("SQLException during append", e);
@@ -876,8 +881,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 	public Optional<StoredEvent> getEventById(EventId eventId) {
 		if ( eventId != null ) {
 			String sql = """
-				SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags 
-				FROM %sevents 
+				SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags, idempotency_key
+				FROM %sevents
 				WHERE event_id = ?::uuid
 			""".formatted(prefix);
 			
@@ -915,6 +920,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		if (rs.getArray("event_tags") != null) {
 			tagsArray = (String[]) rs.getArray("event_tags").getArray();
 		}
+		String idempotencyKey = rs.getString("idempotency_key");
 
 		// Create EventReference
 		EventId eventId = new EventId(eventIdValue);
@@ -927,7 +933,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		// Create Tags from tag array
 		Tags tags = Tags.parse(tagsArray);
 
-		return new StoredEvent(streamId, EventType.ofType(eventTypeName), eventReference, eventDataJson, eventErasableDataJson, tags, timestamp.toInstant().atOffset(ZoneOffset.UTC).toLocalDateTime());
+		return new StoredEvent(streamId, EventType.ofType(eventTypeName), eventReference, eventDataJson, eventErasableDataJson, tags, timestamp.toInstant().atOffset(ZoneOffset.UTC).toLocalDateTime(), idempotencyKey);
 	}
 
 	

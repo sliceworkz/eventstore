@@ -50,7 +50,8 @@ import tools.jackson.databind.node.ObjectNode;
  *   "immutableData": { ... } | null,
  *   "erasableData":  { ... } | null,
  *   "tags":          [ { "key": ..., "value": ... }, ... ],
- *   "timestamp":     "ISO-8601 LocalDateTime"
+ *   "timestamp":     "ISO-8601 LocalDateTime",
+ *   "idempotencyKey": "..." | null
  * }
  * </pre>
  */
@@ -125,6 +126,12 @@ public final class JsonEventCodec {
 
 			node.put("timestamp", event.timestamp().toString());
 
+			if ( event.idempotencyKey() != null ) {
+				node.put("idempotencyKey", event.idempotencyKey());
+			} else {
+				node.putNull("idempotencyKey");
+			}
+
 			return objectMapper.writeValueAsString(node);
 		} catch ( JacksonException e ) {
 			throw new JsonCodecException("failed to serialize event", e);
@@ -170,7 +177,11 @@ public final class JsonEventCodec {
 
 			LocalDateTime timestamp = LocalDateTime.parse(node.get("timestamp").asText());
 
-			return new StoredEvent(stream, type, reference, immutableData, erasableData, tags, timestamp);
+			String idempotencyKey = node.has("idempotencyKey") && !node.get("idempotencyKey").isNull()
+					? node.get("idempotencyKey").asText()
+					: null;
+
+			return new StoredEvent(stream, type, reference, immutableData, erasableData, tags, timestamp, idempotencyKey);
 		} catch ( JacksonException e ) {
 			throw new JsonCodecException("failed to deserialize event", e);
 		}

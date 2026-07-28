@@ -65,6 +65,7 @@ import org.sliceworkz.eventstore.mockdomain.MockDomainEvent.SecondDomainEvent;
 import org.sliceworkz.eventstore.mockdomain.OtherMockDomainEvent;
 import org.sliceworkz.eventstore.mockdomain.OtherMockDomainEvent.AnotherDomainEvent;
 import org.sliceworkz.eventstore.query.EventQuery;
+import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 
 class EventStreamTest {
@@ -344,6 +345,53 @@ class EventStreamTest {
 				es.append(AppendCriteria.none(), List.of(e1, e2))
 			);
 			assertEquals("cannot append multiple events in combination with an idempotency key", iae.getMessage());
+		}
+
+		@Test
+		void testIdempotencyIsScopedPerStream ( ) {
+
+			// The same idempotency key used on two *different* streams must NOT collide: dedup is
+			// scoped to the logical stream (context + purpose), not the storage instance, so the
+			// mechanism does not leak across streams/stores that happen to share a storage.
+			EventStreamId otherStreamId = EventStreamId.forContext("app-other").withPurpose("default");
+			EventStream<MockDomainEvent> otherStream = eventStore().getEventStream(otherStreamId, MockDomainEvent.class);
+
+			List<Event<MockDomainEvent>> first = es.append(AppendCriteria.none(),
+				Collections.singletonList(Event.of(new FirstDomainEvent("1"), Tags.none()).withIdempotencyKey("shared-key")));
+			assertEquals(1, first.size());
+
+			// same key, different stream -> still appended (no cross-stream leak)
+			List<Event<MockDomainEvent>> second = otherStream.append(AppendCriteria.none(),
+				Collections.singletonList(Event.of(new FirstDomainEvent("2"), Tags.none()).withIdempotencyKey("shared-key")));
+			assertEquals(1, second.size());
+
+			// same key, same stream -> still deduped (silently ignored)
+			List<Event<MockDomainEvent>> repeat = es.append(AppendCriteria.none(),
+				Collections.singletonList(Event.of(new FirstDomainEvent("3"), Tags.none()).withIdempotencyKey("shared-key")));
+			assertEquals(0, repeat.size());
+		}
+
+		@Test
+		void testIdempotencyKeyIsReadableFromStoredEvent ( ) {
+
+			// The idempotency key round-trips onto StoredEvent so the SPI layer can read it back.
+			es.append(AppendCriteria.none(),
+				Collections.singletonList(Event.of(new FirstDomainEvent("1"), Tags.none()).withIdempotencyKey("rt-key")));
+			es.append(AppendCriteria.none(),
+				Collections.singletonList(Event.of(new SecondDomainEvent("2"), Tags.none()))); // no key
+
+			List<EventStorage.StoredEvent> stored = eventStorage
+				.query(EventQuery.matchAll(), Optional.of(stream), null, Limit.none())
+				.toList();
+
+			assertEquals(2, stored.size());
+			assertEquals("rt-key", stored.get(0).idempotencyKey());
+			assertNull(stored.get(1).idempotencyKey());
+
+			// also readable via getEventById
+			Optional<EventStorage.StoredEvent> byId = eventStorage.getEventById(stored.get(0).reference().id());
+			assertTrue(byId.isPresent());
+			assertEquals("rt-key", byId.get().idempotencyKey());
 		}
 
 

@@ -225,6 +225,50 @@ public interface EventStorage {
 	List<StoredEvent> append ( AppendCriteria appendCriteria, Optional<EventStreamId> stream, List<EventToStore> events );
 
 	/**
+	 * Imports events into storage, preserving their identity, timestamp and idempotency key.
+	 * <p>
+	 * This is the write path used to move events between storage backends. It is deliberately <em>not</em>
+	 * {@link #append(AppendCriteria, Optional, List)}: an import performs no optimistic locking, accepts a
+	 * caller-supplied {@link EventId} and timestamp, and may span multiple streams in a single call.
+	 * <p>
+	 * What is preserved and what is not:
+	 * <ul>
+	 *   <li><b>Preserved</b> — event id, timestamp, idempotency key, type, tags, immutable and erasable payloads</li>
+	 *   <li><b>Reassigned</b> — position and transaction, which are always allocated by this storage. An import
+	 *       reproduces the source <em>order</em>, never the source ordering numbers. Events are inserted in
+	 *       list order.</li>
+	 * </ul>
+	 * <p>
+	 * Conflict handling depends on {@code mode}. In either mode an idempotency key already used by a different
+	 * event on the same stream is fatal — skipping it would silently discard an event the target has never seen.
+	 * <p>
+	 * <b>Atomicity:</b> a single call is all-or-nothing. A caller importing more events than fit in one call
+	 * gets atomicity per call only; a failure part-way through a sequence of calls leaves the earlier calls
+	 * committed. {@link ImportMode#SKIP_EXISTING_ID} is the supported way to resume such an import.
+	 * <p>
+	 * <b>Concurrency:</b> implementations check the target and insert without holding a lock across both steps.
+	 * Two imports running concurrently against one storage can produce spurious conflicts; run one at a time.
+	 * <p>
+	 * Implementations must reject the batch with {@link IllegalArgumentException} if it contains two events
+	 * sharing an {@link EventId}, and with {@link EventStorageException} if a payload is not valid JSON.
+	 * Listeners are notified of imported events exactly as they are for appended ones.
+	 *
+	 * @param events the events to import, in the order they should be inserted (must not be null)
+	 * @param mode how to treat an event whose id already exists in this storage (must not be null)
+	 * @return the imported events with their preserved ids and newly assigned references; under
+	 *         {@link ImportMode#SKIP_EXISTING_ID} this excludes skipped events, so the caller can derive
+	 *         what was skipped by difference
+	 * @throws EventImportConflictException if the import conflicts with what the target already holds
+	 * @throws EventStorageException if an error occurs during the import
+	 * @throws UnsupportedOperationException if this storage implementation does not support importing
+	 * @see EventToImport
+	 * @see ImportMode
+	 */
+	default List<StoredEvent> importEvents ( List<EventToImport> events, ImportMode mode ) {
+		throw new UnsupportedOperationException("%s does not support importing events".formatted(name()));
+	}
+
+	/**
 	 * Retrieves a specific event by its unique identifier.
 	 * <p>
 	 * This method provides direct access to an event using its {@link EventId}.
@@ -277,6 +321,38 @@ public interface EventStorage {
 		 * Useful for retrieving recent events or working backwards through history.
 		 */
 		BACKWARD
+	}
+
+	/**
+	 * Controls how {@link #importEvents(List, ImportMode)} treats an event whose identifier already
+	 * exists in the target storage.
+	 * <p>
+	 * Neither mode affects idempotency key conflicts: a key already used by a different event on the same
+	 * stream is always fatal.
+	 *
+	 * @see #importEvents(List, ImportMode)
+	 */
+	enum ImportMode {
+
+		/**
+		 * Abort the batch if any event's identifier already exists in the target.
+		 * <p>
+		 * The strict default. Appropriate when the target is known to be free of the events being imported,
+		 * and the safer choice when an unexpected overlap should stop the operation rather than be absorbed.
+		 * Note that a conflict rolls back only the batch that hit it: batches already committed remain.
+		 */
+		FAIL_ON_EXISTING_ID,
+
+		/**
+		 * Skip any event whose identifier already exists in the target, and import the rest.
+		 * <p>
+		 * The resume mode: re-running an interrupted import passes over what already landed and continues
+		 * with what did not. Matching is on identifier alone — the payload already in the target is neither
+		 * read nor compared, so this mode assumes an id identifies the same event. It offers no protection
+		 * against a target whose events were altered after being imported, and it is meaningless if the
+		 * import mints new identifiers, since nothing stable remains to match on.
+		 */
+		SKIP_EXISTING_ID
 	}
 
 	/**

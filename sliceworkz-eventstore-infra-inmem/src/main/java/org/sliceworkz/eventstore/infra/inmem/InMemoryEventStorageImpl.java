@@ -40,8 +40,10 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
+import org.sliceworkz.eventstore.spi.EventImportConflictException;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageException;
+import org.sliceworkz.eventstore.spi.EventToImport;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
@@ -349,6 +351,92 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		eventlog.add(storedEvent);
 		eventsById.put(reference.id(), storedEvent);
 		return storedEvent;
+	}
+
+	/*
+	 *  Synchronized method, so the conflict check and the insertion are one atomic step, and so a rejected
+	 *  batch leaves the event log untouched.
+	 */
+	@Override
+	public synchronized List<StoredEvent> importEvents ( List<EventToImport> events, ImportMode mode ) {
+		if ( events == null ) {
+			throw new IllegalArgumentException("events to import must not be null");
+		}
+		if ( mode == null ) {
+			throw new IllegalArgumentException("import mode must not be null");
+		}
+		if ( events.isEmpty() ) {
+			return Collections.emptyList();
+		}
+
+		// Validate the whole batch before touching any state, so an import either lands completely or not at all
+		Set<EventId> idsInBatch = new HashSet<>();
+		Set<IdempotencyScope> keysInBatch = new HashSet<>();
+		List<EventToImport> toInsert = new ArrayList<>(events.size());
+
+		for ( EventToImport event : events ) {
+
+			if ( !idsInBatch.add(event.id()) ) {
+				throw new IllegalArgumentException("batch to import holds more than one event with id %s".formatted(event.id().value()));
+			}
+
+			verifyImportableJson(event);
+
+			if ( eventsById.containsKey(event.id()) ) {
+				if ( mode == ImportMode.SKIP_EXISTING_ID ) {
+					continue; // already present: skip it, and with it whatever idempotency key it carries
+				}
+				throw EventImportConflictException.duplicateEventId(event.id(), null);
+			}
+
+			if ( event.idempotencyKey() != null ) {
+				IdempotencyScope scope = new IdempotencyScope(event.stream(), event.idempotencyKey());
+				if ( idempotencyKeys.contains(scope) || !keysInBatch.add(scope) ) {
+					throw EventImportConflictException.duplicateIdempotencyKey(event.stream(), event.idempotencyKey(), null);
+				}
+			}
+
+			toInsert.add(event);
+		}
+
+		if ( toInsert.isEmpty() ) {
+			return Collections.emptyList();
+		}
+
+		// One transaction per call, mirroring how a batch of appended events shares a transaction
+		long tx = ++txCounter;
+		List<StoredEvent> imported = new ArrayList<>(toInsert.size());
+		for ( EventToImport event : toInsert ) {
+			// position and tx are assigned here; the id and timestamp travel with the imported event
+			StoredEvent storedEvent = event.positionAt(eventlog.size() + 1, tx);
+			eventlog.add(storedEvent);
+			eventsById.put(storedEvent.reference().id(), storedEvent);
+			if ( event.idempotencyKey() != null ) {
+				idempotencyKeys.add(new IdempotencyScope(event.stream(), event.idempotencyKey()));
+			}
+			imported.add(storedEvent);
+		}
+
+		notifyListenersAbout(imported);
+
+		return imported;
+	}
+
+	/**
+	 * Rejects payloads the Postgres backend would refuse on its {@code ::jsonb} cast, so both backends
+	 * accept exactly the same imports.
+	 */
+	private void verifyImportableJson ( EventToImport event ) {
+		try {
+			if ( jsonMapper.readTree(event.immutableData()).isMissingNode() ) {
+				throw new EventStorageException("event %s to import carries an empty immutable payload".formatted(event.id().value()));
+			}
+			if ( event.erasableData() != null && jsonMapper.readTree(event.erasableData()).isMissingNode() ) {
+				throw new EventStorageException("event %s to import carries an empty erasable payload".formatted(event.id().value()));
+			}
+		} catch (JacksonException e) {
+			throw new EventStorageException("event %s to import does not carry valid JSON".formatted(event.id().value()), e);
+		}
 	}
 
 	@Override

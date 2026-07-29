@@ -41,6 +41,7 @@ import org.sliceworkz.eventstore.serialization.json.JsonBookmarkCodec;
 import org.sliceworkz.eventstore.serialization.json.JsonEventCodec;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageException;
+import org.sliceworkz.eventstore.spi.EventToImport;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
@@ -109,6 +110,16 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 			persistEvent(event);
 		}
 		return stored;
+	}
+
+	@Override
+	public List<StoredEvent> importEvents ( List<EventToImport> events, ImportMode mode ) {
+		// must persist alongside the delegate, otherwise imported events live only until the next restart
+		List<StoredEvent> imported = delegate.importEvents(events, mode);
+		for ( StoredEvent event : imported ) {
+			persistEvent(event);
+		}
+		return imported;
 	}
 
 	@Override

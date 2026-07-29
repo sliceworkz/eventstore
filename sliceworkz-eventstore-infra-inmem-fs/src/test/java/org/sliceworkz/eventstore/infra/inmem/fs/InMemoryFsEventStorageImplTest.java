@@ -24,7 +24,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -32,10 +35,15 @@ import org.junit.jupiter.api.io.TempDir;
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.events.Event;
+import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
+import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.spi.EventStorage;
+import org.sliceworkz.eventstore.spi.EventStorage.ImportMode;
+import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
+import org.sliceworkz.eventstore.spi.EventToImport;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -238,6 +246,69 @@ public class InMemoryFsEventStorageImplTest {
 		TestEvent data = events.get(0).data();
 		assertTrue(data instanceof TestEvent.CustomerRegistered);
 		assertEquals("John Doe", ((TestEvent.CustomerRegistered) data).name());
+	}
+
+	@Test
+	void testIdempotencyKeyIsStillKnownAfterAReload ( @TempDir Path tempDir ) {
+		EventStreamId streamId = EventStreamId.forContext("ctx").withPurpose("p");
+
+		// First instance: append an event carrying an idempotency key
+		{
+			EventStore store = InMemoryFsEventStorage.newBuilder()
+					.directory(tempDir)
+					.name("idempotency-test")
+					.buildStore();
+
+			EventStream<TestEvent> stream = store.getEventStream(streamId, TestEvent.class);
+			List<Event<TestEvent>> appended = stream.append(AppendCriteria.none(),
+					Collections.singletonList(Event.of(new TestEvent.CustomerRegistered("John"), Tags.none()).withIdempotencyKey("k-1")));
+			assertEquals(1, appended.size());
+		}
+
+		// Second instance: the reloaded store restores its event log from disk, and must restore what it
+		// knows about idempotency along with it — otherwise a retry after a restart writes a duplicate
+		EventStore store2 = InMemoryFsEventStorage.newBuilder()
+				.directory(tempDir)
+				.name("idempotency-test-2")
+				.buildStore();
+
+		EventStream<TestEvent> stream2 = store2.getEventStream(streamId, TestEvent.class);
+		List<Event<TestEvent>> duplicate = stream2.append(AppendCriteria.none(),
+				Collections.singletonList(Event.of(new TestEvent.CustomerRegistered("John"), Tags.none()).withIdempotencyKey("k-1")));
+
+		assertTrue(duplicate.isEmpty(), "an idempotency key used before the reload must still deduplicate");
+		assertEquals(1, stream2.query(EventQuery.matchAll()).toList().size());
+	}
+
+	@Test
+	void testImportedEventsArePersisted ( @TempDir Path tempDir ) {
+		EventStreamId streamId = EventStreamId.forContext("ctx").withPurpose("p");
+		EventId id = EventId.create();
+		LocalDateTime timestamp = LocalDateTime.of(2020, 1, 2, 3, 4, 5);
+
+		// First instance: import an event straight into storage
+		{
+			EventStorage storage = InMemoryFsEventStorage.newBuilder()
+					.directory(tempDir)
+					.name("import-test")
+					.build();
+
+			storage.importEvents(
+					List.of(new EventToImport(streamId, EventType.ofType("CustomerRegistered"), id,
+							"{\"name\":\"John\"}", null, Tags.of("customer", "42"), timestamp, "imported-key")),
+					ImportMode.FAIL_ON_EXISTING_ID);
+		}
+
+		// Second instance: imports must reach disk like appends do, not live only in memory
+		EventStorage reloaded = InMemoryFsEventStorage.newBuilder()
+				.directory(tempDir)
+				.name("import-test-2")
+				.build();
+
+		Optional<StoredEvent> found = reloaded.getEventById(id);
+		assertTrue(found.isPresent(), "an imported event must survive a restart");
+		assertEquals(timestamp, found.get().timestamp());
+		assertEquals("imported-key", found.get().idempotencyKey());
 	}
 
 }

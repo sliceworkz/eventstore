@@ -40,8 +40,10 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
+import org.sliceworkz.eventstore.spi.EventImportConflictException;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageException;
+import org.sliceworkz.eventstore.spi.EventToImport;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
@@ -102,6 +104,9 @@ public class InMemoryEventStorageImpl implements EventStorage {
 
 	private String name;
 	private List<StoredEvent> eventlog = new CopyOnWriteArrayList<>();
+	// Lookup index by event id, kept in step with the event log. Backs getEventById in constant time
+	// rather than a linear scan, which matters for imports resolving one id per event.
+	private Map<EventId,StoredEvent> eventsById = new HashMap<>();
 	// Idempotency dedup is scoped to the logical event stream (context + purpose), matching the
 	// Postgres backend's per-stream partial unique index, so the same key on two different streams
 	// does not collide and behaviour does not depend on how storage instances are wired at runtime.
@@ -153,6 +158,20 @@ public class InMemoryEventStorageImpl implements EventStorage {
 				.mapToLong(e -> e.reference().tx())
 				.max()
 				.orElse(0);
+
+		// Seed the derived state from the preloaded events. Without this the idempotency keys of
+		// preloaded events are unknown to the store, so a reloaded store (see the filesystem-backed
+		// storage, which restores its whole event log this way) would append a duplicate for a key it
+		// had already seen instead of deduplicating it.
+		for ( StoredEvent event : initialEvents ) {
+			EventId id = event.reference().id();
+			if ( eventsById.putIfAbsent(id, event) != null ) {
+				throw new IllegalArgumentException("initial events contain more than one event with id %s".formatted(id.value()));
+			}
+			if ( event.idempotencyKey() != null ) {
+				idempotencyKeys.add(new IdempotencyScope(event.stream(), event.idempotencyKey()));
+			}
+		}
 	}
 
 	/**
@@ -294,9 +313,15 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	private List<StoredEvent> addAndNotifyListeners ( List<EventToStore> events ) {
 		long tx = ++txCounter;
 		var addedEvents = events.stream().map(e -> addEventToEventLog(e, tx)).filter(e->e!=null).toList();
-		
-		// notify each Listener about the appends, but if multiple Events were appended, only notify about the last one
-		addedEvents.stream()
+
+		notifyListenersAbout(addedEvents);
+
+		return addedEvents;
+	}
+
+	private void notifyListenersAbout ( List<StoredEvent> storedEvents ) {
+		// notify each Listener about the writes, but if multiple Events landed in one stream, only notify about the last one
+		storedEvents.stream()
 			    .collect(Collectors.toMap(
 			        StoredEvent::stream,
 			        event -> new AppendsToEventStoreNotification(event.stream(), event.reference()),
@@ -308,8 +333,6 @@ public class InMemoryEventStorageImpl implements EventStorage {
 			    		listener.get().notify(notification);
 			    	};
 			    }));
-		
-		return addedEvents;
 	}
 	
 	private StoredEvent addEventToEventLog ( EventToStore event, long tx ) {
@@ -326,12 +349,99 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		EventReference reference = EventReference.create(position, tx);
 		StoredEvent storedEvent = event.positionAt(reference, LocalDateTime.now(ZoneOffset.UTC));
 		eventlog.add(storedEvent);
+		eventsById.put(reference.id(), storedEvent);
 		return storedEvent;
 	}
 
+	/*
+	 *  Synchronized method, so the conflict check and the insertion are one atomic step, and so a rejected
+	 *  batch leaves the event log untouched.
+	 */
 	@Override
-	public Optional<StoredEvent> getEventById(EventId eventId) {
-		return eventlog.stream().filter(e->e.reference().id().equals(eventId)).findFirst();
+	public synchronized List<StoredEvent> importEvents ( List<EventToImport> events, ImportMode mode ) {
+		if ( events == null ) {
+			throw new IllegalArgumentException("events to import must not be null");
+		}
+		if ( mode == null ) {
+			throw new IllegalArgumentException("import mode must not be null");
+		}
+		if ( events.isEmpty() ) {
+			return Collections.emptyList();
+		}
+
+		// Validate the whole batch before touching any state, so an import either lands completely or not at all
+		Set<EventId> idsInBatch = new HashSet<>();
+		Set<IdempotencyScope> keysInBatch = new HashSet<>();
+		List<EventToImport> toInsert = new ArrayList<>(events.size());
+
+		for ( EventToImport event : events ) {
+
+			if ( !idsInBatch.add(event.id()) ) {
+				throw new IllegalArgumentException("batch to import holds more than one event with id %s".formatted(event.id().value()));
+			}
+
+			verifyImportableJson(event);
+
+			if ( eventsById.containsKey(event.id()) ) {
+				if ( mode == ImportMode.SKIP_EXISTING_ID ) {
+					continue; // already present: skip it, and with it whatever idempotency key it carries
+				}
+				throw EventImportConflictException.duplicateEventId(event.id(), null);
+			}
+
+			if ( event.idempotencyKey() != null ) {
+				IdempotencyScope scope = new IdempotencyScope(event.stream(), event.idempotencyKey());
+				if ( idempotencyKeys.contains(scope) || !keysInBatch.add(scope) ) {
+					throw EventImportConflictException.duplicateIdempotencyKey(event.stream(), event.idempotencyKey(), null);
+				}
+			}
+
+			toInsert.add(event);
+		}
+
+		if ( toInsert.isEmpty() ) {
+			return Collections.emptyList();
+		}
+
+		// One transaction per call, mirroring how a batch of appended events shares a transaction
+		long tx = ++txCounter;
+		List<StoredEvent> imported = new ArrayList<>(toInsert.size());
+		for ( EventToImport event : toInsert ) {
+			// position and tx are assigned here; the id and timestamp travel with the imported event
+			StoredEvent storedEvent = event.positionAt(eventlog.size() + 1, tx);
+			eventlog.add(storedEvent);
+			eventsById.put(storedEvent.reference().id(), storedEvent);
+			if ( event.idempotencyKey() != null ) {
+				idempotencyKeys.add(new IdempotencyScope(event.stream(), event.idempotencyKey()));
+			}
+			imported.add(storedEvent);
+		}
+
+		notifyListenersAbout(imported);
+
+		return imported;
+	}
+
+	/**
+	 * Rejects payloads the Postgres backend would refuse on its {@code ::jsonb} cast, so both backends
+	 * accept exactly the same imports.
+	 */
+	private void verifyImportableJson ( EventToImport event ) {
+		try {
+			if ( jsonMapper.readTree(event.immutableData()).isMissingNode() ) {
+				throw new EventStorageException("event %s to import carries an empty immutable payload".formatted(event.id().value()));
+			}
+			if ( event.erasableData() != null && jsonMapper.readTree(event.erasableData()).isMissingNode() ) {
+				throw new EventStorageException("event %s to import carries an empty erasable payload".formatted(event.id().value()));
+			}
+		} catch (JacksonException e) {
+			throw new EventStorageException("event %s to import does not carry valid JSON".formatted(event.id().value()), e);
+		}
+	}
+
+	@Override
+	public synchronized Optional<StoredEvent> getEventById(EventId eventId) {
+		return Optional.ofNullable(eventsById.get(eventId));
 	}
 
 	@Override

@@ -29,14 +29,23 @@ import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.TimeZone;
+import java.util.UUID;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -47,6 +56,7 @@ import javax.sql.DataSource;
 
 import org.postgresql.PGConnection;
 import org.postgresql.PGNotification;
+import org.postgresql.util.PSQLException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.sliceworkz.eventstore.events.Bookmark;
@@ -59,8 +69,10 @@ import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventFilterItem;
 import org.sliceworkz.eventstore.query.Limit;
+import org.sliceworkz.eventstore.spi.EventImportConflictException;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageException;
+import org.sliceworkz.eventstore.spi.EventToImport;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
@@ -875,6 +887,224 @@ public class PostgresEventStorageImpl implements EventStorage {
 		
 		return storedEvents;
 			
+	}
+
+	/**
+	 * Number of events bound into a single INSERT statement.
+	 * <p>
+	 * Bounded by the wire protocol: each row binds 9 parameters against a hard ceiling of 65535 per
+	 * statement, so roughly 7200 rows would fit. 5000 leaves headroom. This is a <em>statement</em>
+	 * boundary only — every statement of one {@code importEvents} call runs in the same transaction,
+	 * so the call stays all-or-nothing however many chunks it takes.
+	 */
+	private static final int IMPORT_CHUNK_SIZE = 5000;
+
+	/** Matches the parenthesised value list Postgres reports in the DETAIL of a unique violation. */
+	private static final Pattern CONFLICT_DETAIL_VALUES = Pattern.compile("\\)=\\((.*)\\) already exists", Pattern.DOTALL);
+
+	@Override
+	public List<StoredEvent> importEvents ( List<EventToImport> events, ImportMode mode ) {
+		if ( events == null ) {
+			throw new IllegalArgumentException("events to import must not be null");
+		}
+		if ( mode == null ) {
+			throw new IllegalArgumentException("import mode must not be null");
+		}
+		if ( events.isEmpty() ) {
+			return Collections.emptyList();
+		}
+
+		validateImportBatch(events);
+
+		List<StoredEvent> imported = new ArrayList<>(events.size());
+
+		try ( Connection writeConnection = dataSource.getConnection() ) {
+			writeConnection.setAutoCommit(false);
+			try {
+				// Statement chunking is a wire-protocol concern; the transaction spans all chunks so the
+				// whole call commits or rolls back as one unit.
+				for ( int from = 0; from < events.size(); from += IMPORT_CHUNK_SIZE ) {
+					List<EventToImport> chunk = events.subList(from, Math.min(from + IMPORT_CHUNK_SIZE, events.size()));
+					imported.addAll(importChunk(writeConnection, chunk, mode));
+				}
+				writeConnection.commit();
+			} catch (SQLException e) {
+				try {
+					writeConnection.rollback();
+				} catch (SQLException rollbackEx) {
+					e.addSuppressed(rollbackEx);
+				}
+				throw classifyImportFailure(e, events);
+			} catch (RuntimeException e) {
+				try {
+					writeConnection.rollback();
+				} catch (SQLException rollbackEx) {
+					e.addSuppressed(rollbackEx);
+				}
+				throw e;
+			}
+		} catch (SQLException e) {
+			throw new EventStorageException("SQLException during import", e);
+		}
+
+		return imported;
+	}
+
+	/**
+	 * Rejects a batch that cannot possibly be inserted, before opening a connection: duplicate identifiers
+	 * within the batch (which the unique index would reject in a way that varies by mode), and identifiers
+	 * that are not UUIDs (which would fail on the {@code ::uuid} cast with an opaque message).
+	 */
+	private void validateImportBatch ( List<EventToImport> events ) {
+		Set<EventId> seen = new HashSet<>();
+		for ( EventToImport event : events ) {
+			if ( !seen.add(event.id()) ) {
+				throw new IllegalArgumentException("batch to import holds more than one event with id %s".formatted(event.id().value()));
+			}
+			try {
+				UUID.fromString(event.id().value());
+			} catch (IllegalArgumentException e) {
+				throw new EventStorageException("event id '%s' cannot be imported: this storage requires event ids to be UUIDs".formatted(event.id().value()), e);
+			}
+		}
+	}
+
+	private List<StoredEvent> importChunk ( Connection writeConnection, List<EventToImport> chunk, ImportMode mode ) throws SQLException {
+
+		StringBuilder sqlBuilder = new StringBuilder();
+		sqlBuilder.append("INSERT INTO %sevents (event_id, idempotency_key, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags) VALUES ".formatted(prefix));
+		for ( int i = 0; i < chunk.size(); i++ ) {
+			if ( i > 0 ) {
+				sqlBuilder.append(", ");
+			}
+			sqlBuilder.append("(?::uuid, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?)");
+		}
+
+		if ( mode == ImportMode.SKIP_EXISTING_ID ) {
+			// Infer on event_id specifically rather than a bare DO NOTHING: a violation of the stream-scoped
+			// idempotency index must still raise, since skipping it would drop an event the target never saw.
+			sqlBuilder.append(" ON CONFLICT (event_id) DO NOTHING");
+		}
+
+		sqlBuilder.append(" RETURNING event_position, event_tx::text, event_id::text");
+
+		List<Object> parameters = new ArrayList<>(chunk.size() * 9);
+		Map<String,EventToImport> byId = new HashMap<>(chunk.size());
+
+		for ( EventToImport event : chunk ) {
+			byId.put(normalizedId(event.id()), event);
+
+			parameters.add(event.id().value());
+			parameters.add(event.idempotencyKey());
+			parameters.add(event.stream().context());
+			parameters.add(event.stream().purpose());
+			parameters.add(event.type().name());
+			// The timestamp travels with the event. Bound as an OffsetDateTime at UTC so the instant is
+			// unambiguous on the wire, mirroring the read path which renders event_timestamp back to a
+			// UTC LocalDateTime. Note timestamptz keeps microseconds and rounds anything finer, so a
+			// nanosecond-precision source timestamp lands up to half a microsecond off.
+			parameters.add(OffsetDateTime.of(event.timestamp(), ZoneOffset.UTC));
+			parameters.add(event.immutableData());
+			parameters.add(event.erasableData());
+			parameters.add(event.tags().toStrings().toArray(new String[event.tags().tags().size()]));
+		}
+
+		List<StoredEvent> imported = new ArrayList<>(chunk.size());
+
+		try ( PreparedStatement stmt = writeConnection.prepareStatement(sqlBuilder.toString()) ) {
+			for ( int i = 0; i < parameters.size(); i++ ) {
+				Object param = parameters.get(i);
+				if ( param instanceof String[] ) {
+					stmt.setArray(i + 1, writeConnection.createArrayOf("text", (String[]) param));
+				} else {
+					stmt.setObject(i + 1, param);
+				}
+			}
+
+			try ( ResultSet rs = stmt.executeQuery() ) {
+				while ( rs.next() ) {
+					long position = rs.getLong("event_position");
+					long tx = Long.parseUnsignedLong(rs.getString("event_tx"));
+					String returnedId = rs.getString("event_id");
+
+					// Matched on the identifier we supplied rather than on RETURNING row order: with
+					// ON CONFLICT the returned rows are a subset of the input, so position in the result
+					// set carries no meaning.
+					EventToImport event = byId.get(returnedId == null ? null : returnedId.toLowerCase(Locale.ROOT));
+					if ( event == null ) {
+						throw new EventStorageException("import returned event id %s which was not part of the batch".formatted(returnedId));
+					}
+
+					imported.add(event.positionAt(position, tx));
+				}
+			}
+		}
+
+		return imported;
+	}
+
+	private static String normalizedId ( EventId id ) {
+		return id.value().toLowerCase(Locale.ROOT);
+	}
+
+	/**
+	 * Turns a failed import into the most specific exception the server error allows.
+	 * <p>
+	 * A unique violation is routed by constraint name — the stream-scoped idempotency index versus the
+	 * event_id uniqueness constraint — rather than by inspecting the message text. The offending event is
+	 * recovered by matching the values Postgres reports in the error DETAIL against the batch; when the
+	 * server does not supply a parseable DETAIL the conflict is still reported, without the specifics.
+	 */
+	private EventStorageException classifyImportFailure ( SQLException e, List<EventToImport> events ) {
+		if ( !"23505".equals(e.getSQLState()) ) {
+			return new EventStorageException("SQLException during import", e);
+		}
+
+		String constraint = null;
+		String detail = null;
+		if ( e instanceof PSQLException psqlException && psqlException.getServerErrorMessage() != null ) {
+			constraint = psqlException.getServerErrorMessage().getConstraint();
+			detail = psqlException.getServerErrorMessage().getDetail();
+		}
+
+		List<String> conflictingValues = parseConflictValues(detail);
+
+		if ( constraint != null && constraint.contains("idempotency") ) {
+			// DETAIL reports (stream_context, stream_purpose, idempotency_key)=(ctx, purpose, key)
+			EventToImport conflicting = conflictingValues.size() == 3
+					? events.stream()
+						.filter(ev -> ev.stream().context().equals(conflictingValues.get(0))
+								&& ev.stream().purpose().equals(conflictingValues.get(1))
+								&& conflictingValues.get(2).equals(ev.idempotencyKey()))
+						.findFirst().orElse(null)
+					: null;
+			return EventImportConflictException.duplicateIdempotencyKey(
+					conflicting == null ? null : conflicting.stream(),
+					conflicting == null ? null : conflicting.idempotencyKey(),
+					e);
+		}
+
+		// DETAIL reports (event_id)=(uuid)
+		EventId conflictingId = null;
+		if ( conflictingValues.size() == 1 ) {
+			String value = conflictingValues.get(0).toLowerCase(Locale.ROOT);
+			conflictingId = events.stream()
+					.map(EventToImport::id)
+					.filter(id -> normalizedId(id).equals(value))
+					.findFirst().orElse(null);
+		}
+		return EventImportConflictException.duplicateEventId(conflictingId, e);
+	}
+
+	private static List<String> parseConflictValues ( String detail ) {
+		if ( detail == null ) {
+			return List.of();
+		}
+		Matcher matcher = CONFLICT_DETAIL_VALUES.matcher(detail);
+		if ( !matcher.find() ) {
+			return List.of();
+		}
+		return List.of(matcher.group(1).split(", ", -1));
 	}
 
 	@Override

@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -238,6 +239,38 @@ public class InMemoryFsEventStorageImplTest {
 		TestEvent data = events.get(0).data();
 		assertTrue(data instanceof TestEvent.CustomerRegistered);
 		assertEquals("John Doe", ((TestEvent.CustomerRegistered) data).name());
+	}
+
+	@Test
+	void testIdempotencyKeyIsStillKnownAfterAReload ( @TempDir Path tempDir ) {
+		EventStreamId streamId = EventStreamId.forContext("ctx").withPurpose("p");
+
+		// First instance: append an event carrying an idempotency key
+		{
+			EventStore store = InMemoryFsEventStorage.newBuilder()
+					.directory(tempDir)
+					.name("idempotency-test")
+					.buildStore();
+
+			EventStream<TestEvent> stream = store.getEventStream(streamId, TestEvent.class);
+			List<Event<TestEvent>> appended = stream.append(AppendCriteria.none(),
+					Collections.singletonList(Event.of(new TestEvent.CustomerRegistered("John"), Tags.none()).withIdempotencyKey("k-1")));
+			assertEquals(1, appended.size());
+		}
+
+		// Second instance: the reloaded store restores its event log from disk, and must restore what it
+		// knows about idempotency along with it — otherwise a retry after a restart writes a duplicate
+		EventStore store2 = InMemoryFsEventStorage.newBuilder()
+				.directory(tempDir)
+				.name("idempotency-test-2")
+				.buildStore();
+
+		EventStream<TestEvent> stream2 = store2.getEventStream(streamId, TestEvent.class);
+		List<Event<TestEvent>> duplicate = stream2.append(AppendCriteria.none(),
+				Collections.singletonList(Event.of(new TestEvent.CustomerRegistered("John"), Tags.none()).withIdempotencyKey("k-1")));
+
+		assertTrue(duplicate.isEmpty(), "an idempotency key used before the reload must still deduplicate");
+		assertEquals(1, stream2.query(EventQuery.matchAll()).toList().size());
 	}
 
 }

@@ -102,6 +102,9 @@ public class InMemoryEventStorageImpl implements EventStorage {
 
 	private String name;
 	private List<StoredEvent> eventlog = new CopyOnWriteArrayList<>();
+	// Lookup index by event id, kept in step with the event log. Backs getEventById in constant time
+	// rather than a linear scan, which matters for imports resolving one id per event.
+	private Map<EventId,StoredEvent> eventsById = new HashMap<>();
 	// Idempotency dedup is scoped to the logical event stream (context + purpose), matching the
 	// Postgres backend's per-stream partial unique index, so the same key on two different streams
 	// does not collide and behaviour does not depend on how storage instances are wired at runtime.
@@ -153,6 +156,20 @@ public class InMemoryEventStorageImpl implements EventStorage {
 				.mapToLong(e -> e.reference().tx())
 				.max()
 				.orElse(0);
+
+		// Seed the derived state from the preloaded events. Without this the idempotency keys of
+		// preloaded events are unknown to the store, so a reloaded store (see the filesystem-backed
+		// storage, which restores its whole event log this way) would append a duplicate for a key it
+		// had already seen instead of deduplicating it.
+		for ( StoredEvent event : initialEvents ) {
+			EventId id = event.reference().id();
+			if ( eventsById.putIfAbsent(id, event) != null ) {
+				throw new IllegalArgumentException("initial events contain more than one event with id %s".formatted(id.value()));
+			}
+			if ( event.idempotencyKey() != null ) {
+				idempotencyKeys.add(new IdempotencyScope(event.stream(), event.idempotencyKey()));
+			}
+		}
 	}
 
 	/**
@@ -294,9 +311,15 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	private List<StoredEvent> addAndNotifyListeners ( List<EventToStore> events ) {
 		long tx = ++txCounter;
 		var addedEvents = events.stream().map(e -> addEventToEventLog(e, tx)).filter(e->e!=null).toList();
-		
-		// notify each Listener about the appends, but if multiple Events were appended, only notify about the last one
-		addedEvents.stream()
+
+		notifyListenersAbout(addedEvents);
+
+		return addedEvents;
+	}
+
+	private void notifyListenersAbout ( List<StoredEvent> storedEvents ) {
+		// notify each Listener about the writes, but if multiple Events landed in one stream, only notify about the last one
+		storedEvents.stream()
 			    .collect(Collectors.toMap(
 			        StoredEvent::stream,
 			        event -> new AppendsToEventStoreNotification(event.stream(), event.reference()),
@@ -308,8 +331,6 @@ public class InMemoryEventStorageImpl implements EventStorage {
 			    		listener.get().notify(notification);
 			    	};
 			    }));
-		
-		return addedEvents;
 	}
 	
 	private StoredEvent addEventToEventLog ( EventToStore event, long tx ) {
@@ -326,12 +347,13 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		EventReference reference = EventReference.create(position, tx);
 		StoredEvent storedEvent = event.positionAt(reference, LocalDateTime.now(ZoneOffset.UTC));
 		eventlog.add(storedEvent);
+		eventsById.put(reference.id(), storedEvent);
 		return storedEvent;
 	}
 
 	@Override
-	public Optional<StoredEvent> getEventById(EventId eventId) {
-		return eventlog.stream().filter(e->e.reference().id().equals(eventId)).findFirst();
+	public synchronized Optional<StoredEvent> getEventById(EventId eventId) {
+		return Optional.ofNullable(eventsById.get(eventId));
 	}
 
 	@Override

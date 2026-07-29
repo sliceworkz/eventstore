@@ -228,6 +228,66 @@ Projector.from(stream).towards(projection).build().run();
 // initQuery finds the last StockCounted, then eventQuery processes only subsequent movements
 ```
 
+### Importing Events Between Stores
+
+`EventStoreImporter` (in `org.sliceworkz.eventstore.migration`, api module) copies events from one
+`EventStorage` into another via the SPI method `EventStorage.importEvents(List<EventToImport>, ImportMode)`.
+
+```java
+ImportReport report = EventStoreImporter.from(sourceStorage).to(targetStorage)
+    .mode(ImportMode.SKIP_EXISTING_ID)                       // default is FAIL_ON_EXISTING_ID
+    .after(previousReport.sourceTo())                        // optional: catch-up run
+    .transform(src -> Optional.of(EventToImport.from(src)    // optional: remap / rewrite / drop
+                        .withStream(archiveStream)))
+    .batchSize(1000)
+    .onProgress(r -> LOGGER.info("{}", r))
+    .run();
+```
+
+**What survives, what does not:**
+- **Preserved**: `EventId`, timestamp, idempotency key, event type, tags, immutable and erasable payloads
+- **Reassigned by the target**: `position` and `tx`. An import reproduces the source *order*, never its
+  ordering numbers. `index` is a read-time upcasting artifact and is always 0 at rest.
+
+**Why it lives at the SPI level.** `EventToImport`/`StoredEvent` carry opaque JSON plus a type name, so an
+import needs no domain classes on the classpath, does no serde round-trip, does not upcast, and does not
+re-split `@Erasable` fields against annotations that may have changed. Going through `EventStream` instead
+would rewrite legacy events into current ones and lose the idempotency key, which the public `Event` record
+does not carry.
+
+**Import modes** (`EventStorage.ImportMode`):
+- `FAIL_ON_EXISTING_ID` (default) — an already-present event id aborts the batch with `EventImportConflictException`
+- `SKIP_EXISTING_ID` — an already-present event id is skipped, matching **on id alone**; no payload is read
+  back or compared. This is the resume mode.
+
+An idempotency key already used by a *different* event on the same stream is fatal in **both** modes — the
+Postgres implementation infers `ON CONFLICT (event_id)` specifically so the stream-scoped idempotency index
+still raises.
+
+**Caveats that matter:**
+- **Atomic per batch only.** A failure part-way leaves earlier batches committed. Re-run with
+  `SKIP_EXISTING_ID` to continue. There is no dry-run mode.
+- **Nothing is verified.** Matching is on id; faithfulness of a migration is the caller's problem.
+- **The transform can rewrite anything** — stream, tags, payload, type, id, timestamp. That makes it a
+  stream-cloning and schema-migration tool, and means it offers no fidelity guarantee of its own.
+  Rewriting ids makes `SKIP_EXISTING_ID` meaningless (nothing stable left to match on).
+- **Reads are always bounded at the source head**, captured before the first write. This is what makes
+  `from(x).to(x)` (cloning inside one store) terminate instead of re-reading its own writes forever. Events
+  appended to the source during the run are excluded; `ImportReport.sourceTo()` fed into a later run's
+  `.after(...)` picks them up in O(new events).
+- **One importer at a time per target** — the conflict check and the insert are not under a common lock.
+- **Listeners are notified** exactly as for appends, so a merge into a live store wakes its projections.
+  Imported events arrive at new (high) positions carrying old timestamps, so "later position implies later
+  timestamp" no longer holds in that store.
+- **Checking a target up front** must be done in **raw mode**
+  (`eventStore.getEventStream(EventStreamId.anyContext())`, no event root classes). With domain classes
+  registered, `getEventById` upcasts, and a legacy event whose upcast yields zero current events comes back
+  as an empty list even though it exists — a false negative.
+
+`EventToImport`'s canonical constructor is public, so it also writes synthetic events with a chosen id and
+timestamp directly into a store — useful for fixtures, but it bypasses `append()` and everything that path
+guarantees.
+
 ## Testing
 
 **Base Test Class:**
@@ -291,3 +351,6 @@ The key insight of DCB is that business decisions are based on querying relevant
 - Requires the `btree_gin` extension (a standard contrib extension, available on the major managed Postgres offerings). Schema initialization runs `CREATE EXTENSION IF NOT EXISTS btree_gin` and schema validation requires `idx_events_stream_tags`, a combined stream+tags GIN index that serves DCB reads scoping by stream *and* filtering by tags in one index. The B-tree indexes are retained for ordered stream replay (GIN cannot serve `ORDER BY`)
 - `stream_purpose` defaults to `'default'` in the DDL, matching `EventStreamId.DEFAULT_PURPOSE`. On a database created before this alignment (default was `''`), operators doing raw SQL inserts should run `ALTER TABLE <prefix>events ALTER COLUMN stream_purpose SET DEFAULT 'default';` — no data migration is needed since all events written through the library bind the purpose explicitly
 - **Idempotency keys are scoped per event stream (context + purpose), not per storage/table.** Uniqueness is enforced by the partial unique index `idx_events_stream_idempotency` on `(stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL` (schema validation requires it), so the same key used on two unrelated streams does not collide and dedup behaviour does not depend on how storage instances / prefixes are wired at runtime. The `idempotency_key` is persisted and surfaced on `StoredEvent` when reading (it is not exposed on the public `Event` record). A duplicate append is still silently ignored (returns an empty result). On a database created before this change (when `idempotency_key` had a table-wide `UNIQUE`), migrate with: `ALTER TABLE <prefix>events DROP CONSTRAINT <prefix>events_idempotency_key_key; CREATE UNIQUE INDEX <prefix>idx_events_stream_idempotency ON <prefix>events (stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL;` — no data migration is needed
+- **Importing needed no DDL change**: `event_id` is already a plain `UUID NOT NULL UNIQUE` and `event_timestamp` is nullable with a `CURRENT_TIMESTAMP` default, so both can be supplied explicitly. `importEvents` binds them per row, chunks statements at 5000 rows (9 params/row against the 65535-parameter wire ceiling) inside a single transaction, and matches `RETURNING` rows **by event_id** rather than by row order — with `ON CONFLICT` the returned rows are a subset of the input, so position in the result set means nothing. Conflicts are routed by constraint name from `PSQLException.getServerErrorMessage().getConstraint()`, not by matching message text
+- **Imported event ids must be UUIDs** (the `::uuid` cast); `importEvents` validates this up front to give a clear error rather than an opaque cast failure
+- **`timestamptz` keeps microseconds and rounds anything finer**, so a nanosecond-precision timestamp (as an in-memory store produces) lands up to half a microsecond away from where it started. This is the only lossy part of an inmem → Postgres → inmem round trip; `EventImportRoundTripTest` pins it down

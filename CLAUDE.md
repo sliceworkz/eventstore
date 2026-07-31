@@ -335,6 +335,32 @@ a storage to the compliance run is one line in that file.
   missing from the service file. All three are silent failures otherwise — that is exactly how three
   scenario classes came to run in-memory only.
 
+**Running backends in parallel.** One JVM per backend, never threads inside one. `ci.yaml` fans the
+TCK across four runners with a matrix over `eventstore.testing.backends`. Locally that is
+`./build-parallel.sh`, a `clean install` whose TCK legs run concurrently:
+
+```bash
+./build-parallel.sh                                     # all four backends
+BACKENDS="inmem postgres:18" ./build-parallel.sh        # a subset; inmem alone needs no Docker
+TCK_ARGS="-Dtest=UpcastMultiTest" ./build-parallel.sh   # extra arguments for the legs
+```
+
+Sharing one working tree across concurrent legs means keeping two things apart, which is most of what
+the script does: `test-compile` runs once up front so no two legs write to `target/test-classes`
+together, and each leg gets `-Dsurefire.reports.suffix` so they do not overwrite each other's
+reports. That property exists only for this — surefire's `reportsDirectory` has no user property of
+its own, so the tests module pom wires it to the suffix; it is empty by default and changes nothing
+in a normal build.
+
+In-JVM parallelism (`junit.jupiter.execution.parallel.enabled`) is **not** available here, and the
+blocker is structural rather than untidy tests: per-test isolation on Postgres is
+`initializeDatabase()` dropping and recreating the tables for the store's prefix, so two scenarios
+sharing a backend concurrently would drop each other's tables mid-test. Enabling it would mean
+switching to a unique prefix per test first. Two smaller obstacles come with it — `MockReadModel`'s
+static cross-instance counter in `EventStoreQueryTest`, and the Awaitility timing windows in
+`EventStreamTest`, which get flaky under CPU contention. JUnit cannot express "parallel across
+backends, serial within one": its resource locks are per class/method, not per template invocation.
+
 The Postgres backends are `Postgres17Backend` and `Postgres18Backend`; the shared base
 `AbstractPostgresBackend` is abstract on purpose, so no class name can be read as "PostgreSQL,
 unspecified version". `AbstractPostgresBackend.forImage("postgres:16")` covers a version with no

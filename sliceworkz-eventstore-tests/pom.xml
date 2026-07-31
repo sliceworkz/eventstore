@@ -36,6 +36,16 @@
 	<artifactId>sliceworkz-eventstore-tests</artifactId>
 	<packaging>jar</packaging>
 
+	<properties>
+		<!--
+			Suffix on the surefire report directory, so several backends can be run concurrently
+			against one working tree without overwriting each other's reports. Empty by default;
+			surefire's reportsDirectory has no user property of its own, so it has to be wired here
+			to be settable at all. See the parallel-run recipe in CLAUDE.md.
+		-->
+		<surefire.reports.suffix />
+	</properties>
+
 	<!--
 		Runs the shared TCK scenarios (which live in sliceworkz-eventstore-testing, so third parties
 		can run them too) against every backend this repository ships, plus the few tests that are
@@ -125,6 +135,7 @@
 					<dependenciesToScan>
 						<dependency>org.sliceworkz:sliceworkz-eventstore-testing</dependency>
 					</dependenciesToScan>
+					<reportsDirectory>${project.build.directory}/surefire-reports${surefire.reports.suffix}</reportsDirectory>
 				</configuration>
 			</plugin>
 		</plugins>

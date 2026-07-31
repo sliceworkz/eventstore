@@ -290,15 +290,83 @@ guarantees.
 
 ## Testing
 
+Testing support lives in **`sliceworkz-eventstore-testing`**, a published module (compile scope; add
+it in `test` scope). It holds three things:
+
+| package | for whom |
+|---|---|
+| `org.sliceworkz.eventstore.testing` | the backend harness: `AbstractEventStoreTest`, `EventStoreBackend`, `@ForEachBackend` |
+| `org.sliceworkz.eventstore.testing.tck` | the shared compliance scenarios every `EventStorage` must satisfy |
+| `org.sliceworkz.eventstore.testing.fixture` | the `given/when/then` fixture for application authors |
+
+Everything is in `src/main/java`, not a test-jar: a test-jar is not transitively resolved and gets no
+sources or javadoc, which makes it a poor way to ship a TCK.
+
 **Base Test Class:**
-Tests should extend `AbstractEventStoreTest` which provides:
-- `createEventStorage()`: Abstract method to provide storage implementation
-- `eventStore()`: Returns the configured EventStore instance
-- `waitBecauseOfEventualConsistency()`: Helper for async scenarios
-- Automatic setup/teardown via JUnit 5 lifecycle
+Tests extend `AbstractEventStoreTest`, which provides:
+- `eventStore()` / `eventStorage()`: the store under test, fresh and empty per test method
+- `createEventStorage()`: override to supply a storage directly instead of using a backend
+- `storageOptions()`: override to ask the backend for a store with a result limit or a table prefix
+- `waitBecauseOfEventualConsistency(BooleanSupplier)`: Awaitility helper for async listener assertions
+- `dataSource()`: direct database access, where the backend is SQL-backed
+- automatic setup/teardown via JUnit 5 lifecycle
+
+**Running against every backend:**
+Annotate scenarios `@ForEachBackend` instead of `@Test`. Each runs once per registered
+`EventStoreBackend`, reported under its own name (`testQueryOneEvent [postgres:18]`). This replaces
+the hand-written `@Nested OnInMem / OnPostgres17 / OnPostgres18` triples that used to be copy-pasted
+into every scenario class.
+
+Backends are discovered with the `ServiceLoader`. In this repository the set is declared in
+`sliceworkz-eventstore-tests/src/test/resources/META-INF/services/org.sliceworkz.eventstore.testing.EventStoreBackend`
+and covers **all four in-tree storages**: `inmem`, `inmem-fs`, `postgres:17` and `postgres:18`. Adding
+a storage to the compliance run is one line in that file.
+
+- Narrow a local run with `-Deventstore.testing.backends=inmem` to skip the containers entirely.
+- Scenarios needing an optional part of the contract declare it —
+  `@ForEachBackend(requires = Capability.IMPORT)` — and are *skipped*, not failed, on backends that do
+  not support it. Capabilities: `IMPORT`, `TABLE_PREFIX`, `RESULT_LIMIT`, `RAW_STORAGE_ACCESS`.
+- `@ForEachBackend(excludingBackends = "inmem-fs")` opts a backend out **for cost, not capability** —
+  `EventStorePerformanceTest` uses it because 10.000 appends against a file-backed store dominates CI
+  time. Also reported as skipped, so the gap stays visible. Not allowed inside the TCK: a compliance
+  scenario that skips a backend proves nothing about it, so use `requires` there instead.
+- `TckBackendCoverageTest` fails the build if a TCK scenario is annotated `@Test` (so it would run
+  against one backend only), if one opts a backend out with `excludingBackends`, or if a backend goes
+  missing from the service file. All three are silent failures otherwise — that is exactly how three
+  scenario classes came to run in-memory only.
+
+Backends run one after another in a single JVM, and in-JVM parallelism
+(`junit.jupiter.execution.parallel.enabled`) is not an option without changing how isolation works
+first: per-test isolation on Postgres is `initializeDatabase()` dropping and recreating the tables
+for the store's prefix, so two scenarios sharing a backend concurrently would drop each other's
+tables mid-test. To split a run anyway, `-Deventstore.testing.backends=...` partitions it across
+separate JVMs.
+
+The Postgres backends are `Postgres17Backend` and `Postgres18Backend`; the shared base
+`AbstractPostgresBackend` is abstract on purpose, so no class name can be read as "PostgreSQL,
+unspecified version". `AbstractPostgresBackend.forImage("postgres:16")` covers a version with no
+dedicated class (the image tag becomes the backend name, so the version still shows in reports).
 
 **Test Structure:**
-The `sliceworkz-eventstore-tests` module contains shared test scenarios that run against all storage implementations (in-memory and PostgreSQL). Each infrastructure module includes these tests to verify compliance.
+`sliceworkz-eventstore-tests` runs the TCK against every in-tree backend — via surefire's
+`dependenciesToScan`, which is the same one line a third-party `EventStorage` adds — plus the few
+tests that are repo-internal rather than part of the storage contract (`EventStorePerformanceTest`,
+`EventImportRoundTripTest`, `TckBackendCoverageTest`). Postgres containers are managed by
+`PostgresContainer`, started once per JVM per image; per-test isolation comes from
+`initializeDatabase()` dropping and recreating the schema, not from a fresh container.
+
+**Testing application code:**
+`EventStoreFixture` gives application authors a `given/when/then` over an in-memory store — seed
+history, run a decider, assert what it appended, assert an `OptimisticLockingException` fires when it
+should, drive a projection to a known point. `whenConcurrently(...)` appends into the window between
+a decider's query and its own append, which is the only deterministic way to provoke a DCB conflict.
+See `EventStoreFixtureTest` for a worked example.
+
+**Timestamps are not assertable.** The in-memory store stamps events from the JVM clock; Postgres does
+not bind `event_timestamp` on append at all and lets the DDL default (`CURRENT_TIMESTAMP`, server
+clock) apply. There is no `Clock` seam anywhere. Assert on timestamps only with a tolerance window, as
+`EventTimestampUtcTest` does. The one path that writes a chosen timestamp is `importEvents`, which
+bypasses `append()`.
 
 ## Naming Conventions
 

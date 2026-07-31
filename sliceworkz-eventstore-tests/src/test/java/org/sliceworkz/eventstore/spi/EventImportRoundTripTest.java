@@ -24,16 +24,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
-
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
 import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorageImpl;
-import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
 import org.sliceworkz.eventstore.migration.EventStoreImporter;
 import org.sliceworkz.eventstore.migration.ImportReport;
 import org.sliceworkz.eventstore.query.EventQuery;
@@ -43,7 +39,7 @@ import org.sliceworkz.eventstore.spi.EventStorage.QueryDirection;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
-
+import org.sliceworkz.eventstore.testing.backend.PostgresContainer;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -61,12 +57,6 @@ class EventImportRoundTripTest {
 	private static final Duration ONE_MICROSECOND = Duration.ofNanos(1000);
 
 	private final EventStreamId stream = EventStreamId.forContext("app").withPurpose("default");
-
-	@BeforeAll
-	static void startContainer ( ) { PostgresContainer.start(PostgresContainer.IMAGE_PG18); }
-
-	@AfterAll
-	static void stopContainer ( ) { PostgresContainer.stop(PostgresContainer.IMAGE_PG18); PostgresContainer.cleanup(PostgresContainer.IMAGE_PG18); }
 
 	@Test
 	void testInMemoryToPostgresAndBack ( ) {
@@ -125,7 +115,7 @@ class EventImportRoundTripTest {
 			assertNotNull(returned.get(2).erasableData());
 		} finally {
 			((PostgresEventStorageImpl)postgres).stop();
-			PostgresContainer.closeDataSource(PostgresContainer.IMAGE_PG18);
+			PostgresContainer.close(PostgresContainer.IMAGE_PG18);
 		}
 	}
 

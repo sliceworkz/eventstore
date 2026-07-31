@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+
+    Sliceworkz Eventstore - a Java/Postgres DCB Eventstore implementation
+    Copyright © 2025-2026 Sliceworkz / XTi (info@sliceworkz.org)
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Lesser General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>org.sliceworkz</groupId>
+		<artifactId>sliceworkz-eventstore-parent-pom</artifactId>
+		<version>0.10.0-SNAPSHOT</version>
+		<relativePath>../sliceworkz-eventstore-parent-pom</relativePath>
+	</parent>
+
+	<name>${project.artifactId}</name>
+	<description>DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)</description>
+	<url>https://sliceworkz.github.io/eventstore</url>
+
+	<artifactId>sliceworkz-eventstore-testing</artifactId>
+	<packaging>jar</packaging>
+
+	<properties>
+		<!--
+			client-facing: publish to the configured repository. This module only earns its keep if
+			third parties can depend on it — an EventStorage implementor running the TCK, or an
+			application author using the fixture. It is deliberately absent from the
+			<excludeArtifacts> list in the root pom that keeps examples/tests/benchmark off Central.
+		-->
+		<maven.deploy.skip>false</maven.deploy.skip>
+	</properties>
+
+	<!--
+		Testing support, published for consumers:
+
+		  - org.sliceworkz.eventstore.testing          the backend harness (AbstractEventStoreTest,
+		                                               EventStoreBackend, @ForEachBackend)
+		  - org.sliceworkz.eventstore.testing.tck      the shared compliance scenarios every
+		                                               EventStorage implementation must satisfy
+		  - org.sliceworkz.eventstore.testing.fixture  the given/when/then fixture for application
+		                                               authors testing DCB deciders and projections
+
+		Everything lives in src/main/java on purpose: a test-jar is not transitively resolved and
+		carries no sources/javadoc, which makes it a poor way to ship a TCK. Consumers add this
+		module in <scope>test</scope>.
+
+		JUnit and Awaitility are compile-scope here because the published types (AbstractEventStoreTest,
+		the @ForEachBackend extension, the fixture assertions) are built on them.
+
+		The Postgres and in-memory-fs backends are <optional>: a consumer testing their own storage,
+		or an application author using only the fixture, must not inherit Testcontainers, the
+		PostgreSQL JDBC driver or HikariCP. Declare those explicitly to use
+		org.sliceworkz.eventstore.testing.backend.Postgres17Backend / Postgres18Backend /
+		InMemoryFsBackend.
+	-->
+	<dependencies>
+		<dependency>
+			<groupId>org.sliceworkz</groupId>
+			<artifactId>sliceworkz-eventstore-api</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.sliceworkz</groupId>
+			<artifactId>sliceworkz-eventstore-impl</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.sliceworkz</groupId>
+			<artifactId>sliceworkz-eventstore-infra-inmem</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.junit.jupiter</groupId>
+			<artifactId>junit-jupiter</artifactId>
+			<scope>compile</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.awaitility</groupId>
+			<artifactId>awaitility</artifactId>
+			<scope>compile</scope>
+		</dependency>
+
+		<!-- optional backends: not inherited by consumers -->
+		<dependency>
+			<groupId>org.sliceworkz</groupId>
+			<artifactId>sliceworkz-eventstore-infra-inmem-fs</artifactId>
+			<optional>true</optional>
+		</dependency>
+		<dependency>
+			<groupId>org.sliceworkz</groupId>
+			<artifactId>sliceworkz-eventstore-infra-postgres</artifactId>
+			<optional>true</optional>
+		</dependency>
+		<dependency>
+			<groupId>org.postgresql</groupId>
+			<artifactId>postgresql</artifactId>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>testcontainers-postgresql</artifactId>
+			<scope>compile</scope>
+			<optional>true</optional>
+		</dependency>
+		<dependency>
+			<groupId>com.zaxxer</groupId>
+			<artifactId>HikariCP</artifactId>
+			<optional>true</optional>
+		</dependency>
+		<dependency>
+			<!-- needed for PostgresLegacyEventStorageImpl when scenarios run against PostgreSQL 17 -->
+			<groupId>com.github.f4b6a3</groupId>
+			<artifactId>uuid-creator</artifactId>
+			<optional>true</optional>
+		</dependency>
+	</dependencies>
+
+</project>

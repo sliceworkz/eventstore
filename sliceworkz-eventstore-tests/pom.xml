@@ -35,7 +35,17 @@
 
 	<artifactId>sliceworkz-eventstore-tests</artifactId>
 	<packaging>jar</packaging>
-	
+
+	<!--
+		Runs the shared TCK scenarios (which live in sliceworkz-eventstore-testing, so third parties
+		can run them too) against every backend this repository ships, plus the few tests that are
+		repo-internal rather than part of the storage contract.
+
+		The backends are registered in
+		src/test/resources/META-INF/services/org.sliceworkz.eventstore.testing.EventStoreBackend —
+		that file is the whole configuration. Narrow a local run with, for example,
+		-Deventstore.testing.backends=inmem to skip the containers.
+	-->
 	<dependencies>
 		<dependency>
 			<groupId>org.sliceworkz</groupId>
@@ -43,16 +53,28 @@
 		</dependency>
 		<dependency>
 			<groupId>org.sliceworkz</groupId>
-			<artifactId>sliceworkz-eventstore-infra-inmem</artifactId>
-		</dependency>
-		<dependency>
-			<groupId>org.sliceworkz</groupId>
-			<artifactId>sliceworkz-eventstore-infra-postgres</artifactId>
+			<artifactId>sliceworkz-eventstore-impl</artifactId>
 			<scope>test</scope>
 		</dependency>
 		<dependency>
 			<groupId>org.sliceworkz</groupId>
-			<artifactId>sliceworkz-eventstore-impl</artifactId>
+			<artifactId>sliceworkz-eventstore-testing</artifactId>
+			<version>${project.version}</version>
+			<scope>test</scope>
+		</dependency>
+
+		<dependency>
+			<groupId>org.sliceworkz</groupId>
+			<artifactId>sliceworkz-eventstore-infra-inmem</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.sliceworkz</groupId>
+			<artifactId>sliceworkz-eventstore-infra-inmem-fs</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.sliceworkz</groupId>
+			<artifactId>sliceworkz-eventstore-infra-postgres</artifactId>
 			<scope>test</scope>
 		</dependency>
 
@@ -61,6 +83,11 @@
 		    <artifactId>awaitility</artifactId>
 		</dependency>
 
+		<!--
+			The testing module declares these <optional>, so a consumer running the TCK against
+			their own storage does not inherit Testcontainers. Running the Postgres backends here
+			means declaring them explicitly.
+		-->
 		<dependency>
 		    <groupId>org.postgresql</groupId>
 		    <artifactId>postgresql</artifactId>
@@ -72,7 +99,7 @@
 		    <scope>test</scope>
 		</dependency>
 		<dependency>
-		    <!-- needed for PostgresLegacyEventStorageImpl when shared tests run against PostgreSQL 17 -->
+		    <!-- needed for PostgresLegacyEventStorageImpl when the scenarios run against PostgreSQL 17 -->
 		    <groupId>com.github.f4b6a3</groupId>
 		    <artifactId>uuid-creator</artifactId>
 		    <scope>test</scope>
@@ -84,5 +111,23 @@
 		</dependency>
 
 	</dependencies>
-	
+
+	<build>
+		<plugins>
+			<plugin>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<!--
+						The TCK scenarios are main classes of the testing module, not test classes of
+						this one, so surefire has to be told to scan that artifact for them. This is
+						the same one line a third-party EventStorage adds to run the suite.
+					-->
+					<dependenciesToScan>
+						<dependency>org.sliceworkz:sliceworkz-eventstore-testing</dependency>
+					</dependenciesToScan>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
+
 </project>

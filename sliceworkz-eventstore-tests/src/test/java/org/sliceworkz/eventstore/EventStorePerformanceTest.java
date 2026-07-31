@@ -39,7 +39,9 @@ public class EventStorePerformanceTest extends AbstractEventStoreTest {
 
 	private static final String UNITTEST_BOUNDEDCONTEXT = "pertest";
 
-	@ForEachBackend
+	// Not on inmem-fs: 10.000 appends there means 10.000 file writes, which dominates CI time for a
+	// throughput number nobody reads. The correctness of those appends is covered by the TCK.
+	@ForEachBackend(excludingBackends = "inmem-fs")
 	void testAppendPerformance ( ) {
 		EventStream<MockDomainEvent> eventStream = createEventStream();
 

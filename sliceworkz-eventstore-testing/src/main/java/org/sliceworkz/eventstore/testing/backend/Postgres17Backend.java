@@ -18,14 +18,14 @@
 package org.sliceworkz.eventstore.testing.backend;
 
 /**
- * {@link PostgresBackend} pinned to PostgreSQL 17, with the no-argument constructor a
+ * {@link AbstractPostgresBackend} pinned to PostgreSQL 17, with the no-argument constructor a
  * {@code ServiceLoader} needs.
  * <p>
  * PostgreSQL 17 has no native {@code uuidv7()}, so this exercises
  * {@code PostgresLegacyEventStorageImpl} — a genuinely different code path from
  * {@link Postgres18Backend}, which is why both are worth running.
  */
-public class Postgres17Backend extends PostgresBackend {
+public class Postgres17Backend extends AbstractPostgresBackend {
 
 	/** Creates the backend for {@link PostgresContainer#IMAGE_PG17}. */
 	public Postgres17Backend ( ) {

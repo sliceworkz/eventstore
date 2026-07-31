@@ -104,6 +104,28 @@ class TckBackendCoverageTest {
 				tck package if they are genuinely backend-specific: %s""".formatted(singleBackendScenarios));
 	}
 
+	@Test
+	void noTckScenarioOptsABackendOut ( ) {
+		List<String> exclusions = new ArrayList<>();
+
+		for ( Class<?> scenario : tckScenarioClasses() ) {
+			for ( Method method : scenario.getDeclaredMethods() ) {
+				ForEachBackend annotation = method.getAnnotation(ForEachBackend.class);
+				if ( annotation != null && annotation.excludingBackends().length > 0 ) {
+					exclusions.add("%s.%s excludes %s".formatted(
+							scenario.getSimpleName(), method.getName(), List.of(annotation.excludingBackends())));
+				}
+			}
+		}
+
+		assertTrue(exclusions.isEmpty(),
+				"""
+				excludingBackends is for cost, not for capability, and a compliance scenario that \
+				skips a backend proves nothing about it. Use requires = Capability... if the backend \
+				genuinely cannot support the scenario, and keep cost-based exclusions out of the TCK: \
+				%s""".formatted(exclusions));
+	}
+
 	/**
 	 * Every scenario class in the published TCK, found on the classpath rather than listed by hand
 	 * so a newly added scenario is covered without anyone remembering to register it here. The TCK

@@ -326,9 +326,19 @@ a storage to the compliance run is one line in that file.
 - Scenarios needing an optional part of the contract declare it —
   `@ForEachBackend(requires = Capability.IMPORT)` — and are *skipped*, not failed, on backends that do
   not support it. Capabilities: `IMPORT`, `TABLE_PREFIX`, `RESULT_LIMIT`, `RAW_STORAGE_ACCESS`.
+- `@ForEachBackend(excludingBackends = "inmem-fs")` opts a backend out **for cost, not capability** —
+  `EventStorePerformanceTest` uses it because 10.000 appends against a file-backed store dominates CI
+  time. Also reported as skipped, so the gap stays visible. Not allowed inside the TCK: a compliance
+  scenario that skips a backend proves nothing about it, so use `requires` there instead.
 - `TckBackendCoverageTest` fails the build if a TCK scenario is annotated `@Test` (so it would run
-  against one backend only) or if a backend goes missing from the service file. Both are silent
-  failures otherwise — that is exactly how three scenario classes came to run in-memory only.
+  against one backend only), if one opts a backend out with `excludingBackends`, or if a backend goes
+  missing from the service file. All three are silent failures otherwise — that is exactly how three
+  scenario classes came to run in-memory only.
+
+The Postgres backends are `Postgres17Backend` and `Postgres18Backend`; the shared base
+`AbstractPostgresBackend` is abstract on purpose, so no class name can be read as "PostgreSQL,
+unspecified version". `AbstractPostgresBackend.forImage("postgres:16")` covers a version with no
+dedicated class (the image tag becomes the backend name, so the version still shows in reports).
 
 **Test Structure:**
 `sliceworkz-eventstore-tests` runs the TCK against every in-tree backend — via surefire's

@@ -61,4 +61,17 @@ public @interface ForEachBackend {
 	 */
 	Capability[] requires ( ) default { };
 
+	/**
+	 * Backend names this scenario is deliberately not run against, reported as skipped with the
+	 * reason so the gap stays visible.
+	 * <p>
+	 * For cost, not for capability — a backend that <em>cannot</em> run a scenario belongs behind
+	 * {@link #requires()}, which says why in terms of the contract. This is the escape hatch for a
+	 * scenario that would run correctly but takes too long to be worth it, and it should stay rare:
+	 * an excluded backend is a backend the scenario proves nothing about.
+	 *
+	 * @return the backend names to skip; empty means the scenario runs everywhere
+	 */
+	String[] excludingBackends ( ) default { };
+
 }

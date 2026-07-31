@@ -66,7 +66,8 @@
 		The Postgres and in-memory-fs backends are <optional>: a consumer testing their own storage,
 		or an application author using only the fixture, must not inherit Testcontainers, the
 		PostgreSQL JDBC driver or HikariCP. Declare those explicitly to use
-		org.sliceworkz.eventstore.testing.backend.PostgresBackend / InMemoryFsBackend.
+		org.sliceworkz.eventstore.testing.backend.Postgres17Backend / Postgres18Backend /
+		InMemoryFsBackend.
 	-->
 	<dependencies>
 		<dependency>

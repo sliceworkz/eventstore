@@ -51,18 +51,19 @@ class BackendTestTemplateProvider implements TestTemplateInvocationContextProvid
 
 	@Override
 	public Stream<TestTemplateInvocationContext> provideTestTemplateInvocationContexts ( ExtensionContext context ) {
-		List<Capability> required = AnnotationSupport.findAnnotation(context.getRequiredTestMethod(), ForEachBackend.class)
-				.map(a -> Arrays.asList(a.requires()))
-				.orElse(List.of());
+		ForEachBackend annotation = AnnotationSupport.findAnnotation(context.getRequiredTestMethod(), ForEachBackend.class)
+				.orElseThrow();
+		List<Capability> required = Arrays.asList(annotation.requires());
+		List<String> excluded = Arrays.asList(annotation.excludingBackends());
 
 		return EventStoreBackends.registered().stream()
-				.map(backend -> (TestTemplateInvocationContext) new BackendInvocationContext(backend, required));
+				.map(backend -> (TestTemplateInvocationContext) new BackendInvocationContext(backend, required, excluded));
 	}
 
 	/**
 	 * One invocation, bound to one backend.
 	 */
-	private record BackendInvocationContext ( EventStoreBackend backend, List<Capability> required ) implements TestTemplateInvocationContext {
+	private record BackendInvocationContext ( EventStoreBackend backend, List<Capability> required, List<String> excluded ) implements TestTemplateInvocationContext {
 
 		@Override
 		public String getDisplayName ( int invocationIndex ) {
@@ -71,7 +72,7 @@ class BackendTestTemplateProvider implements TestTemplateInvocationContextProvid
 
 		@Override
 		public List<Extension> getAdditionalExtensions ( ) {
-			return List.of(new BackendBinding(backend, required));
+			return List.of(new BackendBinding(backend, required, excluded));
 		}
 
 	}
@@ -83,10 +84,12 @@ class BackendTestTemplateProvider implements TestTemplateInvocationContextProvid
 	 * {@code @BeforeEach} creates the store. Also resolves an {@link EventStoreBackend} parameter,
 	 * for scenarios that want the backend without extending the base class.
 	 */
-	private record BackendBinding ( EventStoreBackend backend, List<Capability> required ) implements BeforeEachCallback, ParameterResolver {
+	private record BackendBinding ( EventStoreBackend backend, List<Capability> required, List<String> excluded ) implements BeforeEachCallback, ParameterResolver {
 
 		@Override
 		public void beforeEach ( ExtensionContext context ) {
+			Assumptions.assumeFalse(excluded.contains(backend.name()),
+					() -> "scenario is deliberately not run against backend '%s'".formatted(backend.name()));
 			for ( Capability capability : required ) {
 				Assumptions.assumeTrue(backend.supports(capability),
 						() -> "backend '%s' does not support %s".formatted(backend.name(), capability));

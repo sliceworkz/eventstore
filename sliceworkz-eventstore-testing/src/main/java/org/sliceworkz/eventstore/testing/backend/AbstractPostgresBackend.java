@@ -39,18 +39,34 @@ import org.sliceworkz.eventstore.testing.StorageOptions;
  * additionally needs {@code com.github.f4b6a3:uuid-creator}, which the legacy storage uses to
  * generate UUIDv7 where the server cannot.
  * <p>
- * Instantiate directly for a specific image, or use {@link Postgres17Backend} /
- * {@link Postgres18Backend}, which have the no-argument constructors a {@code ServiceLoader} needs.
+ * Abstract on purpose: every usable Postgres backend names the version it pins, so nothing in a test
+ * report or a service file can be read as "PostgreSQL, some version". Use {@link Postgres17Backend}
+ * or {@link Postgres18Backend}, which also have the no-argument constructors a {@code ServiceLoader}
+ * needs, or {@link #forImage(String)} for a version this module ships no class for.
  */
-public class PostgresBackend implements EventStoreBackend {
+public abstract class AbstractPostgresBackend implements EventStoreBackend {
 
 	private final String image;
 
 	/**
 	 * @param image the PostgreSQL image tag, e.g. {@link PostgresContainer#IMAGE_PG18}
 	 */
-	public PostgresBackend ( String image ) {
+	protected AbstractPostgresBackend ( String image ) {
 		this.image = image;
+	}
+
+	/**
+	 * A backend for a PostgreSQL image this module ships no dedicated class for.
+	 * <p>
+	 * The image tag becomes the backend name, so the version still shows up in every test report.
+	 * A {@code ServiceLoader} cannot use this — register {@link Postgres17Backend} /
+	 * {@link Postgres18Backend}, or a named subclass of your own, for that.
+	 *
+	 * @param image the PostgreSQL image tag, e.g. {@code "postgres:16"}
+	 * @return a backend pinned to that image
+	 */
+	public static AbstractPostgresBackend forImage ( String image ) {
+		return new AbstractPostgresBackend(image) { };
 	}
 
 	@Override

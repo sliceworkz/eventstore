@@ -33,7 +33,7 @@ import com.zaxxer.hikari.HikariDataSource;
  * <p>
  * A container and its connection pool are started once per JVM per image on first use and kept for
  * the lifetime of the JVM — starting one per test class would dominate the run time, and per-test
- * isolation comes from dropping and recreating the schema instead (see {@link PostgresBackend}).
+ * isolation comes from dropping and recreating the schema instead (see {@link AbstractPostgresBackend}).
  * Containers are reaped by Testcontainers' Ryuk on shutdown; {@link #close(String)} closes the pool.
  */
 public final class PostgresContainer {

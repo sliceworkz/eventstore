@@ -295,7 +295,10 @@ public interface InMemoryEventStorage {
 		 * @see EventStoreFactory#eventStore(EventStorage)
 		 */
 		public EventStore buildStore ( ) {
-			return EventStoreFactory.get().eventStore(build(), meterRegistry);
+			// the storage is created here and never handed to the caller, so the returned store owns it:
+			// closing that store is the only way this storage will ever be closed
+			EventStorage eventStorage = build();
+			return EventStore.owning(EventStoreFactory.get().eventStore(eventStorage, meterRegistry), eventStorage);
 		}
 	}
 	

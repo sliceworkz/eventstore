@@ -58,7 +58,14 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  *   <li>Manage reader bookmarks for tracking event processing progress</li>
  *   <li>Notify listeners when new events are appended or bookmarks are placed</li>
  *   <li>Handle both forward and backward queries with proper ordering</li>
+ *   <li>Release everything they created when {@link #close()} is called — see the contract there</li>
  * </ul>
+ *
+ * <h2>Lifecycle:</h2>
+ * An EventStorage is usable from the moment its builder returns it, and stays usable until it is
+ * {@link #close() closed}. Backends without background resources need do nothing: {@code close()}
+ * defaults to a no-op. Backends that start threads, hold connections or open files must implement it
+ * and honour the contract documented on {@link #close()}.
  *
  * <h2>Thread Safety:</h2>
  * Implementations should be thread-safe and support concurrent reads and writes.
@@ -122,7 +129,52 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  * @see EventQuery
  * @see org.sliceworkz.eventstore.stream.OptimisticLockingException
  */
-public interface EventStorage {
+public interface EventStorage extends AutoCloseable {
+
+	/**
+	 * Releases everything this storage created, and stops all background activity it started.
+	 * <p>
+	 * The default implementation does nothing, which is correct for a backend that holds no resources
+	 * beyond the objects it was handed. A backend that starts threads, checks out connections or opens
+	 * files must override it and honour the following contract, which callers and the
+	 * {@link org.sliceworkz.eventstore.EventStore} rely on:
+	 * <ol>
+	 *   <li><b>Idempotent.</b> The second and later calls do nothing and never throw.</li>
+	 *   <li><b>Blocking and bounded.</b> {@code close()} returns only once background activity has
+	 *       actually ceased: no thread it started may still be running, no connection it checked out
+	 *       may still be held. It must return within an implementation-defined bound; if that bound
+	 *       expires it logs and returns rather than throwing or hanging.</li>
+	 *   <li><b>Ownership.</b> It releases only what the implementation created. A DataSource,
+	 *       connection pool, thread pool or file handle supplied by the caller is left untouched —
+	 *       closing that is the caller's business. Conversely, a caller who supplies such a resource
+	 *       must close this storage <em>before</em> closing the resource.</li>
+	 *   <li><b>Terminal.</b> A closed storage cannot be reopened.</li>
+	 *   <li><b>Operations throw afterwards.</b> {@link #query}, {@link #append}, {@link #importEvents},
+	 *       {@link #getEventById}, {@link #subscribe}, {@link #bookmark}, {@link #getBookmark},
+	 *       {@link #getBookmarks} and {@link #removeBookmark} throw
+	 *       {@link EventStorageClosedException} once the storage is closed. Continuing to serve reads
+	 *       and writes while notifications are dead is not an acceptable alternative: it strands
+	 *       projections silently. {@link #name()} keeps working, so logging and diagnostics do not
+	 *       break.</li>
+	 *   <li><b>No more notifications.</b> No {@link AppendsToEventStoreNotification} or
+	 *       {@link BookmarkPlacedNotification} is delivered to any listener after {@code close()}
+	 *       returns.</li>
+	 * </ol>
+	 * <p>
+	 * Declared without a checked exception, unlike {@link AutoCloseable#close()}, so that
+	 * try-with-resources stays pleasant:
+	 * <pre>{@code
+	 * try ( EventStorage storage = PostgresEventStorage.newBuilder().build() ) {
+	 *     ...
+	 * }
+	 * }</pre>
+	 *
+	 * @see org.sliceworkz.eventstore.EventStore#close()
+	 */
+	@Override
+	default void close ( ) {
+		// no resources to release
+	}
 
 	/**
 	 * Returns the name of this event storage implementation.

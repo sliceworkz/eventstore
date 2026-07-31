@@ -19,6 +19,37 @@ Supports all features described described by the [DCB Specification](https://dcb
 Step-by-step introduction with the [quickstart guide](https://sliceworkz.github.io/posts/eventstore-quickstart/) or the [documentation](https://sliceworkz.github.io/categories/eventstore-documentation/)
 
 
+# Shutting a store down
+
+`EventStore` and `EventStorage` are `AutoCloseable`. A store that lives as long as the process needs
+nothing; one created per tenant, per test or per hot reload should be closed, because the Postgres
+backend runs two LISTEN/NOTIFY threads holding JDBC connections — and those threads keep the storage
+alive, so dropping the reference does not help.
+
+```java
+try ( EventStore eventStore = PostgresEventStorage.newBuilder().buildStore() ) {
+    ...
+}   // monitors stopped, and pools the builder created are closed
+```
+
+Closing blocks until the background threads have really stopped, is idempotent and terminal, and never
+closes a `DataSource` you supplied yourself. Afterwards every operation throws
+`EventStorageClosedException` rather than half-working with dead notifications. The full contract is on
+`EventStorage.close()`; `PostgresEventStorageImpl.stop()` is deprecated and delegates to it.
+
+Closing an `EventStore` shuts down that store, not the storage under it — a storage can back several
+stores and usually outlives them, so you close it yourself once the stores built on it are closed. The
+store from `buildStore()` is the exception: it created the storage and hands you nothing else, so it
+closes both. When you build the pair yourself and want one handle, compose it the same way:
+
+```java
+EventStorage storage = PostgresEventStorage.newBuilder().build();
+try ( EventStore eventStore = EventStore.owning(EventStoreFactory.get().eventStore(storage), storage) ) {
+    ...
+}
+```
+
+
 # Moving events between stores
 
 `EventStoreImporter` copies events from one storage backend into another, keeping each event's id,

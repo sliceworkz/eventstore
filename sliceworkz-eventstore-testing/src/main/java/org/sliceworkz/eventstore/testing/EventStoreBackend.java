@@ -63,11 +63,17 @@ public interface EventStoreBackend {
 
 	/**
 	 * Releases a store handed out by {@link #createEventStorage(StorageOptions)}. Called after
-	 * every test method. The default does nothing.
+	 * every test method.
+	 * <p>
+	 * The default closes it, which is all most backends need: {@link EventStorage#close()} is
+	 * contractually required to release everything the storage created and to block until it has.
+	 * Override only to release something the backend itself created around the store — a pool it
+	 * handed in, say, which the storage will deliberately not close.
 	 *
 	 * @param storage the storage to release; never {@code null}
 	 */
 	default void destroyEventStorage ( EventStorage storage ) {
+		storage.close();
 	}
 
 	/**

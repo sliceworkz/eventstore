@@ -50,6 +50,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 
 import javax.sql.DataSource;
@@ -71,6 +73,7 @@ import org.sliceworkz.eventstore.query.EventFilterItem;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventImportConflictException;
 import org.sliceworkz.eventstore.spi.EventStorage;
+import org.sliceworkz.eventstore.spi.EventStorageClosedException;
 import org.sliceworkz.eventstore.spi.EventStorageException;
 import org.sliceworkz.eventstore.spi.EventToImport;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -139,14 +142,44 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private final DataSource monitoringDataSource;
 	private final Limit absoluteLimit;
 
+	/**
+	 * Whether the DataSources were created by {@link PostgresEventStorage.Builder} rather than supplied
+	 * by the caller, and must therefore be closed by {@link #close()}. A caller-supplied pool is never
+	 * touched — closing someone else's pool is worse than leaking our own.
+	 */
+	private final boolean ownsDataSources;
+
 	private final List<WeakReference<EventStoreListener>> listeners = new CopyOnWriteArrayList<>();
 	private final ExecutorService executorService;
-	private volatile boolean stopped;
+	private final AtomicBoolean stopped = new AtomicBoolean();
 
 	private static final JsonMapper JSONMAPPER = JsonMapper.builder().build();
 
-	private static final int THIRTY_SECONDS = 30*1000;
-	public static final int WAIT_FOR_NOTIFICATIONS_TIMEOUT = THIRTY_SECONDS;
+	/**
+	 * How long a single {@code getNotifications} call blocks before returning empty-handed.
+	 * <p>
+	 * This is a polling slice, not a deadline: the monitors loop on it, so it costs one parked socket
+	 * read per interval and nothing else, and notification delivery is unaffected — a notification
+	 * returns the call immediately. It is short because it doubles as how quickly a monitor notices it
+	 * has been stopped: the monitor then finishes on its own, UNLISTENs, and hands its connection back
+	 * to the pool intact. Interrupting it instead would be faster, but it closes the socket underneath
+	 * the driver, so the pool discards the connection and logs a stack trace about it on every shutdown.
+	 */
+	public static final int WAIT_FOR_NOTIFICATIONS_TIMEOUT = 100;
+
+	/**
+	 * How long {@link #close()} waits for the monitors to finish by themselves before resorting to
+	 * interrupting them. Comfortably more than {@link #WAIT_FOR_NOTIFICATIONS_TIMEOUT} plus an UNLISTEN
+	 * round trip, so the tidy path is the one that normally happens.
+	 */
+	private static final long GRACEFUL_SHUTDOWN_TIMEOUT_MILLIS = 2_000;
+
+	/**
+	 * How long {@link #close()} waits for the monitor threads to finish after interrupting them, before
+	 * giving up and logging. Only reached when a monitor is wedged somewhere it did not notice being
+	 * stopped — inside a listener callback that ignores interruption, for instance.
+	 */
+	private static final long SHUTDOWN_TIMEOUT_SECONDS = 5;
 
 	private static final long INITIAL_RETRY_DELAY_MS = 1_000;
 	private static final long MAX_RETRY_DELAY_MS = 30_000;
@@ -173,11 +206,32 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * @see PostgresEventStorage.Builder#build()
 	 */
 	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix ) {
+		this(name, dataSource, monitoringDataSource, absoluteLimit, prefix, false);
+	}
+
+	/**
+	 * Constructs a new PostgreSQL-backed event storage instance, stating who owns the DataSources.
+	 * <p>
+	 * This constructor is used by {@link PostgresEventStorage.Builder} and should not be called
+	 * directly. It exists so that {@link #close()} can close a pool the builder created without ever
+	 * closing one the caller supplied.
+	 *
+	 * @param name the logical name for this storage instance (used in logging and monitoring)
+	 * @param dataSource the main JDBC DataSource for event operations
+	 * @param monitoringDataSource the JDBC DataSource for LISTEN/NOTIFY operations
+	 * @param absoluteLimit the absolute limit on query results, or {@link Limit#none()} for no limit
+	 * @param prefix the table name prefix (validated, or empty string for no prefix)
+	 * @param ownsDataSources {@code true} if the DataSources were created for this storage and should
+	 *                        be closed by {@link #close()}; {@code false} if they belong to the caller
+	 * @see PostgresEventStorage.Builder#build()
+	 */
+	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources ) {
 		this.prefix = validatePrefix(prefix);
 		this.name = name;
 		this.dataSource = dataSource;
 		this.monitoringDataSource = monitoringDataSource;
 		this.absoluteLimit = absoluteLimit;
+		this.ownsDataSources = ownsDataSources;
 
 		this.executorService = Executors.newVirtualThreadPerTaskExecutor();
 	}
@@ -540,7 +594,18 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 	}
 	
+	/**
+	 * Starts the LISTEN/NOTIFY monitor threads and blocks until both have registered their listener.
+	 * <p>
+	 * Called by {@link PostgresEventStorage.Builder#build()}; a storage handed to application code is
+	 * always already started. A stopped storage is terminal and cannot be started again.
+	 *
+	 * @throws IllegalStateException if this storage has been stopped
+	 */
 	public void start ( ) {
+		if ( stopped.get() ) {
+			throw new IllegalStateException("event storage '%s' has been stopped and cannot be started again".formatted(name));
+		}
 		CountDownLatch eventMonitorReady = new CountDownLatch(1);
 		CountDownLatch bookmarkMonitorReady = new CountDownLatch(1);
 		this.executorService.execute(new NewEventsAppendedMonitor("event-append-listener/" + name, listeners, monitoringDataSource, eventMonitorReady));
@@ -552,14 +617,106 @@ public class PostgresEventStorageImpl implements EventStorage {
 			Thread.currentThread().interrupt();
 		}
 	}
-	
+
+	/**
+	 * Closes this storage: stops the LISTEN/NOTIFY monitor threads, then closes the DataSources if —
+	 * and only if — they were created by the builder rather than supplied by the caller.
+	 * <p>
+	 * Implements the contract on {@link EventStorage#close()}: idempotent, blocking until the monitor
+	 * threads have actually finished and released their connections (typically within
+	 * {@value #WAIT_FOR_NOTIFICATIONS_TIMEOUT}ms, bounded), terminal, and after it every operation on
+	 * this storage throws {@link EventStorageClosedException}.
+	 * <p>
+	 * A caller who supplied the DataSource must close this storage <em>before</em> closing that pool.
+	 * The other order leaves the monitors alive against a dead pool, where they cannot tell a closed
+	 * pool from a database outage and will retry with backoff, logging as they go.
+	 */
+	@Override
+	public void close ( ) {
+		boolean wasRunning = stopMonitors();
+		if ( wasRunning && ownsDataSources ) {
+			closeDataSource(dataSource);
+			if ( monitoringDataSource != dataSource ) {
+				closeDataSource(monitoringDataSource);
+			}
+		}
+	}
+
+	private void closeDataSource ( DataSource dataSourceToClose ) {
+		if ( dataSourceToClose instanceof AutoCloseable closeable ) {
+			try {
+				closeable.close();
+			} catch (Exception e) {
+				LOGGER.warn("failed to close the DataSource created for event storage '{}': {}", name, e.getMessage(), e);
+			}
+		}
+	}
+
+	/**
+	 * Stops the LISTEN/NOTIFY monitor threads and waits for them to finish.
+	 * <p>
+	 * The monitors poll for notifications in {@value #WAIT_FOR_NOTIFICATIONS_TIMEOUT}ms slices, so they
+	 * see the stop flag within that and wind themselves up: UNLISTEN, then the connection returns to the
+	 * pool healthy and no shutdown noise is logged. Only if that has not happened within
+	 * {@value #GRACEFUL_SHUTDOWN_TIMEOUT_MILLIS}ms are they interrupted, which is abrupt — it closes the
+	 * socket underneath the driver, so the pool discards the connection and logs a "marked as broken"
+	 * warning about it.
+	 * <p>
+	 * Idempotent: only the first call does anything, later calls return immediately. When this method
+	 * returns, no monitor thread of this storage is running any more (unless the bounded wait expired,
+	 * which is logged).
+	 *
+	 * @deprecated use {@link #close()} instead, which is on the {@link EventStorage} interface and so
+	 *             needs no downcast, and which additionally closes DataSources the builder created.
+	 *             This method now simply delegates to it.
+	 */
+	@Deprecated(since = "0.10.0", forRemoval = true)
 	public void stop ( ) {
-		this.stopped = true;
+		close();
+	}
+
+	/**
+	 * Interrupts the monitor threads and waits for them to finish.
+	 *
+	 * @return {@code true} if this call was the one that stopped them, {@code false} if they were
+	 *         already stopped
+	 */
+	private boolean stopMonitors ( ) {
+		if ( !stopped.compareAndSet(false, true) ) {
+			return false;
+		}
 		executorService.shutdown();
+		try {
+			// the monitors check the flag every WAIT_FOR_NOTIFICATIONS_TIMEOUT and wind themselves up
+			// cleanly: UNLISTEN, then the connection goes back to the pool healthy
+			if ( !executorService.awaitTermination(GRACEFUL_SHUTDOWN_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS) ) {
+				// a monitor is stuck somewhere it cannot see the flag; interrupt it, accepting that this
+				// breaks its connection under the driver and that the pool will say so
+				LOGGER.debug("monitor threads of event storage '{}' did not stop on their own, interrupting them", name);
+				executorService.shutdownNow();
+				if ( !executorService.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS) ) {
+					LOGGER.warn("monitor threads of event storage '{}' did not terminate within {}s", name, SHUTDOWN_TIMEOUT_SECONDS);
+				}
+			}
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+		}
+		return true;
+	}
+
+	/**
+	 * Throws if this storage has been closed. Called at the top of every operation, so that a closed
+	 * storage fails immediately and locatably instead of half-working with dead notifications.
+	 */
+	private void checkNotClosed ( ) {
+		if ( stopped.get() ) {
+			throw new EventStorageClosedException("event storage '%s' is closed".formatted(name));
+		}
 	}
 
 	@Override
 	public Stream<StoredEvent> query(EventQuery query, Optional<EventStreamId> stream, EventReference after, Limit limit, QueryDirection direction ) {
+		checkNotClosed();
 		// Handle the case where query matches none - return empty stream
 		if (query.isMatchNone()) {
 			return Stream.empty();
@@ -746,6 +903,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	@Override
 	public List<StoredEvent> append(AppendCriteria appendCriteria, Optional<EventStreamId> streamId, List<EventToStore> events) {
+		checkNotClosed();
 		List<StoredEvent> storedEvents = new ArrayList<>();
 
 		if ( events.size() != 0 ) {
@@ -904,6 +1062,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	@Override
 	public List<StoredEvent> importEvents ( List<EventToImport> events, ImportMode mode ) {
+		checkNotClosed();
 		if ( events == null ) {
 			throw new IllegalArgumentException("events to import must not be null");
 		}
@@ -1109,6 +1268,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	@Override
 	public Optional<StoredEvent> getEventById(EventId eventId) {
+		checkNotClosed();
 		if ( eventId != null ) {
 			String sql = """
 				SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags, idempotency_key
@@ -1194,7 +1354,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			String unlistenStatement = "UNLISTEN %sevent_appended;".formatted(prefix);
 
 			long retryDelayMs = INITIAL_RETRY_DELAY_MS;
-			while ( !stopped ) {
+			while ( !stopped.get() ) {
 
 				try ( Connection monitorConnection = monitoringDataSource.getConnection(); Statement stmt = monitorConnection.createStatement() ){
 					// Ensure connection is in the right state for LISTEN
@@ -1209,11 +1369,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 					retryDelayMs = INITIAL_RETRY_DELAY_MS;
 
-					while ( !stopped ) { // loop using a single connnection without returning it to the pool
+					while ( !stopped.get() ) { // loop using a single connnection without returning it to the pool
 
 						LOGGER.debug("checking for notifications...");
 
-						PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // wait at max so long for new notifications, then ask new connection and start waiting again
+						PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // returns as soon as a notification arrives, otherwise empty-handed after the poll slice
 
 					    if (notifications != null) {
 					        for (PGNotification notification : notifications) {
@@ -1225,7 +1385,14 @@ public class PostgresEventStorageImpl implements EventStorage {
 									listeners.forEach(l -> {
 										EventStoreListener listener = l.get();
 										if (listener != null) {
-											listener.notify(aesn);
+											// one listener misbehaving must not kill this monitor: it is the only one this
+											// storage has, so its death silently stops notifications for every store,
+											// listener and projection attached to the storage
+											try {
+												listener.notify(aesn);
+											} catch (Exception e) {
+												LOGGER.error("event store listener failed handling a notification: {}", e.getMessage(), e);
+											}
 										}
 									});
 
@@ -1244,15 +1411,17 @@ public class PostgresEventStorageImpl implements EventStorage {
 					}
 
 				} catch (SQLException e) {
-					if ( !stopped ) {
-						LOGGER.error(e.getMessage(), e);
-						try {
-							Thread.sleep(retryDelayMs);
-							retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_DELAY_MS);
-						} catch (InterruptedException ie) {
-							Thread.currentThread().interrupt();
-							return;
-						}
+					if ( stopped.get() || Thread.currentThread().isInterrupted() ) {
+						// shutting down: the connection was closed underneath us on purpose, nothing to report
+						return;
+					}
+					LOGGER.error(e.getMessage(), e);
+					try {
+						Thread.sleep(retryDelayMs);
+						retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_DELAY_MS);
+					} catch (InterruptedException ie) {
+						Thread.currentThread().interrupt();
+						return;
 					}
 				} finally {
 					LOGGER.debug("loop done.");
@@ -1290,7 +1459,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			JsonMapper jsonMapper = JsonMapper.builder().build();
 
 			long retryDelayMs = INITIAL_RETRY_DELAY_MS;
-			while ( !stopped ) {
+			while ( !stopped.get() ) {
 
 				try ( Connection monitorConnection = monitoringDataSource.getConnection(); Statement stmt = monitorConnection.createStatement() ){
 					// Ensure connection is in the right state for LISTEN
@@ -1305,11 +1474,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 					retryDelayMs = INITIAL_RETRY_DELAY_MS;
 
-					while ( !stopped ) { // reuse single connection without returing in tot the pool
+					while ( !stopped.get() ) { // reuse single connection without returing in tot the pool
 
 						LOGGER.debug("checking for notifications...");
 
-						PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // wait at for new notifications, then ask new connection and start waiting again
+						PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // returns as soon as a notification arrives, otherwise empty-handed after the poll slice
 					    if (notifications != null) {
 					        for (PGNotification notification : notifications) {
 					            LOGGER.debug("Received: " + notification.getParameter());
@@ -1321,7 +1490,14 @@ public class PostgresEventStorageImpl implements EventStorage {
 									listeners.forEach(l -> {
 										EventStoreListener listener = l.get();
 										if (listener != null) {
-											listener.notify(bpn);
+											// one listener misbehaving must not kill this monitor: it is the only one this
+											// storage has, so its death silently stops notifications for every store,
+											// listener and projection attached to the storage
+											try {
+												listener.notify(bpn);
+											} catch (Exception e) {
+												LOGGER.error("event store listener failed handling a notification: {}", e.getMessage(), e);
+											}
 										}
 									});
 
@@ -1340,15 +1516,17 @@ public class PostgresEventStorageImpl implements EventStorage {
 					}
 
 				} catch (SQLException e) {
-					if ( !stopped ) {
-						LOGGER.error(e.getMessage(), e);
-						try {
-							Thread.sleep(retryDelayMs);
-							retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_DELAY_MS);
-						} catch (InterruptedException ie) {
-							Thread.currentThread().interrupt();
-							return;
-						}
+					if ( stopped.get() || Thread.currentThread().isInterrupted() ) {
+						// shutting down: the connection was closed underneath us on purpose, nothing to report
+						return;
+					}
+					LOGGER.error(e.getMessage(), e);
+					try {
+						Thread.sleep(retryDelayMs);
+						retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_DELAY_MS);
+					} catch (InterruptedException ie) {
+						Thread.currentThread().interrupt();
+						return;
 					}
 				} finally {
 					LOGGER.debug("loop done.");
@@ -1375,12 +1553,14 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	@Override
 	public void subscribe(EventStoreListener listener) {
+		checkNotClosed();
 		listeners.add(new WeakReference<>(listener));
 		listeners.removeIf(ref -> ref.get() == null);
 	}
 
 	@Override
 	public Optional<EventReference> getBookmark(String reader) {
+		checkNotClosed();
 		String sql = """
 			SELECT event_position, event_id, event_tx::text
 			FROM %sbookmarks
@@ -1413,6 +1593,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	@Override
 	public List<Bookmark> getBookmarks() {
+		checkNotClosed();
 		String sql = """
 			SELECT reader, event_position, event_id, event_tx::text, updated_at, updated_tags
 			FROM %sbookmarks
@@ -1453,6 +1634,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	
 	@Override
 	public void bookmark(String reader, EventReference eventReference, Tags tags ) {
+		checkNotClosed();
 		if ( eventReference == null ) {
 			removeBookmark(reader);
 		} else {
@@ -1509,6 +1691,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	
 	@Override
 	public void removeBookmark(String reader ) {
+		checkNotClosed();
 		String sql = """
 			DELETE FROM %sbookmarks  
 			WHERE reader = ?

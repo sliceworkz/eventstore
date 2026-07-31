@@ -79,7 +79,7 @@ class PostgresEventStorageVersionDetectionTest {
 				assertInstanceOf(PostgresLegacyEventStorageImpl.class, storage,
 					"PG17 should be served by PostgresLegacyEventStorageImpl");
 			} finally {
-				((PostgresEventStorageImpl) storage).stop();
+				storage.close();
 				PostgresContainer.closeDataSource(PostgresContainer.IMAGE_PG17);
 			}
 		}
@@ -98,7 +98,7 @@ class PostgresEventStorageVersionDetectionTest {
 				UUID id = UUID.fromString(stored.get(0).reference().id().value());
 				assertEquals(7, id.version(), "expected UUIDv7");
 			} finally {
-				((PostgresEventStorageImpl) storage).stop();
+				storage.close();
 				PostgresContainer.closeDataSource(PostgresContainer.IMAGE_PG17);
 			}
 		}
@@ -128,7 +128,7 @@ class PostgresEventStorageVersionDetectionTest {
 				assertFalse(storage instanceof PostgresLegacyEventStorageImpl,
 					"PG18 must not use the legacy implementation");
 			} finally {
-				((PostgresEventStorageImpl) storage).stop();
+				storage.close();
 				PostgresContainer.closeDataSource(PostgresContainer.IMAGE_PG18);
 			}
 		}
@@ -148,7 +148,7 @@ class PostgresEventStorageVersionDetectionTest {
 				assertEquals(7, id.version(), "PG18 uuidv7() must produce UUID version 7");
 				assertTrue(id.variant() == 2, "RFC 4122 variant expected, got " + id.variant());
 			} finally {
-				((PostgresEventStorageImpl) storage).stop();
+				storage.close();
 				PostgresContainer.closeDataSource(PostgresContainer.IMAGE_PG18);
 			}
 		}

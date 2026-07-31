@@ -94,15 +94,12 @@ public final class PostgresContainer {
 	 * Closes the connection pool for {@code image}; the next {@link #dataSource(String)} builds a new
 	 * one. The container itself is left to Ryuk.
 	 * <p>
-	 * This runs after <em>every test</em>, not once at the end of the run, and that is load-bearing.
-	 * A store's LISTEN/NOTIFY monitors each hold a connection for their whole life and take it from
-	 * the monitoring DataSource, which defaults to this very pool.
-	 * {@code PostgresEventStorageImpl.stop()} sets a flag and calls {@code shutdown()} without
-	 * interrupting, so a monitor keeps its connection until its 30-second
-	 * {@code getNotifications(...)} wait returns. Against a pool that outlives the test those
-	 * connections accumulate two per test, exhaust the default maximum of ten, and every later
-	 * {@code getConnection()} — including the next test's own monitors — blocks for 30 seconds
-	 * waiting for one to be released. Dropping the pool releases them immediately instead.
+	 * This runs after <em>every test</em>, not once at the end of the run. A store's LISTEN/NOTIFY
+	 * monitors each hold a connection for their whole life, taken from the monitoring DataSource,
+	 * which defaults to this very pool. {@code EventStorage.close()} gives those connections back
+	 * before it returns, so a pool outliving the test would no longer be starved by them — but it is
+	 * still dropped per test, so that a leaked store, or one a scenario forgot to close, shows up as a
+	 * failure in the test that caused it rather than as connection exhaustion several tests later.
 	 *
 	 * @param image the PostgreSQL image tag
 	 */

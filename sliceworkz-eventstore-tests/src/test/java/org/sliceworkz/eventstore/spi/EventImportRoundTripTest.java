@@ -29,7 +29,6 @@ import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
-import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorageImpl;
 import org.sliceworkz.eventstore.migration.EventStoreImporter;
 import org.sliceworkz.eventstore.migration.ImportReport;
 import org.sliceworkz.eventstore.query.EventQuery;
@@ -114,7 +113,7 @@ class EventImportRoundTripTest {
 			// the erasable payload really made the trip rather than being merged away
 			assertNotNull(returned.get(2).erasableData());
 		} finally {
-			((PostgresEventStorageImpl)postgres).stop();
+			postgres.close();
 			PostgresContainer.close(PostgresContainer.IMAGE_PG18);
 		}
 	}

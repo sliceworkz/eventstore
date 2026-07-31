@@ -81,11 +81,26 @@ import io.micrometer.core.instrument.Metrics;
  * // Using default configuration from db.properties file (default mode is ENSURE)
  * EventStore eventStore = PostgresEventStorage.newBuilder().buildStore();
  *
- * // Test environment: fresh schema every time
- * EventStore eventStore = PostgresEventStorage.newBuilder()
- *     .initializeDatabase()
- *     .buildStore();
+ * // Test environment: fresh schema every time, closed when the block ends
+ * try ( EventStore eventStore = PostgresEventStorage.newBuilder()
+ *         .initializeDatabase()
+ *         .buildStore() ) {
+ *     ...
+ * }
  * }</pre>
+ *
+ * <h2>Lifecycle:</h2>
+ * This storage runs two LISTEN/NOTIFY monitor threads, each holding a JDBC connection, and — unless you
+ * supply a {@link DataSource} yourself — the connection pools behind them. A store that lives as long as
+ * the process needs no explicit shutdown; one created per tenant, per test or per reload must be
+ * {@link EventStorage#close() closed}, or its threads, connections and pools stay alive for good: the
+ * running monitor threads keep the storage reachable, so garbage collection will not clean up after you.
+ * <p>
+ * Closing an {@link EventStore} does not close a storage you handed to it — a storage can back several
+ * stores and usually outlives them. The store returned by {@link Builder#buildStore()} is the exception:
+ * it created the storage and returns no other handle on it, so closing it closes both. A DataSource you
+ * passed in is never closed; one this builder created is. See {@link EventStorage#close()} for the full
+ * contract.
  *
  * <h2>Advanced Configuration Example:</h2>
  * <pre>{@code
@@ -425,6 +440,11 @@ public interface PostgresEventStorage {
 		 * <p>
 		 * The returned EventStorage can be passed to {@link EventStoreFactory#eventStore(EventStorage)}
 		 * to create an EventStore instance.
+		 * <p>
+		 * The returned storage is already started: its LISTEN/NOTIFY monitor threads are running and
+		 * holding connections. Close it with {@link EventStorage#close()} when done — and note that if no
+		 * {@link #dataSource(DataSource)} was supplied, this method also creates the connection pools, and
+		 * closing the storage is then the only thing that will ever close them.
 		 *
 		 * @return a configured EventStorage instance backed by PostgreSQL
 		 * @throws RuntimeException if database configuration cannot be loaded or schema operations fail
@@ -432,11 +452,15 @@ public interface PostgresEventStorage {
 		 * @see EventStoreFactory#eventStore(EventStorage)
 		 */
 		public EventStorage build ( ) {
+			// a DataSource we create here belongs to the storage, and is closed by EventStorage.close();
+			// one the caller passed in stays the caller's, and is never touched
+			boolean createdDataSources = false;
 			if ( dataSource == null ) {
 				Properties dbProperties = DataSourceFactory.loadProperties();
 				if ( dataSource == null ) {
 					dataSource = DataSourceFactory.fromConfiguration(dbProperties, "pooled");
 					monitoringDataSource = DataSourceFactory.fromConfiguration(dbProperties, "nonpooled");
+					createdDataSources = true;
 				}
 				if ( monitoringDataSource == null ) {
 					monitoringDataSource = dataSource;
@@ -458,22 +482,43 @@ public interface PostgresEventStorage {
 				}
 			}
 
-			boolean nativeUuidv7 = detectsNativeUuidv7Support(dataSource);
+			try {
+				boolean nativeUuidv7 = detectsNativeUuidv7Support(dataSource);
 
-			PostgresEventStorageImpl result = nativeUuidv7
-				? new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix)
-				: new PostgresLegacyEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix);
+				PostgresEventStorageImpl result = nativeUuidv7
+					? new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, createdDataSources)
+					: new PostgresLegacyEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, createdDataSources);
 
-			switch ( databaseInitMode ) {
-				case NONE       -> { }
-				case VALIDATE   -> result.validateDatabase();
-				case ENSURE     -> result.ensureDatabase();
-				case INITIALIZE -> result.initializeDatabase();
+				switch ( databaseInitMode ) {
+					case NONE       -> { }
+					case VALIDATE   -> result.validateDatabase();
+					case ENSURE     -> result.ensureDatabase();
+					case INITIALIZE -> result.initializeDatabase();
+				}
+				// if we didn't fail until here, then we can start the executor threads
+				result.start();
+				return result;
+			} catch (RuntimeException e) {
+				// version detection or schema handling failed: don't strand the pools we just created
+				if ( createdDataSources ) {
+					closeQuietly(dataSource);
+					if ( monitoringDataSource != dataSource ) {
+						closeQuietly(monitoringDataSource);
+					}
+				}
+				throw e;
 			}
-			// if we didn't fail until here, then we can start the executor threads
-			result.start();
-			return result;
 
+		}
+
+		private static void closeQuietly ( DataSource dataSource ) {
+			if ( dataSource instanceof AutoCloseable closeable ) {
+				try {
+					closeable.close();
+				} catch (Exception e) {
+					LOGGER.warn("failed to close a DataSource after a failed build(): {}", e.getMessage(), e);
+				}
+			}
 		}
 
 		/**
@@ -488,6 +533,11 @@ public interface PostgresEventStorage {
 		 * EventStorage storage = builder.build();
 		 * EventStore eventStore = EventStoreFactory.get().eventStore(storage);
 		 * }</pre>
+		 * <p>
+		 * The returned EventStore is the only handle on the storage this creates, so it is also the only
+		 * way to shut it down: {@link EventStore#close()} stops the monitor threads and closes the
+		 * connection pools created here. Use try-with-resources unless the store is meant to live as long
+		 * as the process.
 		 *
 		 * @return a fully configured EventStore backed by PostgreSQL
 		 * @throws RuntimeException if database configuration cannot be loaded or schema initialization fails
@@ -495,7 +545,10 @@ public interface PostgresEventStorage {
 		 * @see EventStoreFactory#eventStore(EventStorage)
 		 */
 		public EventStore buildStore ( ) {
-			return EventStoreFactory.get().eventStore(build(), meterRegistry);
+			// the storage is created here and never handed to the caller, so the returned store owns it:
+			// closing that store is the only way this storage will ever be closed
+			EventStorage eventStorage = build();
+			return EventStore.owning(EventStoreFactory.get().eventStore(eventStorage, meterRegistry), eventStorage);
 		}
 
 		/**

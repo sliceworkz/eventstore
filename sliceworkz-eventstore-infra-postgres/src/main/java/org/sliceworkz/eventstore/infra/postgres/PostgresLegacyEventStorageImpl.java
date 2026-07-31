@@ -44,6 +44,10 @@ public class PostgresLegacyEventStorageImpl extends PostgresEventStorageImpl {
 		super(name, dataSource, monitoringDataSource, absoluteLimit, prefix);
 	}
 
+	public PostgresLegacyEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources ) {
+		super(name, dataSource, monitoringDataSource, absoluteLimit, prefix, ownsDataSources);
+	}
+
 	@Override
 	protected String appendValuesRowFragment ( ) {
 		return "(?::uuid, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?) ";

@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -42,6 +43,7 @@ import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventImportConflictException;
 import org.sliceworkz.eventstore.spi.EventStorage;
+import org.sliceworkz.eventstore.spi.EventStorageClosedException;
 import org.sliceworkz.eventstore.spi.EventStorageException;
 import org.sliceworkz.eventstore.spi.EventToImport;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -116,6 +118,11 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	private JsonMapper jsonMapper;
 	private Limit absoluteLimit;
 	private long txCounter;
+	// This backend holds no threads, connections or file handles, so close() has nothing to release.
+	// It still marks itself closed, so that the post-close behaviour required by EventStorage.close()
+	// is the same here as on a backend that does — code that outlives its storage fails the same way
+	// against every backend, in tests as in production.
+	private final AtomicBoolean closed = new AtomicBoolean();
 
 	/**
 	 * Constructs a new in-memory event storage instance with the specified name and absolute query limit.
@@ -202,6 +209,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	 */
 	@Override
 	public synchronized Stream<StoredEvent> query(EventQuery query, Optional<EventStreamId> stream, EventReference after, Limit limit, QueryDirection direction ) {
+		checkNotClosed();
 		Stream<StoredEvent> on;
 
 		switch ( direction ) {
@@ -256,6 +264,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	 */
 	@Override
 	public synchronized List<StoredEvent> append(AppendCriteria appendCriteria, Optional<EventStreamId> streamId, List<EventToStore> events) {
+		checkNotClosed();
 		
 		verifyPersistableJson(events);
 		
@@ -359,6 +368,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	 */
 	@Override
 	public synchronized List<StoredEvent> importEvents ( List<EventToImport> events, ImportMode mode ) {
+		checkNotClosed();
 		if ( events == null ) {
 			throw new IllegalArgumentException("events to import must not be null");
 		}
@@ -441,32 +451,38 @@ public class InMemoryEventStorageImpl implements EventStorage {
 
 	@Override
 	public synchronized Optional<StoredEvent> getEventById(EventId eventId) {
+		checkNotClosed();
 		return Optional.ofNullable(eventsById.get(eventId));
 	}
 
 	@Override
 	public void subscribe(EventStoreListener listener) {
+		checkNotClosed();
 		listeners.add(new WeakReference<>(listener));
 		listeners.removeIf(ref -> ref.get() == null);
 	}
 
 	@Override
 	public synchronized Optional<EventReference> getBookmark(String reader) {
+		checkNotClosed();
 		return Optional.ofNullable(bookmarks.get(reader)).map(Bookmark::reference);
 	}
 
 	@Override
 	public synchronized List<Bookmark> getBookmarks() {
+		checkNotClosed();
 		return List.copyOf(bookmarks.values());
 	}
 
 	@Override
 	public synchronized void removeBookmark(String reader) {
+		checkNotClosed();
 		bookmarks.remove(reader);
 	}
 
 	@Override
 	public synchronized void bookmark(String reader, EventReference eventReference, Tags tags ) {
+		checkNotClosed();
 		Tags effectiveTags = tags == null ? Tags.none() : tags;
 		bookmarks.put(reader, new Bookmark(reader, eventReference, effectiveTags, Instant.now()));
 		BookmarkPlacedNotification notification = new BookmarkPlacedNotification(reader, eventReference);
@@ -523,6 +539,26 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	@Override
 	public String name() {
 		return name;
+	}
+
+	/**
+	 * Marks this storage closed. There is nothing to release — the events live on the heap and go away
+	 * with the instance — but the post-close contract on {@link EventStorage#close()} still applies, so
+	 * that code which outlives its storage fails identically against every backend.
+	 * <p>
+	 * Idempotent. The events are deliberately not discarded: a closed storage rejects operations rather
+	 * than quietly answering from a half-torn-down state, and dropping the log would only make
+	 * diagnosing a lifecycle bug harder.
+	 */
+	@Override
+	public void close ( ) {
+		closed.set(true);
+	}
+
+	private void checkNotClosed ( ) {
+		if ( closed.get() ) {
+			throw new EventStorageClosedException("event storage '%s' is closed".formatted(name));
+		}
 	}
 
 	/**

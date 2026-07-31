@@ -25,6 +25,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
@@ -48,6 +50,7 @@ import org.sliceworkz.eventstore.query.EventFilterItem;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
+import org.sliceworkz.eventstore.spi.EventStorageClosedException;
 import org.sliceworkz.eventstore.spi.EventStorage.AppendsToEventStoreNotification;
 import org.sliceworkz.eventstore.spi.EventStorage.BookmarkPlacedNotification;
 import org.sliceworkz.eventstore.spi.EventStorage.EventStoreListener;
@@ -108,7 +111,9 @@ import io.micrometer.core.instrument.Timer;
  * @see EventPayloadSerializerDeserializer
  */
 public class EventStoreImpl implements EventStore {
-	
+
+	private static final Logger STORE_LOGGER = LoggerFactory.getLogger(EventStoreImpl.class);
+
 	static {
 		Banner.printBanner();
 	}
@@ -136,7 +141,20 @@ public class EventStoreImpl implements EventStore {
 	 * Used to track event store operations such as event stream creation, appends, and queries.
 	 */
 	private final MeterRegistry meterRegistry;
-	
+
+	/**
+	 * Guards {@link #close()} so that it runs once, and marks this store as unusable afterwards.
+	 */
+	private final AtomicBoolean closed = new AtomicBoolean();
+
+	/**
+	 * How long {@link #close()} waits for each notification executor to finish before logging and
+	 * moving on. The tasks are short-lived listener callbacks, so this only covers a listener that
+	 * ignores interruption.
+	 */
+	private static final long SHUTDOWN_TIMEOUT_SECONDS = 5;
+
+
 	/**
 	 * Constructs a new EventStoreImpl instance backed by the specified storage with observability support.
 	 * <p>
@@ -171,10 +189,46 @@ public class EventStoreImpl implements EventStore {
 		this.executorServiceForBookmarkUpdates = Executors.newSingleThreadExecutor(threadFactory);
 	}
 
+	/**
+	 * Shuts down this store's notification executors, leaving the storage open.
+	 * <p>
+	 * Idempotent, and bounded: the executors are interrupted and awaited briefly. The storage was handed
+	 * to this store rather than created by it, and may well be backing other stores, so closing it is
+	 * not this store's call — see {@link EventStore#close()}. A store that must close its storage is
+	 * composed with {@link EventStore#owning(EventStore, EventStorage)}, which is what the storage
+	 * builders' {@code buildStore()} returns.
+	 * <p>
+	 * Once closed, this store's streams stop working and its listeners fall silent, but nothing it does
+	 * disturbs another store on the same storage.
+	 */
+	@Override
+	public void close ( ) {
+		if ( !closed.compareAndSet(false, true) ) {
+			return;
+		}
+		shutdown(executorServiceForEventAppends);
+		shutdown(executorServiceForBookmarkUpdates);
+	}
+
+	private void shutdown ( ExecutorService executorService ) {
+		executorService.shutdownNow();
+		try {
+			if ( !executorService.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS) ) {
+				STORE_LOGGER.warn("notification threads of event store '{}' did not terminate within {}s", eventStorage.name(), SHUTDOWN_TIMEOUT_SECONDS);
+			}
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+		}
+	}
+
 	@Override
 	public <EVENT_TYPE> EventStream<EVENT_TYPE> getEventStream(EventStreamId eventStreamId, Set<Class<?>> eventRootClasses, Set<Class<?>> historicalEventRootClasses ) {
-		
-		EventPayloadSerializerDeserializer serde; 
+
+		if ( closed.get() ) {
+			throw new EventStorageClosedException("event store on storage '%s' is closed".formatted(eventStorage.name()));
+		}
+
+		EventPayloadSerializerDeserializer serde;
 		if ( eventRootClasses != null && eventRootClasses.size() > 0 ) {
 			// use typed event payloads, mapped to Java objects
 			serde = EventPayloadSerializerDeserializer.typed();
@@ -245,6 +299,17 @@ public class EventStoreImpl implements EventStore {
 			meterRegistry.counter("sliceworkz.eventstore.stream.create", baseTags).increment();
 		}
 		
+		/**
+		 * Throws if the store this stream came from has been closed. A stream outliving its store would
+		 * otherwise keep reading and writing — the storage may still be open, serving other stores —
+		 * while silently receiving no notifications, which is exactly how a projection stalls unnoticed.
+		 */
+		private void checkStoreNotClosed ( ) {
+			if ( closed.get() ) {
+				throw new EventStorageClosedException("the event store this stream (%s) came from is closed".formatted(eventStreamId));
+			}
+		}
+
 		@Override
 		public EventStreamId id() {
 			return eventStreamId;
@@ -252,21 +317,25 @@ public class EventStoreImpl implements EventStore {
 
 		@Override
 		public void subscribe(EventStreamEventuallyConsistentAppendListener eventuallyConsistentSubscriber) {
+			checkStoreNotClosed();
 			this.eventuallyConsistentSubscribers.add(new OptimizingApendListenerDecorator(eventuallyConsistentSubscriber));
 		}
 
 		@Override
 		public void subscribe(EventStreamConsistentAppendListener<EVENT_TYPE> consistentSubscriber) {
+			checkStoreNotClosed();
 			this.consistentSubscribers.add(consistentSubscriber);
 		}
 
 		@Override
 		public void subscribe(EventStreamEventuallyConsistentBookmarkListener listener) {
+			checkStoreNotClosed();
 			this.bookmarkSubscribers.add(listener);
 		}
 
 		@Override
 		public Stream<Event<EVENT_TYPE>> query(EventQuery query, EventReference cursor, Limit limit, Consumer<EventReference> storedEventCursorTracker ) {
+			checkStoreNotClosed();
 			meterQuery.increment(); // one query done
 			QueryDirection direction = query.isBackwards() ? QueryDirection.BACKWARD : QueryDirection.FORWARD;
 			EventFilter originalFilter = query.filter();
@@ -319,6 +388,7 @@ public class EventStoreImpl implements EventStore {
 		}
 		@Override
 		public List<Event<EVENT_TYPE>> append(AppendCriteria appendCriteria, List<EphemeralEvent<? extends EVENT_TYPE>> events, EventStreamId streamToAppendTo) {
+			checkStoreNotClosed();
 			
 			if ( !streamToAppendTo.canAppendTo(eventStreamId)) {
 				throw new IllegalArgumentException("cannot append to eventstream %s using streamId %s".formatted(eventStreamId, streamToAppendTo));
@@ -389,6 +459,14 @@ public class EventStoreImpl implements EventStore {
 
 		@Override
 		public void notify(AppendsToEventStoreNotification newEventsInStore) {
+			// A storage outlives the stores built on it, and keeps notifying every stream ever registered
+			// with it -- including ours, after our store was closed and its executors shut down. Dropping
+			// the notification here is what keeps a closed store from poisoning the storage it shares:
+			// submitting to a terminated executor throws RejectedExecutionException into whoever is
+			// notifying, which on Postgres is the LISTEN/NOTIFY monitor thread, and would kill it.
+			if ( closed.get() ) {
+				return;
+			}
 			// if the events are in the logical stream we care about...
 			if ( newEventsInStore.isRelevantFor(eventStreamId) ) {
 				LOGGER.debug("Must asynchronously notify {} eventually consistent clients of stream {} about append up until at least {}", eventuallyConsistentSubscribers.size(), eventStreamId, newEventsInStore.atLeastUntil());
@@ -403,6 +481,9 @@ public class EventStoreImpl implements EventStore {
 
 		@Override
 		public void notify(BookmarkPlacedNotification bookmarkPlaced) {
+			if ( closed.get() ) {
+				return; // see notify(AppendsToEventStoreNotification)
+			}
 			LOGGER.debug("Must asynchronously notify {} eventually consistent bookmark listeners on {} of update for {} to {}", eventuallyConsistentSubscribers.size(), eventStreamId, bookmarkPlaced.reader(), bookmarkPlaced.bookmark());
 			
 			// schedule for execution on different thread to notify/interrupt any waiting eventual consistent processors 
@@ -414,12 +495,14 @@ public class EventStoreImpl implements EventStore {
 
 		@Override
 		public void placeBookmark(String reader, EventReference reference, Tags tags) {
+			checkStoreNotClosed();
 			meterBookmarkPlace.increment();
 			eventStorage.bookmark(reader, reference, tags);
 		}
 
 		@Override
 		public Optional<EventReference> removeBookmark(String reader) {
+			checkStoreNotClosed();
 			Optional<EventReference> result = getBookmark(reader);
 			if ( result.isPresent() ) {
 				eventStorage.removeBookmark(reader);
@@ -429,18 +512,21 @@ public class EventStoreImpl implements EventStore {
 
 		@Override
 		public Optional<EventReference> getBookmark(String reader) {
+			checkStoreNotClosed();
 			meterBookmarkGet.increment();
 			return eventStorage.getBookmark(reader.toString());
 		}
 
 		@Override
 		public List<Bookmark> getBookmarks() {
+			checkStoreNotClosed();
 			meterBookmarkList.increment();
 			return eventStorage.getBookmarks();
 		}
 
 		@Override
 		public List<Event<EVENT_TYPE>> getEventById(EventId eventId) {
+			checkStoreNotClosed();
 			meterGetEvent.increment();
 			// filters out events that can not be read by this stream, then upcasts via enrich
 			return eventStorage.getEventById(eventId)

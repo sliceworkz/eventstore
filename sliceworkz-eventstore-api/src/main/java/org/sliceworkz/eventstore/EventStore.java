@@ -20,6 +20,7 @@ package org.sliceworkz.eventstore;
 import java.util.Collections;
 import java.util.Set;
 
+import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
@@ -46,11 +47,76 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  * List<Event<CustomerEvent>> events = stream.query(EventQuery.matchAll()).toList();
  * }</pre>
  *
+ * <h2>Lifecycle:</h2>
+ * An EventStore owns background machinery of its own, and — when obtained from a storage builder's
+ * {@code buildStore()} — is the only handle on the storage backing it. {@link #close() Close} it when
+ * the application is done with it, either explicitly or with try-with-resources:
+ * <pre>{@code
+ * try ( EventStore eventStore = PostgresEventStorage.newBuilder().buildStore() ) {
+ *     ...
+ * }
+ * }</pre>
+ * A store that lives as long as the process needs no explicit close; one created per tenant, per test
+ * or per reload does.
+ *
  * @see EventStoreFactory
  * @see EventStream
  * @see EventStreamId
  */
-public interface EventStore {
+public interface EventStore extends AutoCloseable {
+
+	/**
+	 * Closes this event store, shutting down the notification machinery it started.
+	 * <p>
+	 * <b>The {@link org.sliceworkz.eventstore.spi.EventStorage} is not closed.</b> An EventStore is
+	 * always handed a storage it did not create, and the storage is the expensive object — connection
+	 * pool, notification threads — which can back several stores and usually outlives them. Closing it
+	 * is the caller's business, once every store built on it has been closed.
+	 * <p>
+	 * The single exception is a store obtained from a storage builder's {@code buildStore()}: that one
+	 * created the storage and hands back no other reference to it, so closing it closes both. See
+	 * {@link #owning(EventStore, EventStorage)}, which is how such a store is composed.
+	 * <p>
+	 * Idempotent, and bounded: it waits briefly for in-flight listener notifications rather than
+	 * abandoning them. After closing, {@link #getEventStream} and every operation on streams already
+	 * obtained from this store throw {@link org.sliceworkz.eventstore.spi.EventStorageClosedException} —
+	 * a store whose notifications have stopped must not keep serving reads as if nothing happened, since
+	 * that strands anything subscribed to it. Streams from <em>other</em> stores on the same storage are
+	 * unaffected.
+	 * <p>
+	 * Declared without a checked exception, unlike {@link AutoCloseable#close()}, so that
+	 * try-with-resources needs no catch block. The default implementation does nothing.
+	 */
+	@Override
+	default void close ( ) {
+		// no resources to release
+	}
+
+	/**
+	 * Returns an EventStore that behaves exactly like {@code eventStore}, but also closes
+	 * {@code eventStorage} when it is closed.
+	 * <p>
+	 * Closing an EventStore never closes a storage handed to it, for the reasons on {@link #close()}.
+	 * This composes the two into a single handle for the one case where that reasoning does not apply:
+	 * a {@code buildStore()} that created both and returns only the store, leaving the caller nothing
+	 * else to close. The storage builders use it for exactly that; application code can use it wherever
+	 * it wants one closable handle for a storage and store it created together:
+	 * <pre>{@code
+	 * EventStorage storage = PostgresEventStorage.newBuilder().build();
+	 * try ( EventStore eventStore = EventStore.owning(EventStoreFactory.get().eventStore(storage), storage) ) {
+	 *     ...
+	 * }   // store shut down, then storage closed
+	 * }</pre>
+	 * Both closes are idempotent, so closing the result and the parts, in any order, is harmless.
+	 *
+	 * @param eventStore the store to delegate to; must not be null
+	 * @param eventStorage the storage to close along with it; must not be null
+	 * @return an EventStore that closes both
+	 * @throws IllegalArgumentException if either argument is null
+	 */
+	static EventStore owning ( EventStore eventStore, EventStorage eventStorage ) {
+		return new OwningEventStore(eventStore, eventStorage);
+	}
 
 	/**
 	 * Retrieves an event stream with full configuration for event types and historical event types.

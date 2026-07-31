@@ -160,6 +160,18 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 		deleteBookmark(reader);
 	}
 
+	/**
+	 * Closes this storage by closing its in-memory delegate.
+	 * <p>
+	 * Nothing is buffered on this side: every event and bookmark is written to its own file with a
+	 * single {@code Files.writeString} as it is appended, so there is nothing to flush and no handle to
+	 * release. Closing only stops further operations, per the contract on {@link EventStorage#close()}.
+	 */
+	@Override
+	public void close ( ) {
+		delegate.close();
+	}
+
 	// --- persistence: writing ---
 
 	private void persistEvent ( StoredEvent event ) {

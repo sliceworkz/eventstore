@@ -220,6 +220,7 @@ public class BenchmarkApplication {
 		}
 		
 		javalin.stop();
+		eventStore.close(); // stops the LISTEN/NOTIFY monitors and closes the pools the builder created
 
 		LOGGER.info("exited.");
 		

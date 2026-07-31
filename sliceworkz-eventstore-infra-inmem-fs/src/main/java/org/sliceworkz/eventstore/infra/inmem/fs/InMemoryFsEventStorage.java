@@ -169,7 +169,10 @@ public interface InMemoryFsEventStorage {
 		 * @return a new EventStore instance backed by file-persisted in-memory storage
 		 */
 		public EventStore buildStore ( ) {
-			return EventStoreFactory.get().eventStore(build(), meterRegistry);
+			// the storage is created here and never handed to the caller, so the returned store owns it:
+			// closing that store is the only way this storage will ever be closed
+			EventStorage eventStorage = build();
+			return EventStore.owning(EventStoreFactory.get().eventStore(eventStorage, meterRegistry), eventStorage);
 		}
 	}
 

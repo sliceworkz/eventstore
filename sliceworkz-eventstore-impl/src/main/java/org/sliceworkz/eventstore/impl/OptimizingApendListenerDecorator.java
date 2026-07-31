@@ -88,27 +88,43 @@ public class OptimizingApendListenerDecorator implements EventStreamEventuallyCo
             return atLeastUntil;
         }
 
-        // Update target to the latest event reference seen
+        // Update target to the latest event reference seen. Registering it before taking the lock is
+        // what makes handing the work off safe: a thread that is about to decide it has nothing left
+        // to do makes that decision while holding the lock, so it either sees this target, or has
+        // already released the lock by the time we take it below.
         nextEventReference.updateAndGet(current -> (current == null || current.happenedBefore(atLeastUntil))? atLeastUntil:current);
-        
-        if (!lock.tryLock()) {
-            return atLeastUntil; // Someone else is handling it
-        }
-        
+
+        // Wait for the lock rather than giving up on it. Returning early instead -- assuming whoever
+        // holds it will pick up the target just registered -- loses notifications: the holder may
+        // already have read nextEventReference and decided to stop, in which case nobody delivers this
+        // one and the listener never hears about the append. The wait is short, since the lock is
+        // released around the delegate call.
+        lock.lock();
+
         try {
             if (updateInProgress) {
-                return atLeastUntil; // Update in progress, target already registered
+                return atLeastUntil; // a delivery is running; it re-reads the target and will pick this up
             }
-            
+
             notifyDecoratedListener();
-            
+
         } finally {
             lock.unlock();
         }
-        
+
         return atLeastUntil;
     }
     
+    /**
+     * Delivers to the delegate until the registered target has been caught up with.
+     * <p>
+     * Called with the lock held, and returns with it held. The lock is released around the delegate
+     * call, so a slow listener never blocks the threads notifying it — they register their target and
+     * find a delivery already in progress. Because the decision to stop is taken under the lock, and a
+     * target is always registered before its thread takes the lock, no target can be registered
+     * unnoticed: whoever registers one either finds this loop still running, or gets the lock itself
+     * and delivers.
+     */
     private void notifyDecoratedListener() {
         while (true) {
             EventReference target = nextEventReference.get();

@@ -8,9 +8,6 @@ on:
     branches: [ "develop", "feature/*", "release/*" ]
 
 jobs:
-
-  # Compile, license check, javadoc, and each module's own tests. The shared TCK is excluded here and
-  # fanned out across backends in the job below instead.
   build:
 
     runs-on: ubuntu-latest
@@ -24,36 +21,4 @@ jobs:
         distribution: 'temurin'
         cache: maven
     - name: Build with Maven
-      run: mvn -B package --file pom.xml -pl '!sliceworkz-eventstore-tests'
-
-  # The shared TCK, one backend per runner, all four at the same time.
-  #
-  # Backend-level parallelism has to be one JVM per backend rather than threads inside one. Per-test
-  # isolation on Postgres is initializeDatabase() dropping and recreating the tables for the store's
-  # prefix, so two scenarios sharing a backend concurrently would drop each other's tables mid-test.
-  # Separate runners also mean separate Docker daemons, so each Postgres leg pulls and starts only
-  # its own image instead of both images landing in one job back to back.
-  #
-  # fail-fast is off on purpose: a failure specific to one backend is exactly the thing worth
-  # knowing, and it must not hide the state of the other three.
-  tck:
-
-    runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        backend: [ 'inmem', 'inmem-fs', 'postgres:17', 'postgres:18' ]
-
-    steps:
-    - uses: actions/checkout@v4
-    - name: Set up JDK 21
-      uses: actions/setup-java@v4
-      with:
-        java-version: '21'
-        distribution: 'temurin'
-        cache: maven
-    - name: Install dependencies
-      run: mvn -B install -DskipTests --file pom.xml -pl '!sliceworkz-eventstore-tests'
-    - name: Run the TCK against ${{ matrix.backend }}
-      run: mvn -B test --file pom.xml -pl sliceworkz-eventstore-tests -Deventstore.testing.backends=${{ matrix.backend }}
+      run: mvn -B package --file pom.xml

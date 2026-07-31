@@ -85,10 +85,16 @@ public abstract class AbstractEventStoreTest {
 
 	@AfterEach
 	public void tearDown ( ) {
+		// the store first, then the storage under it: that is the order the lifecycle contract
+		// prescribes, and dropping the store's reference instead would leak its notification
+		// executors -- a pair of them per test method
+		if ( eventStore != null ) {
+			eventStore.close();
+			eventStore = null;
+		}
 		if ( eventStorage != null ) {
 			destroyEventStorage(eventStorage);
 			eventStorage = null;
-			eventStore = null;
 		}
 	}
 

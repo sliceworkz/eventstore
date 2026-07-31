@@ -146,6 +146,48 @@ EventStorage storage = PostgresEventStorage.newBuilder()
 
 PostgreSQL requires a `db.properties` file with connection settings. The DataSourceFactory searches for this file in the current directory and up to 2 parent directories.
 
+### Lifecycle: closing a store
+
+Both `EventStorage` and `EventStore` extend `AutoCloseable`. A store that lives as long as the process
+needs no explicit close; one created per tenant, per test or per hot reload does — the Postgres backend
+runs two LISTEN/NOTIFY monitor threads, each holding a JDBC connection, and those threads keep the whole
+storage reachable, so a dropped-but-unclosed storage is not reclaimed by GC.
+
+```java
+try ( EventStore eventStore = PostgresEventStorage.newBuilder().buildStore() ) {
+    ...
+}   // stops the monitors and closes the pools the builder created
+```
+
+The contract every backend implements (documented on `EventStorage.close()`):
+
+- **Idempotent** — later calls do nothing and never throw.
+- **Blocks, bounded** — when `close()` returns, the background threads have finished and released their
+  connections. On Postgres the monitors poll for notifications in 100ms slices, so they notice the stop
+  within that, UNLISTEN, and hand their connections back to the pool healthy: closing takes ~100ms and
+  logs nothing. A monitor that fails to stop on its own within 2s is interrupted instead (hard bound 5s);
+  that path breaks its connection under the driver, so the pool logs "connection marked as broken" — an
+  interrupted shutdown, not a normal one.
+- **Ownership** — a `DataSource` you passed to `.dataSource(...)` is never closed; one the builder
+  created from `db.properties` is. If you supply the pool, close the storage *before* closing the pool —
+  the other order leaves the monitors retrying against a dead pool, which they cannot distinguish from a
+  database outage.
+- **Terminal** — no reopening; `start()` on a closed storage throws.
+- **Operations throw afterwards** — every read and write throws `EventStorageClosedException`; `name()`
+  keeps working. A closed storage does not keep serving reads while its notifications are dead, which
+  would strand projections silently.
+- **Closing an `EventStore` does *not* close a storage you gave it.** A storage can back several stores
+  and usually outlives them, so closing it is the caller's job — after closing the stores built on it.
+  The exception is the store from `buildStore()`: it created the storage and hands back nothing else, so
+  it closes both (via `EventStore.owning(store, storage)`, which you can use for the same purpose when
+  you build the pair yourself). Closing a store is safe for its siblings: they keep working.
+- **A closed `EventStore`'s streams throw too**, for the same reason a closed storage's operations do —
+  its notifications have stopped, so letting it keep reading would strand its subscribers silently.
+
+`PostgresEventStorageImpl.stop()` still exists, deprecated, and delegates to `close()`. Prefer `close()`:
+it is on the interface, so no downcast, and it works for framework integration (Spring infers `close` as
+the destroy method for a `@Bean`; CDI `@Disposes`; try-with-resources).
+
 ### Typical Usage Pattern
 
 ```java
@@ -310,6 +352,11 @@ Tests extend `AbstractEventStoreTest`, which provides:
 - `waitBecauseOfEventualConsistency(BooleanSupplier)`: Awaitility helper for async listener assertions
 - `dataSource()`: direct database access, where the backend is SQL-backed
 - automatic setup/teardown via JUnit 5 lifecycle
+
+Teardown goes through `EventStoreBackend.destroyEventStorage`, which defaults to `storage.close()` —
+the SPI contract already requires that to release everything the storage created and to block until it
+has, so a backend only overrides it to release something *it* handed the storage, such as a pool the
+storage deliberately will not close.
 
 **Running against every backend:**
 Annotate scenarios `@ForEachBackend` instead of `@Test`. Each runs once per registered

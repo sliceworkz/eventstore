@@ -18,6 +18,8 @@
 package org.sliceworkz.eventstore.testing.backend;
 
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import javax.sql.DataSource;
 
@@ -30,9 +32,10 @@ import org.sliceworkz.eventstore.testing.StorageOptions;
 /**
  * PostgreSQL storage on a Testcontainers-managed database, as a backend for the shared scenarios.
  * <p>
- * The container and its connection pool are shared for the lifetime of the JVM. Per-test isolation
- * comes from {@code initializeDatabase()}, which drops and recreates the tables for the store's
- * prefix — so a store handed to a scenario is always empty even though the database outlives it.
+ * The container is shared for the lifetime of the JVM; the connection pool is not, and is dropped
+ * after each test — see {@link PostgresContainer#close(String)} for why. Per-test isolation comes
+ * from {@code initializeDatabase()}, which drops and recreates the tables for the store's prefix, so
+ * a store handed to a scenario is always empty even though the database outlives it.
  * <p>
  * Requires {@code sliceworkz-eventstore-infra-postgres}, the PostgreSQL JDBC driver, HikariCP and
  * Testcontainers; all optional dependencies of the testing module. Running against PostgreSQL 17
@@ -47,6 +50,9 @@ import org.sliceworkz.eventstore.testing.StorageOptions;
 public abstract class AbstractPostgresBackend implements EventStoreBackend {
 
 	private final String image;
+
+	/** Stores handed out and not yet destroyed; a test may hold more than one. */
+	private final Set<EventStorage> liveStorages = ConcurrentHashMap.newKeySet();
 
 	/**
 	 * @param image the PostgreSQL image tag, e.g. {@link PostgresContainer#IMAGE_PG18}
@@ -85,7 +91,9 @@ public abstract class AbstractPostgresBackend implements EventStoreBackend {
 		if ( options.resultLimit() != null ) {
 			builder.resultLimit(options.resultLimit());
 		}
-		return builder.build();
+		EventStorage storage = builder.build();
+		liveStorages.add(storage);
+		return storage;
 	}
 
 	/**
@@ -113,6 +121,16 @@ public abstract class AbstractPostgresBackend implements EventStoreBackend {
 		// has no close()/stop(), and leaving the executor running leaks a thread per test
 		if ( storage instanceof PostgresEventStorageImpl postgres ) {
 			postgres.stop();
+		}
+		liveStorages.remove(storage);
+
+		// Once the test's last store is stopped, drop the pool with it. stop() above returns while
+		// that store's LISTEN/NOTIFY monitors still hold a connection each — they only let go when
+		// their 30-second getNotifications(...) wait returns — so a pool kept across tests would be
+		// starved within a handful of them. Waiting for the last store matters because a scenario
+		// may hold two at once (an import needs a source and a target) and they share this pool.
+		if ( liveStorages.isEmpty() ) {
+			PostgresContainer.close(image);
 		}
 	}
 

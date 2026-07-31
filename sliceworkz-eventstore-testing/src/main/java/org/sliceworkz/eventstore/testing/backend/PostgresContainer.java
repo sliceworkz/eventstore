@@ -70,11 +70,11 @@ public final class PostgresContainer {
 	/**
 	 * The pooled DataSource for {@code image}, starting the container on first use.
 	 * <p>
-	 * One pool per image, shared by every store built against it. Callers must not close it; use
-	 * {@link #close(String)} when the whole run against that image is over.
+	 * One pool at a time per image, so every store a single test builds shares it. The pool does not
+	 * outlive the test — see {@link #close(String)} for why that matters.
 	 *
 	 * @param image the PostgreSQL image tag
-	 * @return the shared DataSource
+	 * @return the current DataSource for that image
 	 */
 	public static synchronized DataSource dataSource ( String image ) {
 		start(image);
@@ -84,12 +84,25 @@ public final class PostgresContainer {
 			config.setUsername(container.getUsername());
 			config.setPassword(container.getPassword());
 			config.setJdbcUrl(container.getJdbcUrl());
+			// the pool is rebuilt per test, so filling it eagerly would be paid on every one of them
+			config.setMinimumIdle(1);
 			return new HikariDataSource(config);
 		});
 	}
 
 	/**
-	 * Closes the connection pool for {@code image}. The container itself is left to Ryuk.
+	 * Closes the connection pool for {@code image}; the next {@link #dataSource(String)} builds a new
+	 * one. The container itself is left to Ryuk.
+	 * <p>
+	 * This runs after <em>every test</em>, not once at the end of the run, and that is load-bearing.
+	 * A store's LISTEN/NOTIFY monitors each hold a connection for their whole life and take it from
+	 * the monitoring DataSource, which defaults to this very pool.
+	 * {@code PostgresEventStorageImpl.stop()} sets a flag and calls {@code shutdown()} without
+	 * interrupting, so a monitor keeps its connection until its 30-second
+	 * {@code getNotifications(...)} wait returns. Against a pool that outlives the test those
+	 * connections accumulate two per test, exhaust the default maximum of ten, and every later
+	 * {@code getConnection()} — including the next test's own monitors — blocks for 30 seconds
+	 * waiting for one to be released. Dropping the pool releases them immediately instead.
 	 *
 	 * @param image the PostgreSQL image tag
 	 */

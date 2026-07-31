@@ -19,14 +19,18 @@ package org.sliceworkz.eventstore.testing.tck;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
@@ -156,6 +160,125 @@ public class EventStorageLifecycleTest extends AbstractEventStoreTest {
 			() -> eventStore().getEventStream(EventStreamId.forContext("lifecycle"), MockDomainEvent.class));
 
 		eventStore().close(); // idempotent on this side too
+	}
+
+	/** rounds of "close a store while notifications are in flight"; the window is small, so drive it */
+	private static final int RACE_ROUNDS = 60;
+
+	/** streams the doomed store holds on the appended-to stream, widening the window per notification */
+	private static final int RACE_STREAMS_PER_ROUND = 20;
+
+	/** how long each round lets notifications flow before closing the store mid-flight */
+	private static final long RACE_PAUSE_MILLIS = 1;
+
+	@ForEachBackend
+	void closingAStoreWhileNotificationsAreInFlightLeavesTheStorageIntact ( ) throws InterruptedException {
+		EventStore survivingStore = EventStoreFactory.get().eventStore(eventStorage());
+		EventStream<MockDomainEvent> survivingStream = stream(survivingStore);
+		AtomicInteger notifications = new AtomicInteger();
+		survivingStream.subscribe((EventStreamEventuallyConsistentAppendListener) reference -> {
+			notifications.incrementAndGet();
+			return reference;
+		});
+
+		// Appends run throughout, so every close below lands in live notification traffic rather than
+		// before or after it. Closing between two notifications proves nothing: the window this pins is
+		// the one inside a single notification, between a store noticing it is still open and handing
+		// the notification to its executors.
+		AtomicReference<Throwable> notifyingFailure = new AtomicReference<>();
+		AtomicBoolean keepAppending = new AtomicBoolean(true);
+		Thread appender = new Thread(( ) -> {
+			while ( keepAppending.get() ) {
+				try {
+					append(survivingStream, "in flight");
+				} catch ( Throwable t ) {
+					notifyingFailure.compareAndSet(null, t);
+				}
+			}
+		}, "lifecycle-race-appender");
+		appender.start();
+
+		try {
+			for ( int round = 0; round < RACE_ROUNDS; round++ ) {
+				// a store about to be closed, holding several streams on the stream being appended to:
+				// each registers itself as a listener, so one notification walks a long list, and a
+				// close has that many chances to land in the middle of it. The list is per round, and
+				// dropped with it — holding every round's streams would leave the storage notifying
+				// hundreds of dead ones, which slows notifications down and narrows the very window
+				// this is trying to hit.
+				EventStore closingStore = EventStoreFactory.get().eventStore(eventStorage());
+				List<EventStream<MockDomainEvent>> doomedStreams = new ArrayList<>();
+				for ( int i = 0; i < RACE_STREAMS_PER_ROUND; i++ ) {
+					doomedStreams.add(stream(closingStore)); // held, so the storage's weak refs survive
+				}
+
+				Thread.sleep(RACE_PAUSE_MILLIS); // let notifications reach those streams...
+				closingStore.close();            // ... and pull the store out from under them
+				doomedStreams.clear();
+			}
+		} finally {
+			keepAppending.set(false);
+			appender.join();
+		}
+
+		// In-memory backends notify on the appending thread, so a rejected submit surfaces there — in
+		// an append that has nothing to do with the store being closed.
+		assertNull(notifyingFailure.get(),
+			"closing a store must never surface in another store's append: " + notifyingFailure.get());
+
+		// Postgres delivers on the storage's single LISTEN/NOTIFY monitor thread, where an escaping
+		// rejection kills the monitor outright: appends would keep working and notifications would
+		// simply stop, for every store on the storage. So ask the survivor whether it is still being
+		// told about appends.
+		int before = notifications.get();
+		append(survivingStream, "after the races");
+		waitBecauseOfEventualConsistency(( ) -> notifications.get() > before);
+
+		survivingStore.close();
+	}
+
+	@ForEachBackend
+	void aListenerThatThrowsBreaksNeitherTheAppendNorTheOtherListeners ( ) {
+		EventStorage storage = eventStorage();
+		AtomicInteger reachedAfterTheThrowingOne = new AtomicInteger();
+
+		storage.subscribe(new EventStorage.EventStoreListener() {
+			@Override
+			public void notify ( EventStorage.AppendsToEventStoreNotification newEventsInStore ) {
+				throw new IllegalStateException("this listener is having a bad day");
+			}
+
+			@Override
+			public void notify ( EventStorage.BookmarkPlacedNotification bookmarkPlaced ) {
+				throw new IllegalStateException("this listener is having a bad day");
+			}
+		});
+		storage.subscribe(new EventStorage.EventStoreListener() {
+			@Override
+			public void notify ( EventStorage.AppendsToEventStoreNotification newEventsInStore ) {
+				reachedAfterTheThrowingOne.incrementAndGet();
+			}
+
+			@Override
+			public void notify ( EventStorage.BookmarkPlacedNotification bookmarkPlaced ) {
+				// not what this scenario asserts
+			}
+		});
+
+		EventStream<MockDomainEvent> stream = stream(eventStore());
+		append(stream, "listener throws on this one");
+
+		// the append succeeded: reporting it as failed because a listener misbehaved would invite the
+		// caller to append the same event twice
+		assertEquals(1, stream.query(EventQuery.matchAll()).count());
+		// and the listener behind the failing one was still told
+		waitBecauseOfEventualConsistency(( ) -> reachedAfterTheThrowingOne.get() >= 1);
+
+		// notifications keep flowing afterwards -- on a backend delivering from a thread of its own,
+		// an escaping throwable would have killed that thread and ended them for good
+		int before = reachedAfterTheThrowingOne.get();
+		append(stream, "and the next one still arrives");
+		waitBecauseOfEventualConsistency(( ) -> reachedAfterTheThrowingOne.get() > before);
 	}
 
 	@ForEachBackend

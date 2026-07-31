@@ -35,6 +35,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
@@ -103,6 +105,8 @@ import tools.jackson.databind.json.JsonMapper;
  * @see InMemoryEventStorage.Builder
  */
 public class InMemoryEventStorageImpl implements EventStorage {
+
+	private static final Logger LOGGER = LoggerFactory.getLogger(InMemoryEventStorageImpl.class);
 
 	private String name;
 	private List<StoredEvent> eventlog = new CopyOnWriteArrayList<>();
@@ -339,7 +343,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 			    .values()
 			    .forEach(notification->listeners.forEach(listener->{
 			    	if (listener.get()!=null){
-			    		listener.get().notify(notification);
+			    		notifyQuietly(listener.get(), notification);
 			    	};
 			    }));
 	}
@@ -488,7 +492,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		BookmarkPlacedNotification notification = new BookmarkPlacedNotification(reader, eventReference);
 		listeners.forEach(l->{
 			if ( l.get() != null ) {
-				l.get().notify(notification);
+				notifyQuietly(l.get(), notification);
 			}
 		});
 	}
@@ -536,6 +540,32 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	 *
 	 * @return the unique name of this storage instance
 	 */
+	/**
+	 * Notifies one listener, containing its failure.
+	 * <p>
+	 * Listeners are notified inline here, on the thread that appended or bookmarked, so a listener
+	 * throwing would otherwise fail an operation that has already succeeded — the event is stored, and
+	 * reporting it as failed invites the caller to append it twice. It would also rob every listener
+	 * after it in the list of the notification. A backend delivering on a thread of its own has the
+	 * same duty for a starker reason: there, one listener's throwable kills notifications for
+	 * everybody.
+	 */
+	private void notifyQuietly ( EventStoreListener listener, AppendsToEventStoreNotification notification ) {
+		try {
+			listener.notify(notification);
+		} catch ( Exception e ) {
+			LOGGER.error("event store listener failed handling an append notification: {}", e.getMessage(), e);
+		}
+	}
+
+	private void notifyQuietly ( EventStoreListener listener, BookmarkPlacedNotification notification ) {
+		try {
+			listener.notify(notification);
+		} catch ( Exception e ) {
+			LOGGER.error("event store listener failed handling a bookmark notification: {}", e.getMessage(), e);
+		}
+	}
+
 	@Override
 	public String name() {
 		return name;

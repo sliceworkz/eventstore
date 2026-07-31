@@ -24,6 +24,7 @@ import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -461,18 +462,16 @@ public class EventStoreImpl implements EventStore {
 		public void notify(AppendsToEventStoreNotification newEventsInStore) {
 			// A storage outlives the stores built on it, and keeps notifying every stream ever registered
 			// with it -- including ours, after our store was closed and its executors shut down. Dropping
-			// the notification here is what keeps a closed store from poisoning the storage it shares:
-			// submitting to a terminated executor throws RejectedExecutionException into whoever is
-			// notifying, which on Postgres is the LISTEN/NOTIFY monitor thread, and would kill it.
+			// the notification is what keeps a closed store from poisoning the storage it shares.
 			if ( closed.get() ) {
 				return;
 			}
 			// if the events are in the logical stream we care about...
 			if ( newEventsInStore.isRelevantFor(eventStreamId) ) {
 				LOGGER.debug("Must asynchronously notify {} eventually consistent clients of stream {} about append up until at least {}", eventuallyConsistentSubscribers.size(), eventStreamId, newEventsInStore.atLeastUntil());
-				
-				// schedule for execution on different thread to notify/interrupt any waiting eventual consistent processors 
-				executorServiceForEventAppends.execute( ( ) -> {
+
+				// schedule for execution on different thread to notify/interrupt any waiting eventual consistent processors
+				submitOrDropIfClosed(executorServiceForEventAppends, ( ) -> {
 						LOGGER.debug("Notifying {} eventually consistent clients of stream {} about append up until at least {}", eventuallyConsistentSubscribers.size(), eventStreamId, newEventsInStore.atLeastUntil());
 						eventuallyConsistentSubscribers.stream().forEach(s->s.eventsAppended(newEventsInStore.atLeastUntil()));
 				});
@@ -485,12 +484,29 @@ public class EventStoreImpl implements EventStore {
 				return; // see notify(AppendsToEventStoreNotification)
 			}
 			LOGGER.debug("Must asynchronously notify {} eventually consistent bookmark listeners on {} of update for {} to {}", eventuallyConsistentSubscribers.size(), eventStreamId, bookmarkPlaced.reader(), bookmarkPlaced.bookmark());
-			
-			// schedule for execution on different thread to notify/interrupt any waiting eventual consistent processors 
-			executorServiceForBookmarkUpdates.execute( ( ) -> {
+
+			// schedule for execution on different thread to notify/interrupt any waiting eventual consistent processors
+			submitOrDropIfClosed(executorServiceForBookmarkUpdates, ( ) -> {
 					LOGGER.debug("Notifying {} eventually consistent bookmark listeners on {} of update for {} to {}", eventuallyConsistentSubscribers.size(), eventStreamId, bookmarkPlaced.reader(), bookmarkPlaced.bookmark());
 					bookmarkSubscribers.stream().forEach(s->s.bookmarkUpdated(bookmarkPlaced.reader(), bookmarkPlaced.bookmark()));
 			});
+		}
+
+		/**
+		 * Hands a notification to an executor, dropping it if this store was closed in the meantime.
+		 * <p>
+		 * The {@code closed} check in the callers is only an early out: it cannot close the window, since
+		 * {@link #close()} can shut the executors down between that check and this submit. Whoever is
+		 * notifying must not see the rejection either way — on Postgres that is the LISTEN/NOTIFY monitor
+		 * thread, shared by every store on the storage, and an exception escaping it kills notifications
+		 * for all of them. Dropping the notification is exactly what closing the store asked for.
+		 */
+		private void submitOrDropIfClosed ( ExecutorService executorService, Runnable notification ) {
+			try {
+				executorService.execute(notification);
+			} catch ( RejectedExecutionException closedWhileNotifying ) {
+				LOGGER.debug("event store closed while notifying stream {}; notification dropped", eventStreamId);
+			}
 		}
 
 		@Override

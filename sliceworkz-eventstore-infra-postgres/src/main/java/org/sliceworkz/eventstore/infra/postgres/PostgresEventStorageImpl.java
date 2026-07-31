@@ -1385,7 +1385,14 @@ public class PostgresEventStorageImpl implements EventStorage {
 									listeners.forEach(l -> {
 										EventStoreListener listener = l.get();
 										if (listener != null) {
-											listener.notify(aesn);
+											// one listener misbehaving must not kill this monitor: it is the only one this
+											// storage has, so its death silently stops notifications for every store,
+											// listener and projection attached to the storage
+											try {
+												listener.notify(aesn);
+											} catch (Exception e) {
+												LOGGER.error("event store listener failed handling a notification: {}", e.getMessage(), e);
+											}
 										}
 									});
 
@@ -1483,7 +1490,14 @@ public class PostgresEventStorageImpl implements EventStorage {
 									listeners.forEach(l -> {
 										EventStoreListener listener = l.get();
 										if (listener != null) {
-											listener.notify(bpn);
+											// one listener misbehaving must not kill this monitor: it is the only one this
+											// storage has, so its death silently stops notifications for every store,
+											// listener and projection attached to the storage
+											try {
+												listener.notify(bpn);
+											} catch (Exception e) {
+												LOGGER.error("event store listener failed handling a notification: {}", e.getMessage(), e);
+											}
 										}
 									});
 

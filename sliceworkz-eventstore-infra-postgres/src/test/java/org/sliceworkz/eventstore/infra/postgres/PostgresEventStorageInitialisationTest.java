@@ -48,7 +48,7 @@ public class PostgresEventStorageInitialisationTest {
 				.initializeDatabase()
 				.build();
 
-			((PostgresEventStorageImpl)storage).stop();
+			storage.close();
 
 			// second time, should drop/create once again
 
@@ -59,7 +59,7 @@ public class PostgresEventStorageInitialisationTest {
 				.initializeDatabase()
 				.build();
 
-			((PostgresEventStorageImpl)storage).stop();
+			storage.close();
 
 			PostgresContainer.closeDataSource(image);
 		}
@@ -74,7 +74,7 @@ public class PostgresEventStorageInitialisationTest {
 				.ensureDatabase()
 				.build();
 
-			((PostgresEventStorageImpl)storage).stop();
+			storage.close();
 
 			// second time: ensure leaves existing objects untouched
 			storage = PostgresEventStorage.newBuilder()
@@ -84,7 +84,7 @@ public class PostgresEventStorageInitialisationTest {
 				.ensureDatabase()
 				.build();
 
-			((PostgresEventStorageImpl)storage).stop();
+			storage.close();
 
 			PostgresContainer.closeDataSource(image);
 		}
@@ -113,7 +113,7 @@ public class PostgresEventStorageInitialisationTest {
 				.dataSource(PostgresContainer.dataSource(image))
 				.build();
 
-			((PostgresEventStorageImpl)storage).stop();
+			storage.close();
 
 			PostgresContainer.closeDataSource(image);
 		}

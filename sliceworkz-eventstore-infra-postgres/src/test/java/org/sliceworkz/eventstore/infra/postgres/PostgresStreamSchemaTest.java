@@ -32,6 +32,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
+import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
 /**
@@ -61,7 +62,7 @@ public class PostgresStreamSchemaTest {
 			String prefix = "purposedefault_";
 			DataSource dataSource = PostgresContainer.dataSource(image);
 
-			PostgresEventStorageImpl storage = (PostgresEventStorageImpl) PostgresEventStorage.newBuilder()
+			EventStorage storage = PostgresEventStorage.newBuilder()
 				.name("unit-test")
 				.prefix(prefix)
 				.dataSource(dataSource)
@@ -106,7 +107,7 @@ public class PostgresStreamSchemaTest {
 				assertTrue(contextStream.canRead(new EventStreamId(context, storedPurpose)),
 					"a context-scoped stream id must be able to read a row written via the SQL default purpose");
 			} finally {
-				storage.stop();
+				storage.close();
 				PostgresContainer.closeDataSource(image);
 			}
 		}
@@ -116,7 +117,7 @@ public class PostgresStreamSchemaTest {
 			String prefix = "streamtagsidx_";
 			DataSource dataSource = PostgresContainer.dataSource(image);
 
-			PostgresEventStorageImpl storage = (PostgresEventStorageImpl) PostgresEventStorage.newBuilder()
+			EventStorage storage = PostgresEventStorage.newBuilder()
 				.name("unit-test")
 				.prefix(prefix)
 				.dataSource(dataSource)
@@ -129,7 +130,7 @@ public class PostgresStreamSchemaTest {
 				assertTrue(extensionExists(connection, "btree_gin"),
 					"btree_gin extension must be present to support the combined stream+tags index");
 			} finally {
-				storage.stop();
+				storage.close();
 				PostgresContainer.closeDataSource(image);
 			}
 		}

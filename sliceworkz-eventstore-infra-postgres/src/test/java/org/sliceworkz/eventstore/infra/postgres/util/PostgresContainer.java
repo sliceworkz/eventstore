@@ -17,6 +17,16 @@
  */
 package org.sliceworkz.eventstore.infra.postgres.util;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -86,6 +96,78 @@ public class PostgresContainer {
 		if ( dataSource != null && !dataSource.isClosed() ) {
 			dataSource.close();
 		}
+	}
+
+	/**
+	 * Marker put in {@code application_name} of the pools the builder creates for itself, so a test can
+	 * tell those connections apart from the ones it opened.
+	 */
+	public static final String SELF_BUILT_POOL_MARKER = "eventstore-selfbuilt";
+
+	/**
+	 * Points {@link org.sliceworkz.eventstore.infra.postgres.DataSourceFactory} at this container by
+	 * writing a {@code db.properties} for it and setting {@code eventstore.db.config}.
+	 * <p>
+	 * Needed to exercise the path where the builder creates the connection pools itself — the path
+	 * where nobody but the storage has a handle on them.
+	 */
+	public static void writeDbProperties ( String image ) {
+		PostgreSQLContainer container = CONTAINERS.get(image);
+		if ( container == null ) {
+			throw new IllegalStateException("PostgresContainer.start(\"" + image + "\") was not called");
+		}
+		try {
+			Path file = Files.createTempFile("eventstore-db", ".properties");
+			file.toFile().deleteOnExit();
+			// the ApplicationName goes in the URL: with a jdbcUrl-based HikariConfig that is what
+			// actually reaches the server. A "datasource." property is still needed for
+			// HikariConfigurationUtil to consider the section present at all.
+			String url = container.getJdbcUrl() + (container.getJdbcUrl().contains("?") ? "&" : "?");
+			Files.writeString(file, """
+				db.pooled.url=%1$sApplicationName=%2$s-pooled
+				db.pooled.username=%3$s
+				db.pooled.password=%4$s
+				db.pooled.maximumPoolSize=3
+				db.pooled.datasource.ApplicationName=%2$s-pooled
+				db.nonpooled.url=%1$sApplicationName=%2$s-nonpooled
+				db.nonpooled.username=%3$s
+				db.nonpooled.password=%4$s
+				db.nonpooled.maximumPoolSize=3
+				db.nonpooled.datasource.ApplicationName=%2$s-nonpooled
+				""".formatted(url, SELF_BUILT_POOL_MARKER, container.getUsername(), container.getPassword()));
+			System.setProperty("eventstore.db.config", file.toString());
+		} catch ( IOException e ) {
+			throw new IllegalStateException("could not write a db.properties for " + image, e);
+		}
+	}
+
+	/**
+	 * Returns the server-side connections currently held by pools the builder created for itself,
+	 * identified by {@link #SELF_BUILT_POOL_MARKER}. Empty means those pools are really gone — asked of
+	 * the database rather than of the pool object, since the point is that nobody holds that object.
+	 *
+	 * @param image the container image whose database to ask
+	 * @return one entry per open backend, describing it for assertion messages
+	 */
+	public static List<String> backendsOfSelfBuiltPools ( String image ) {
+		PostgreSQLContainer container = CONTAINERS.get(image);
+		if ( container == null ) {
+			throw new IllegalStateException("PostgresContainer.start(\"" + image + "\") was not called");
+		}
+		List<String> result = new ArrayList<>();
+		try ( Connection connection = DriverManager.getConnection(container.getJdbcUrl(), container.getUsername(), container.getPassword());
+			  PreparedStatement statement = connection.prepareStatement(
+				  "select pid, application_name, state from pg_stat_activity where application_name like ?") ) {
+			statement.setString(1, SELF_BUILT_POOL_MARKER + "%");
+			try ( ResultSet rs = statement.executeQuery() ) {
+				while ( rs.next() ) {
+					result.add("%d/%s/%s".formatted(rs.getInt(1), rs.getString(2), rs.getString(3)));
+				}
+			}
+		} catch ( SQLException e ) {
+			throw new IllegalStateException("could not inspect pg_stat_activity of " + image, e);
+		}
+		return result;
 	}
 
 }

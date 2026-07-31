@@ -24,7 +24,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import javax.sql.DataSource;
 
 import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
-import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorageImpl;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.testing.EventStoreBackend;
 import org.sliceworkz.eventstore.testing.StorageOptions;
@@ -117,18 +116,16 @@ public abstract class AbstractPostgresBackend implements EventStoreBackend {
 
 	@Override
 	public void destroyEventStorage ( EventStorage storage ) {
-		// the single place in the suite that needs to know the concrete storage type: EventStorage
-		// has no close()/stop(), and leaving the executor running leaks a thread per test
-		if ( storage instanceof PostgresEventStorageImpl postgres ) {
-			postgres.stop();
-		}
+		// close() returns once the store's LISTEN/NOTIFY monitors have stopped and handed their
+		// connections back, so the pool below is free the moment this returns
+		storage.close();
 		liveStorages.remove(storage);
 
-		// Once the test's last store is stopped, drop the pool with it. stop() above returns while
-		// that store's LISTEN/NOTIFY monitors still hold a connection each — they only let go when
-		// their 30-second getNotifications(...) wait returns — so a pool kept across tests would be
-		// starved within a handful of them. Waiting for the last store matters because a scenario
-		// may hold two at once (an import needs a source and a target) and they share this pool.
+		// Drop the pool once the test's last store is gone. It is this backend's pool, not the
+		// store's, so no store will ever close it. Waiting for the last one matters because a
+		// scenario may hold two at once (an import needs a source and a target) and they share it;
+		// closing it under a live store would leave that store's monitors retrying against a dead
+		// pool, which they cannot tell from a database outage.
 		if ( liveStorages.isEmpty() ) {
 			PostgresContainer.close(image);
 		}

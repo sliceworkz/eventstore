@@ -37,6 +37,54 @@ that matter: an import is atomic per batch only, nothing is verified afterwards,
 should run at a time per target.
 
 
+# Testing
+
+`sliceworkz-eventstore-testing` is published for two audiences.
+
+**Testing your application.** `EventStoreFixture` covers the shape every DCB application has — read
+the relevant facts, decide, append conditionally:
+
+```java
+EventStoreFixture<LearningEvent> fixture =
+    EventStoreFixture.inMemory(EventStreamId.forContext("learning"), LearningEvent.class);
+
+fixture.given(event(new CourseDefined("abc001", "Java basics", 12)).tagged("course", "abc001"))
+       .when(stream -> new Registrations(stream).subscribe("123", "abc001"))
+       .expectResult(true)
+       .expectAppended(event(new StudentSubscribed("123", "abc001"))
+                           .tagged("student", "123").tagged("course", "abc001"));
+```
+
+The decider gets a real `EventStream`, so the code under test is unmodified production code. Only the
+payload and tags are compared — stream, reference and timestamp are assigned by the store.
+`whenConcurrently(...)` appends into the window between the decider's query and its own append, which
+is the only deterministic way to provoke the conflict a consistency boundary exists to catch:
+
+```java
+fixture.given(event(new CourseDefined("abc001", "Java basics", 12)).tagged("course", "abc001"))
+       .whenConcurrently(
+           stream -> new Registrations(stream).subscribe("123", "abc001"),
+           event(new StudentSubscribed("123", "abc001")).tagged("course", "abc001"))
+       .expectOptimisticLockingFailure()
+       .matchingTags("course", "abc001");
+```
+
+**Implementing your own `EventStorage`.** The same module carries the compliance suite. Implement
+`EventStoreBackend`, register it in
+`META-INF/services/org.sliceworkz.eventstore.testing.EventStoreBackend`, and point surefire at the
+artifact:
+
+```xml
+<dependenciesToScan>
+    <dependency>org.sliceworkz:sliceworkz-eventstore-testing</dependency>
+</dependenciesToScan>
+```
+
+Every scenario then runs against your storage. Optional parts of the contract (`importEvents`, table
+prefixes, result limits, direct database access) are declared as capabilities and skipped rather than
+failed where you do not support them.
+
+
 # Other
 
 ## Contributing

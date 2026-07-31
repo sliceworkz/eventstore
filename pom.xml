@@ -68,7 +68,10 @@
 		<module>sliceworkz-eventstore-infra-inmem-fs</module>
 		<module>sliceworkz-eventstore-infra-postgres</module>
 
-		<!-- tests, those same scenarios will be run inmem as well as on postgres  -->
+		<!-- testing support: backend harness, shared TCK scenarios and the application fixture -->
+		<module>sliceworkz-eventstore-testing</module>
+
+		<!-- runs the TCK scenarios against every in-tree backend, plus repo-internal tests -->
 		<module>sliceworkz-eventstore-tests</module>
 
 		<!-- benchmark tool -->
@@ -144,6 +147,10 @@
 						maven.deploy.skip, so the build constructs (aggregator, parent-pom)
 						and non-client modules (examples, tests, benchmark) must be excluded
 						explicitly here to publish only the client-facing set to Central.
+
+						sliceworkz-eventstore-testing is intentionally NOT excluded: it carries the
+						TCK a third-party EventStorage runs and the fixture application authors
+						test against, so it has to be resolvable like any other client artifact.
 					-->
 					<!-- matched against each artifact's artifactId (exact) -->
 					<excludeArtifacts>

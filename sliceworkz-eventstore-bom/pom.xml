@@ -89,6 +89,11 @@
 				<artifactId>sliceworkz-eventstore-infra-postgres</artifactId>
 				<version>${project.version}</version>
 			</dependency>
+			<dependency>
+				<groupId>org.sliceworkz</groupId>
+				<artifactId>sliceworkz-eventstore-testing</artifactId>
+				<version>${project.version}</version>
+			</dependency>
 		</dependencies>
 	</dependencyManagement>
 

@@ -608,9 +608,18 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		 * and may batch multiple events before triggering a projection run.
 		 * <p>
 		 * Without this setting, projections only update when explicitly triggered via {@link Projector#run()}.
+		 * <p>
+		 * <b>Lifetime.</b> Subscribing registers the event source with the storage, which then holds it —
+		 * and this projector through it — until the source is closed. That is deliberate: it is what lets
+		 * a live projection go on updating without the caller having to keep a variable alive for it. It
+		 * also means the pair is released only by
+		 * {@link org.sliceworkz.eventstore.stream.EventSource#close()}, or by closing the
+		 * {@link org.sliceworkz.eventstore.EventStore} the source came from. Long-lived projections need
+		 * nothing; one per request, per tenant or per test should close its source when done.
 		 *
 		 * @return this builder for method chaining
 		 * @see EventStreamEventuallyConsistentAppendListener
+		 * @see org.sliceworkz.eventstore.stream.EventSource#close()
 		 */
 		public Builder<EVENT_TYPE> subscribe ( ) {
 			this.subscribe = true;

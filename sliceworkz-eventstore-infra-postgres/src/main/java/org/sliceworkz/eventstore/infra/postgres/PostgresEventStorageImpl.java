@@ -19,7 +19,6 @@ package org.sliceworkz.eventstore.infra.postgres;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -151,7 +150,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 */
 	private final boolean ownsDataSources;
 
-	private final List<WeakReference<EventStoreListener>> listeners = new CopyOnWriteArrayList<>();
+	// Strong references, released only by unsubscribe(). Held weakly, a listener whose registrant stopped
+	// referencing it would vanish at the next GC and take its notifications with it, silently -- see
+	// EventStorage.subscribe(). CopyOnWriteArrayList because the monitor threads walk this on every
+	// notification and must never block on a subscription.
+	private final CopyOnWriteArrayList<EventStoreListener> listeners = new CopyOnWriteArrayList<>();
 	private final ExecutorService executorService;
 	private final AtomicBoolean stopped = new AtomicBoolean();
 
@@ -632,10 +635,15 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * A caller who supplied the DataSource must close this storage <em>before</em> closing that pool.
 	 * The other order leaves the monitors alive against a dead pool, where they cannot tell a closed
 	 * pool from a database outage and will retry with backoff, logging as they go.
+	 * <p>
+	 * The listeners are dropped once the monitors have stopped — after, so that nothing is walking the
+	 * list while it is emptied, and at all because they are held strongly: a closed storage that kept
+	 * them would pin every stream ever subscribed to it, and every event store behind those streams.
 	 */
 	@Override
 	public void close ( ) {
 		boolean wasRunning = stopMonitors();
+		listeners.clear();
 		if ( wasRunning && ownsDataSources ) {
 			closeDataSource(dataSource);
 			if ( monitoringDataSource != dataSource ) {
@@ -1445,11 +1453,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 		private static final Logger LOGGER = LoggerFactory.getLogger(NewEventsAppendedMonitor.class);
 
 		private String name;
-		private List<WeakReference<EventStoreListener>> listeners;
+		private List<EventStoreListener> listeners;
 		private DataSource monitoringDataSource;
 		private CountDownLatch readyLatch;
 
-		public NewEventsAppendedMonitor ( String name, List<WeakReference<EventStoreListener>> listeners, DataSource monitoringDataSource, CountDownLatch readyLatch ) {
+		public NewEventsAppendedMonitor ( String name, List<EventStoreListener> listeners, DataSource monitoringDataSource, CountDownLatch readyLatch ) {
 			this.name = name;
 			this.listeners = listeners;
 			this.monitoringDataSource = monitoringDataSource;
@@ -1494,17 +1502,14 @@ public class PostgresEventStorageImpl implements EventStorage {
 									EventAppendedPostgresNotification msg = JSONMAPPER.readValue(notification.getParameter(), EventAppendedPostgresNotification.class);
 									AppendsToEventStoreNotification aesn = msg.toNotification();
 
-									listeners.forEach(l -> {
-										EventStoreListener listener = l.get();
-										if (listener != null) {
-											// one listener misbehaving must not kill this monitor: it is the only one this
-											// storage has, so its death silently stops notifications for every store,
-											// listener and projection attached to the storage
-											try {
-												listener.notify(aesn);
-											} catch (Exception e) {
-												LOGGER.error("event store listener failed handling a notification: {}", e.getMessage(), e);
-											}
+									listeners.forEach(listener -> {
+										// one listener misbehaving must not kill this monitor: it is the only one this
+										// storage has, so its death silently stops notifications for every store,
+										// listener and projection attached to the storage
+										try {
+											listener.notify(aesn);
+										} catch (Exception e) {
+											LOGGER.error("event store listener failed handling a notification: {}", e.getMessage(), e);
 										}
 									});
 
@@ -1548,11 +1553,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 		private static final Logger LOGGER = LoggerFactory.getLogger(BookmarkPlacedMonitor.class);
 
 		private String name;
-		private List<WeakReference<EventStoreListener>> listeners;
+		private List<EventStoreListener> listeners;
 		private DataSource monitoringDataSource;
 		private CountDownLatch readyLatch;
 
-		public BookmarkPlacedMonitor ( String name, List<WeakReference<EventStoreListener>> listeners, DataSource monitoringDataSource, CountDownLatch readyLatch ) {
+		public BookmarkPlacedMonitor ( String name, List<EventStoreListener> listeners, DataSource monitoringDataSource, CountDownLatch readyLatch ) {
 			this.name = name;
 			this.listeners = listeners;
 			this.monitoringDataSource = monitoringDataSource;
@@ -1599,17 +1604,14 @@ public class PostgresEventStorageImpl implements EventStorage {
 									BookmarkPlacedNotification bpn = msg.toNotification();
 									LOGGER.debug("notification: " + bpn);
 
-									listeners.forEach(l -> {
-										EventStoreListener listener = l.get();
-										if (listener != null) {
-											// one listener misbehaving must not kill this monitor: it is the only one this
-											// storage has, so its death silently stops notifications for every store,
-											// listener and projection attached to the storage
-											try {
-												listener.notify(bpn);
-											} catch (Exception e) {
-												LOGGER.error("event store listener failed handling a notification: {}", e.getMessage(), e);
-											}
+									listeners.forEach(listener -> {
+										// one listener misbehaving must not kill this monitor: it is the only one this
+										// storage has, so its death silently stops notifications for every store,
+										// listener and projection attached to the storage
+										try {
+											listener.notify(bpn);
+										} catch (Exception e) {
+											LOGGER.error("event store listener failed handling a notification: {}", e.getMessage(), e);
 										}
 									});
 
@@ -1666,8 +1668,15 @@ public class PostgresEventStorageImpl implements EventStorage {
 	@Override
 	public void subscribe(EventStoreListener listener) {
 		checkNotClosed();
-		listeners.add(new WeakReference<>(listener));
-		listeners.removeIf(ref -> ref.get() == null);
+		// addIfAbsent, so re-registering the same listener does not double its notifications
+		listeners.addIfAbsent(listener);
+	}
+
+	@Override
+	public void unsubscribe(EventStoreListener listener) {
+		// deliberately no checkNotClosed: unsubscribing from a closed storage is what an orderly
+		// teardown looks like when the storage happened to be closed first, and it must not throw
+		listeners.remove(listener);
 	}
 
 	@Override

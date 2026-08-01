@@ -289,8 +289,8 @@ public class EventStorageLifecycleTest extends AbstractEventStoreTest {
 		EventStream<MockDomainEvent> closedStream = stream(closedStore);
 		EventStream<MockDomainEvent> survivingStream = stream(survivingStore);
 
-		// listeners on both: the closed store's stream stays registered with the storage, so the
-		// storage keeps offering it notifications it must now quietly decline rather than reject
+		// listeners on both: closing a store unregisters its streams from the storage, and anything
+		// already in flight when that happens must be declined quietly rather than rejected
 		AtomicInteger notificationsAfterClose = new AtomicInteger();
 		closedStream.subscribe((EventStreamEventuallyConsistentAppendListener) reference -> {
 			notificationsAfterClose.incrementAndGet();

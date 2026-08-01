@@ -293,7 +293,11 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 			// The main eventQuery then starts from that savepoint's reference.
 			// On subsequent run() calls, lastEventReference is already set, so initQuery is skipped.
 			if ( bookmarkReader == null && lastEventReference == null && projection.initQuery() != null && !projection.initQuery().isMatchNone() ) {
-				EventQuery initQuery = projection.initQuery();
+				// The boundary of a bounded run applies to the savepoint too: without it, runUntil() would
+				// initialise the read model from the newest savepoint in the store -- possibly one written
+				// after the requested point in time -- and then start the main query beyond the boundary,
+				// reporting present-day state as a point-in-time projection.
+				EventQuery initQuery = projection.initQuery().untilIfEarlier ( until );
 				queriesDone++;
 				es.query(initQuery).forEach(e -> {
 					eventsStreamed++;

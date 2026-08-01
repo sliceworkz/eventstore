@@ -207,6 +207,22 @@ public interface EventStorage extends AutoCloseable {
 	 *   <li><b>FORWARD</b> - Events are returned in chronological order (oldest to newest)</li>
 	 *   <li><b>BACKWARD</b> - Events are returned in reverse chronological order (newest to oldest)</li>
 	 * </ul>
+	 * <p>
+	 * The Until Boundary:
+	 * <p>
+	 * {@link EventQuery#until()} is a matching criterion, not a traversal one. It is the <em>inclusive
+	 * upper bound</em> over the total {@code (tx, position, index)} order that
+	 * {@link org.sliceworkz.eventstore.query.EventFilter#matches(StoredEvent)} implements, and it selects
+	 * the same events in both directions — direction decides only the order they come back in. An
+	 * implementation must not read it as "traverse until you reach it", which turns it into a lower bound
+	 * when going backward and returns the events on the far side of it. Nor may it compare positions
+	 * alone where positions and transactions can be assigned in different orders: the boundary has to be
+	 * compared the same way the cursor is.
+	 * <p>
+	 * A backend may implement the boundary as a superset — dropping only what it can cheaply prove is
+	 * past it — because the exact filter is re-applied above this SPI after upcasting. It must never
+	 * exclude an event the filter would keep. Note that a limit is applied <em>after</em> the boundary:
+	 * spending it on events beyond the boundary that are discarded later returns too few events, or none.
 	 *
 	 * @param query the event query defining type and tag filters
 	 * @param stream optional stream identifier to filter events by stream

@@ -622,6 +622,35 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		assertEquals(1, metrics2.eventsHandled());
 	}
 
+	/**
+	 * A bounded run bounds the savepoint too. Left unbounded, the init query returns the newest savepoint
+	 * in the store -- here one written past the requested point in time -- and the main query then starts
+	 * beyond the boundary, so a point-in-time projection silently reports present-day state.
+	 */
+	@ForEachBackend
+	void testProjectorWithInitQueryRunUntilIgnoresLaterSavepoints ( ) {
+		EventStreamId stream = EventStreamId.forContext("app").withPurpose("initquery-rununtil");
+		EventStream<MockDomainEvent> initEs = eventStore().getEventStream(stream, MockDomainEvent.class);
+
+		append(initEs, new FirstDomainEvent("10"), Tags.none());
+		append(initEs, new ThirdDomainEvent("savepoint:10"), Tags.none());
+		append(initEs, new FirstDomainEvent("5"), Tags.none());
+		append(initEs, new ThirdDomainEvent("savepoint:15"), Tags.none());
+		append(initEs, new FirstDomainEvent("3"), Tags.none());
+
+		EventReference until = initEs.query(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()))
+				.toList().get(1).reference(); // the "5", written before the second savepoint
+
+		InitQueryProjection projection = new InitQueryProjection();
+		var projector = Projector.from(initEs).towards(projection).build();
+
+		ProjectorMetrics metrics = projector.runUntil(until);
+
+		assertEquals("savepoint:10", projection.lastSavepoint());
+		assertEquals(2, projection.counter()); // the savepoint, then the "5"
+		assertEquals(2, metrics.eventsHandled());
+	}
+
 	@ForEachBackend
 	void testProjectorBackwardsWithLimitEnforcesTotalLimit ( ) {
 		BackwardsLimitProjection projection = new BackwardsLimitProjection();

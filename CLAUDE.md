@@ -456,6 +456,19 @@ The key insight of DCB is that business decisions are based on querying relevant
 3. Append new events with `AppendCriteria` containing the query's `EventFilter` and last reference
 4. If new events matching the filter exist after the reference, the append fails
 
+**The guarantee holds under concurrency, and every backend has to earn it.** The check in step 4 and the
+insert must be one indivisible step. If they are not, two appends racing at the same boundary each find it
+empty, both are admitted, and the invariant is gone with nothing raised — the worst kind of failure, since
+the store reports success to both callers. The in-memory backends get this by construction (`append` is
+`synchronized`); the Postgres backend takes a per-stream advisory lock, because its check is a phantom
+predicate that READ COMMITTED does not protect (see the PostgreSQL notes below).
+
+`ConcurrentOptimisticLockingTest` in the TCK is what holds every backend to it: several threads append at
+one boundary from a common start signal, and exactly one must win while the rest get an
+`OptimisticLockingException`. Note that the rest of `OptimisticLockingTest` is single-threaded, so it
+proves the check *reads* correctly and says nothing about whether it is atomic — which is why a backend
+can pass all of it and still violate the boundary in production.
+
 ## PostgreSQL Specific Notes
 
 - Table schema can be prefixed (useful for multi-tenancy or isolation)
@@ -464,6 +477,32 @@ The key insight of DCB is that business decisions are based on querying relevant
 - Separate DataSource for monitoring queries (optional, defaults to main DataSource)
 - Tests use Testcontainers for isolated PostgreSQL instances
 - Requires the `btree_gin` extension (a standard contrib extension, available on the major managed Postgres offerings). Schema initialization runs `CREATE EXTENSION IF NOT EXISTS btree_gin` and schema validation requires `idx_events_stream_tags`, a combined stream+tags GIN index that serves DCB reads scoping by stream *and* filtering by tags in one index. The B-tree indexes are retained for ordered stream replay (GIN cannot serve `ORDER BY`)
+- **Conditional appends are serialized per stream by a `pg_advisory_xact_lock`.** The optimistic-locking
+  check is an `INSERT … WHERE NOT EXISTS (…)`, and under PostgreSQL's default READ COMMITTED isolation each
+  statement fixes its snapshot when it starts, so two concurrent appends at the same consistency boundary
+  both find it empty, both insert, and both commit — a silent DCB violation. The conflicting row is a
+  *phantom* at the moment of the check, so no row lock can cover it. `append` therefore takes a
+  transaction-scoped advisory lock, keyed on a SHA-256 of the table prefix plus `(stream_context,
+  stream_purpose)`, before running the INSERT. Consequences worth knowing:
+  - **The lock is taken as its own statement, before the INSERT** — this is load-bearing, not stylistic.
+    Folded into the INSERT's `WHERE`, the statement would block with its stale snapshot already taken and
+    the check would still miss the other appender's row: the same race with a lock in front of it.
+  - **Only conditional appends take it.** `AppendCriteria.none()` reads nothing and so cannot observe a
+    stale boundary; a conditional append that misses one is still equivalent to the two having run in the
+    order conditional-then-unconditional, which is a legitimate history. Bulk ingestion stays fully parallel.
+  - **The key is the stream, not the filter.** Hashing the filter would be finer grained and unsound: two
+    overlapping-but-unequal filters (tag `A` vs tags `A + B`) hash differently and would not exclude each
+    other. An append not confined to one fully specified stream falls back to a storage-wide key.
+  - **Cost**: measured at ~5% against 8 concurrent writers spread over 1000 streams. Conditional appends to
+    *one* stream serialize for the duration of a single INSERT, so a hot stream (remember a stream is
+    usually a bounded context, not one aggregate) is the ceiling to watch. Key collisions only make two
+    unrelated streams take turns; they can never let a real conflict through.
+  - **Why not `SERIALIZABLE`**: it is correct, but a poor fit. A DCB boundary check is always
+    `event_position > <recent reference>`, i.e. a scan of the log's tail, which is exactly where every
+    writer writes — so SSI predicate locks collide constantly. Measured on the same workload: 86%
+    serialization failures and a third of the throughput, with disjoint boundaries falsely conflicting
+    because the planner's choice (seq scan → relation-level `SIRead` lock) decides the granularity.
+  - No DDL change, so no migration: the lock is entirely in the write path.
 - `stream_purpose` defaults to `'default'` in the DDL, matching `EventStreamId.DEFAULT_PURPOSE`. On a database created before this alignment (default was `''`), operators doing raw SQL inserts should run `ALTER TABLE <prefix>events ALTER COLUMN stream_purpose SET DEFAULT 'default';` — no data migration is needed since all events written through the library bind the purpose explicitly
 - **Idempotency keys are scoped per event stream (context + purpose), not per storage/table.** Uniqueness is enforced by the partial unique index `idx_events_stream_idempotency` on `(stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL` (schema validation requires it), so the same key used on two unrelated streams does not collide and dedup behaviour does not depend on how storage instances / prefixes are wired at runtime. The `idempotency_key` is persisted and surfaced on `StoredEvent` when reading (it is not exposed on the public `Event` record). A duplicate append is still silently ignored (returns an empty result). On a database created before this change (when `idempotency_key` had a table-wide `UNIQUE`), migrate with: `ALTER TABLE <prefix>events DROP CONSTRAINT <prefix>events_idempotency_key_key; CREATE UNIQUE INDEX <prefix>idx_events_stream_idempotency ON <prefix>events (stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL;` — no data migration is needed
 - **Importing needed no DDL change**: `event_id` is already a plain `UUID NOT NULL UNIQUE` and `event_timestamp` is nullable with a `CURRENT_TIMESTAMP` default, so both can be supplied explicitly. `importEvents` binds them per row, chunks statements at 5000 rows (9 params/row against the 65535-parameter wire ceiling) inside a single transaction, and matches `RETURNING` rows **by event_id** rather than by row order — with `ON CONFLICT` the returned rows are a subset of the input, so position in the result set means nothing. Conflicts are routed by constraint name from `PSQLException.getServerErrorMessage().getConstraint()`, not by matching message text

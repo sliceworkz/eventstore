@@ -21,6 +21,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -901,6 +903,72 @@ public class PostgresEventStorageImpl implements EventStorage {
 		// no-op: server-side generation
 	}
 
+	/**
+	 * Statement that serializes conditional appends; see {@link #appendLockKey}.
+	 * <p>
+	 * It has to be executed as a <em>statement of its own, before</em> the conditional INSERT. Under
+	 * READ COMMITTED a statement fixes its snapshot when it starts executing, so folding the lock into
+	 * the INSERT's {@code WHERE} would block with the stale snapshot already taken and the check would
+	 * still miss the other appender's row — the same race, now with a lock in front of it that proves
+	 * nothing.
+	 */
+	private static final String ACQUIRE_APPEND_LOCK = "SELECT pg_advisory_xact_lock(?)";
+
+	/** Lock scope used when an append is not confined to one fully specified stream. */
+	private static final String ANY_STREAM_SCOPE = "\u0000any-stream";
+
+	/** Separates the parts of a lock scope, so that ("ab","c") and ("a","bc") cannot hash alike. */
+	private static final char UNIT_SEPARATOR = '\u001F';
+
+	/**
+	 * Advisory lock key that makes the optimistic-locking check and the insert one indivisible step.
+	 * <p>
+	 * <b>Why a lock is needed at all.</b> The conditional append is an {@code INSERT … WHERE NOT EXISTS
+	 * (…)}, and under PostgreSQL's default READ COMMITTED isolation two of them racing each other both
+	 * evaluate {@code NOT EXISTS} against a snapshot taken before the other committed. Both find the
+	 * boundary empty, both insert, both commit, and the consistency boundary the caller expressed is
+	 * violated with nothing raised. The conflicting row is a <em>phantom</em> at the moment of the
+	 * check, so no row-level lock can cover it — there is no row yet to lock.
+	 * <p>
+	 * <b>Why the key is the stream and not the filter.</b> Hashing the {@link AppendCriteria}'s filter
+	 * would be finer grained and wrong: two filters that overlap without being equal (say tag {@code A}
+	 * versus tags {@code A + B}) hash to different keys, so they would not exclude each other even
+	 * though each one's write falls inside the other's boundary. The stream is the narrowest scope that
+	 * provably contains every boundary an append can express, because the {@code NOT EXISTS} is itself
+	 * confined to the stream. An append not confined to one fully specified stream can range over the
+	 * whole table, so it falls back to a single storage-wide scope.
+	 * <p>
+	 * Only conditional appends take it. An {@link AppendCriteria#none()} append reads nothing, so it
+	 * cannot observe a stale boundary, and a conditional append that misses it is still equivalent to
+	 * the two having run in the order conditional-then-unconditional — a legitimate history. Leaving
+	 * the unconditional path lock-free keeps bulk ingestion fully parallel.
+	 * <p>
+	 * The key is derived from the table prefix as well as the stream, so two storages sharing a
+	 * database but not a table do not contend. Collisions are possible — the key is 64 bits of a digest
+	 * and PostgreSQL's advisory lock space is global to the database — but they can only make two
+	 * unrelated appends take turns, never let a real conflict through.
+	 */
+	private long appendLockKey ( Optional<EventStreamId> streamId ) {
+
+		String scope = ANY_STREAM_SCOPE;
+		if ( streamId.isPresent() && !streamId.get().isAnyContext() && !streamId.get().isAnyPurpose() ) {
+			scope = streamId.get().context() + UNIT_SEPARATOR + streamId.get().purpose();
+		}
+
+		try {
+			byte[] digest = MessageDigest.getInstance("SHA-256")
+					.digest((prefix + UNIT_SEPARATOR + scope).getBytes(StandardCharsets.UTF_8));
+			long key = 0;
+			for ( int i = 0; i < Long.BYTES; i++ ) {
+				key = (key << 8) | (digest[i] & 0xffL);
+			}
+			return key;
+		} catch (NoSuchAlgorithmException e) {
+			// SHA-256 is required of every JRE
+			throw new EventStorageException("SHA-256 is unavailable, cannot derive the append lock key", e);
+		}
+	}
+
 	@Override
 	public List<StoredEvent> append(AppendCriteria appendCriteria, Optional<EventStreamId> streamId, List<EventToStore> events) {
 		checkNotClosed();
@@ -986,6 +1054,18 @@ public class PostgresEventStorageImpl implements EventStorage {
 				writeConnection.setAutoCommit(false);
 
 				try ( PreparedStatement stmt = writeConnection.prepareStatement(sqlBuilder.toString()) ) {
+
+					if ( ! appendCriteria.isNone() ) {
+						// Serialize this stream's conditional appends: the NOT EXISTS below is a phantom
+						// check, which READ COMMITTED does not protect. Held until this transaction ends,
+						// and taken as its own statement so the INSERT's snapshot is taken after the
+						// previous holder committed. See appendLockKey.
+						try ( PreparedStatement lock = writeConnection.prepareStatement(ACQUIRE_APPEND_LOCK) ) {
+							lock.setLong(1, appendLockKey(streamId));
+							lock.execute();
+						}
+					}
+
 					// Set parameters
 					for (int i = 0; i < parameters.size(); i++) {
 						Object param = parameters.get(i);

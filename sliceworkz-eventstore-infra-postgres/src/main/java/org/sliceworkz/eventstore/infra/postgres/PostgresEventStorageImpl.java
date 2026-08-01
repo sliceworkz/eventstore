@@ -746,18 +746,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 		List<Object> parameters = new ArrayList<>();
 
-		// Add position filtering if reference is provided (exclusive - events after the reference)
-		if (after != null ) {
-			if ( direction == QueryDirection.FORWARD ) {
-				sqlBuilder.append(" AND ((event_tx>?::xid8) OR (event_tx = ?::xid8 AND event_position > ?))");
-			} else {
-				sqlBuilder.append(" AND ((event_tx<?::xid8) OR (event_tx = ?::xid8 AND event_position < ?))");
-			}
-			parameters.add(Long.toUnsignedString(after.tx()));
-			parameters.add(Long.toUnsignedString(after.tx()));
-			parameters.add(after.position());
-		}
-		
+		// Seek past the reference if one is provided (exclusive)
+		addCursorBoundary(sqlBuilder, parameters, after, direction);
+
 		addUntilBoundary(sqlBuilder, parameters, query.until());
 
 		// Add stream filtering
@@ -817,6 +808,53 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 	}
 	
+	/**
+	 * Appends the exclusive cursor of a statement being built: "strictly after the given reference"
+	 * going forward, "strictly before it" going backward.
+	 * <p>
+	 * The comparison is over the {@code (tx, position)} tuple, because that is the order events are
+	 * read in — {@code ORDER BY event_tx, event_position}, matching
+	 * {@link EventReference#happenedAfter(EventReference)}. Comparing on {@code event_position} alone
+	 * would be a different order, and the two genuinely disagree: {@code event_position} comes from a
+	 * sequence at insert time while {@code event_tx} defaults to {@code pg_current_xact_id()}, and the
+	 * two are assigned independently, so a transaction can carry a lower position and a higher tx than
+	 * one that committed before it.
+	 * <p>
+	 * That matters most for the optimistic-locking check, where the cursor is the caller's expected
+	 * last event and anything after it that matches the filter is a new relevant fact. On a
+	 * position-only comparison such an event is invisible to the check while every reader sorts it
+	 * after the reference, so the append succeeds against a history the store does not agree with —
+	 * silently, which is the worst way for a consistency boundary to fail. The read path's
+	 * {@code pg_snapshot_xmin} barrier makes that reachable rather than theoretical: it deliberately
+	 * withholds an event whose transaction is still in flight, so a reader legitimately takes a
+	 * reference with a higher position than an event that becomes visible, and sorts later, moments
+	 * afterwards.
+	 * <p>
+	 * The {@code index} part of an {@link EventReference} has no column, exactly as in
+	 * {@link #addUntilBoundary}: it distinguishes sub-events an upcaster produced from one stored
+	 * event. Two sub-events of the <em>same</em> stored event are therefore indistinguishable here —
+	 * narrow, since they come from one atomic append, and on the read path {@code EventStoreImpl}
+	 * re-applies the exact filter after upcasting.
+	 *
+	 * @param sqlBuilder the statement being built
+	 * @param parameters the parameter list being built alongside it
+	 * @param after the reference to seek past, or null for no cursor (in which case nothing is appended)
+	 * @param direction which side of the reference to keep
+	 */
+	private void addCursorBoundary(StringBuilder sqlBuilder, List<Object> parameters, EventReference after, QueryDirection direction) {
+		if ( after == null ) {
+			return;
+		}
+		if ( direction == QueryDirection.FORWARD ) {
+			sqlBuilder.append(" AND ((event_tx>?::xid8) OR (event_tx = ?::xid8 AND event_position > ?))");
+		} else {
+			sqlBuilder.append(" AND ((event_tx<?::xid8) OR (event_tx = ?::xid8 AND event_position < ?))");
+		}
+		parameters.add(Long.toUnsignedString(after.tx()));
+		parameters.add(Long.toUnsignedString(after.tx()));
+		parameters.add(after.position());
+	}
+
 	/**
 	 * Appends the {@code until} boundary of an {@link EventFilter} to a statement being built.
 	 * <p>
@@ -1065,9 +1103,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 				if ( appendCriteria.expectedLastEventReference() != null && appendCriteria.expectedLastEventReference().isPresent()  ) {
 
-					// Add position filtering - check for events after the expected last event
-					sqlBuilder.append(" AND event_position > ?");
-					parameters.add(appendCriteria.expectedLastEventReference().get().position());
+					// Look for events after the expected last one, over the same (tx, position) order
+					// readers see and EventReference.happenedAfter defines. See addCursorBoundary: on a
+					// position-only comparison a committed event that every reader sorts after the
+					// reference can carry a lower position, and the check would not see it.
+					addCursorBoundary(sqlBuilder, parameters, appendCriteria.expectedLastEventReference().get(), QueryDirection.FORWARD);
 				}
 
 

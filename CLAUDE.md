@@ -504,6 +504,14 @@ The key insight of DCB is that business decisions are based on querying relevant
 3. Append new events with `AppendCriteria` containing the query's `EventFilter` and last reference
 4. If new events matching the filter exist after the reference, the append fails
 
+**"After the reference" in step 4 means the total `(tx, position, index)` order** — the one
+`EventReference.happenedAfter` defines and reads are ordered by — not position alone. The two are not
+interchangeable: a backend assigning position and transaction independently can produce an event holding a
+lower position and a higher transaction than one that committed before it, and such an event is after the
+reference for every reader. A check comparing positions alone does not see it and admits an append against
+a history the store no longer agrees with, silently. `PostgresLockCheckOrderingTest` pins this down for the
+Postgres backend, where the two are a `bigserial` and a `xid8`; see the PostgreSQL notes below.
+
 **The guarantee holds under concurrency, and every backend has to earn it.** The check in step 4 and the
 insert must be one indivisible step. If they are not, two appends racing at the same boundary each find it
 empty, both are admitted, and the invariant is gone with nothing raised — the worst kind of failure, since
@@ -525,6 +533,16 @@ can pass all of it and still violate the boundary in production.
 - Separate DataSource for monitoring queries (optional, defaults to main DataSource)
 - Tests use Testcontainers for isolated PostgreSQL instances
 - Requires the `btree_gin` extension (a standard contrib extension, available on the major managed Postgres offerings). Schema initialization runs `CREATE EXTENSION IF NOT EXISTS btree_gin` and schema validation requires `idx_events_stream_tags`, a combined stream+tags GIN index that serves DCB reads scoping by stream *and* filtering by tags in one index. The B-tree indexes are retained for ordered stream replay (GIN cannot serve `ORDER BY`)
+- **Ordering is the `(event_tx, event_position)` tuple everywhere — reads, the `until` boundary, and the
+  optimistic-locking check.** `event_position` is a `bigserial` taken at insert time and `event_tx` is
+  `pg_current_xact_id()`, assigned independently, so the two orders genuinely disagree: a transaction can
+  carry a lower position and a higher tx than one that committed before it. The read path's
+  `pg_snapshot_xmin` barrier makes that ordinary rather than exotic — it withholds an event whose
+  transaction is still in flight, so a reader takes a reference and the event surfaces afterwards, sorting
+  later on a lower position. Any predicate over the log's order goes through `addCursorBoundary` or
+  `addUntilBoundary`; comparing `event_position` alone is a different order and silently drops events.
+  Writers that do not hold the append lock (unconditional appends, `importEvents`, raw SQL) are where the
+  inversion actually comes from, which is why the advisory lock below does not subsume this
 - **Conditional appends are serialized per stream by a `pg_advisory_xact_lock`.** The optimistic-locking
   check is an `INSERT … WHERE NOT EXISTS (…)`, and under PostgreSQL's default READ COMMITTED isolation each
   statement fixes its snapshot when it starts, so two concurrent appends at the same consistency boundary

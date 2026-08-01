@@ -17,7 +17,6 @@
  */
 package org.sliceworkz.eventstore.infra.inmem;
 
-import java.lang.ref.WeakReference;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -117,7 +116,11 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	// Postgres backend's per-stream partial unique index, so the same key on two different streams
 	// does not collide and behaviour does not depend on how storage instances are wired at runtime.
 	private Set<IdempotencyScope> idempotencyKeys = new HashSet<>();
-	private List<WeakReference<EventStoreListener>> listeners = new CopyOnWriteArrayList<>();
+	// Strong references, released only by unsubscribe(). Held weakly, a listener whose registrant stopped
+	// referencing it would vanish at the next GC and take its notifications with it, silently -- see
+	// EventStorage.subscribe(). CopyOnWriteArrayList because notification is far more frequent than
+	// (un)subscription, and notifying must not block appends.
+	private final CopyOnWriteArrayList<EventStoreListener> listeners = new CopyOnWriteArrayList<>();
 	private Map<String,Bookmark> bookmarks = new HashMap<>();
 	private JsonMapper jsonMapper;
 	private Limit absoluteLimit;
@@ -351,11 +354,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 			        (existing, replacement) -> replacement // in sequence, only useful to notify about the last one
 			    ))
 			    .values()
-			    .forEach(notification->listeners.forEach(listener->{
-			    	if (listener.get()!=null){
-			    		notifyQuietly(listener.get(), notification);
-			    	};
-			    }));
+			    .forEach(notification->listeners.forEach(listener->notifyQuietly(listener, notification)));
 	}
 	
 	private StoredEvent addEventToEventLog ( EventToStore event, long tx ) {
@@ -472,8 +471,15 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	@Override
 	public void subscribe(EventStoreListener listener) {
 		checkNotClosed();
-		listeners.add(new WeakReference<>(listener));
-		listeners.removeIf(ref -> ref.get() == null);
+		// addIfAbsent, so re-registering the same listener does not double its notifications
+		listeners.addIfAbsent(listener);
+	}
+
+	@Override
+	public void unsubscribe(EventStoreListener listener) {
+		// deliberately no checkNotClosed: unsubscribing from a closed storage is what an orderly
+		// teardown looks like when the storage happened to be closed first, and it must not throw
+		listeners.remove(listener);
 	}
 
 	@Override
@@ -500,11 +506,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		Tags effectiveTags = tags == null ? Tags.none() : tags;
 		bookmarks.put(reader, new Bookmark(reader, eventReference, effectiveTags, Instant.now()));
 		BookmarkPlacedNotification notification = new BookmarkPlacedNotification(reader, eventReference);
-		listeners.forEach(l->{
-			if ( l.get() != null ) {
-				notifyQuietly(l.get(), notification);
-			}
-		});
+		listeners.forEach(l->notifyQuietly(l, notification));
 	}
 
 	/**
@@ -589,10 +591,15 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	 * Idempotent. The events are deliberately not discarded: a closed storage rejects operations rather
 	 * than quietly answering from a half-torn-down state, and dropping the log would only make
 	 * diagnosing a lifecycle bug harder.
+	 * <p>
+	 * The listeners <em>are</em> discarded. They are held strongly, so a closed storage that kept them
+	 * would pin every stream ever subscribed to it, and every event store behind those streams, for as
+	 * long as anything still referenced the storage itself.
 	 */
 	@Override
 	public void close ( ) {
 		closed.set(true);
+		listeners.clear();
 	}
 
 	private void checkNotClosed ( ) {

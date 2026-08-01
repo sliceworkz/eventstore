@@ -108,7 +108,12 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  *
  *     @Override
  *     public void subscribe(EventStoreListener listener) {
- *         listeners.add(listener);
+ *         listeners.addIfAbsent(listener);
+ *     }
+ *
+ *     @Override
+ *     public void unsubscribe(EventStoreListener listener) {
+ *         listeners.remove(listener);
  *     }
  *
  *     // Implement remaining methods...
@@ -361,13 +366,47 @@ public interface EventStorage extends AutoCloseable {
 	 * <p>
 	 * Implementations should ensure listeners are called in a thread-safe manner.
 	 * Listeners should perform minimal work and delegate to async processing where possible.
+	 * <p>
+	 * <b>The registration is a strong reference, and it is permanent until
+	 * {@link #unsubscribe(EventStoreListener)} is called.</b> Implementations must not hold listeners
+	 * weakly: a listener that quietly disappears when the caller stops referencing it turns "my
+	 * projection stopped updating" into a garbage-collection-timing bug with no error and no log. Who
+	 * registered a listener is responsible for unregistering it — which for the streams this library
+	 * hands out means {@code EventStream.close()}, or closing the store they came from.
+	 * <p>
+	 * Registering the same listener twice must be harmless and must not double the notifications it
+	 * receives, so that a caller need not track whether it has already subscribed.
 	 *
 	 * @param listener the listener to register for storage notifications
+	 * @see #unsubscribe(EventStoreListener)
 	 * @see EventStoreListener
 	 * @see AppendsToEventStoreNotification
 	 * @see BookmarkPlacedNotification
 	 */
 	void subscribe ( EventStoreListener listener );
+
+	/**
+	 * Unregisters a listener previously passed to {@link #subscribe(EventStoreListener)}, so that it
+	 * receives no further notifications and this storage stops referencing it.
+	 * <p>
+	 * Idempotent and forgiving: unregistering a listener that was never registered, or unregistering
+	 * one twice, does nothing and does not throw. Listeners are matched by identity unless the listener
+	 * type defines equality.
+	 * <p>
+	 * A notification already in flight on another thread may still reach the listener after this
+	 * returns; the guarantee is that no <em>new</em> notification will be dispatched to it.
+	 * <p>
+	 * The default implementation does nothing, so that an {@link EventStorage} written before this
+	 * method existed still compiles and runs. Such a backend leaks every listener ever registered with
+	 * it, which the compliance scenarios in {@code org.sliceworkz.eventstore.testing.tck} detect — a
+	 * backend that keeps a listener list must override this.
+	 *
+	 * @param listener the listener to unregister; ignored if null or not registered
+	 * @see #subscribe(EventStoreListener)
+	 */
+	default void unsubscribe ( EventStoreListener listener ) {
+		// backends predating this method keep their listeners forever; the TCK reports it
+	}
 
 	/**
 	 * Defines the direction of event query traversal.

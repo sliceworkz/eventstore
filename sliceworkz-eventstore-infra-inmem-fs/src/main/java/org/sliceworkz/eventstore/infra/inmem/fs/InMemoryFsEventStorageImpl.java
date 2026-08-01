@@ -133,6 +133,11 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 	}
 
 	@Override
+	public void unsubscribe ( EventStoreListener listener ) {
+		delegate.unsubscribe(listener);
+	}
+
+	@Override
 	public Optional<EventReference> getBookmark ( String reader ) {
 		return delegate.getBookmark(reader);
 	}

@@ -84,6 +84,10 @@ public interface EventStore extends AutoCloseable {
 	 * that strands anything subscribed to it. Streams from <em>other</em> stores on the same storage are
 	 * unaffected.
 	 * <p>
+	 * Closing a store also closes its streams, ending their subscriptions and handing their registrations
+	 * back to the storage — see {@link org.sliceworkz.eventstore.stream.EventSource#close()}. That one
+	 * operation on a stream keeps working afterwards, as closing something twice must.
+	 * <p>
 	 * Declared without a checked exception, unlike {@link AutoCloseable#close()}, so that
 	 * try-with-resources needs no catch block. The default implementation does nothing.
 	 */

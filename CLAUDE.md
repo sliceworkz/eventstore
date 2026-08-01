@@ -194,6 +194,48 @@ The contract every backend implements (documented on `EventStorage.close()`):
 it is on the interface, so no downcast, and it works for framework integration (Spring infers `close` as
 the destroy method for a `@Bean`; CDI `@Disposes`; try-with-resources).
 
+### Lifecycle: closing a stream
+
+`EventSource` — so `EventStream` — is `AutoCloseable` too, but at a much smaller scale: the only thing a
+stream owns is its subscriptions.
+
+- **A stream you only query and append through owns nothing.** `getEventStream()` registers nothing with
+  the storage; the registration happens on the *first* `subscribe(...)`, because a stream with no
+  subscribers has nothing to do with a notification anyway. Most streams are in this category, are handed
+  out per operation, and need no lifecycle handling at all.
+- **A stream you subscribe to is held by the storage, strongly, until closed.** This is what makes live
+  updates survive the caller dropping the variable:
+  ```java
+  // this keeps working -- the storage holds the stream, so the subscription cannot be collected
+  eventStore.getEventStream(streamId, CustomerEvent.class)
+            .subscribe(reference -> { ...; return reference; });
+  ```
+  The cost of that guarantee is that nothing releases it on your behalf. A subscribed stream that is
+  never closed is retained for the lifetime of the storage — deliberately a leak you can find, rather
+  than a subscription that dies at an unpredictable GC with no error and no log, which is what holding
+  listeners weakly used to give.
+- **Close what you subscribe to**, or close the store, which closes them all:
+  ```java
+  try ( EventStream<CustomerEvent> stream = eventStore.getEventStream(streamId, CustomerEvent.class) ) {
+      Projector.from(stream).towards(projection).subscribe().build();
+      ...
+  }   // subscriptions ended, registration released
+  ```
+- **Closing a stream is not terminal**, unlike closing a store or a storage. It ends the subscriptions and
+  clears the listeners; the handle stays usable for query, append and bookmark, and subscribing again
+  re-registers it. A stream is a cheap per-operation handle, not a connection — there is nothing to
+  protect by poisoning it. Idempotent, and closing a never-subscribed stream is a no-op.
+- **Consistent append listeners need no registration.** `EventStreamConsistentAppendListener` is called
+  inline by `append()` on the same object, never through a storage notification, so subscribing one
+  registers nothing. `close()` still discards it.
+
+For backends: `EventStorage.unsubscribe(EventStoreListener)` is the SPI counterpart, and `subscribe` must
+hold listeners **strongly** and be idempotent per listener. `unsubscribe` has a no-op `default` so a
+backend written before it still compiles — and `EventStreamSubscriptionLifecycleTest` in the TCK catches
+one that relies on that default, by asserting a closed stream becomes unreachable. No count of delivered
+notifications can catch it: a closed stream has already discarded its listeners, so it stays quiet whether
+or not the storage let go of it.
+
 ### Typical Usage Pattern
 
 ```java

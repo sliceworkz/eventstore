@@ -113,7 +113,45 @@ import org.sliceworkz.eventstore.query.Limit;
  * @see EventQuery
  * @see Event
  */
-public interface EventSource<DOMAIN_EVENT_TYPE> {
+public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
+
+	/**
+	 * Ends every subscription made on this source, releasing the registration it holds with the
+	 * underlying storage.
+	 * <p>
+	 * A source that has been subscribed to is kept alive by the storage for as long as it is
+	 * registered — that is what stops notifications from dying silently when the caller no longer
+	 * holds the source. The flip side is that nothing else will ever release it, so a subscribed
+	 * source that is never closed is retained for the lifetime of the storage. Close the sources you
+	 * subscribe to, or close the {@link org.sliceworkz.eventstore.EventStore} they came from, which
+	 * closes them all:
+	 * <pre>{@code
+	 * try ( EventStream<CustomerEvent> stream = eventStore.getEventStream(streamId, CustomerEvent.class) ) {
+	 *     Projector.from(stream).towards(projection).subscribe().build();
+	 *     ...
+	 * }   // subscriptions ended, registration released
+	 * }</pre>
+	 * A source that was never subscribed to holds no registration, so closing it does nothing — and
+	 * not closing it costs nothing either. Streams used only to query and append, which is most of
+	 * them, need no lifecycle handling at all.
+	 * <p>
+	 * <b>Closing is not terminal.</b> The source stays usable for querying, appending and bookmarking
+	 * afterwards, and subscribing again re-registers it. The only resource a source owns is its
+	 * subscriptions, so closing means "stop listening", not "throw this handle away" — poisoning a
+	 * cheap handle that 150 call sites obtain freely would buy nothing. This is the one respect in
+	 * which it differs from {@link org.sliceworkz.eventstore.EventStore#close()} and
+	 * {@link org.sliceworkz.eventstore.spi.EventStorage#close()}, which are terminal because they do
+	 * own threads and connections.
+	 * <p>
+	 * Idempotent. Declared without a checked exception, unlike {@link AutoCloseable#close()}, so that
+	 * try-with-resources needs no catch block. The default implementation does nothing.
+	 *
+	 * @see #subscribe(EventStreamEventuallyConsistentAppendListener)
+	 */
+	@Override
+	default void close ( ) {
+		// no subscriptions to release
+	}
 
 	/**
 	 * Queries events from the stream with full control over pagination and raw cursor tracking.
@@ -208,8 +246,12 @@ public interface EventSource<DOMAIN_EVENT_TYPE> {
 	 * This subscription provides eventual consistency guarantees - the listener may be notified
 	 * slightly after the append has completed. Useful for async processing where immediate
 	 * consistency is not required.
+	 * <p>
+	 * Subscribing registers this source with the underlying storage, which then keeps it alive until
+	 * {@link #close()}. Close the source when the subscription is no longer wanted — see {@link #close()}.
 	 *
 	 * @param listener the listener to receive append notifications
+	 * @see #close()
 	 */
 	void subscribe ( EventStreamEventuallyConsistentAppendListener listener );
 
@@ -218,8 +260,13 @@ public interface EventSource<DOMAIN_EVENT_TYPE> {
 	 * <p>
 	 * This subscription provides strong consistency guarantees - the listener is notified
 	 * synchronously as part of the append operation. The listener receives the typed domain events.
+	 * <p>
+	 * Unlike the eventually consistent overloads, this needs no registration with the storage: the
+	 * listener is called inline by the append, so reaching it means holding this source anyway.
+	 * {@link #close()} still discards it.
 	 *
 	 * @param listener the listener to receive append notifications with typed events
+	 * @see #close()
 	 */
 	void subscribe ( EventStreamConsistentAppendListener<DOMAIN_EVENT_TYPE> listener );
 
@@ -228,8 +275,11 @@ public interface EventSource<DOMAIN_EVENT_TYPE> {
 	 * <p>
 	 * This subscription allows monitoring bookmark updates, useful for coordinating
 	 * multiple readers or tracking processing progress.
+	 * <p>
+	 * As with the append overloads, this registers the source with the storage until {@link #close()}.
 	 *
 	 * @param listener the listener to receive bookmark notifications
+	 * @see #close()
 	 */
 	void subscribe ( EventStreamEventuallyConsistentBookmarkListener listener );
 

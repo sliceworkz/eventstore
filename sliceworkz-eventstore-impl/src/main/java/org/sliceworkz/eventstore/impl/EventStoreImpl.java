@@ -21,6 +21,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -149,6 +150,17 @@ public class EventStoreImpl implements EventStore {
 	private final AtomicBoolean closed = new AtomicBoolean();
 
 	/**
+	 * The streams of this store that currently hold a listener registration with the storage — that is,
+	 * the ones somebody has subscribed to. Streams nobody subscribed to never appear here.
+	 * <p>
+	 * The storage references those streams strongly, so they outlive the caller's variable on purpose;
+	 * this set is what lets {@link #close()} hand them all back rather than leaving the storage holding
+	 * streams belonging to a store that is gone. Identity-based, since {@code EventStreamImpl} defines
+	 * no equality: two streams for the same id are two distinct registrations.
+	 */
+	private final Set<EventStreamImpl<?>> subscribedStreams = ConcurrentHashMap.newKeySet();
+
+	/**
 	 * How long {@link #close()} waits for each notification executor to finish before logging and
 	 * moving on. The tasks are short-lived listener callbacks, so this only covers a listener that
 	 * ignores interruption.
@@ -191,13 +203,19 @@ public class EventStoreImpl implements EventStore {
 	}
 
 	/**
-	 * Shuts down this store's notification executors, leaving the storage open.
+	 * Unregisters this store's subscribed streams from the storage and shuts down its notification
+	 * executors, leaving the storage itself open.
 	 * <p>
 	 * Idempotent, and bounded: the executors are interrupted and awaited briefly. The storage was handed
 	 * to this store rather than created by it, and may well be backing other stores, so closing it is
 	 * not this store's call — see {@link EventStore#close()}. A store that must close its storage is
 	 * composed with {@link EventStore#owning(EventStore, EventStorage)}, which is what the storage
 	 * builders' {@code buildStore()} returns.
+	 * <p>
+	 * The streams are unregistered <em>first</em>: the storage holds subscribed streams strongly, so
+	 * leaving them registered would keep this store — an inner-class stream references the store that
+	 * made it — reachable from a storage that outlives it, and would keep the storage delivering
+	 * notifications no one can act on any more.
 	 * <p>
 	 * Once closed, this store's streams stop working and its listeners fall silent, but nothing it does
 	 * disturbs another store on the same storage.
@@ -207,6 +225,7 @@ public class EventStoreImpl implements EventStore {
 		if ( !closed.compareAndSet(false, true) ) {
 			return;
 		}
+		subscribedStreams.forEach(EventStreamImpl::close);
 		shutdown(executorServiceForEventAppends);
 		shutdown(executorServiceForBookmarkUpdates);
 	}
@@ -268,12 +287,17 @@ public class EventStoreImpl implements EventStore {
 		private final List<EventStreamConsistentAppendListener<EVENT_TYPE>> consistentSubscribers = new CopyOnWriteArrayList<>();
 		private final List<EventStreamEventuallyConsistentBookmarkListener> bookmarkSubscribers = new CopyOnWriteArrayList<>();
 
+		/**
+		 * Whether this stream currently holds a listener registration with the storage. Flipped by
+		 * {@link #subscribeToStorage()} and {@link #close()}, which are the only two places it changes.
+		 */
+		private final AtomicBoolean subscribedToStorage = new AtomicBoolean();
+
 		public EventStreamImpl ( EventStorage eventStorage, EventStreamId eventStreamId, EventPayloadSerializerDeserializer serde ) {
 			this.eventStorage = eventStorage;
 			this.eventStreamId = eventStreamId;
-			this.eventStorage.subscribe(this);
 			this.serde = serde;
-			
+
 			String tagContextValue = Optional.ofNullable(eventStreamId.context()).orElse(""); // null is not allowed
 			String tagPurposeValue = Optional.ofNullable(eventStreamId.purpose()).orElse(""); // null is not allowed
 			String tagTypedValue = String.valueOf(serde.isTyped());
@@ -316,12 +340,70 @@ public class EventStoreImpl implements EventStore {
 			return eventStreamId;
 		}
 
+		/**
+		 * Registers this stream with the storage, on the first subscription and not before.
+		 * <p>
+		 * A stream that nobody subscribes to has nothing to do with a notification — {@link #notify} does
+		 * no more than fan out to the three subscriber lists — so registering one would only lengthen the
+		 * list the storage walks on every append, on the single thread that serves every store attached to
+		 * it. Streams are handed out per operation and most of them only query and append, so that list
+		 * used to grow with traffic rather than with the number of things actually listening.
+		 * <p>
+		 * Deferring registration to here is also what makes the storage's strong reference safe: it holds
+		 * exactly the streams somebody asked to be notified through, which are the streams that were
+		 * supposed to stay alive anyway.
+		 */
+		private void subscribeToStorage ( ) {
+			if ( !subscribedToStorage.compareAndSet(false, true) ) {
+				return;
+			}
+			subscribedStreams.add(this);
+			eventStorage.subscribe(this);
+			if ( closed.get() ) {
+				// the store was closed between this stream's checkStoreNotClosed and the registration
+				// above, so close() has already walked its streams and will not come back for this one.
+				// Undoing it here is what keeps that race from leaving a registration behind on a
+				// storage that outlives the store
+				close();
+			}
+		}
+
+		/**
+		 * Ends this stream's subscriptions and hands its registration back to the storage.
+		 * <p>
+		 * Idempotent, and not terminal: the stream stays usable for querying, appending and bookmarking,
+		 * and subscribing again re-registers it. See {@link org.sliceworkz.eventstore.stream.EventSource#close()}
+		 * for why a stream is closable at all and why closing it is not the end of it.
+		 * <p>
+		 * The subscriber lists are cleared as well as the registration released, so that a listener cannot
+		 * survive into a later subscription of the same stream and be notified twice.
+		 */
+		@Override
+		public void close ( ) {
+			if ( subscribedToStorage.compareAndSet(true, false) ) {
+				eventStorage.unsubscribe(this);
+				subscribedStreams.remove(this);
+			}
+			eventuallyConsistentSubscribers.clear();
+			consistentSubscribers.clear();
+			bookmarkSubscribers.clear();
+		}
+
 		@Override
 		public void subscribe(EventStreamEventuallyConsistentAppendListener eventuallyConsistentSubscriber) {
 			checkStoreNotClosed();
 			this.eventuallyConsistentSubscribers.add(new OptimizingApendListenerDecorator(eventuallyConsistentSubscriber));
+			subscribeToStorage();
 		}
 
+		/**
+		 * {@inheritDoc}
+		 * <p>
+		 * Deliberately does <em>not</em> register with the storage. A consistent subscriber is notified
+		 * inline by {@link #append}, on this very object, and never through a storage notification — so it
+		 * needs no registration, and it cannot be orphaned by one being absent: reaching it at all means
+		 * holding this stream to append through.
+		 */
 		@Override
 		public void subscribe(EventStreamConsistentAppendListener<EVENT_TYPE> consistentSubscriber) {
 			checkStoreNotClosed();
@@ -332,6 +414,7 @@ public class EventStoreImpl implements EventStore {
 		public void subscribe(EventStreamEventuallyConsistentBookmarkListener listener) {
 			checkStoreNotClosed();
 			this.bookmarkSubscribers.add(listener);
+			subscribeToStorage();
 		}
 
 		@Override
@@ -460,9 +543,10 @@ public class EventStoreImpl implements EventStore {
 
 		@Override
 		public void notify(AppendsToEventStoreNotification newEventsInStore) {
-			// A storage outlives the stores built on it, and keeps notifying every stream ever registered
-			// with it -- including ours, after our store was closed and its executors shut down. Dropping
-			// the notification is what keeps a closed store from poisoning the storage it shares.
+			// close() unregisters this stream, but a notification already being dispatched can still land
+			// here afterwards -- unsubscribe only promises no *new* dispatches. Dropping it is what keeps
+			// a closed store from poisoning the storage it shares: the executors are gone by then, and on
+			// Postgres the caller is the LISTEN/NOTIFY monitor thread every store on the storage depends on.
 			if ( closed.get() ) {
 				return;
 			}

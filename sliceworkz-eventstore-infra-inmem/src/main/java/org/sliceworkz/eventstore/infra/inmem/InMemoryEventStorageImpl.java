@@ -233,9 +233,19 @@ public class InMemoryEventStorageImpl implements EventStorage {
 			}
 		}
 		
-		// if we only need to read until a certain event, we stop after we have reached it
+		// If we only need to read until a certain event, we can cut the traversal short. "until" is a
+		// matching criterion, not a traversal one: it is an inclusive upper bound over the total
+		// (tx, position, index) order and means the same thing in both directions. So the events beyond
+		// it are a suffix of a forward traversal and a prefix of a backward one -- hence takeWhile vs
+		// dropWhile. This is purely a short-circuit; the boundary itself is enforced by query::matches
+		// below, which is where the exact comparison lives.
 		if ( query.until() != null ) {
-			on = on.takeWhile(e->e.reference().position()<=query.until().position());
+			EventReference until = query.until();
+			if ( direction == QueryDirection.BACKWARD ) {
+				on = on.dropWhile(e->e.reference().happenedAfter(until));
+			} else {
+				on = on.takeWhile(e->!e.reference().happenedAfter(until));
+			}
 		}
 		
 		Stream<StoredEvent> result = on;

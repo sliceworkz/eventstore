@@ -750,15 +750,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 			parameters.add(after.position());
 		}
 		
-		if ( query.until() != null ) {
-			if ( direction == QueryDirection.FORWARD ) {
-				sqlBuilder.append(" AND event_position <= ?");
-			} else { 
-				sqlBuilder.append(" AND event_position >= ?");
-			}
-			parameters.add(query.until().position());
-		}
-		
+		addUntilBoundary(sqlBuilder, parameters, query.until());
+
 		// Add stream filtering
 		if (stream.isPresent()) {
 			if (!stream.get().isAnyContext()) {
@@ -816,6 +809,38 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 	}
 	
+	/**
+	 * Appends the {@code until} boundary of an {@link EventFilter} to a statement being built.
+	 * <p>
+	 * The boundary is a matching criterion, not a traversal one: it is the inclusive upper bound over
+	 * the same {@code (tx, position)} order the cursor uses, and it means the same thing whether the
+	 * query runs forward or backward. Reading it as "traverse until you reach it" -- a lower bound when
+	 * going backward -- returns the events on the wrong side of the boundary.
+	 * <p>
+	 * Comparing on {@code event_position} alone is not enough either. {@code event_tx} defaults to
+	 * {@code pg_current_xact_id()}, assigned at a transaction's first write, while {@code event_position}
+	 * comes from a sequence at insert time, so a transaction that wrote elsewhere first can carry a lower
+	 * tx and a higher position. Ordering is by the tuple, so the boundary has to be too, or an event
+	 * before the boundary is silently never fetched.
+	 * <p>
+	 * The {@code index} part of an {@link EventReference} has no column: it distinguishes sub-events an
+	 * upcaster produced from one stored event. This predicate therefore stays a deliberate superset, and
+	 * {@code EventStoreImpl} re-applies the exact filter after upcasting.
+	 *
+	 * @param sqlBuilder the statement being built
+	 * @param parameters the parameter list being built alongside it
+	 * @param until the boundary, or null for no boundary (in which case nothing is appended)
+	 */
+	private void addUntilBoundary(StringBuilder sqlBuilder, List<Object> parameters, EventReference until) {
+		if ( until == null ) {
+			return;
+		}
+		sqlBuilder.append(" AND ((event_tx<?::xid8) OR (event_tx = ?::xid8 AND event_position <= ?))");
+		parameters.add(Long.toUnsignedString(until.tx()));
+		parameters.add(Long.toUnsignedString(until.tx()));
+		parameters.add(until.position());
+	}
+
 	private void addEventFilterFiltering(StringBuilder sqlBuilder, List<Object> parameters, EventFilter filter) {
 		if (filter.items() == null || filter.items().isEmpty()) {
 			return; // matchAll case is already handled
@@ -1040,6 +1065,13 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 				// Add EventFilter filtering for the consistency boundary
 				EventFilter lockingFilter = appendCriteria.eventFilter();
+
+				// A consistency boundary is whatever its EventFilter matches, and a filter carrying an
+				// "until" does not match past it -- so an event beyond the boundary is not a new relevant
+				// fact and must not raise a conflict. Leaving this out made this backend lock where the
+				// in-memory one, which runs the criteria through query(), did not.
+				addUntilBoundary(sqlBuilder, parameters, lockingFilter.until());
+
 				if (!lockingFilter.isMatchAll()) {
 					addEventFilterFiltering(sqlBuilder, parameters, lockingFilter);
 				}

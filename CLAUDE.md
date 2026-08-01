@@ -81,6 +81,12 @@ mvn clean install -DskipTests
 - Can match all (`EventFilter.matchAll()`), none (`EventFilter.matchNone()`), or specific criteria
 - Created via `EventFilter.forEvents(eventTypesFilter, tags)`
 - Used by `AppendCriteria` for optimistic locking (where direction/limit are irrelevant)
+- **`until` is an inclusive upper bound over the total `(tx, position, index)` order and is
+  direction-independent**: `.backwards()` returns the same events as forward, newest first. It is part of
+  the filter, so it also bounds a consistency boundary — an event past it is not a new relevant fact and
+  raises no `OptimisticLockingException`. Backends must compare it as the tuple, exactly as they compare
+  the cursor; comparing positions alone drops events whose transaction and position were assigned in
+  different orders. `EventQueryUntilBoundaryTest` pins all of this down per backend
 
 **EventQuery:**
 - Wraps an `EventFilter` together with traversal semantics (direction and limit)

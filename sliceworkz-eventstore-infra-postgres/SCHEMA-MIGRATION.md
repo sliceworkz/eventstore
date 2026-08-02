@@ -2,10 +2,16 @@
 
 Review briefing 13 — *No schema migration path; `ENSURE` cannot update an existing object*.
 
-Everything below was verified against PostgreSQL 17 and 18 in Testcontainers by
-`PostgresSchemaDriftTest` (postgres module, `src/test`). That class asserts the **current, broken**
-behaviour on purpose: it is the evidence for this document and the regression net for whatever
-lands next, and its assertions are meant to be inverted by the fix.
+> **Status.** Step C below has **landed**, together with the advisory lock and a support floor of
+> PostgreSQL 15. Sections 1 and 2 describe what was measured *before* that change and are kept as the
+> record of why it was made; §3.1 says what the fix actually does. Step A (the version table) and the
+> shape-validation gap are still open, and §1.5 is still true of indexes, defaults and column types.
+>
+> `PostgresSchemaDriftTest` was inverted along with the fix and now asserts, per backend, both what
+> `ENSURE` repairs and what it still does not.
+
+Everything below was verified against PostgreSQL 15, 17 and 18 in Testcontainers by
+`PostgresSchemaDriftTest` (postgres module, `src/test`).
 
 ---
 
@@ -155,32 +161,52 @@ already does per stream. The project has the pattern in place and documented.
 
 **Land C now, then A. Adopt D as part of A. Do not take B.**
 
-### Step 1 — C: make every object idempotently replaceable (immediately)
+### Step 1 — C: make every object idempotently replaceable — **landed**
 
-In `ensure-schema.sql`, replace the `DO $$ … IF NOT EXISTS` guards with:
+The functions are now `CREATE OR REPLACE`d rather than guarded, and `drop-schema.sql` drops them as
+well as the tables, which is what makes `INITIALIZE` a genuine reset.
 
-```sql
-CREATE OR REPLACE FUNCTION PREFIX_notify_event_appended() …;
-DROP TRIGGER IF EXISTS table_insert_trigger ON PREFIX_events;
-CREATE TRIGGER table_insert_trigger AFTER INSERT ON PREFIX_events …;
-```
-
-and in `drop-schema.sql`, drop the functions too:
+The triggers are **compared, then recreated only when they differ**, rather than rewritten every
+start:
 
 ```sql
-DROP FUNCTION IF EXISTS PREFIX_notify_event_appended() CASCADE;
-DROP FUNCTION IF EXISTS PREFIX_notify_bookmark_placed() CASCADE;
+DO $$ BEGIN
+  -- tgtype is a bitmask: ROW = 1, BEFORE = 2, INSERT = 4, DELETE = 8, UPDATE = 16, TRUNCATE = 32.
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger t … WHERE t.tgname = 'table_insert_trigger'
+                   AND t.tgtype = 5 AND t.tgfoid = 'PREFIX_notify_event_appended'::regproc) THEN
+    DROP TRIGGER IF EXISTS table_insert_trigger ON PREFIX_events;
+    CREATE TRIGGER table_insert_trigger AFTER INSERT ON PREFIX_events …;
+  END IF;
+END $$;
 ```
 
-Add the advisory lock around the whole ensure path at the same time — it is the same file and the
-same release note, and it removes the concurrency finding above. `DROP TRIGGER` + `CREATE TRIGGER`
-takes an `ACCESS EXCLUSIVE` lock on the events table for the duration of the transaction; that is
-brief, but it is a reason the lock and the one-transaction property both matter.
+`CREATE OR REPLACE TRIGGER` would express this in one statement, but it is PostgreSQL 14+ **and**
+rewrites unconditionally, so it takes an `ACCESS EXCLUSIVE` lock on the events table on every start
+of every instance. Comparing first makes the ordinary case — the trigger is already correct — a
+catalog read that locks nothing, and it repairs drifted timing, orientation and target function as a
+side effect, which the unconditional form would too but the old name-only guard did not.
 
-This is cheap, needs no dependency, no DDL of its own, and no version marker. It makes function and
-trigger bodies genuinely self-healing on every start, and it makes `INITIALIZE` mean what it says.
-It does **not** solve data migrations: the two `ALTER TABLE` migrations in `CLAUDE.md` still cannot
-be expressed this way, and a store still cannot tell which schema generation it is talking to.
+Schema scripts now run **as one transaction under a per-prefix advisory lock**
+(`executeSqlScripts`), which removes the concurrency finding in §2 and makes `INITIALIZE`'s
+drop-then-ensure indivisible.
+
+This needs no dependency, no DDL of its own and no version marker. It does **not** solve data
+migrations: the two `ALTER TABLE` migrations in `CLAUDE.md` still cannot be expressed this way, and
+a store still cannot tell which schema generation it is talking to.
+
+**Support floor raised to PostgreSQL 15** alongside it. The schema only needs 13, so this is a
+support policy rather than a technical limit — 13 is past community end-of-life and 14 follows in
+November 2026. An older server is warned about, not rejected. `Postgres15Backend` was added to the
+TCK service file so the floor is exercised; before it, the compliance run covered 17 and 18 only
+while the documentation promised 13+.
+
+That backend paid for itself immediately: **the library did not work on PostgreSQL 15 at all.** The
+conditional append builds `INSERT … SELECT * FROM ( VALUES … )` with no alias on the subquery, which
+PostgreSQL only made optional in 16. Every conditional append — so every DCB consistency check, the
+central operation of this store — failed on 15 with `VALUES in FROM must have an alias`, 18 TCK
+scenarios plus the performance test. The fix is the two words `AS new_events`; nothing references the
+alias. Worth stating plainly: the 13+ support claim in the documentation had never been true for any
+version below 16, and nothing in the build could have said so.
 
 ### Step 2 — A: a prefixed version table with ordered steps
 
@@ -298,18 +324,19 @@ case, so **shipping briefing 11 on today's `ensure-schema.sql` would deliver the
 databases only, leave every existing database on the row-level trigger, and report success** — with
 no way for an operator to tell which behaviour they have.
 
-Recommended order:
+**Step C has landed, so briefing 11 is unblocked and needs no special handling.** It changes
+`PREFIX_notify_event_appended`'s body and the shape of `table_insert_trigger`; both now reach
+existing databases on the next `ENSURE`.
 
-1. **Land step C first, as its own change.** It is small, self-contained, has no DDL of its own, and
-   is the minimum that makes briefing 11 correct on existing databases. Fold the advisory lock in
-   with it.
-2. **Briefing 11 then writes ordinary `CREATE OR REPLACE FUNCTION` + `DROP TRIGGER IF EXISTS` /
-   `CREATE TRIGGER`** and needs no special handling of its own.
+Two things briefing 11 does have to do:
 
-If the two are worked in parallel and C cannot land first, briefing 11 should hand-roll
-`CREATE OR REPLACE` + `DROP TRIGGER IF EXISTS` **for its own two objects only**, and leave the
-bookmark function's guard alone, so the later C change is a clean generalisation rather than a
-conflict. Either way the two changes touch the same region of `ensure-schema.sql` and the order must
-be agreed before either writes SQL.
+1. **Update the trigger's `tgtype` in the comparison guard.** A statement-level trigger is
+   `FOR EACH STATEMENT`, so the ROW bit is not set: `AFTER INSERT … FOR EACH STATEMENT` is `tgtype =
+   4`, not `5`. Leaving it at 5 would make every startup believe the trigger has drifted and rewrite
+   it, taking `ACCESS EXCLUSIVE` on the events table each time — the exact cost the comparison
+   exists to avoid. `PostgresSchemaDriftTest.testTriggerDriftIsRepairedByEnsure` will not catch that;
+   it asserts repair, not that a correct trigger is left alone.
+2. **Check the transition-table syntax against the floor.** `REFERENCING NEW TABLE AS …` is
+   PostgreSQL 10+, so it is fine at 15, and `Postgres15Backend` now runs the TCK against the floor.
 
 Option A is not on briefing 11's critical path and should not block it.

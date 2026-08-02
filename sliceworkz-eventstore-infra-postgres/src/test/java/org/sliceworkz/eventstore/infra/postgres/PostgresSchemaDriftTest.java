@@ -46,17 +46,20 @@ import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageException;
 
 /**
- * Characterisation tests for schema drift: they pin down what the schema scripts and
- * {@code checkDatabase()} do <em>today</em> on a database that already exists.
+ * What {@code ENSURE} repairs on a database that already exists — and what it still does not.
  * <p>
- * The headline is {@link Tests#testStaleFunctionSurvivesInitialize()}: {@code ensure-schema.sql} is
- * create-if-absent throughout and {@code drop-schema.sql} drops only the two tables, so a function
- * body written by an older release survives even the mode documented as "drop and recreate from
- * scratch" — and the {@code IF NOT EXISTS} guard then declines to recreate it. Validation checks
- * that objects exist, never what they are, so nothing reports the drift.
+ * {@code ensure-schema.sql} used to be create-if-absent throughout, so a function body written by an
+ * older release survived every mode, including the one documented as "drop and recreate from scratch"
+ * ({@code drop-schema.sql} dropped only the two tables, and the {@code IF NOT EXISTS} guard then
+ * declined to recreate the function). The store reported a validated schema while its notifications
+ * were dead. The first half of this class pins down that this is fixed: functions are
+ * {@code CREATE OR REPLACE}d, triggers are compared and recreated when their shape differs, and the
+ * drop script takes the functions with it.
  * <p>
- * These tests assert the current (broken) behaviour deliberately. When a migration mechanism lands
- * they must be inverted, which is the point: they are the regression net for it.
+ * The second half pins down the part that is <em>not</em> fixed, so the remaining gap stays visible:
+ * {@code checkDatabase()} still validates that objects exist, never what they are, so an index of the
+ * wrong kind or a lost unique constraint passes validation. Closing that needs the version-marker work
+ * described in {@code SCHEMA-MIGRATION.md}.
  */
 public class PostgresSchemaDriftTest {
 
@@ -73,9 +76,9 @@ public class PostgresSchemaDriftTest {
 
 		// ---------------------------------------------------------------- §3.1
 
-		/** A function body changed after creation is left untouched by {@code ENSURE}, which reports success. */
+		/** A function body changed after creation is brought back to the shipped one by {@code ENSURE}. */
 		@Test
-		public void testStaleFunctionSurvivesEnsure ( ) throws Exception {
+		public void testStaleFunctionIsRepairedByEnsure ( ) throws Exception {
 			String prefix = "driftensure_";
 			DataSource dataSource = PostgresContainer.dataSource(image);
 
@@ -83,14 +86,12 @@ public class PostgresSchemaDriftTest {
 			hijackNotifyFunction(dataSource, prefix);
 			assertTrue(functionBody(dataSource, prefix).contains(HIJACKED_CHANNEL), "precondition: body was replaced");
 
-			// ENSURE runs again and reports success ...
 			ensure(prefix, dataSource).close();
 
-			// ... but the stale body is still there
-			assertTrue(functionBody(dataSource, prefix).contains(HIJACKED_CHANNEL),
-				"ENSURE left the stale function body in place");
-			assertFalse(functionBody(dataSource, prefix).contains(prefix + "event_appended"),
-				"the body shipped with this release never reached the database");
+			assertFalse(functionBody(dataSource, prefix).contains(HIJACKED_CHANNEL),
+				"ENSURE replaced the stale function body");
+			assertTrue(functionBody(dataSource, prefix).contains(prefix + "event_appended"),
+				"the body shipped with this release reached the database");
 
 			PostgresContainer.closeDataSource(image);
 		}
@@ -98,16 +99,16 @@ public class PostgresSchemaDriftTest {
 		// ---------------------------------------------------------------- §3.2
 
 		/**
-		 * The headline: the same stale body survives {@code INITIALIZE}, the mode documented as
-		 * "drop all event store objects and recreate them from scratch".
+		 * {@code INITIALIZE} means what it says: the functions go with the tables.
 		 * <p>
-		 * {@code drop-schema.sql} drops the two tables (taking the triggers with them via
-		 * {@code CASCADE}) and nothing else, so the function is still in {@code pg_proc} when
-		 * {@code ensure-schema.sql} runs — where {@code IF NOT EXISTS} declines to recreate it.
-		 * The freshly created trigger is then wired to the old body.
+		 * This was the sharpest form of the old bug — {@code drop-schema.sql} dropped the two tables
+		 * (taking the triggers with them via {@code CASCADE}) and nothing else, so the function was
+		 * still in {@code pg_proc} when {@code ensure-schema.sql} ran, where {@code IF NOT EXISTS}
+		 * declined to recreate it, and the freshly created trigger was wired straight back to the old
+		 * body.
 		 */
 		@Test
-		public void testStaleFunctionSurvivesInitialize ( ) throws Exception {
+		public void testInitializeReplacesAStaleFunction ( ) throws Exception {
 			String prefix = "driftinit_";
 			DataSource dataSource = PostgresContainer.dataSource(image);
 
@@ -122,19 +123,22 @@ public class PostgresSchemaDriftTest {
 				assertEquals(0, eventCount(dataSource, prefix), "INITIALIZE did drop and recreate the table");
 			}
 
-			assertTrue(functionBody(dataSource, prefix).contains(HIJACKED_CHANNEL),
-				"INITIALIZE left the stale function body in place -- 'from scratch' is not from scratch");
+			assertFalse(functionBody(dataSource, prefix).contains(HIJACKED_CHANNEL),
+				"INITIALIZE really is from scratch: the stale function body is gone");
 
 			PostgresContainer.closeDataSource(image);
 		}
 
 		/**
-		 * The drift is not cosmetic: with a stale body the store's LISTEN/NOTIFY path is dead.
-		 * A listener registered on a storage that has just run {@code INITIALIZE} never hears
-		 * about an insert, because the trigger notifies the old channel.
+		 * The repair is functional, not cosmetic: notifications flow again afterwards.
+		 * <p>
+		 * This is the assertion that would have caught the original bug. A count of delivered
+		 * notifications is the only thing that distinguishes a store whose trigger calls the shipped
+		 * function from one whose trigger calls a stale body — validation cannot see the difference,
+		 * and the store logs success either way.
 		 */
 		@Test
-		public void testStaleFunctionBreaksNotificationsAfterInitialize ( ) throws Exception {
+		public void testNotificationsWorkAfterInitializeRepairsAStaleFunction ( ) throws Exception {
 			String prefix = "driftnotify_";
 			DataSource dataSource = PostgresContainer.dataSource(image);
 
@@ -152,12 +156,11 @@ public class PostgresSchemaDriftTest {
 				});
 
 				insertRawEvent(dataSource, prefix);
-				// give the monitor thread more than enough time to deliver a notification
-				Thread.sleep(1500);
+				waitForNotification(notifications);
 
-				assertEquals(0, notifications.get(),
-					"no notification arrives: the trigger created by INITIALIZE calls the stale function, "
-						+ "which notifies '" + HIJACKED_CHANNEL + "' instead of '" + prefix + "event_appended'");
+				assertEquals(1, notifications.get(),
+					"the trigger created by INITIALIZE calls the shipped function, which notifies '"
+						+ prefix + "event_appended'");
 			}
 
 			PostgresContainer.closeDataSource(image);
@@ -165,16 +168,23 @@ public class PostgresSchemaDriftTest {
 
 		// ---------------------------------------------------------------- §3.3
 
-		/** Validation checks that objects exist, not what they are, so a stale body passes. */
+		/**
+		 * The remaining gap: {@code VALIDATE} still cannot see a stale function body.
+		 * <p>
+		 * {@code ENSURE} now repairs one, so a deployment on the default mode heals itself on the next
+		 * start. A deployment pinned to {@code VALIDATE} or {@code NONE} — the split where a DBA applies
+		 * DDL — does not, and nothing reports it, because {@code checkDatabase()} only asks whether the
+		 * function exists. Closing this needs the version marker; see {@code SCHEMA-MIGRATION.md}.
+		 */
 		@Test
-		public void testValidateDoesNotNoticeStaleFunction ( ) throws Exception {
+		public void testValidateStillDoesNotNoticeStaleFunction ( ) throws Exception {
 			String prefix = "driftvalidate_";
 			DataSource dataSource = PostgresContainer.dataSource(image);
 
 			ensure(prefix, dataSource).close();
 			hijackNotifyFunction(dataSource, prefix);
 
-			// VALIDATE passes against the drifted database
+			// VALIDATE passes against the drifted database and leaves it drifted
 			try ( EventStorage storage = PostgresEventStorage.newBuilder()
 					.name("unit-test").prefix(prefix).dataSource(dataSource)
 					.validateDatabase().build() ) {
@@ -206,17 +216,83 @@ public class PostgresSchemaDriftTest {
 		}
 
 		/**
-		 * The boundary of what validation catches. Everything below is real, load-bearing drift that
-		 * passes validation because only the <em>name</em> of the object is checked:
-		 * <ul>
-		 *   <li>an index of the wrong kind and on the wrong columns, under the right name;</li>
-		 *   <li>the idempotency index no longer unique -- silently admits duplicate keys;</li>
-		 *   <li>the {@code stream_purpose} default reverted to the pre-alignment {@code ''};</li>
-		 *   <li>the trigger changed from {@code AFTER INSERT} to {@code BEFORE INSERT}.</li>
-		 * </ul>
+		 * A trigger whose shape has drifted is repaired by {@code ENSURE}.
+		 * <p>
+		 * The script compares the installed trigger's {@code tgtype} and target function rather than
+		 * merely checking that the name exists, so wrong timing, wrong orientation and a trigger pointing
+		 * at the wrong function are all corrected. Comparing first — instead of the unconditional
+		 * {@code CREATE OR REPLACE TRIGGER} available from PostgreSQL 14 — keeps the ordinary startup, in
+		 * which the trigger is already correct, a catalog read that takes no lock on the events table.
 		 */
 		@Test
-		public void testIndexTriggerAndDefaultDriftAreNotCaught ( ) throws Exception {
+		public void testTriggerDriftIsRepairedByEnsure ( ) throws Exception {
+			String prefix = "drifttrigger_";
+			DataSource dataSource = PostgresContainer.dataSource(image);
+
+			ensure(prefix, dataSource).close();
+
+			execute(dataSource, "DROP TRIGGER table_insert_trigger ON " + prefix + "events");
+			execute(dataSource, "CREATE TRIGGER table_insert_trigger BEFORE INSERT ON " + prefix + "events "
+				+ "FOR EACH ROW EXECUTE FUNCTION " + prefix + "notify_event_appended()");
+			assertEquals("BEFORE", triggerTiming(dataSource, prefix + "events", "table_insert_trigger"),
+				"precondition: the trigger fires at the wrong time");
+
+			ensure(prefix, dataSource).close();
+
+			assertEquals("AFTER", triggerTiming(dataSource, prefix + "events", "table_insert_trigger"),
+				"ENSURE put the trigger back to AFTER INSERT");
+
+			PostgresContainer.closeDataSource(image);
+		}
+
+		/**
+		 * A trigger that is already correct is left strictly alone — the point of comparing rather than
+		 * rewriting.
+		 * <p>
+		 * This is the assertion that protects the performance property, and nothing else does:
+		 * {@link #testTriggerDriftIsRepairedByEnsure()} passes just as well against an implementation
+		 * that rewrites the trigger on every start, which would take an {@code ACCESS EXCLUSIVE} lock on
+		 * the events table each time an instance boots. The trigger's oid changes if it was recreated.
+		 * <p>
+		 * It also guards the guard itself: a future change to the trigger's shape that forgets to update
+		 * the expected {@code tgtype} would make every startup believe the trigger has drifted, and this
+		 * test fails rather than the cost going unnoticed.
+		 */
+		@Test
+		public void testCorrectTriggerIsNotRewrittenByEnsure ( ) throws Exception {
+			String prefix = "driftnorewrite_";
+			DataSource dataSource = PostgresContainer.dataSource(image);
+
+			ensure(prefix, dataSource).close();
+			String oidAfterCreate = triggerOid(dataSource, prefix + "events", "table_insert_trigger");
+			String bookmarkOidAfterCreate = triggerOid(dataSource, prefix + "bookmarks", "table_insert_or_update_trigger");
+
+			ensure(prefix, dataSource).close();
+			ensure(prefix, dataSource).close();
+
+			assertEquals(oidAfterCreate, triggerOid(dataSource, prefix + "events", "table_insert_trigger"),
+				"the events trigger was recreated even though it was already correct");
+			assertEquals(bookmarkOidAfterCreate, triggerOid(dataSource, prefix + "bookmarks", "table_insert_or_update_trigger"),
+				"the bookmarks trigger was recreated even though it was already correct");
+
+			PostgresContainer.closeDataSource(image);
+		}
+
+		/**
+		 * The remaining gap, and the reason this class still exists. Both of these are real,
+		 * load-bearing drift that {@code ENSURE} does not repair and validation does not report,
+		 * because only the <em>name</em> of the index is checked:
+		 * <ul>
+		 *   <li>an index of the wrong kind and on the wrong columns, under the right name;</li>
+		 *   <li>the idempotency index no longer unique — silently admits duplicate keys;</li>
+		 *   <li>the {@code stream_purpose} default reverted to the pre-alignment {@code ''}.</li>
+		 * </ul>
+		 * Indexes and columns are deliberately only ever created, never altered — rebuilding an index on
+		 * a large events table at startup is not something a library should do behind the caller's back.
+		 * Detecting and reporting the drift is the part that is missing, and it needs the version marker.
+		 */
+		@Test
+		public void testIndexAndDefaultDriftAreStillNotCaught ( ) throws Exception {
 			String prefix = "driftshape_";
 			DataSource dataSource = PostgresContainer.dataSource(image);
 
@@ -233,12 +309,7 @@ public class PostgresSchemaDriftTest {
 			// the pre-alignment default documented in CLAUDE.md as needing a manual migration
 			execute(dataSource, "ALTER TABLE " + prefix + "events ALTER COLUMN stream_purpose SET DEFAULT ''");
 
-			// the trigger, wrong timing
-			execute(dataSource, "DROP TRIGGER table_insert_trigger ON " + prefix + "events");
-			execute(dataSource, "CREATE TRIGGER table_insert_trigger BEFORE INSERT ON " + prefix + "events "
-				+ "FOR EACH ROW EXECUTE FUNCTION " + prefix + "notify_event_appended()");
-
-			// ENSURE reports success and changes nothing; VALIDATE agrees
+			// ENSURE reports success and changes none of it; VALIDATE agrees
 			ensure(prefix, dataSource).close();
 			try ( EventStorage storage = PostgresEventStorage.newBuilder()
 					.name("unit-test").prefix(prefix).dataSource(dataSource)
@@ -249,8 +320,6 @@ public class PostgresSchemaDriftTest {
 					"the unique idempotency index is gone and validation did not notice");
 				assertEquals("''::text", columnDefault(dataSource, prefix + "events", "stream_purpose"),
 					"the stale default survives and validation did not notice");
-				assertEquals("BEFORE", triggerTiming(dataSource, prefix + "events", "table_insert_trigger"),
-					"the trigger fires at the wrong time and validation did not notice");
 			}
 
 			PostgresContainer.closeDataSource(image);
@@ -261,14 +330,15 @@ public class PostgresSchemaDriftTest {
 		/**
 		 * Several application instances starting at once all run {@code ensure-schema.sql} — which is
 		 * what the default {@link DatabaseInitMode#ENSURE} means for a scaled-out deployment rolling
-		 * onto a database that does not have the schema yet.
+		 * onto a database that does not have the schema yet. None of them may fail.
 		 * <p>
 		 * {@code CREATE TABLE / INDEX / EXTENSION IF NOT EXISTS} are not atomic against a concurrent
-		 * creator: the existence check and the catalog insert are separate, so two transactions can
-		 * both find the object absent and both try to create it. The loser hits a unique violation on
-		 * a system catalog index, the whole script rolls back (it runs as one transaction), and that
-		 * instance fails to start. It is a race, so it is intermittent — several rounds, each on its
-		 * own fresh prefix, are used to make it show up reliably.
+		 * creator: the existence check and the catalog insert are separate, so two transactions can both
+		 * find the object absent and both try to create it. The loser hit a unique violation on a system
+		 * catalog index, the whole script rolled back, and that instance failed to start — measured at
+		 * 64 of 80 instances before the per-prefix advisory lock in {@code executeSqlScripts} was
+		 * introduced. Several rounds, each on its own fresh prefix, because it is a race: one round
+		 * passing proves very little.
 		 */
 		@Test
 		public void testConcurrentEnsureFromSeveralInstances ( ) throws Exception {
@@ -311,28 +381,30 @@ public class PostgresSchemaDriftTest {
 					for ( Throwable t : failures ) {
 						Throwable root = t;
 						while ( root.getCause() != null ) { root = root.getCause(); }
-						String message = root.getMessage().replaceAll("\\s+", " ").trim();
-						// every failure seen is a catalog race, not something else going wrong
-						assertTrue(message.contains("already exists"),
-							"expected a catalog race, got: " + message);
-						messages.add(root.getClass().getSimpleName() + ": " + message);
+						messages.add(root.getClass().getSimpleName() + ": "
+							+ root.getMessage().replaceAll("\\s+", " ").trim());
 					}
 				}
 
-				// whoever won, the script runs as one transaction, so a loser rolls back cleanly and
-				// the schema left behind is complete
+				// and the schema each round leaves behind is complete
 				ensure(prefix, dataSource).close();
 			}
 
-			System.out.println("[concurrent ENSURE on " + image + "] " + roundsWithFailures + " of " + rounds
-				+ " rounds had a failing instance; " + totalFailures + " of " + (rounds * instances)
-				+ " instances failed to start");
-			messages.stream().distinct().forEach(m -> System.out.println("    " + m));
+			assertEquals(0, totalFailures,
+				"every instance must start; " + totalFailures + " of " + (rounds * instances)
+					+ " failed across " + roundsWithFailures + " rounds: " + messages.stream().distinct().toList());
 
 			PostgresContainer.closeDataSource(image);
 		}
 
 		// ---------------------------------------------------------------- helpers
+
+		/** Polls for a notification rather than sleeping a fixed time, up to a generous ceiling. */
+		private void waitForNotification ( AtomicInteger notifications ) throws InterruptedException {
+			for ( int attempt = 0; attempt < 100 && notifications.get() == 0; attempt++ ) {
+				Thread.sleep(50);
+			}
+		}
 
 		private EventStorage ensure ( String prefix, DataSource dataSource ) {
 			return PostgresEventStorage.newBuilder()
@@ -393,6 +465,14 @@ public class PostgresSchemaDriftTest {
 					+ "AND table_name = '" + tableName + "' AND column_name = '" + columnName + "'");
 		}
 
+		/** The trigger's oid, which changes if and only if it was dropped and recreated. */
+		private String triggerOid ( DataSource dataSource, String tableName, String triggerName ) throws SQLException {
+			return queryString(dataSource,
+				"SELECT t.oid::text FROM pg_trigger t JOIN pg_class c ON t.tgrelid = c.oid "
+					+ "JOIN pg_namespace n ON c.relnamespace = n.oid WHERE n.nspname = current_schema() "
+					+ "AND c.relname = '" + tableName + "' AND t.tgname = '" + triggerName + "' AND NOT t.tgisinternal");
+		}
+
 		private String triggerTiming ( DataSource dataSource, String tableName, String triggerName ) throws SQLException {
 			return queryString(dataSource,
 				"SELECT action_timing FROM information_schema.triggers WHERE trigger_schema = current_schema() "
@@ -405,6 +485,28 @@ public class PostgresSchemaDriftTest {
 				  ResultSet rs = statement.executeQuery(sql) ) {
 				return rs.next() ? rs.getString(1) : null;
 			}
+		}
+	}
+
+	/**
+	 * The oldest supported major version. This class exercises the most version-sensitive SQL in the
+	 * codebase — {@code tgtype} comparison, {@code ::regproc} resolution, {@code CREATE OR REPLACE
+	 * FUNCTION} — so it is worth running against the floor and not only against the newest releases.
+	 */
+	@Nested
+	class OnPostgres15 extends Tests {
+
+		OnPostgres15 ( ) { super(PostgresContainer.IMAGE_PG15); }
+
+		@BeforeAll
+		public static void setUpBeforeAll ( ) {
+			PostgresContainer.start(PostgresContainer.IMAGE_PG15);
+		}
+
+		@AfterAll
+		public static void tearDownAfterAll ( ) {
+			PostgresContainer.stop(PostgresContainer.IMAGE_PG15);
+			PostgresContainer.cleanup(PostgresContainer.IMAGE_PG15);
 		}
 	}
 

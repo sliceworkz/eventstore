@@ -48,6 +48,9 @@ import com.zaxxer.hikari.HikariDataSource;
  */
 public class PostgresContainer {
 
+	/** PostgreSQL 15 image tag — the oldest supported major version. */
+	public static final String IMAGE_PG15 = "postgres:15";
+
 	public static final String IMAGE_PG17 = "postgres:17";
 	public static final String IMAGE_PG18 = "postgres:18";
 

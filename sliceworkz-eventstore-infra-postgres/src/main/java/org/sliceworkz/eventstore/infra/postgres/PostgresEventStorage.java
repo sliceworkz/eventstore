@@ -119,7 +119,7 @@ import io.micrometer.core.instrument.Metrics;
  * EventStore eventStore = EventStoreFactory.get().eventStore(storage);
  * }</pre>
  *
- * <h2>Optional uuid-creator Dependency (PostgreSQL 13-17 only)</h2>
+ * <h2>Optional uuid-creator Dependency (PostgreSQL 15-17 only)</h2>
  * From PostgreSQL 18 onwards, event ids are generated server-side via the native
  * {@code uuidv7()} function. On older versions the library generates ids in Java using
  * {@code com.github.f4b6a3:uuid-creator}, which is therefore declared as an
@@ -127,7 +127,7 @@ import io.micrometer.core.instrument.Metrics;
  * <p>
  * Applications certain they will only ever connect to PostgreSQL 18+ may simply omit
  * this dependency from their build and the smaller dependency tree carries through.
- * Applications that may connect to PostgreSQL 13-17 must declare it explicitly:
+ * Applications that may connect to PostgreSQL 15-17 must declare it explicitly:
  * <pre>{@code
  * <dependency>
  *     <groupId>com.github.f4b6a3</groupId>
@@ -186,6 +186,21 @@ public interface PostgresEventStorage {
 		 * Servers reporting a lower major version use {@link PostgresLegacyEventStorageImpl}.
 		 */
 		static final int FIRST_NATIVE_UUIDV7_MAJOR_VERSION = 18;
+
+		/**
+		 * Oldest PostgreSQL major version this library supports.
+		 * <p>
+		 * The schema itself needs 13 ({@code xid8}, {@code pg_current_xact_id()}), and everything the
+		 * store does still runs there — the floor is a support policy, not a technical limit. PostgreSQL
+		 * 13 reached community end-of-life in November 2025 and 14 follows in November 2026, so 15 is the
+		 * oldest version that will still be receiving fixes for a meaningful period.
+		 * <p>
+		 * An older server is <em>warned about, not rejected</em>. Nothing is known to break on 13 or 14,
+		 * and turning a library upgrade into a hard startup failure for someone running a working
+		 * deployment would cost them more than the unsupported configuration does. The warning names the
+		 * version so it shows up in the logs of exactly the deployments that need to plan an upgrade.
+		 */
+		static final int OLDEST_SUPPORTED_MAJOR_VERSION = 15;
 
 		private String prefix = "";
 		private String name = "psql";
@@ -564,6 +579,7 @@ public interface PostgresEventStorage {
 		private static boolean detectsNativeUuidv7Support ( DataSource dataSource ) {
 			try ( Connection connection = dataSource.getConnection() ) {
 				int majorVersion = connection.getMetaData().getDatabaseMajorVersion();
+				warnIfUnsupportedVersion(majorVersion);
 				if ( majorVersion >= FIRST_NATIVE_UUIDV7_MAJOR_VERSION ) {
 					LOGGER.info("PostgreSQL major version {} detected — using native server-side uuidv7() via {}",
 						majorVersion, PostgresEventStorageImpl.class.getSimpleName());
@@ -578,6 +594,22 @@ public interface PostgresEventStorage {
 				LOGGER.warn("PostgreSQL version detection failed — falling back to Java-side uuidv7 generation via {}",
 					PostgresLegacyEventStorageImpl.class.getSimpleName(), e);
 				return false;
+			}
+		}
+
+		/**
+		 * Logs a warning when the server is older than {@link #OLDEST_SUPPORTED_MAJOR_VERSION}.
+		 * <p>
+		 * Deliberately not an exception: see the constant's javadoc for why an unsupported version is
+		 * reported rather than refused.
+		 *
+		 * @param majorVersion the server's major version, as reported by the driver
+		 */
+		private static void warnIfUnsupportedVersion ( int majorVersion ) {
+			if ( majorVersion < OLDEST_SUPPORTED_MAJOR_VERSION ) {
+				LOGGER.warn("PostgreSQL major version {} is older than the oldest supported version {} — "
+					+ "this configuration is untested and unsupported; plan an upgrade",
+					majorVersion, OLDEST_SUPPORTED_MAJOR_VERSION);
 			}
 		}
 

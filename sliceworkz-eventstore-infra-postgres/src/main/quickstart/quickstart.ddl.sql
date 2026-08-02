@@ -115,28 +115,47 @@ CREATE TABLE IF NOT EXISTS events (
 
 ---- EVENT APPEND NOTIFICATIONS
 
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = current_schema() AND p.proname = 'notify_event_appended') THEN
-    CREATE FUNCTION notify_event_appended()
-    RETURNS trigger AS $fn$
-    BEGIN
-        PERFORM pg_notify('event_appended',
-            jsonb_build_object(
-                'streamContext', NEW.stream_context,
-                'streamPurpose', NEW.stream_purpose,
-                'eventPosition', NEW.event_position,
-                'eventTx', NEW.event_tx,
-                'eventId', NEW.event_id
-            )::text
-        );
-        RETURN NEW;
-    END;
-    $fn$ LANGUAGE plpgsql;
-  END IF;
-END $$;
+-- CREATE OR REPLACE, not a create-if-absent guard: a function body changed by a later release has
+-- to reach databases that already have the old one. A guard that skips an existing function leaves
+-- the old body in place forever and reports success -- and because drop-schema.sql only drops the
+-- tables, not even INITIALIZE would replace it.
+CREATE OR REPLACE FUNCTION notify_event_appended()
+RETURNS trigger AS $fn$
+BEGIN
+    PERFORM pg_notify('event_appended',
+        jsonb_build_object(
+            'streamContext', NEW.stream_context,
+            'streamPurpose', NEW.stream_purpose,
+            'eventPosition', NEW.event_position,
+            'eventTx', NEW.event_tx,
+            'eventId', NEW.event_id
+        )::text
+    );
+    RETURN NEW;
+END;
+$fn$ LANGUAGE plpgsql;
 
+-- Recreate the trigger only when it is absent or does not have the shape this release wants.
+-- PostgreSQL 14 added CREATE OR REPLACE TRIGGER, but it rewrites unconditionally and so takes an
+-- ACCESS EXCLUSIVE lock on the events table on every single startup of every instance. Comparing
+-- first makes the common case -- the trigger is already correct -- a catalog read that locks nothing,
+-- and it also repairs a trigger whose timing, orientation or target function has drifted.
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM information_schema.triggers WHERE trigger_schema = current_schema() AND event_object_table = 'events' AND trigger_name = 'table_insert_trigger') THEN
+  -- tgtype is a bitmask: ROW = 1, BEFORE = 2, INSERT = 4, DELETE = 8, UPDATE = 16, TRUNCATE = 32.
+  -- AFTER INSERT ... FOR EACH ROW is therefore ROW | INSERT = 5.
+  IF NOT EXISTS (
+      SELECT 1
+      FROM pg_trigger t
+      JOIN pg_class c ON t.tgrelid = c.oid
+      JOIN pg_namespace n ON c.relnamespace = n.oid
+      WHERE n.nspname = current_schema()
+        AND c.relname = 'events'
+        AND t.tgname = 'table_insert_trigger'
+        AND NOT t.tgisinternal
+        AND t.tgtype = 5
+        AND t.tgfoid = 'notify_event_appended'::regproc
+  ) THEN
+    DROP TRIGGER IF EXISTS table_insert_trigger ON events;
     CREATE TRIGGER table_insert_trigger
         AFTER INSERT ON events
         FOR EACH ROW
@@ -164,27 +183,37 @@ CREATE TABLE IF NOT EXISTS bookmarks (
   CREATE INDEX IF NOT EXISTS idx_bookmarks_event_id ON bookmarks(event_id);
 
 
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = current_schema() AND p.proname = 'notify_bookmark_placed') THEN
-    CREATE FUNCTION notify_bookmark_placed()
-    RETURNS trigger AS $fn$
-    BEGIN
-        PERFORM pg_notify('bookmark_placed',
-            jsonb_build_object(
-                'reader', NEW.reader,
-                'eventTx', NEW.event_tx,
-                'eventPosition', NEW.event_position,
-                'eventId', NEW.event_id
-            )::text
-        );
-        RETURN NEW;
-    END;
-    $fn$ LANGUAGE plpgsql;
-  END IF;
-END $$;
+-- CREATE OR REPLACE for the same reason as notify_event_appended above.
+CREATE OR REPLACE FUNCTION notify_bookmark_placed()
+RETURNS trigger AS $fn$
+BEGIN
+    PERFORM pg_notify('bookmark_placed',
+        jsonb_build_object(
+            'reader', NEW.reader,
+            'eventTx', NEW.event_tx,
+            'eventPosition', NEW.event_position,
+            'eventId', NEW.event_id
+        )::text
+    );
+    RETURN NEW;
+END;
+$fn$ LANGUAGE plpgsql;
 
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM information_schema.triggers WHERE trigger_schema = current_schema() AND event_object_table = 'bookmarks' AND trigger_name = 'table_insert_or_update_trigger') THEN
+  -- tgtype bitmask as above: AFTER INSERT OR UPDATE ... FOR EACH ROW is ROW | INSERT | UPDATE = 21.
+  IF NOT EXISTS (
+      SELECT 1
+      FROM pg_trigger t
+      JOIN pg_class c ON t.tgrelid = c.oid
+      JOIN pg_namespace n ON c.relnamespace = n.oid
+      WHERE n.nspname = current_schema()
+        AND c.relname = 'bookmarks'
+        AND t.tgname = 'table_insert_or_update_trigger'
+        AND NOT t.tgisinternal
+        AND t.tgtype = 21
+        AND t.tgfoid = 'notify_bookmark_placed'::regproc
+  ) THEN
+    DROP TRIGGER IF EXISTS table_insert_or_update_trigger ON bookmarks;
     CREATE TRIGGER table_insert_or_update_trigger
         AFTER INSERT OR UPDATE ON bookmarks
         FOR EACH ROW

@@ -2,5 +2,6 @@
 # compliance run is a line here and nothing else.
 org.sliceworkz.eventstore.testing.backend.InMemoryBackend
 org.sliceworkz.eventstore.testing.backend.InMemoryFsBackend
+org.sliceworkz.eventstore.testing.backend.Postgres15Backend
 org.sliceworkz.eventstore.testing.backend.Postgres17Backend
 org.sliceworkz.eventstore.testing.backend.Postgres18Backend

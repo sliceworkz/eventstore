@@ -44,6 +44,16 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
  *   <li>Check for tag presence and containment relationships</li>
  * </ul>
  *
+ * <h2>Matching is exact, not by key prefix</h2>
+ * A query tag matches an event's tag only when key <em>and</em> value are equal, whatever the
+ * backend: {@link #containsAll(Tags)} is a {@link java.util.Set} containment over {@link Tag}
+ * records in memory, and a {@code text[]} containment over {@link #toStrings()} on PostgreSQL. So
+ * {@code Tags.of("customer", "123")} matches only events carrying exactly that tag, and
+ * {@code Tags.of(Tag.of("customer"))} matches only events carrying the bare {@code customer} flag —
+ * <b>not</b> events tagged {@code customer:123}. There is no key-prefix, key-only or wildcard
+ * matching. See {@link Tag} for why, and for the constraints construction enforces so that a tag
+ * survives being written and read back unchanged.
+ *
  * <h2>Basic Usage:</h2>
  * <pre>{@code
  * // Creating tags for an event
@@ -312,6 +322,13 @@ public record Tags ( Set<Tag> tags ) {
 	 * combined into a single Tags instance. Null or unparseable strings are ignored.
 	 * Strings should be in the format "key" or "key:value".
 	 * <p>
+	 * This is the read path — the PostgreSQL backend calls it on the {@code text[]} column — so it
+	 * inherits {@link Tag#parse(String)}'s leniency towards tags written before construction was
+	 * validated, and adds one effect of its own: because the result is a {@link java.util.Set}, two
+	 * stored strings that normalise to the same tag <b>collapse into one</b>. A row storing
+	 * {@code {"k: v ", "k:v"}} comes back carrying a single {@code Tag.of("k", "v")}. No tag the
+	 * current constructor accepts can collide this way, so this only affects legacy rows.
+	 * <p>
 	 * <b>Example:</b>
 	 * <pre>{@code
 	 * Tags tags = Tags.parse("customer:123", "region:EU", "important");
@@ -325,11 +342,14 @@ public record Tags ( Set<Tag> tags ) {
 	 * // Results in two tags: customer:123 and region:EU
 	 * }</pre>
 	 *
-	 * @param values the string representations to parse
+	 * @param values the string representations to parse (if null, returns {@link #none()})
 	 * @return a new Tags instance containing all successfully parsed tags
 	 * @see Tag#parse(String)
 	 */
 	public static Tags parse ( String... values ) {
+		if ( values == null ) {
+			return Tags.none();
+		}
 		Set<Tag> tags = new HashSet<>();
 		for ( String v: values ) {
 			Tag t = Tag.parse(v);
@@ -345,6 +365,10 @@ public record Tags ( Set<Tag> tags ) {
 	 * <p>
 	 * Each tag is converted using {@link Tag#toString()}, resulting in strings in the
 	 * format "key" or "key:value". The result is returned as a Set to maintain uniqueness.
+	 * <p>
+	 * This is the form a backend persists and matches against, so the returned set is the same size
+	 * as {@link #tags()}: {@link Tag}'s constructor rejects the shapes whose string forms could
+	 * collide, which is what stops two distinct tags on one event from being stored as one.
 	 * <p>
 	 * <b>Example:</b>
 	 * <pre>{@code

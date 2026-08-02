@@ -118,4 +118,62 @@ public class TagsTest {
 		assertTrue(tags.tags().contains(Tag.parse("customer:456")));
 		assertTrue(tags.tags().contains(Tag.parse("order:ABC")));
 	}
+
+	// ---------------------------------------------------------------------------------------------
+	// Tags.parse(String[]) is the read path -- the PostgreSQL backend calls it on the text[] column.
+	// It inherits Tag.parse's leniency towards tags written before construction was validated, and
+	// adds a collapse of its own, because the result is a Set.
+	// ---------------------------------------------------------------------------------------------
+
+	@Test
+	void testParseIsLenientForLegacyStoredForms ( ) {
+		// none of these round-trip to what wrote them, and none of them may throw: they are what is
+		// already sitting in databases written before Tag validated on construction
+		assertEquals(Tag.of("k", "v"), Tag.parse("k: v "));
+		assertEquals(Tag.of("k"), Tag.parse("k:"));
+		assertEquals(Tag.of("a", "b:c"), Tag.parse("a:b:c"));
+		assertEquals(Tag.of(null, "v"), Tag.parse(" : v "));
+
+		Tags tags = Tags.parse("k: v ", "k2:", "a:b:c", "", "   ");
+		assertEquals(3, tags.tags().size());
+		assertTrue(tags.tags().contains(Tag.of("k", "v")));
+		assertTrue(tags.tags().contains(Tag.of("k2")));
+		assertTrue(tags.tags().contains(Tag.of("a", "b:c")));
+	}
+
+	@Test
+	void testParseCollapsesLegacyFormsThatNormaliseToTheSameTag ( ) {
+		// a row storing both of these comes back carrying ONE tag: the event loses a tag on read.
+		// Only reachable for legacy rows -- no two tags the constructor accepts render alike.
+		Tags tags = Tags.parse("k: v ", "k:v", " k :v");
+		assertEquals(1, tags.tags().size());
+		assertEquals(Tag.of("k", "v"), tags.tags().iterator().next());
+	}
+
+	@Test
+	void testParseNullArray ( ) {
+		String[] values = null;
+		assertEquals(Tags.none(), Tags.parse(values));
+	}
+
+	@Test
+	void testToStringsNeverCollapses ( ) {
+		// what makes the stored text[] faithful: toString is injective over constructible tags, so a
+		// three-tag event is stored as three array elements and read back as three tags
+		Tags tags = Tags.of(Tag.of("a", "b:c"), Tag.of("customer", "123"), Tag.of("important"));
+		assertEquals(3, tags.toStrings().size());
+		assertEquals(tags, Tags.parse(tags.toStrings().toArray(new String[0])));
+	}
+
+	@Test
+	void testKeyOnlyTagDoesNotMatchAKeyValueTag ( ) {
+		// matching is exact containment, never key-prefix: a query for Tag.of("customer") does not
+		// find events tagged Tag.of("customer","123"), and vice versa
+		Tags onEvent = Tags.of(Tag.of("customer", "123"));
+		Tags keyOnlyQuery = Tags.of(Tag.of("customer"));
+
+		assertFalse(onEvent.containsAll(keyOnlyQuery));
+		assertFalse(Tags.of(Tag.of("customer")).containsAll(onEvent));
+		assertFalse(onEvent.toStrings().contains("customer"));
+	}
 }

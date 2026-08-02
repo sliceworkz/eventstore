@@ -42,6 +42,35 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
  *   <li>{@code "key:value"} - a tag with both key and value</li>
  * </ul>
  *
+ * <h2>The string form is the wire format</h2>
+ * {@link #toString()} is not a debugging convenience: it is how a tag is persisted and how it is
+ * matched. The PostgreSQL backend stores {@link Tags#toStrings()} into a {@code text[]} column and
+ * answers a tag query with {@code event_tags @> ARRAY[...]} built from the same {@code toString()},
+ * so a query is an <em>exact string comparison</em> against the stored form, and
+ * {@link #parse(String)} is what a caller gets back when reading tags off an {@link Event}.
+ * <p>
+ * That only works if {@code parse(tag.toString())} returns the same tag it started with, and for a
+ * tag whose key contains {@code ':'}, or whose key or value is empty or carries surrounding
+ * whitespace, it does not — {@code parse} splits on the <em>first</em> {@code ':'}, strips both
+ * halves and maps an empty half to {@code null}. {@code Tag.of("a:b", "c")} renders as
+ * {@code "a:b:c"}, which reads back as key {@code "a"} and value {@code "b:c"}: a different tag,
+ * and the same string a genuine {@code Tag.of("a", "b:c")} renders to. The failure such a tag
+ * produces is a query returning nothing, or matching something it should not, with no exception
+ * raised anywhere.
+ * <p>
+ * The constructor therefore <b>rejects</b> exactly the tags that cannot survive the round trip
+ * (see {@link #Tag(String, String)}), which makes {@code toString}/{@code parse} a bijection over
+ * every tag that can be constructed. {@link #parse(String)} deliberately stays lenient, because it
+ * has to keep reading tags written before this was enforced.
+ *
+ * <h2>Matching is exact, not by key prefix</h2>
+ * A tag matches a query tag when <em>both</em> the key and the value are equal. {@code Tag.of("customer")}
+ * and {@code Tag.of("customer", "123")} are two different tags, and a query for the first does
+ * <b>not</b> return events carrying the second — there is no key-prefix, key-only or wildcard
+ * matching anywhere in the store. To find every event for a customer, tag them all with
+ * {@code Tag.of("customer", id)} and query for that; a bare {@code Tag.of("customer")} is a flag,
+ * useful when the presence of the tag is itself the fact.
+ *
  * <h2>Example Usage:</h2>
  * <pre>{@code
  * // Creating tags with key and value
@@ -91,13 +120,87 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
 public record Tag ( String key, String value ) {
 
 	/**
+	 * The character separating key from value in the string form, and therefore the one character a
+	 * key may not contain.
+	 */
+	public static final char SEPARATOR = ':';
+
+	/**
+	 * Constructs a tag, rejecting the shapes that do not survive the string round trip.
+	 * <p>
+	 * The string form produced by {@link #toString()} is what gets persisted and what a tag query is
+	 * matched against, so a tag that {@link #parse(String)} reads back as something else is a query
+	 * that silently returns the wrong events. Rather than escape the string form — which would change
+	 * what is already in the databases — construction refuses the four shapes that are ambiguous:
+	 * <ul>
+	 *   <li><b>a key containing {@value #SEPARATOR}</b>, because {@code parse} splits on the first
+	 *       one: {@code Tag.of("a:b", "c")} would render as {@code "a:b:c"} and read back as
+	 *       {@code Tag.of("a", "b:c")}, which is also what a genuine {@code Tag.of("a", "b:c")}
+	 *       renders to. Values may contain {@value #SEPARATOR} freely — everything after the first
+	 *       one is the value.</li>
+	 *   <li><b>a key or value with leading or trailing whitespace</b>, because {@code parse} strips
+	 *       both halves: {@code Tag.of("k", " v ")} would read back as {@code Tag.of("k", "v")}.
+	 *       Whitespace <em>inside</em> a key or value is fine. Whitespace is rejected rather than
+	 *       silently stripped so the mistake surfaces where it is made; a caller handling untrusted
+	 *       input should {@code strip()} it themselves.</li>
+	 *   <li><b>an empty key or an empty value</b>, because {@code parse} maps an empty half to
+	 *       {@code null}: {@code Tag.of("k", "")} would render as {@code "k:"} and read back as
+	 *       {@code Tag.of("k")}, so an event visibly carrying tag {@code k} would not be found by a
+	 *       query for {@code Tag.of("k")}. Use {@link #of(String)} when there is no value.</li>
+	 *   <li><b>a tag that is entirely null</b>, which renders as the empty string and is read back as
+	 *       no tag at all.</li>
+	 * </ul>
+	 * A {@code null} key with a value is legal and renders as {@code ":value"}; {@link #parse(String)}
+	 * still produces such tags from history, so they have to remain constructible.
+	 *
+	 * @param key the tag key, may be null
+	 * @param value the tag value, may be null
+	 * @throws IllegalArgumentException if the tag cannot be rendered and parsed back unchanged
+	 */
+	public Tag {
+		if ( key == null && value == null ) {
+			throw new IllegalArgumentException(
+					"a tag needs a key or a value: a tag with neither renders as the empty string and cannot be read back");
+		}
+		if ( key != null && key.indexOf(SEPARATOR) >= 0 ) {
+			throw new IllegalArgumentException(
+					"tag key must not contain '" + SEPARATOR + "': it separates key from value in the stored form, so \""
+							+ key + "\" would be read back as a different tag");
+		}
+		checkRoundTrippable("key", key);
+		checkRoundTrippable("value", value);
+	}
+
+	private static void checkRoundTrippable ( String what, String s ) {
+		if ( s == null ) {
+			return;
+		}
+		if ( s.isEmpty() ) {
+			throw new IllegalArgumentException(
+					"tag " + what + " must not be empty (it is stored as, and read back as, no " + what + " at all)"
+							+ ("value".equals(what) ? " — use Tag.of(key) for a tag without a value" : ""));
+		}
+		if ( !s.equals(s.strip()) ) {
+			throw new IllegalArgumentException(
+					"tag " + what + " must not have leading or trailing whitespace (it is stripped when read back, so \""
+							+ s + "\" would become \"" + s.strip() + "\"");
+		}
+	}
+
+	/**
 	 * Creates a tag with only a key and no value.
 	 * <p>
 	 * This is useful for boolean-style tags or flags where the presence of the tag
 	 * itself is meaningful, without requiring a specific value.
+	 * <p>
+	 * Note that this is a <em>different tag</em> from {@code Tag.of(key, someValue)}, not a prefix of
+	 * it: a query for {@code Tag.of("customer")} does not match events tagged
+	 * {@code Tag.of("customer", "123")}. See the class javadoc.
 	 *
 	 * @param key the tag key
 	 * @return a new Tag with the specified key and null value
+	 * @throws IllegalArgumentException if the key is null, empty, or has leading or trailing
+	 *         whitespace, or contains {@value #SEPARATOR}
 	 */
 	public static Tag of ( String key ) {
 		return new Tag(key, null);
@@ -112,6 +215,8 @@ public record Tag ( String key, String value ) {
 	 * @param key the tag key
 	 * @param value the tag value
 	 * @return a new Tag with the specified key and value
+	 * @throws IllegalArgumentException if the tag cannot be rendered and parsed back unchanged —
+	 *         see {@link #Tag(String, String)}
 	 */
 	public static Tag of ( String key, String value ) {
 		return new Tag(key, value);
@@ -154,6 +259,19 @@ public record Tag ( String key, String value ) {
 	 *   <li>{@code "key:value"} - creates a tag with both key and value</li>
 	 * </ul>
 	 * Whitespace is trimmed from both key and value. Empty strings are converted to null.
+	 * <p>
+	 * <b>This is deliberately lenient, and deliberately not symmetric with construction.</b> Tags
+	 * written before the constructor started rejecting ambiguous shapes are in databases that cannot
+	 * be rewritten, so the read path has to keep accepting them; it normalises them instead. A stored
+	 * {@code "k: v "} comes back as {@code Tag.of("k", "v")}, a stored {@code "k:"} as
+	 * {@code Tag.of("k")}, and a stored {@code "a:b:c"} as {@code Tag.of("a", "b:c")} whichever tag
+	 * wrote it. Note what that means for legacy data: the tag you read off an event may not be the
+	 * tag that was appended, and re-tagging a new event with it stores a different string.
+	 * <p>
+	 * Everything {@code parse} returns is a tag the constructor accepts — the key it produces never
+	 * contains {@value #SEPARATOR}, both halves are stripped, and an empty half becomes {@code null} —
+	 * so reading legacy data never throws, and for any constructible tag
+	 * {@code parse(tag.toString()).equals(tag)}.
 	 * <p>
 	 * <b>Examples:</b>
 	 * <pre>{@code
@@ -201,13 +319,19 @@ public record Tag ( String key, String value ) {
 	/**
 	 * Converts this tag to its string representation.
 	 * <p>
+	 * <b>This is the persisted and matched form</b>, not just a debugging rendering — see the class
+	 * javadoc. It is unescaped, and it is kept that way because escaping would change the form
+	 * already sitting in every existing database; the constructor rejects the tags that would need
+	 * escaping instead.
+	 * <p>
 	 * The format is:
 	 * <ul>
 	 *   <li>{@code "key"} if value is null</li>
 	 *   <li>{@code "key:value"} if both key and value are present</li>
 	 *   <li>{@code ":value"} if key is null but value is present</li>
-	 *   <li>{@code ""} (empty string) if both key and value are null</li>
 	 * </ul>
+	 * The fourth case the constructor used to allow — both key and value null, rendering as the empty
+	 * string — is now rejected, since nothing can read it back.
 	 *
 	 * @return the string representation of this tag
 	 */

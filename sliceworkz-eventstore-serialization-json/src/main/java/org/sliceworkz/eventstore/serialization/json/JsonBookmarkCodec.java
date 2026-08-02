@@ -108,7 +108,10 @@ public final class JsonBookmarkCodec {
 			JsonNode tagsNode = node.get("tags");
 			if ( tagsNode != null && tagsNode.isArray() ) {
 				for ( JsonNode tagNode : tagsNode ) {
-					String key = tagNode.get("key").asText();
+					// see JsonEventCodec: asText() renders a JSON null as "", which is a key Tag rejects
+					String key = tagNode.has("key") && !tagNode.get("key").isNull()
+							? tagNode.get("key").asText()
+							: null;
 					String value = tagNode.has("value") && !tagNode.get("value").isNull()
 							? tagNode.get("value").asText()
 							: null;

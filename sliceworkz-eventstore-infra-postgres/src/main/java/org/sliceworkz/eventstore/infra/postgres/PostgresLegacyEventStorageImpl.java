@@ -23,6 +23,8 @@ import javax.sql.DataSource;
 
 import com.github.f4b6a3.uuid.UuidCreator;
 
+import io.micrometer.core.instrument.MeterRegistry;
+
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.query.Limit;
 
@@ -46,6 +48,10 @@ public class PostgresLegacyEventStorageImpl extends PostgresEventStorageImpl {
 
 	public PostgresLegacyEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources ) {
 		super(name, dataSource, monitoringDataSource, absoluteLimit, prefix, ownsDataSources);
+	}
+
+	public PostgresLegacyEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources, MeterRegistry meterRegistry ) {
+		super(name, dataSource, monitoringDataSource, absoluteLimit, prefix, ownsDataSources, meterRegistry);
 	}
 
 	@Override

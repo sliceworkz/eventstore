@@ -287,8 +287,10 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		
 		List<StoredEvent> result = Collections.emptyList();
 		
-		// if we should just append and not check, or no reference was present to a last event id (empty stream)
-		if ( appendCriteria.isNone() || appendCriteria.expectedLastEventReference() == null ) {
+		// if we should just append and not check
+		// (an empty expectedLastEventReference is NOT this case: it means "I decided on an empty stream",
+		//  which still has to be verified — see the else branch, which queries from the start of the stream)
+		if ( appendCriteria.isNone() ) {
 			result = addAndNotifyListeners(events);
 			
 		// otherwise, we'll need to be aware of any optimistic locking issues

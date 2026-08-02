@@ -37,16 +37,29 @@ import org.sliceworkz.eventstore.query.EventQuery;
  * Simple appends without locking (without relevant facts to consider) are possible with AppendCriteria.none()
  *
  * @param eventFilter the filter defining which events are relevant for the consistency check
- * @param expectedLastEventReference the last known Event matching the filter that our decision was based upon, or Optional.empty() for none assumed (empty EventStream)
+ * @param expectedLastEventReference the last known Event matching the filter that our decision was based upon, or Optional.empty() for none assumed (empty EventStream).
+ *                                   Never null — a null handed to the canonical constructor is normalised to Optional.empty().
  */
 public record AppendCriteria ( EventFilter eventFilter, Optional<EventReference> expectedLastEventReference ) {
+
+	/**
+	 * Normalises a null expectedLastEventReference into {@link Optional#empty()}, so this record can never hold
+	 * a null in that component regardless of how it was built. Callers — including third-party {@code EventStorage}
+	 * implementations — can therefore call {@link #expectedLastEventReference()} and use the Optional directly.
+	 *
+	 * @param eventFilter the filter defining which events are relevant for the consistency check
+	 * @param expectedLastEventReference the last known matching Event, or Optional.empty() (or null, normalised here) for none
+	 */
+	public AppendCriteria {
+		expectedLastEventReference = expectedLastEventReference == null ? Optional.empty() : expectedLastEventReference;
+	}
 
 	/**
 	 * Specifies that no AppendCriteria should be applied, so the append will be carried out regardless of the history.
 	 * @return AppendCriteria without conditional appends
 	 */
 	public static final AppendCriteria none ( ) {
-		return new AppendCriteria(EventFilter.matchNone(), null);
+		return new AppendCriteria(EventFilter.matchNone(), Optional.empty());
 	}
 
 	/**

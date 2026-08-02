@@ -175,6 +175,17 @@ mvn clean install -DskipTests
 - If new matching events are found after the reference, append fails with `OptimisticLockingException`
 - Use `AppendCriteria.none()` for simple appends without locking
 - Use `AppendCriteria.of(eventQuery, reference)` or `AppendCriteria.of(eventFilter, reference)` for conditional appends
+- **`expectedLastEventReference()` is never null**, whichever factory or constructor produced the criteria — the
+  compact constructor normalises a null to `Optional.empty()`. `none()` used to put a literal null there, so the
+  most common criteria in the library threw an NPE on `.isPresent()` and both in-tree backends carried their own
+  null guard; a third-party `EventStorage` had to guess the same one
+- **"No criteria" and "an empty expected reference" are different things, and only `isNone()` distinguishes
+  them.** `isNone()` is derived from the filter being `matchNone`, independently of the reference. An empty
+  reference under a *real* filter means "I decided on an empty stream", which is still a consistency boundary:
+  any matching event in the stream is a new relevant fact and must raise `OptimisticLockingException` (see
+  `OptimisticLockingTest.testOptimisticLockingSucceedsWhenExpectingEmptyStreamAndStreamIsNotEmpty`). A backend
+  skipping the check when the reference is absent is a silent loss of optimistic locking; `AppendCriteriaTest`
+  in the TCK pins both halves down
 
 **Projection:**
 - Combines an `EventQuery` with an `EventHandler`

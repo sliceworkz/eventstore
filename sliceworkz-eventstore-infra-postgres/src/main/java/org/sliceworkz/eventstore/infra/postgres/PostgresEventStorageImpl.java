@@ -388,8 +388,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 			checkFunction(readConnection, prefix + "notify_bookmark_placed");
 
 			// Check triggers
-			checkTrigger(readConnection, prefix + "events", "table_insert_trigger");
-			checkTrigger(readConnection, prefix + "bookmarks", "table_insert_or_update_trigger");
+			// STATEMENT for events: one notification per stream per statement, not one per row.
+			// ROW for bookmarks: a bookmark upsert is always a single row, so the two are the same there.
+			checkTrigger(readConnection, prefix + "events", "table_insert_trigger", "STATEMENT");
+			checkTrigger(readConnection, prefix + "bookmarks", "table_insert_or_update_trigger", "ROW");
 
 			// Check indexes
 			checkIndex(readConnection, prefix + "idx_events_position_brin");
@@ -579,26 +581,49 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 	}
 
-	private void checkTrigger(Connection connection, String tableName, String triggerName) throws SQLException {
-		LOGGER.debug("Checking trigger: {} on table {}", triggerName, tableName);
+	/**
+	 * Validates that a trigger exists <em>and</em> fires at the expected granularity.
+	 * <p>
+	 * Checking the name alone is not enough. The append notification trigger changed from
+	 * {@code FOR EACH ROW} to {@code FOR EACH STATEMENT} without changing its name, and a database
+	 * carrying the old row-level trigger is not merely slower — paired with a refreshed function body
+	 * it is silently broken, and paired with a stale one it re-amplifies every write. Neither shows up
+	 * in a name check, so the orientation is validated explicitly and an un-migrated database fails
+	 * here, loudly, instead of at runtime with notifications that no subscriber matches.
+	 *
+	 * @param expectedOrientation {@code STATEMENT} or {@code ROW}, as reported by
+	 *        {@code information_schema.triggers.action_orientation}
+	 */
+	private void checkTrigger(Connection connection, String tableName, String triggerName, String expectedOrientation) throws SQLException {
+		LOGGER.debug("Checking trigger: {} on table {} (expecting {} level)", triggerName, tableName, expectedOrientation);
 
 		String sql = """
-			SELECT EXISTS (
-				SELECT FROM information_schema.triggers
-				WHERE trigger_schema = current_schema()
-				AND event_object_table = ?
-				AND trigger_name = ?
-			)
+			SELECT action_orientation
+			FROM information_schema.triggers
+			WHERE trigger_schema = current_schema()
+			AND event_object_table = ?
+			AND trigger_name = ?
+			LIMIT 1
 		""";
 
 		try (PreparedStatement stmt = connection.prepareStatement(sql)) {
 			stmt.setString(1, tableName);
 			stmt.setString(2, triggerName);
 			try (ResultSet rs = stmt.executeQuery()) {
-				if (!rs.next() || !rs.getBoolean(1)) {
+				if (!rs.next()) {
 					throw new EventStorageException(
 						"Required trigger '%s' does not exist on table '%s'"
 							.formatted(triggerName, tableName)
+					);
+				}
+				String actualOrientation = rs.getString(1);
+				if (!expectedOrientation.equalsIgnoreCase(actualOrientation)) {
+					throw new EventStorageException(
+						("Trigger '%s' on table '%s' fires FOR EACH %s, but this version requires FOR EACH %s. "
+						+ "The database predates the statement-level notification trigger; re-run schema creation "
+						+ "(the ensure-schema script is idempotent and migrates it in place) so notifications are "
+						+ "emitted once per stream per statement.")
+							.formatted(triggerName, tableName, actualOrientation, expectedOrientation)
 					);
 				}
 			}

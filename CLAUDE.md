@@ -599,7 +599,8 @@ can pass all of it and still violate the boundary in production.
   80 failed to start, on PG17 and PG18 alike. One transaction across *all* scripts also makes `INITIALIZE`'s
   drop-then-ensure indivisible, so a second instance cannot drop what the first has just recreated
 - **What is still missing: a version marker, and validation of an object's shape.** `checkDatabase()` checks
-  that named tables, columns (type + nullability), functions, triggers and indexes *exist*; it does not check
+  that named tables, columns (type + nullability), functions and indexes *exist*, and that each trigger
+  exists with the expected `action_orientation`; it does not check
   an index's method, columns or uniqueness, a column default, or a function body. So an index rebuilt as the
   wrong kind, or the idempotency index silently made non-unique, passes validation — and a `VALIDATE`/`NONE`
   deployment, where a DBA applies DDL, never gets the function repair either. A change needing `ALTER TABLE`
@@ -607,6 +608,52 @@ can pass all of it and still violate the boundary in production.
   halves per backend: what `ENSURE` now repairs, and what it still does not. See
   `sliceworkz-eventstore-infra-postgres/SCHEMA-MIGRATION.md` for the measurements and the recommended
   version-table design
+- **Append notifications are emitted once per stream per statement, not once per row.** The trigger on
+  `<prefix>events` is `AFTER INSERT ... REFERENCING NEW TABLE AS inserted FOR EACH STATEMENT`, and the
+  function emits one `pg_notify` per distinct `(stream_context, stream_purpose)` in the transition table,
+  carrying that stream's maximum over the total `(event_tx, event_position)` order. It was `FOR EACH ROW`,
+  which meant a 1000-event append queued 1000 notifications and an import chunk queued 5000 — all but one
+  per stream discarded by `OptimizingApendListenerDecorator` after being built as JSON, written to the
+  cluster-wide async queue, sent over the wire, parsed by Jackson and fanned out to every listener.
+  Measured on the PG16 floor, a 100k-row insert: the notification count falls from 100.000 to exactly 1,
+  and trigger time roughly halves — 1230ms to 460ms on one run, 808ms to 369ms on another (the absolute
+  numbers move a lot between runs; the ratio is the stable part). The remaining cost is the transition
+  table, which is materialised as a tuplestore and then sorted, so this is not free — just far cheaper
+  than a plpgsql invocation and a queued notification per row. This also matches the in-memory backends,
+  which have always notified once per stream per append. Things to keep in mind when touching this:
+  - **The aggregation is `DISTINCT ON (stream_context, stream_purpose) ... ORDER BY event_tx DESC,
+    event_position DESC`, not `max(event_position)`.** The two orders genuinely disagree (see the
+    `(tx, position)` note above), and `DISTINCT ON` returns the whole winning row, so `event_id` belongs
+    to the reference being reported instead of being aggregated independently of it. A notification naming
+    a reference the reader has already passed is dropped by the optimizing decorator, so getting this
+    wrong strands subscriptions silently rather than loudly.
+  - **One notification per *distinct stream*, never a single collapsed "something happened".**
+    `AppendsToEventStoreNotification.isRelevantFor` matches through `EventStreamId.canRead`, so the
+    notification has to name a concrete stream or no concrete subscriber matches it.
+  - The payload shape is unchanged — `eventTx` is still rendered as a JSON *string* by
+    `jsonb_build_object` — so the Java side needed no change.
+  - **The trigger's expected `tgtype` is 4** (`INSERT` with the `ROW` bit clear), where the row-level
+    version was 5. That is what makes an un-migrated database fail the shape compare and get repaired by
+    `ENSURE`. `tgnewtable = 'inserted'` is compared too: the function reads the transition table, so a
+    statement-level trigger declared without `REFERENCING` would fail at runtime rather than at startup.
+  - The bookmark trigger is deliberately still `FOR EACH ROW`: `bookmark()` is a single-row upsert, so
+    per-row and per-statement are the same count there.
+  - `EventAppendNotificationGranularityTest` in the TCK pins the granularity and the reference down for
+    every backend.
+- **`checkTrigger` validates `action_orientation`, not just the trigger's name.** A `VALIDATE`/`NONE`
+  deployment never gets the `ENSURE` repair, so without this an un-migrated database would start and
+  misbehave. The failure it prevents is not loud: a statement-level trigger bound to a stale row-level
+  function body does *not* raise in PostgreSQL — `NEW` is unassigned, so it emits a notification with
+  every field null, which becomes a wildcard stream with a zero reference that every concrete
+  subscriber's `canRead` rejects. Live updates would stop with nothing thrown and nothing logged.
+- **The async notification queue was never the binding constraint.** Measured on PG16, 100.000 pending
+  notifications occupy 0.217% of it, so it holds ~46 million and a single transaction would need that many
+  events to hit `NOTIFY queue is full` (SQLSTATE 53200) — far past where the in-memory `List<EventToImport>`
+  would OOM first. `EventStoreImporter` also commits one transaction per `batchSize` (default 1000), so a
+  million-event migration is a thousand commits, not one. The queue is cluster-wide and only recycled once
+  every listener has consumed, so a stalled listener does make usage accumulate monotonically across
+  transactions — but from a base low enough that the amplification was a throughput and latency problem,
+  not a correctness-of-operation one.
 - `stream_purpose` defaults to `'default'` in the DDL, matching `EventStreamId.DEFAULT_PURPOSE`. On a database created before this alignment (default was `''`), operators doing raw SQL inserts should run `ALTER TABLE <prefix>events ALTER COLUMN stream_purpose SET DEFAULT 'default';` — no data migration is needed since all events written through the library bind the purpose explicitly
 - **Idempotency keys are scoped per event stream (context + purpose), not per storage/table.** Uniqueness is enforced by the partial unique index `idx_events_stream_idempotency` on `(stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL` (schema validation requires it), so the same key used on two unrelated streams does not collide and dedup behaviour does not depend on how storage instances / prefixes are wired at runtime. The `idempotency_key` is persisted and surfaced on `StoredEvent` when reading (it is not exposed on the public `Event` record). A duplicate append is still silently ignored (returns an empty result). On a database created before this change (when `idempotency_key` had a table-wide `UNIQUE`), migrate with: `ALTER TABLE <prefix>events DROP CONSTRAINT <prefix>events_idempotency_key_key; CREATE UNIQUE INDEX <prefix>idx_events_stream_idempotency ON <prefix>events (stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL;` — no data migration is needed
 - **Importing needed no DDL change**: `event_id` is already a plain `UUID NOT NULL UNIQUE` and `event_timestamp` is nullable with a `CURRENT_TIMESTAMP` default, so both can be supplied explicitly. `importEvents` binds them per row, chunks statements at 5000 rows (9 params/row against the 65535-parameter wire ceiling) inside a single transaction, and matches `RETURNING` rows **by event_id** rather than by row order — with `ON CONFLICT` the returned rows are a subset of the input, so position in the result set means nothing. Conflicts are routed by constraint name from `PSQLException.getServerErrorMessage().getConstraint()`, not by matching message text

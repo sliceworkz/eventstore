@@ -115,23 +115,50 @@ CREATE TABLE IF NOT EXISTS PREFIX_events (
 
 ---- EVENT APPEND NOTIFICATIONS
 
+-- One notification per (stream_context, stream_purpose) touched by the statement, NOT one per row.
+--
+-- A row-level trigger here made every write amplify: a 1000-event append queued 1000 notifications,
+-- and an import chunk queued 5000, of which the consumer uses exactly one per stream --
+-- OptimizingApendListenerDecorator collapses a burst to the newest reference before the delegate is
+-- called, so the rest were built as JSON, written to the cluster-wide async queue, sent over the wire,
+-- parsed by Jackson and fanned out to every listener only to lose a comparison. This also aligns the
+-- Postgres backend with the in-memory ones, which have always notified once per stream per append.
+--
+-- The reference carried is the maximum over the total (event_tx, event_position) order -- the order
+-- EventReference.happenedAfter defines and reads are sorted by -- and NOT the maximum position. The
+-- two genuinely disagree: event_position is a bigserial and event_tx is assigned independently, so a
+-- row can hold the highest position while another holds the higher transaction. DISTINCT ON returns
+-- the whole winning row, so event_id always belongs to the reference being reported rather than being
+-- aggregated separately from it. event_tx is compared as xid8 (numeric, unsigned) and rendered by
+-- jsonb_build_object as a JSON string, exactly as the row-level version did, so the payload shape the
+-- Java side parses is unchanged.
+--
 -- CREATE OR REPLACE, not a create-if-absent guard: a function body changed by a later release has
 -- to reach databases that already have the old one. A guard that skips an existing function leaves
 -- the old body in place forever and reports success -- and because drop-schema.sql only drops the
 -- tables, not even INITIALIZE would replace it.
 CREATE OR REPLACE FUNCTION PREFIX_notify_event_appended()
 RETURNS trigger AS $fn$
+DECLARE
+    latest record;
 BEGIN
-    PERFORM pg_notify('PREFIX_event_appended',
-        jsonb_build_object(
-            'streamContext', NEW.stream_context,
-            'streamPurpose', NEW.stream_purpose,
-            'eventPosition', NEW.event_position,
-            'eventTx', NEW.event_tx,
-            'eventId', NEW.event_id
-        )::text
-    );
-    RETURN NEW;
+    FOR latest IN
+        SELECT DISTINCT ON (stream_context, stream_purpose)
+               stream_context, stream_purpose, event_position, event_tx, event_id
+        FROM inserted
+        ORDER BY stream_context, stream_purpose, event_tx DESC, event_position DESC
+    LOOP
+        PERFORM pg_notify('PREFIX_event_appended',
+            jsonb_build_object(
+                'streamContext', latest.stream_context,
+                'streamPurpose', latest.stream_purpose,
+                'eventPosition', latest.event_position,
+                'eventTx',       latest.event_tx,
+                'eventId',       latest.event_id
+            )::text
+        );
+    END LOOP;
+    RETURN NULL;
 END;
 $fn$ LANGUAGE plpgsql;
 
@@ -139,10 +166,15 @@ $fn$ LANGUAGE plpgsql;
 -- PostgreSQL 14 added CREATE OR REPLACE TRIGGER, but it rewrites unconditionally and so takes an
 -- ACCESS EXCLUSIVE lock on the events table on every single startup of every instance. Comparing
 -- first makes the common case -- the trigger is already correct -- a catalog read that locks nothing,
--- and it also repairs a trigger whose timing, orientation or target function has drifted.
+-- and it also repairs a trigger whose timing, orientation or target function has drifted. A database
+-- carrying the old row-level trigger is repaired here, which is what migrates it to per-statement
+-- notifications with no operator action.
 DO $$ BEGIN
   -- tgtype is a bitmask: ROW = 1, BEFORE = 2, INSERT = 4, DELETE = 8, UPDATE = 16, TRUNCATE = 32.
-  -- AFTER INSERT ... FOR EACH ROW is therefore ROW | INSERT = 5.
+  -- AFTER INSERT ... FOR EACH STATEMENT leaves the ROW bit clear, so it is INSERT alone = 4. (The
+  -- row-level version this replaced was ROW | INSERT = 5, so an un-migrated trigger fails the compare
+  -- and is recreated.) tgnewtable is checked too: the function reads the "inserted" transition table,
+  -- so a statement-level trigger declared without REFERENCING would fail at runtime, not at startup.
   IF NOT EXISTS (
       SELECT 1
       FROM pg_trigger t
@@ -152,13 +184,15 @@ DO $$ BEGIN
         AND c.relname = 'PREFIX_events'
         AND t.tgname = 'table_insert_trigger'
         AND NOT t.tgisinternal
-        AND t.tgtype = 5
+        AND t.tgtype = 4
+        AND t.tgnewtable = 'inserted'
         AND t.tgfoid = 'PREFIX_notify_event_appended'::regproc
   ) THEN
     DROP TRIGGER IF EXISTS table_insert_trigger ON PREFIX_events;
     CREATE TRIGGER table_insert_trigger
         AFTER INSERT ON PREFIX_events
-        FOR EACH ROW
+        REFERENCING NEW TABLE AS inserted
+        FOR EACH STATEMENT
         EXECUTE FUNCTION PREFIX_notify_event_appended();
   END IF;
 END $$;
@@ -183,6 +217,11 @@ CREATE TABLE IF NOT EXISTS PREFIX_bookmarks (
   CREATE INDEX IF NOT EXISTS PREFIX_idx_bookmarks_event_id ON PREFIX_bookmarks(event_id);
 
 
+-- Deliberately still FOR EACH ROW, unlike the events trigger above. bookmark() is a single-row
+-- upsert keyed on the reader, so one row per statement is all there ever is: per-row and
+-- per-statement are the same count here, and a transition table would only add a tuplestore for one
+-- row. The append amplification does not exist on this table.
+--
 -- CREATE OR REPLACE for the same reason as PREFIX_notify_event_appended above.
 CREATE OR REPLACE FUNCTION PREFIX_notify_bookmark_placed()
 RETURNS trigger AS $fn$

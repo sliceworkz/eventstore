@@ -19,6 +19,7 @@ package org.sliceworkz.eventstore.impl;
 
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
+import org.sliceworkz.eventstore.MeterOptions;
 import org.sliceworkz.eventstore.spi.EventStorage;
 
 import io.micrometer.core.instrument.MeterRegistry;
@@ -65,6 +66,20 @@ public class EventStoreFactoryImpl implements EventStoreFactory {
 	@Override
 	public EventStore eventStore(EventStorage eventStorage, MeterRegistry meterRegistry) {
 		return new EventStoreImpl(eventStorage, meterRegistry);
+	}
+
+	/**
+	 * Creates a new EventStore instance with explicit control over how much detail its meters carry.
+	 *
+	 * @param eventStorage the storage backend for persisting and retrieving events
+	 * @param meterRegistry the Micrometer meter registry for collecting metrics and observability data
+	 * @param meterOptions how much detail the store's meters may carry
+	 * @return a new EventStore instance using the provided storage
+	 * @see MeterOptions
+	 */
+	@Override
+	public EventStore eventStore(EventStorage eventStorage, MeterRegistry meterRegistry, MeterOptions meterOptions) {
+		return new EventStoreImpl(eventStorage, meterRegistry, meterOptions);
 	}
 
 }

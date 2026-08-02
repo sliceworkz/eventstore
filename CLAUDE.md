@@ -57,6 +57,19 @@ mvn clean install -DskipTests
 - Supports both reading (via `query()`) and writing (via `append()`)
 - Type-safe through generic parameter `<DOMAIN_EVENT_TYPE>`
 - Combines `EventSource` (reading) and `EventSink` (writing) interfaces
+- **`query()` returns a `Stream`, but it is already in memory.** Storage has finished reading by the
+  time the stream comes back — the whole result set is fetched and the stream iterates a list. So
+  `findFirst()`, `.limit(10)` and `takeWhile` on the returned stream discard work already done, and a
+  query with no limit against a storage with no `resultLimit` reads everything matching into heap: an
+  OOM rather than a slow stream, with no back-pressure to arrive at. Bound the read with
+  `EventQuery.limit(n)`, which is the limit storage is given. Nothing needs closing — no database
+  resource is held open behind the stream, so it is safe to abandon half-consumed (`EventSource.close()`
+  is about subscriptions, not queries)
+- **A full replay is a loop, not one unbounded query.** `Projector` already reads in batches of 500,
+  carrying a cursor between them, and is the right tool for a stream of unknown size. By hand, page with
+  `query(q.limit(n), cursor)`, advancing `cursor` to the last reference of each page. The unlimited path
+  exists for callers who know their result set is small, or who genuinely want it all at once — it is
+  not a way to process a large stream incrementally
 
 **Event:**
 - Record type containing: `stream`, `type`, `reference`, `data`, `tags`, `timestamp`

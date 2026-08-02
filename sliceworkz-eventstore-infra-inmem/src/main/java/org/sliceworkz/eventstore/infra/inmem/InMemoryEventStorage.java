@@ -166,6 +166,14 @@ public interface InMemoryEventStorage {
 		 * <p>
 		 * The absolute limit acts as a hard ceiling - even if a query specifies a higher limit via
 		 * {@link Limit}, the absolute limit will take precedence.
+		 * <p>
+		 * <b>Leaving it unset means queries are unbounded, not streamed.</b> A query is read in full
+		 * before its {@link java.util.stream.Stream} is returned (see
+		 * {@link org.sliceworkz.eventstore.stream.EventSource}), so a query that carries no limit of its
+		 * own against a storage with no absolute limit reads every matching event into heap. Not setting
+		 * this is the right choice when callers bound their own queries — as
+		 * {@link org.sliceworkz.eventstore.projection.Projector} does — and a way to run out of memory
+		 * when they do not.
 		 *
 		 * @param absoluteLimit the maximum number of events any query can return (must be positive)
 		 * @return this Builder instance for method chaining

@@ -228,13 +228,32 @@ public interface EventStorage extends AutoCloseable {
 	 * past it — because the exact filter is re-applied above this SPI after upcasting. It must never
 	 * exclude an event the filter would keep. Note that a limit is applied <em>after</em> the boundary:
 	 * spending it on events beyond the boundary that are discarded later returns too few events, or none.
+	 * <p>
+	 * The Returned Stream:
+	 * <p>
+	 * The return type is a {@link Stream}, but laziness is not part of this contract, and callers do not
+	 * get to assume it. Every in-tree backend reads its whole result set before returning and hands back
+	 * a stream over a list; {@link org.sliceworkz.eventstore.stream.EventSource} documents that to
+	 * callers as the behaviour to expect. So {@code limit} is what bounds the work and the memory of a
+	 * query — a caller that passes {@link Limit#none()} is asking to have everything matching read into
+	 * heap, and gets it.
+	 * <p>
+	 * An implementation <em>may</em> stream its result set lazily, but then it owns two obligations this
+	 * SPI does not otherwise impose. First, nothing above it closes the returned stream — neither
+	 * {@code EventSource} nor {@link org.sliceworkz.eventstore.projection.Projector} does, and user code
+	 * receives a bare {@code Stream} it has never been told to close — so any resource held open behind
+	 * it (a connection, a cursor) leaks on every query, including one abandoned half-consumed. Second, a
+	 * cursor held open for the caller's whole traversal is a long-running transaction, which on
+	 * PostgreSQL holds down {@code pg_snapshot_xmin} and thereby stalls what every reader of that
+	 * database can see. Neither is a reason not to do it; both have to be solved deliberately rather
+	 * than discovered.
 	 *
 	 * @param query the event query defining type and tag filters
 	 * @param stream optional stream identifier to filter events by stream
 	 * @param after the reference point to start querying after (exclusive - events after this reference)
-	 * @param limit maximum number of events to return
+	 * @param limit maximum number of events to read; {@link Limit#none()} reads everything matching
 	 * @param queryDirection the direction of query traversal (FORWARD or BACKWARD)
-	 * @return a stream of stored events matching the query criteria
+	 * @return a stream of stored events matching the query criteria, which callers must not assume is lazy
 	 * @throws EventStorageException if an error occurs during query execution
 	 * @see EventQuery
 	 * @see QueryDirection

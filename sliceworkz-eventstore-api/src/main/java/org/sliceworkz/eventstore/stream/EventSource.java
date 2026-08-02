@@ -56,6 +56,34 @@ import org.sliceworkz.eventstore.query.Limit;
  *   <li><strong>Pagination</strong>: Use cursor references and limits for efficient navigation</li>
  * </ul>
  *
+ * <h2>A Returned Stream Is Already In Memory:</h2>
+ * Every {@code query} method here returns a {@link Stream}, but none of them is lazy in the sense the
+ * type suggests. The storage below has finished reading by the time the stream is handed back: its
+ * whole result set has been fetched and is being iterated from a list. Every storage backend shipped
+ * with this library works that way, and no caller may assume otherwise.
+ * <p>
+ * What follows from that:
+ * <ul>
+ *   <li><b>Short-circuiting terminal operations do not save any work.</b>
+ *       {@code query(q).findFirst()}, {@code .limit(10)} and {@code .takeWhile(…)} discard events that
+ *       have already been read, deserialized and upcasted. Bound the read with
+ *       {@link EventQuery#limit(long)} instead — that is the limit storage is given.</li>
+ *   <li><b>An unbounded query holds its whole result in heap.</b> A query with no limit, run against a
+ *       storage with no absolute result limit configured, reads every matching event before returning.
+ *       On a large stream that is an {@link OutOfMemoryError}, not a slow stream — there is no
+ *       back-pressure to arrive at.</li>
+ *   <li><b>Nothing needs closing.</b> No database resource is held open behind the returned stream, so
+ *       it can be abandoned half-consumed without leaking anything. (Closing an {@code EventSource} is
+ *       a separate matter, and concerns subscriptions only — see {@link #close()}.)</li>
+ * </ul>
+ * <p>
+ * So a full replay is a loop, not a single unbounded query. {@link org.sliceworkz.eventstore.projection.Projector}
+ * already does this — it reads in batches of
+ * {@value org.sliceworkz.eventstore.projection.Projector.Builder#DEFAULT_MAX_EVENTS_PER_QUERY} and
+ * carries a cursor between them — and is the right tool for replaying a stream of unknown size. To do
+ * it by hand, page with {@link #query(EventQuery, EventReference)} and a limited query, advancing the
+ * cursor to the last reference of each page.
+ *
  * <h2>Example Usage:</h2>
  * <pre>{@code
  * EventStream<CustomerEvent> stream = eventStore.getEventStream(
@@ -237,9 +265,16 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * event that upcasts into two returns both — truncating them would hand back half of one stored
 	 * event and leave a cursor pointing into its middle. Read it as "read n stored events", not as
 	 * "return at most n events".
+	 * <p>
+	 * <b>A query with no limit reads everything before it returns.</b> The stream handed back is already
+	 * in memory (see the class javadoc), so {@code query(EventQuery.matchAll())} on a large stream is an
+	 * {@link OutOfMemoryError} rather than something that can be consumed a piece at a time, and
+	 * {@code query(q).findFirst()} pays for the whole result set. Give the query a limit and page with
+	 * {@link #query(EventQuery, EventReference)}, or use
+	 * {@link org.sliceworkz.eventstore.projection.Projector}, which does that for you.
 	 *
 	 * @param query the query criteria specifying which events to retrieve
-	 * @return a Stream of events matching the query criteria
+	 * @return a Stream of events matching the query criteria, fully realised before it is returned
 	 */
 	default Stream<Event<DOMAIN_EVENT_TYPE>> query ( EventQuery query ) {
 		return query(query, null, query.limit());

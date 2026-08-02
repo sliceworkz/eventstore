@@ -322,6 +322,17 @@ public interface PostgresEventStorage {
 		 * The limit applies to all queries executed through this storage instance, including
 		 * event stream queries and projections. Individual queries can specify lower limits,
 		 * but cannot exceed this absolute limit.
+		 * <p>
+		 * When it is set, a query that carries no limit of its own is given {@code absoluteLimit + 1} as
+		 * its {@code LIMIT}, so the read stays bounded and the extra row is what reveals the violation.
+		 * <p>
+		 * <b>Leaving it unset means queries are unbounded, not streamed.</b> A query is read in full
+		 * before its {@link java.util.stream.Stream} is returned (see
+		 * {@link org.sliceworkz.eventstore.stream.EventSource}), so a query with no limit of its own,
+		 * against a storage with no absolute limit, issues a {@code SELECT} with no {@code LIMIT} and
+		 * materialises every matching row in heap. Not setting this is the right choice when callers
+		 * bound their own queries — as {@link org.sliceworkz.eventstore.projection.Projector} does, and
+		 * as a paging loop does — and a way to run out of memory when they do not.
 		 *
 		 * @param absoluteLimit the maximum number of events that can be returned from any query
 		 * @return this Builder for method chaining

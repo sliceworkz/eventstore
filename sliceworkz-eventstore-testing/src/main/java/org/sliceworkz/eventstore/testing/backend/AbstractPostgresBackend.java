@@ -17,6 +17,7 @@
  */
 package org.sliceworkz.eventstore.testing.backend;
 
+import java.time.Duration;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -86,7 +87,11 @@ public abstract class AbstractPostgresBackend implements EventStoreBackend {
 				.prefix(prefix(options))
 				.dataSource(PostgresContainer.dataSource(image))
 				// drops and recreates this prefix's tables: what makes each test start empty
-				.initializeDatabase();
+				.initializeDatabase()
+				// build() already fails if LISTEN/NOTIFY is not established; the longer deadline is for a
+				// container that has just been started and a pool that is rebuilt per test, so a slow
+				// first connection shows up as a slow test rather than a failed one
+				.notificationStartupTimeout(Duration.ofSeconds(30));
 		if ( options.resultLimit() != null ) {
 			builder.resultLimit(options.resultLimit());
 		}

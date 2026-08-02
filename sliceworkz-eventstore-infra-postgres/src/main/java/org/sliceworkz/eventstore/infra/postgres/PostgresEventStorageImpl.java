@@ -28,6 +28,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -56,6 +57,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 
 import javax.sql.DataSource;
+
+import io.micrometer.core.instrument.Metrics;
+import io.micrometer.core.instrument.MeterRegistry;
 
 import org.postgresql.PGConnection;
 import org.postgresql.PGNotification;
@@ -158,6 +162,26 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private final ExecutorService executorService;
 	private final AtomicBoolean stopped = new AtomicBoolean();
 
+	/**
+	 * Whether each monitor currently holds a live {@code LISTEN}. Flipped on by the monitor once the
+	 * statement has succeeded and off again the moment its connection fails, so it tracks the state of
+	 * notification delivery over the whole life of the storage and not just at startup — a database that
+	 * goes away an hour after boot leaves exactly the same silence as one that was never there.
+	 */
+	private final AtomicBoolean eventMonitorListening = new AtomicBoolean();
+	private final AtomicBoolean bookmarkMonitorListening = new AtomicBoolean();
+
+	/**
+	 * The latches {@link #start()} is waiting on, so that {@link #close()} can release a caller blocked in
+	 * there. Without this a {@code start()} that timed out generously — or one racing a close — would stay
+	 * parked after the monitors it is waiting for have already been told to stop and will never count
+	 * anything down.
+	 */
+	private volatile CountDownLatch eventMonitorReady;
+	private volatile CountDownLatch bookmarkMonitorReady;
+
+	private final MeterRegistry meterRegistry;
+
 	private static final JsonMapper JSONMAPPER = JsonMapper.builder().build();
 
 	/**
@@ -188,6 +212,24 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	private static final long INITIAL_RETRY_DELAY_MS = 1_000;
 	private static final long MAX_RETRY_DELAY_MS = 30_000;
+
+	/**
+	 * How long {@link #start()} waits for the monitors to register their {@code LISTEN} before deciding
+	 * they are not going to, when no other timeout has been configured.
+	 * <p>
+	 * Expiry fails the startup, so this errs generous: a database that is up answers in milliseconds, and
+	 * the cost of being too impatient with one that is merely slow — a cold pool, a connection storm on a
+	 * simultaneous restart — is an application that refuses to boot. It still has to be a deadline, since
+	 * the monitors themselves have none.
+	 */
+	public static final Duration DEFAULT_NOTIFICATION_STARTUP_TIMEOUT = Duration.ofSeconds(10);
+
+	/**
+	 * The slice {@link #start()} waits in, so that it notices a concurrent {@link #close()} promptly even
+	 * when the configured timeout is long. The latches are also counted down by {@code close()}; this is
+	 * the belt to that pair of braces.
+	 */
+	private static final long START_POLL_SLICE_MILLIS = 100;
 
 	private static final int MAX_PREFIX_LENGTH = 32;
 
@@ -231,14 +273,72 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * @see PostgresEventStorage.Builder#build()
 	 */
 	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources ) {
+		this(name, dataSource, monitoringDataSource, absoluteLimit, prefix, ownsDataSources, Metrics.globalRegistry);
+	}
+
+	/**
+	 * Constructs a new PostgreSQL-backed event storage instance, stating who owns the DataSources and
+	 * where the notification-availability meters go.
+	 * <p>
+	 * This constructor is used by {@link PostgresEventStorage.Builder} and should not be called directly.
+	 *
+	 * @param name the logical name for this storage instance (used in logging and monitoring)
+	 * @param dataSource the main JDBC DataSource for event operations
+	 * @param monitoringDataSource the JDBC DataSource for LISTEN/NOTIFY operations
+	 * @param absoluteLimit the absolute limit on query results, or {@link Limit#none()} for no limit
+	 * @param prefix the table name prefix (validated, or empty string for no prefix)
+	 * @param ownsDataSources {@code true} if the DataSources were created for this storage and should
+	 *                        be closed by {@link #close()}; {@code false} if they belong to the caller
+	 * @param meterRegistry where to register the {@code sliceworkz.eventstore.notifications.*} meters
+	 * @see PostgresEventStorage.Builder#build()
+	 */
+	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources, MeterRegistry meterRegistry ) {
 		this.prefix = validatePrefix(prefix);
 		this.name = name;
 		this.dataSource = dataSource;
 		this.monitoringDataSource = monitoringDataSource;
 		this.absoluteLimit = absoluteLimit;
 		this.ownsDataSources = ownsDataSources;
+		this.meterRegistry = meterRegistry == null ? Metrics.globalRegistry : meterRegistry;
 
 		this.executorService = Executors.newVirtualThreadPerTaskExecutor();
+
+		registerNotificationMeters();
+	}
+
+	/**
+	 * Publishes notification availability as a gauge, one series per channel, so that a storage whose
+	 * monitors are down is visible without holding a reference to it and downcasting.
+	 * <p>
+	 * Registered in the constructor rather than in {@link #start()}, so the series exists — reading 0 —
+	 * from the moment the storage does. A gauge that only appears once notifications work is no use for
+	 * alerting on notifications not working.
+	 */
+	private void registerNotificationMeters ( ) {
+		io.micrometer.core.instrument.Tags baseTags = io.micrometer.core.instrument.Tags.of("storage", name == null ? "" : name);
+		meterRegistry.gauge("sliceworkz.eventstore.notifications.up", baseTags.and("channel", "event_appended"),
+			eventMonitorListening, up -> up.get() ? 1d : 0d);
+		meterRegistry.gauge("sliceworkz.eventstore.notifications.up", baseTags.and("channel", "bookmark_placed"),
+			bookmarkMonitorListening, up -> up.get() ? 1d : 0d);
+	}
+
+	/**
+	 * Whether both LISTEN/NOTIFY monitors currently hold a live registration, i.e. whether appends and
+	 * bookmark placements are reaching subscribers.
+	 * <p>
+	 * {@code false} means the storage is <em>degraded</em>, not broken: queries, appends and bookmarks all
+	 * go through the main {@code DataSource} and keep working, but nothing wakes a subscriber, so
+	 * projections only advance when run explicitly. The monitors retry with backoff, so this comes back to
+	 * {@code true} on its own once the database is reachable again.
+	 * <p>
+	 * Intended for health endpoints. The same state is published as the
+	 * {@code sliceworkz.eventstore.notifications.up} gauge, which needs no downcast from
+	 * {@link EventStorage}.
+	 *
+	 * @return {@code true} if both monitors are listening
+	 */
+	public boolean isNotificationsAvailable ( ) {
+		return eventMonitorListening.get() && bookmarkMonitorListening.get();
 	}
 	
 	static String validatePrefix(String prefix) {
@@ -654,27 +754,107 @@ public class PostgresEventStorageImpl implements EventStorage {
 	}
 	
 	/**
-	 * Starts the LISTEN/NOTIFY monitor threads and blocks until both have registered their listener.
-	 * <p>
-	 * Called by {@link PostgresEventStorage.Builder#build()}; a storage handed to application code is
-	 * always already started. A stopped storage is terminal and cannot be started again.
+	 * Starts the LISTEN/NOTIFY monitor threads, waiting up to
+	 * {@link #DEFAULT_NOTIFICATION_STARTUP_TIMEOUT} for both to register their listener.
 	 *
 	 * @throws IllegalStateException if this storage has been stopped
+	 * @throws EventStorageException if LISTEN/NOTIFY is not established in time
+	 * @see #start(Duration)
 	 */
 	public void start ( ) {
+		start(DEFAULT_NOTIFICATION_STARTUP_TIMEOUT);
+	}
+
+	/**
+	 * Starts the LISTEN/NOTIFY monitor threads and waits, <em>for a bounded time</em>, until both have
+	 * registered their listener — failing if they do not.
+	 * <p>
+	 * Called by {@link PostgresEventStorage.Builder#build()}; a storage handed to application code is
+	 * always already started, with its notifications working. A stopped storage is terminal and cannot be
+	 * started again.
+	 * <p>
+	 * The wait is bounded because a monitor that cannot reach the database does not fail — it retries with
+	 * backoff, forever, by design. Waiting on it without a deadline made an unreachable database hang
+	 * application startup with no exception, no timeout and nothing logged above DEBUG. The deadline covers
+	 * both monitors together, not each in turn.
+	 * <p>
+	 * On expiry this storage is closed and an {@link EventStorageException} is thrown. Starting anyway
+	 * would be starting an event-sourced application that is not told when events are appended: its
+	 * subscribers are never woken and its read models advance only when something happens to run a
+	 * projection, so it serves stale data with nothing in its own logs to say so. That is worse than not
+	 * starting, and it is not a state to be silently in — which is why there is no mode for it. Closing
+	 * rather than merely throwing matters too: the two monitor threads started here would otherwise go on
+	 * retrying behind a storage the caller never received.
+	 *
+	 * @param timeout how long to wait in total; {@code null} means {@link #DEFAULT_NOTIFICATION_STARTUP_TIMEOUT}
+	 * @throws IllegalStateException if this storage has been stopped
+	 * @throws EventStorageException if the wait expires, or if the calling thread is interrupted while
+	 *                               waiting; in both cases this storage has been closed
+	 */
+	public void start ( Duration timeout ) {
 		if ( stopped.get() ) {
 			throw new IllegalStateException("event storage '%s' has been stopped and cannot be started again".formatted(name));
 		}
-		CountDownLatch eventMonitorReady = new CountDownLatch(1);
-		CountDownLatch bookmarkMonitorReady = new CountDownLatch(1);
+		Duration effectiveTimeout = timeout == null ? DEFAULT_NOTIFICATION_STARTUP_TIMEOUT : timeout;
+
+		this.eventMonitorReady = new CountDownLatch(1);
+		this.bookmarkMonitorReady = new CountDownLatch(1);
 		this.executorService.execute(new NewEventsAppendedMonitor("event-append-listener/" + name, listeners, monitoringDataSource, eventMonitorReady));
 		this.executorService.execute(new BookmarkPlacedMonitor("bookmark-listener/" + name, listeners, monitoringDataSource, bookmarkMonitorReady));
+
+		boolean ready;
 		try {
-			eventMonitorReady.await();
-			bookmarkMonitorReady.await();
+			ready = awaitMonitorsReady(effectiveTimeout);
 		} catch (InterruptedException e) {
+			// an interrupt here means the application is going away mid-startup. Returning normally would
+			// hand back a storage nobody can tell is unstarted, with two monitor threads still retrying
+			// behind it, so wind them up and say what happened
 			Thread.currentThread().interrupt();
+			close();
+			throw new EventStorageException("interrupted while starting event storage '%s'".formatted(name), e);
 		}
+
+		if ( ready ) {
+			return;
+		}
+
+		close();
+		throw new EventStorageException(
+			("event storage '%s' could not establish LISTEN/NOTIFY within %dms. Without it nothing wakes a "
+			+ "subscriber: appends and bookmark placements would not reach projections, which would then "
+			+ "advance only when explicitly run. Check the monitoring DataSource — it may be configured "
+			+ "separately from the main one, since LISTEN/NOTIFY does not survive a transaction pooler, so a "
+			+ "deployment can have a working pooled connection and an unreachable direct one.")
+				.formatted(name, effectiveTimeout.toMillis()));
+	}
+
+	/**
+	 * Waits for both monitors to register their listener, in slices so that a concurrent {@link #close()}
+	 * is noticed even under a generous timeout.
+	 *
+	 * @return {@code true} if both are listening, {@code false} if the deadline passed or the storage was
+	 *         closed while waiting
+	 */
+	private boolean awaitMonitorsReady ( Duration timeout ) throws InterruptedException {
+		long remainingMillis = Math.max(0, timeout.toMillis());
+		for ( CountDownLatch latch : List.of(eventMonitorReady, bookmarkMonitorReady) ) {
+			while ( latch.getCount() > 0 ) {
+				if ( stopped.get() ) {
+					return false;
+				}
+				if ( remainingMillis <= 0 ) {
+					return false;
+				}
+				long slice = Math.min(START_POLL_SLICE_MILLIS, remainingMillis);
+				if ( latch.await(slice, TimeUnit.MILLISECONDS) ) {
+					break;
+				}
+				remainingMillis -= slice;
+			}
+		}
+		// the latches are only the wake-up mechanism -- close() counts them down too, to release a caller
+		// parked here -- so the verdict comes from the state the monitors actually publish
+		return isNotificationsAvailable();
 	}
 
 	/**
@@ -749,6 +929,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 		if ( !stopped.compareAndSet(false, true) ) {
 			return false;
 		}
+		// release anyone still inside start(): the monitors they are waiting on have just been told to
+		// stop and will never count these down themselves
+		releaseStartLatches();
+		eventMonitorListening.set(false);
+		bookmarkMonitorListening.set(false);
 		executorService.shutdown();
 		try {
 			// the monitors check the flag every WAIT_FOR_NOTIFICATIONS_TIMEOUT and wind themselves up
@@ -766,6 +951,17 @@ public class PostgresEventStorageImpl implements EventStorage {
 			Thread.currentThread().interrupt();
 		}
 		return true;
+	}
+
+	private void releaseStartLatches ( ) {
+		CountDownLatch eventLatch = this.eventMonitorReady;
+		if ( eventLatch != null ) {
+			eventLatch.countDown();
+		}
+		CountDownLatch bookmarkLatch = this.bookmarkMonitorReady;
+		if ( bookmarkLatch != null ) {
+			bookmarkLatch.countDown();
+		}
 	}
 
 	/**
@@ -1593,6 +1789,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 		private List<EventStoreListener> listeners;
 		private DataSource monitoringDataSource;
 		private CountDownLatch readyLatch;
+		/** the outer storage's flag for this channel: true exactly while this monitor holds a live LISTEN */
+		private final AtomicBoolean listening = eventMonitorListening;
 
 		public NewEventsAppendedMonitor ( String name, List<EventStoreListener> listeners, DataSource monitoringDataSource, CountDownLatch readyLatch ) {
 			this.name = name;
@@ -1620,6 +1818,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 					stmt.execute(listenStatement);
 
 					LOGGER.debug("... listening for event appends.");
+					if ( listening.compareAndSet(false, true) ) {
+						LOGGER.info("event append notifications are available for event storage '{}'", PostgresEventStorageImpl.this.name);
+					}
 					readyLatch.countDown();
 
 					PGConnection pgConn = monitorConnection.unwrap(PGConnection.class);
@@ -1657,6 +1858,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 					    }
 					}
 
+					listening.set(false);
+
 					// drop the registration so the connection is hygienic when returned to the pool
 					try {
 						stmt.execute(unlistenStatement);
@@ -1665,9 +1868,18 @@ public class PostgresEventStorageImpl implements EventStorage {
 					}
 
 				} catch (SQLException e) {
+					// notifications stop the moment this connection does, whether that is at startup or an
+					// hour in; say so before anything else, so the gauge never claims a channel is up while
+					// this monitor is sitting in the backoff below
+					boolean wasListening = listening.getAndSet(false);
 					if ( stopped.get() || Thread.currentThread().isInterrupted() ) {
 						// shutting down: the connection was closed underneath us on purpose, nothing to report
 						return;
+					}
+					if ( wasListening ) {
+						LOGGER.warn("lost the notification connection of event storage '{}'; retrying with backoff. "
+							+ "Until it is back, subscribers are not woken and projections only advance when run explicitly.",
+							PostgresEventStorageImpl.this.name);
 					}
 					LOGGER.error(e.getMessage(), e);
 					try {
@@ -1693,6 +1905,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 		private List<EventStoreListener> listeners;
 		private DataSource monitoringDataSource;
 		private CountDownLatch readyLatch;
+		/** the outer storage's flag for this channel: true exactly while this monitor holds a live LISTEN */
+		private final AtomicBoolean listening = bookmarkMonitorListening;
 
 		public BookmarkPlacedMonitor ( String name, List<EventStoreListener> listeners, DataSource monitoringDataSource, CountDownLatch readyLatch ) {
 			this.name = name;
@@ -1722,6 +1936,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 					stmt.execute(listenStatement);
 
 					LOGGER.debug("... listening for bookmark updates.");
+					if ( listening.compareAndSet(false, true) ) {
+						LOGGER.info("bookmark notifications are available for event storage '{}'", PostgresEventStorageImpl.this.name);
+					}
 					readyLatch.countDown();
 
 					PGConnection pgConn = monitorConnection.unwrap(PGConnection.class);
@@ -1759,6 +1976,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 					    }
 					}
 
+					listening.set(false);
+
 					// drop the registration so the connection is hygienic when returned to the pool
 					try {
 						stmt.execute(unlistenStatement);
@@ -1767,9 +1986,18 @@ public class PostgresEventStorageImpl implements EventStorage {
 					}
 
 				} catch (SQLException e) {
+					// notifications stop the moment this connection does, whether that is at startup or an
+					// hour in; say so before anything else, so the gauge never claims a channel is up while
+					// this monitor is sitting in the backoff below
+					boolean wasListening = listening.getAndSet(false);
 					if ( stopped.get() || Thread.currentThread().isInterrupted() ) {
 						// shutting down: the connection was closed underneath us on purpose, nothing to report
 						return;
+					}
+					if ( wasListening ) {
+						LOGGER.warn("lost the notification connection of event storage '{}'; retrying with backoff. "
+							+ "Until it is back, subscribers are not woken and projections only advance when run explicitly.",
+							PostgresEventStorageImpl.this.name);
 					}
 					LOGGER.error(e.getMessage(), e);
 					try {

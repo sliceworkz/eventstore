@@ -19,6 +19,7 @@ package org.sliceworkz.eventstore.infra.postgres;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.util.Properties;
 
 import javax.sql.DataSource;
@@ -209,6 +210,7 @@ public interface PostgresEventStorage {
 		private DataSource dataSource;
 		private DataSource monitoringDataSource;
 		private DatabaseInitMode databaseInitMode = DatabaseInitMode.ENSURE;
+		private Duration notificationStartupTimeout = PostgresEventStorageImpl.DEFAULT_NOTIFICATION_STARTUP_TIMEOUT;
 		private Limit limit = Limit.none();
 		private MeterRegistry meterRegistry = Metrics.globalRegistry;
 
@@ -367,6 +369,40 @@ public interface PostgresEventStorage {
 		}
 
 		/**
+		 * How long {@link #build()} waits for LISTEN/NOTIFY to be established before failing.
+		 * <p>
+		 * The monitors never fail by themselves — they retry with backoff, forever — so this wait needs a
+		 * deadline, or an unreachable database hangs application startup silently. On expiry {@code build()}
+		 * closes the storage and throws {@link EventStorageException}: an event-sourced application that is
+		 * not told when events are appended does not have a working store, it has one whose read models
+		 * quietly stop advancing, so there is deliberately no option to start anyway.
+		 * <p>
+		 * The default,
+		 * {@link PostgresEventStorageImpl#DEFAULT_NOTIFICATION_STARTUP_TIMEOUT} (10 seconds), suits a
+		 * database that is up. Raise it where startup legitimately races the database coming up — several
+		 * services restarting at once, a cold pool — since the penalty for being too impatient is a refused
+		 * boot.
+		 * <p>
+		 * This is most often hit where the monitoring DataSource is configured separately from the main one,
+		 * which is the normal arrangement: LISTEN/NOTIFY does not survive a transaction pooler, so a
+		 * deployment whose pooled DataSource works and whose direct one is firewalled reaches exactly this
+		 * code path — and used to hang there.
+		 * <pre>{@code
+		 * EventStorage storage = PostgresEventStorage.newBuilder()
+		 *     .notificationStartupTimeout(Duration.ofSeconds(30))
+		 *     .build();
+		 * }</pre>
+		 *
+		 * @param timeout how long to wait in total for both monitors; {@code null} restores the default
+		 * @return this Builder for method chaining
+		 * @see PostgresEventStorageImpl#isNotificationsAvailable()
+		 */
+		public Builder notificationStartupTimeout ( Duration timeout ) {
+			this.notificationStartupTimeout = timeout == null ? PostgresEventStorageImpl.DEFAULT_NOTIFICATION_STARTUP_TIMEOUT : timeout;
+			return this;
+		}
+
+		/**
 		 * Sets the database initialization mode to {@link DatabaseInitMode#VALIDATE}.
 		 * <p>
 		 * Validates that all required database objects exist and are correctly defined.
@@ -503,8 +539,8 @@ public interface PostgresEventStorage {
 				boolean nativeUuidv7 = detectsNativeUuidv7Support(dataSource);
 
 				PostgresEventStorageImpl result = nativeUuidv7
-					? new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, createdDataSources)
-					: new PostgresLegacyEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, createdDataSources);
+					? new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, createdDataSources, meterRegistry)
+					: new PostgresLegacyEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, createdDataSources, meterRegistry);
 
 				switch ( databaseInitMode ) {
 					case NONE       -> { }
@@ -512,8 +548,10 @@ public interface PostgresEventStorage {
 					case ENSURE     -> result.ensureDatabase();
 					case INITIALIZE -> result.initializeDatabase();
 				}
-				// if we didn't fail until here, then we can start the executor threads
-				result.start();
+				// if we didn't fail until here, then we can start the executor threads. The wait for their
+				// LISTEN is bounded: they retry forever rather than failing, so an unbounded wait here is
+				// how an unreachable database used to hang startup with nothing logged
+				result.start(notificationStartupTimeout);
 				return result;
 			} catch (RuntimeException e) {
 				// version detection or schema handling failed: don't strand the pools we just created

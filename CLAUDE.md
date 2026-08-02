@@ -152,6 +152,61 @@ EventStorage storage = PostgresEventStorage.newBuilder()
 
 PostgreSQL requires a `db.properties` file with connection settings. The DataSourceFactory searches for this file in the current directory and up to 2 parent directories.
 
+### Lifecycle: starting a store when the database is not there
+
+`build()` finishes by starting the two LISTEN/NOTIFY monitors and waiting for them to register. That wait
+is **bounded** (10s by default) because the monitors have no failure mode: on a `SQLException` they log,
+back off and retry for as long as the storage lives. Waiting on them without a deadline is waiting on
+something that may never happen — which is exactly what an unreachable database used to do to
+`build()`: hang forever, with no exception, no timeout and nothing logged above DEBUG.
+
+**Expiry is fatal, and there is deliberately no mode that starts anyway.** An event-sourced application
+that is not told when events are appended has read models that quietly stop advancing: nothing wakes a
+subscriber, so projections only move when something happens to run them. It serves stale data with
+nothing in its own logs to say so, which is worse than not starting. `build()` therefore closes the
+storage and throws `EventStorageException` — closing, not just throwing, because the two monitor threads
+would otherwise keep retrying behind a storage the caller never received.
+
+```java
+// default: fail after 10s if LISTEN/NOTIFY is not established
+EventStorage storage = PostgresEventStorage.newBuilder().build();
+
+// where startup legitimately races the database coming up
+EventStorage storage = PostgresEventStorage.newBuilder()
+    .notificationStartupTimeout(Duration.ofSeconds(30))
+    .build();
+```
+
+- **The deadline is generous on purpose.** A database that is up answers in milliseconds; the cost of
+  being too impatient with one that is merely slow — a cold pool, a simultaneous restart — is an
+  application that refuses to boot. Within the deadline the monitors' retry loop does the waiting, so a
+  store racing its database up succeeds rather than failing (`PostgresNotificationStartupTest`).
+- **A *running* store still repairs itself.** The same retry loop brings notifications back after an
+  outage, with nothing to restart — the fail-fast is about not *starting* blind, not about tearing a live
+  store down when its connection drops.
+- **Which configurations can reach this.** With `ENSURE` or `VALIDATE` the schema work runs first and
+  fails with a clear error, so a dead *main* DataSource never reaches the wait. The exposed paths are
+  `DatabaseInitMode.NONE` (recommended for production, where nothing touches the database before the
+  monitors do) and — the realistic one — a **reachable main DataSource with an unreachable monitoring
+  one**. Those two are configured separately precisely because LISTEN/NOTIFY does not survive a
+  transaction pooler, so "pooled works, direct is firewalled" is an ordinary misconfiguration.
+  Note that version detection (`detectsNativeUuidv7Support`) does *not* fail the build — it logs a WARN
+  and falls back to the legacy implementation — so it is the schema work, not the version probe, that
+  provides the fail-fast.
+- **Observability.** `sliceworkz.eventstore.notifications.up` is a gauge, 1/0, tagged `storage` and
+  `channel` (`event_appended` / `bookmark_placed`). It is registered by the constructor, so the series
+  exists reading 0 from the moment the storage does — a gauge that only appears once notifications work
+  is no use for alerting on notifications not working. It also drops back to 0 when a *running* store
+  loses its monitoring connection, which is the same silence as never having had one.
+  `PostgresEventStorageImpl.isNotificationsAvailable()` is the same state for a health endpoint, at the
+  cost of a downcast from `EventStorage`.
+- **An interrupt during startup throws** `EventStorageException` and closes the storage, rather than
+  returning quietly. The alternative — restore the flag and return — hands back a storage nobody can tell
+  is unstarted, with two monitor threads still retrying behind it.
+- **`close()` releases a caller still inside `start()`.** It counts the readiness latches down itself,
+  because the monitors it stopped never will. Without that, closing a storage whose `start()` was still
+  waiting left that thread parked forever.
+
 ### Lifecycle: closing a store
 
 Both `EventStorage` and `EventStore` extend `AutoCloseable`. A store that lives as long as the process

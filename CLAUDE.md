@@ -931,6 +931,25 @@ can pass all of it and still violate the boundary in production.
   not a correctness-of-operation one.
 - `stream_purpose` defaults to `'default'` in the DDL, matching `EventStreamId.DEFAULT_PURPOSE`. On a database created before this alignment (default was `''`), operators doing raw SQL inserts should run `ALTER TABLE <prefix>events ALTER COLUMN stream_purpose SET DEFAULT 'default';` — no data migration is needed since all events written through the library bind the purpose explicitly
 - **Idempotency keys are scoped per event stream (context + purpose), not per storage/table.** Uniqueness is enforced by the partial unique index `idx_events_stream_idempotency` on `(stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL` (schema validation requires it), so the same key used on two unrelated streams does not collide and dedup behaviour does not depend on how storage instances / prefixes are wired at runtime. The `idempotency_key` is persisted and surfaced on `StoredEvent` when reading (it is not exposed on the public `Event` record). A duplicate append is still silently ignored (returns an empty result). On a database created before this change (when `idempotency_key` had a table-wide `UNIQUE`), migrate with: `ALTER TABLE <prefix>events DROP CONSTRAINT <prefix>events_idempotency_key_key; CREATE UNIQUE INDEX <prefix>idx_events_stream_idempotency ON <prefix>events (stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL;` — no data migration is needed
+  - **The duplicate is recognised by the index the server names, never by the message text.** Both the
+    append and the import path go through `isIdempotencyKeyViolation`, which pairs SQLSTATE 23505 with
+    `PSQLException.getServerErrorMessage().getConstraint()` — populated with the *index* name for a bare
+    `CREATE UNIQUE INDEX`, and compared case-insensitively against `<prefix>idx_events_stream_idempotency`
+    because PostgreSQL folds the unquoted identifier in the DDL. Two things make the message text unusable
+    here, and only one of them is obvious. The subtle one is the table prefix: it is caller-supplied and
+    validated only as `[a-zA-Z0-9_]+_`, so a prefix containing the word "idempotency" puts that word into
+    `<prefix>events_pkey` and `<prefix>events_event_id_key` as well, and a substring match then swallows
+    *every* unique violation the table can raise — reporting a successful de-duplication for an append that
+    wrote nothing. (The other, message translation under a non-English `lc_messages`, turns out **not** to
+    bite: an index name is an identifier, so it appears verbatim in the French and Japanese messages too.
+    Verified, not assumed.) `EventStreamIdempotencyTest` builds its store with exactly such a prefix and
+    pins a generated `event_id` with a `BEFORE INSERT` trigger, so the misrouting fails the build rather
+    than passing silently
+  - **Identifier length is a coupling to keep in mind.** PostgreSQL truncates identifiers at 63 bytes, which
+    would break an exact-name comparison; `MAX_PREFIX_LENGTH` (32) keeps the longest generated index name at
+    61 characters, so it cannot happen. Raising that cap needs this comparison revisited — and, more
+    urgently, would let two of the schema's index names truncate to the same string, at which point
+    `CREATE UNIQUE INDEX IF NOT EXISTS` silently does nothing and idempotency uniqueness stops existing
 - **Importing needed no DDL change**: `event_id` is already a plain `UUID NOT NULL UNIQUE` and `event_timestamp` is nullable with a `CURRENT_TIMESTAMP` default, so both can be supplied explicitly. `importEvents` binds them per row, chunks statements at 5000 rows (9 params/row against the 65535-parameter wire ceiling) inside a single transaction, and matches `RETURNING` rows **by event_id** rather than by row order — with `ON CONFLICT` the returned rows are a subset of the input, so position in the result set means nothing. Conflicts are routed by constraint name from `PSQLException.getServerErrorMessage().getConstraint()`, not by matching message text
 - **Imported event ids must be UUIDs** (the `::uuid` cast); `importEvents` validates this up front to give a clear error rather than an opaque cast failure
 - **`timestamptz` keeps microseconds and rounds anything finer**, so a nanosecond-precision timestamp (as an in-memory store produces) lands up to half a microsecond away from where it started. This is the only lossy part of an inmem → Postgres → inmem round trip; `EventImportRoundTripTest` pins it down

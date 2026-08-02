@@ -20,22 +20,39 @@ package org.sliceworkz.eventstore.query;
 import org.sliceworkz.eventstore.events.Event;
 
 /**
- * Represents the maximum number of {@link Event}s to query from the store.
+ * Represents how many {@link Event}s to read from the store in one query.
  *
- * <p>Limit allows you to restrict the number of events returned from a query.
- * A limit of null means no limit is applied (all matching events are returned).
- * A positive limit value restricts the result set to that many events.
+ * <p>Limit allows you to restrict the number of events read by a query.
+ * A limit of null means no limit is applied (all matching events are read).
+ * A positive limit value restricts the query to that many events.
+ *
+ * <p>The limit is pushed into the storage query itself — a SQL {@code LIMIT} on the PostgreSQL
+ * backend — rather than applied to its result, so it bounds the work done and the memory used, not
+ * just what you end up looking at. That is the point of setting one: a storage query materialises
+ * its whole result set before returning it, so an unlimited query over a large stream is a heap
+ * problem, not a slow one.
+ *
+ * <p><strong>A limit counts stored events.</strong> Normally that is also the number of events you
+ * get back, because a stored event yields exactly one. Upcasting is where the two part company: an
+ * {@link org.sliceworkz.eventstore.events.Upcast @Upcast} method may turn one stored event into
+ * several, or into none, and the limit is spent before any of that happens. So
+ * {@code EventQuery.matchAll().limit(1)} over a stored event that upcasts into two returns two
+ * events, and over one that upcasts into none returns zero — while having read exactly one stored
+ * event either way, which is what was asked for. Trimming the surplus would hand back a fragment of
+ * a stored event and leave a cursor pointing into its middle, so the count read is what the limit
+ * governs. Where the distinction matters, apply your own {@code .limit(n)} to the returned
+ * {@link java.util.stream.Stream}: cheap, since it operates on events already read.
  *
  * <p><strong>Usage Examples:</strong>
  * <pre>{@code
- * // No limit - return all matching events
+ * // No limit - read all matching events
  * Limit noLimit = Limit.none();
  *
- * // Return at most 100 events
- * Limit maxHundred = Limit.to(100);
+ * // Read 100 stored events
+ * Limit hundred = Limit.to(100);
  *
- * // Return at most 10 events (using int)
- * Limit maxTen = Limit.to(10);
+ * // Read 10 stored events (using int)
+ * Limit ten = Limit.to(10);
  *
  * // Check if a limit is set
  * if (limit.isSet()) {
@@ -43,7 +60,7 @@ import org.sliceworkz.eventstore.events.Event;
  * }
  * }</pre>
  *
- * @param value the maximum number of events to return (null for no limit, must be positive if set)
+ * @param value how many stored events to read (null for no limit, must be positive if set)
  *
  * @see EventQuery
  */
@@ -129,7 +146,7 @@ public record Limit ( Long value ) {
 	}
 
 	/**
-	 * Creates a Limit with no restriction (returns all matching events).
+	 * Creates a Limit with no restriction (reads all matching events).
 	 *
 	 * @return a Limit representing no limit
 	 */
@@ -138,9 +155,9 @@ public record Limit ( Long value ) {
 	}
 
 	/**
-	 * Creates a Limit with the specified maximum number of events.
+	 * Creates a Limit reading the specified number of stored events.
 	 *
-	 * @param value the maximum number of events to return (must be positive)
+	 * @param value how many stored events to read (must be positive)
 	 * @return a Limit with the specified value
 	 * @throws IllegalArgumentException if value is less than or equal to 0
 	 */
@@ -149,10 +166,10 @@ public record Limit ( Long value ) {
 	}
 
 	/**
-	 * Creates a Limit with the specified maximum number of events.
+	 * Creates a Limit reading the specified number of stored events.
 	 * Convenience method that accepts an int parameter.
 	 *
-	 * @param value the maximum number of events to return (must be positive)
+	 * @param value how many stored events to read (must be positive)
 	 * @return a Limit with the specified value
 	 * @throws IllegalArgumentException if value is less than or equal to 0
 	 */

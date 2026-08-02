@@ -211,8 +211,11 @@ public record EventQuery ( EventFilter filter, Direction direction, Limit limit 
 
 	/**
 	 * Returns a new EventQuery with the specified limit.
+	 * <p>
+	 * The limit is how many <em>stored</em> events to read; see {@link Limit} for what that means when
+	 * upcasting is in play.
 	 *
-	 * @param limit the maximum number of events to return
+	 * @param limit how many stored events to read
 	 * @return a new EventQuery with the specified limit
 	 */
 	public EventQuery limit ( Limit limit ) {
@@ -221,8 +224,11 @@ public record EventQuery ( EventFilter filter, Direction direction, Limit limit 
 
 	/**
 	 * Returns a new EventQuery with the specified limit.
+	 * <p>
+	 * The limit is how many <em>stored</em> events to read; see {@link Limit} for what that means when
+	 * upcasting is in play.
 	 *
-	 * @param n the maximum number of events to return (must be positive)
+	 * @param n how many stored events to read (must be positive)
 	 * @return a new EventQuery with the specified limit
 	 */
 	public EventQuery limit ( long n ) {

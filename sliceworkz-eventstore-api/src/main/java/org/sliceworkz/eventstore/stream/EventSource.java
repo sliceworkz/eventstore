@@ -172,7 +172,7 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 *
 	 * @param query the query criteria specifying which events to retrieve and in which direction
 	 * @param cursor optional reference for pagination (after for forward, before for backward), null to start from the beginning/end
-	 * @param limit maximum number of events to return (overrides the query's own limit)
+	 * @param limit how many stored events to read (overrides the query's own limit); see {@link #query(EventQuery)} for why that is not always the number of events returned
 	 * @param storedEventCursorTracker callback invoked with each raw stored event's reference before upcasting, useful for advancing cursors past events that upcast to zero enriched events
 	 * @return a Stream of events matching the query criteria
 	 * @see EventQuery
@@ -188,7 +188,7 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 *
 	 * @param query the query criteria specifying which events to retrieve and in which direction
 	 * @param cursor optional reference for pagination (after for forward, before for backward), null to start from the beginning/end
-	 * @param limit maximum number of events to return (overrides the query's own limit)
+	 * @param limit how many stored events to read (overrides the query's own limit); see {@link #query(EventQuery)} for why that is not always the number of events returned
 	 * @return a Stream of events matching the query criteria
 	 * @see EventQuery
 	 * @see Limit
@@ -227,7 +227,16 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * <p>
 	 * If the query has a backward direction (via {@link EventQuery#backwards()}), events are returned
 	 * in reverse chronological order. If the query has a limit (via {@link EventQuery#limit(long)}),
-	 * at most that many events are returned. Otherwise, returns all events in forward order.
+	 * that many events are read from storage. Otherwise, returns all events in forward order.
+	 * <p>
+	 * <b>A limit counts stored events, which is what upcasting makes visible.</b> It is what the
+	 * storage query is given, so it bounds the work and the memory — that is its job. Ordinarily it is
+	 * also the number of events you get back, because a stored event yields exactly one. Where an
+	 * {@link org.sliceworkz.eventstore.events.Upcast @Upcast} method turns one stored event into
+	 * several, or into none, the count returned is not the count read: {@code limit(1)} over a stored
+	 * event that upcasts into two returns both — truncating them would hand back half of one stored
+	 * event and leave a cursor pointing into its middle. Read it as "read n stored events", not as
+	 * "return at most n events".
 	 *
 	 * @param query the query criteria specifying which events to retrieve
 	 * @return a Stream of events matching the query criteria

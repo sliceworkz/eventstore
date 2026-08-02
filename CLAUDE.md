@@ -94,6 +94,20 @@ mvn clean install -DskipTests
 - Can match all (`EventQuery.matchAll()`), none (`EventQuery.matchNone()`), or specific criteria
 - Supports backward direction (`.backwards()`) and result limits (`.limit(n)`)
 - Created via `EventQuery.forEvents(eventTypesFilter, tags)`
+- **`.limit(n)` means "read n stored events", and it is pushed into the storage query** — a SQL
+  `LIMIT` on Postgres, a short-circuiting `Stream.limit` in memory — not applied to the result. That
+  is what makes it bound memory as well as output: a storage query materialises its whole result set
+  before returning it, so an unbounded query over a large stream is a heap problem rather than a slow
+  one. A cursor does not change this: `query(q.limit(500), cursor)` reads 500, same as `query(q)`
+  would with the limit on `q`. Pass `Limit.none()` to the three-argument overload to read to the end
+  of a stream deliberately
+- **Without upcasting, n stored events are n events back. With it, they are not.** An `@Upcast`
+  method may turn one stored event into several or into none, and the limit is spent before it runs,
+  so `.limit(1)` over an event upcasting into two returns two, and over one upcasting into none
+  returns zero — having read exactly one stored event either way. Trimming the surplus would return a
+  fragment of a stored event and leave a cursor pointing into its middle; `Projector` counts stored
+  events for exactly this reason. Where a caller needs exactly n, `.limit(n)` the returned `Stream` —
+  cheap, since those events are already read. `UpcastMultiTest` pins this per backend
 
 **AppendCriteria:**
 - Controls optimistic locking when appending events

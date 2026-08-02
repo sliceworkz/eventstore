@@ -368,6 +368,34 @@ stream owns is its subscriptions.
 - **Consistent append listeners need no registration.** `EventStreamConsistentAppendListener` is called
   inline by `append()` on the same object, never through a storage notification, so subscribing one
   registers nothing. `close()` still discards it.
+- **What makes it cheap is that the expensive part is shared, not rebuilt.** `getEventStream` allocates a
+  stream object and resolves ~10 Micrometer meters (a map lookup each, since Micrometer dedups by name +
+  tags) — about **2µs and 1KB**. The payload serde is *not* rebuilt: `EventStoreImpl` caches one per
+  distinct pair of event root class sets and hands the same instance to every stream opened with that
+  mapping. Building one costs ~20µs and ~40KB, but the construction is the smaller half of the story —
+  Jackson caches its per-type serializers **inside the mapper**, so a serde per call gives every stream a
+  cold type cache and re-runs bean introspection on the first serialize of each record type. Measured on
+  a 24-record sealed hierarchy, a serde per call made a query through a freshly obtained stream
+  **~175µs / 139KB against ~36µs / 69KB** through a stream that was kept — four times the work, for a
+  call the documentation calls cheap. With the serde shared the two are the same.
+  - **The cache key is the root class sets, never the `EventStreamId`.** The same stream can legitimately
+    be opened with different type mappings, and two streams with the same mapping can share a serde
+    whatever their ids.
+  - **Only the serde is shared, never the `EventStreamImpl`.** A serde is written once at registration
+    and read-only afterwards (the two Jackson mappers are immutable and thread-safe), so sharing it is
+    invisible. A stream is stateful — subscriber lists, a subscribed flag — so sharing *it* would make
+    one caller's `close()` end another caller's subscriptions. That is why the cheap-handle contract
+    above survives the optimisation: you still get your own stream.
+  - The cache lives on the store, not statically: its key holds `Class` objects, and a static cache would
+    pin their class loader for the life of the JVM. `EventStreamSerdeSharingTest` pins all of this down.
+- **`sliceworkz.eventstore.append.position`** is a gauge of the highest position appended, tagged like
+  the other stream meters (`context`, `purpose`, `typed`, `storage`), and reads `NaN` until something is
+  appended. Its state is held **per tag set on the store**, not per stream, and registered once — because
+  a gauge cannot be re-registered (Micrometer keeps the first registration and ignores the rest) and
+  because Micrometer holds gauge state *weakly*. With a per-stream holder only the first stream ever
+  created for a tag set was wired to the series, and the series went permanently `NaN` as soon as that
+  stream was collected — which, in the per-operation usage recommended above, is almost immediately.
+  Nothing failed; the metric was just stuck. `AppendPositionGaugeTest` covers it.
 
 For backends: `EventStorage.unsubscribe(EventStoreListener)` is the SPI counterpart, and `subscribe` must
 hold listeners **strongly** and be idempotent per listener. `unsubscribe` has a no-op `default` so a

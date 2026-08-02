@@ -569,6 +569,17 @@ can pass all of it and still violate the boundary in production.
     serialization failures and a third of the throughput, with disjoint boundaries falsely conflicting
     because the planner's choice (seq scan → relation-level `SIRead` lock) decides the granularity.
   - No DDL change, so no migration: the lock is entirely in the write path.
+- **There is no schema migration mechanism, and `ENSURE` cannot update an object that already exists.**
+  `ensure-schema.sql` is create-if-absent throughout (`IF NOT EXISTS` everywhere, `DO $$ … IF NOT EXISTS
+  (SELECT 1 FROM pg_proc …)` around the functions and triggers, nothing `CREATE OR REPLACE`), and
+  `drop-schema.sql` drops only the two tables — so a changed function body never reaches an existing
+  database, not even under `INITIALIZE`, and `checkDatabase()` validates that objects *exist*, never what
+  they are, so the drift passes validation silently. Concurrent `ENSURE` from several instances against a
+  database that does not have the schema yet also races on the system catalogs and most instances fail to
+  start. Both are confirmed per backend by `PostgresSchemaDriftTest`, which asserts the current broken
+  behaviour deliberately and is to be inverted by the fix. See
+  `sliceworkz-eventstore-infra-postgres/SCHEMA-MIGRATION.md` for the measurements and the recommendation;
+  the manual migrations below are the prose that stands in for the missing mechanism
 - `stream_purpose` defaults to `'default'` in the DDL, matching `EventStreamId.DEFAULT_PURPOSE`. On a database created before this alignment (default was `''`), operators doing raw SQL inserts should run `ALTER TABLE <prefix>events ALTER COLUMN stream_purpose SET DEFAULT 'default';` — no data migration is needed since all events written through the library bind the purpose explicitly
 - **Idempotency keys are scoped per event stream (context + purpose), not per storage/table.** Uniqueness is enforced by the partial unique index `idx_events_stream_idempotency` on `(stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL` (schema validation requires it), so the same key used on two unrelated streams does not collide and dedup behaviour does not depend on how storage instances / prefixes are wired at runtime. The `idempotency_key` is persisted and surfaced on `StoredEvent` when reading (it is not exposed on the public `Event` record). A duplicate append is still silently ignored (returns an empty result). On a database created before this change (when `idempotency_key` had a table-wide `UNIQUE`), migrate with: `ALTER TABLE <prefix>events DROP CONSTRAINT <prefix>events_idempotency_key_key; CREATE UNIQUE INDEX <prefix>idx_events_stream_idempotency ON <prefix>events (stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL;` — no data migration is needed
 - **Importing needed no DDL change**: `event_id` is already a plain `UUID NOT NULL UNIQUE` and `event_timestamp` is nullable with a `CURRENT_TIMESTAMP` default, so both can be supplied explicitly. `importEvents` binds them per row, chunks statements at 5000 rows (9 params/row against the 65535-parameter wire ceiling) inside a single transaction, and matches `RETURNING` rows **by event_id** rather than by row order — with `ON CONFLICT` the returned rows are a subset of the input, so position in the result set means nothing. Conflicts are routed by constraint name from `PSQLException.getServerErrorMessage().getConstraint()`, not by matching message text

@@ -150,6 +150,23 @@ public class EventStoreImpl implements EventStore {
 	private final AtomicBoolean closed = new AtomicBoolean();
 
 	/**
+	 * Every stored event name registered on any stream of this store, and the class that claimed it first.
+	 * <p>
+	 * Event names are global to a storage: a stream scopes reads, not names, so two classes claiming the same
+	 * name write indistinguishable rows into one table. Within a single stream that is caught at registration
+	 * ("duplicate event name"), but across streams nothing catches it — a wildcard read
+	 * ({@link EventStreamId#anyContext()}) then hands one class's JSON to the other's deserializer, which
+	 * frequently succeeds with wrong data rather than throwing. This map exists to say so out loud.
+	 */
+	private final ConcurrentHashMap<String,Class<?>> eventNameClaims = new ConcurrentHashMap<>();
+
+	/**
+	 * The name/class pairs already reported through {@link #eventNameClaims}, so a collision is logged once
+	 * rather than on every {@code getEventStream} call.
+	 */
+	private final Set<String> reportedEventNameCollisions = ConcurrentHashMap.newKeySet();
+
+	/**
 	 * The streams of this store that currently hold a listener registration with the storage — that is,
 	 * the ones somebody has subscribed to. Streams nobody subscribed to never appear here.
 	 * <p>
@@ -254,12 +271,36 @@ public class EventStoreImpl implements EventStore {
 			serde = EventPayloadSerializerDeserializer.typed();
 			eventRootClasses.forEach(serde::registerEventTypes);
 			historicalEventRootClasses.forEach(serde::registerLegacyEventTypes);
+			warnOnCrossStreamEventNameCollisions(serde);
 		} else {
 			// no type mappings, all events payload will be String type
 			serde = EventPayloadSerializerDeserializer.raw();
 		}
 		
 		return new EventStreamImpl<EVENT_TYPE> ( eventStorage, eventStreamId, serde );
+	}
+
+	/**
+	 * Reports classes from different streams of this store that have claimed the same stored event name.
+	 * <p>
+	 * A warning, not an exception: the collision only becomes wrong data when something reads across both
+	 * streams, the two classes may well have coexisted harmlessly in an existing deployment for years, and
+	 * this store sees only the streams opened through it — throwing on a partial view would break working
+	 * applications on a guess. The fix is a distinct
+	 * {@link org.sliceworkz.eventstore.events.EventName @EventName} on one of them.
+	 */
+	private void warnOnCrossStreamEventNameCollisions ( EventPayloadSerializerDeserializer serde ) {
+		serde.registeredEventTypes().forEach((eventName, claimingClass) -> {
+			Class<?> firstClaim = eventNameClaims.putIfAbsent(eventName, claimingClass);
+			if ( firstClaim != null && !firstClaim.equals(claimingClass)
+					&& reportedEventNameCollisions.add(eventName + "|" + claimingClass.getName()) ) {
+				STORE_LOGGER.warn("event name '{}' is claimed by two different classes on store '{}': {} and {}. "
+						+ "Event names are global to a storage, so events of both classes are stored under the same "
+						+ "event_type and a read spanning both streams will deserialize one as the other -- often "
+						+ "without failing. Give one of them a distinct @EventName.",
+						eventName, eventStorage.name(), firstClaim.getName(), claimingClass.getName());
+			}
+		});
 	}
 
 	class EventStreamImpl<EVENT_TYPE> implements EventStream<EVENT_TYPE>, EventStoreListener {

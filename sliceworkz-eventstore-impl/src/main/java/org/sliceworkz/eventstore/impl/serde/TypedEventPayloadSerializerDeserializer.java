@@ -52,9 +52,10 @@ import tools.jackson.databind.node.ObjectNode;
 public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloadSerializerDeserializer {
 
 	private final Map<String,EventDeserializer> deserializers = new HashMap<>();
+	private final Map<String,Class<?>> classesByEventName = new HashMap<>(); // every claimed name -- canonical and alias -- to the class that claimed it
 	private final Map<EventType, Set<EventType>> mostRecentTypes = new HashMap<>();
 	private final Map<EventType, Set<EventType>> mostRecentMultiTypes = new HashMap<>(); // for interface hierarchies, this maps interface->set of interface-implementing event types
-	
+
 	@Override
 	public List<TypeAndPayload> deserialize ( TypeAndSerializedPayload serialized ) {
 		List<TypeAndPayload> result;
@@ -76,27 +77,32 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 	
 	@Override
 	public TypedEventPayloadSerializerDeserializer registerEventTypes(Class<?> rootClass) {
-		deserializersFor(rootClass, Collections.emptySet()).forEach(m->registerEventType(m.name(), m.clazz(), false));
-		
+		deserializersFor(rootClass, Collections.emptySet()).forEach(m->registerEventType(m, false));
+
 		return this;
 	}
-	
+
 	@Override
 	public TypedEventPayloadSerializerDeserializer registerLegacyEventTypes(Class<?> rootClass) {
-		deserializersFor(rootClass, Collections.emptySet()).forEach(m->registerEventType(m.name(), m.clazz(), true));
-		
+		deserializersFor(rootClass, Collections.emptySet()).forEach(m->registerEventType(m, true));
+
 		return this;
 	}
 
 	@SuppressWarnings("unchecked")
-	private void registerEventType ( String eventName, Class<?> clazz, boolean assumeUpcasters ) {
-		String key = eventName;
-		if ( deserializers.containsKey(key) ) {
-			throw new IllegalArgumentException("duplicate event name " + key);
-		}
+	private void registerEventType ( EventNameAndEventClass mapping, boolean assumeUpcasters ) {
+		String eventName = mapping.name();
+		Class<?> clazz = mapping.clazz();
+
+		claimEventName(eventName, clazz);
 
 		EventType eventType = EventType.ofType(eventName);
 		EventDeserializer eventDeserializer = new InstantiationEventDeserializer(clazz, eventType);
+
+		// the set of stored names that this class, once read, presents itself as -- the canonical name for a
+		// current event, the upcast targets for a legacy one. An alias resolves to exactly the same set, which
+		// is what makes a query on the current class also select events stored under the old name.
+		Set<EventType> presentsAs;
 
 		// when we need to upcast an historical legacy event
 		if ( clazz.isAnnotationPresent(LegacyEvent.class)) {
@@ -111,10 +117,10 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 
 				upcast = (Upcast<Object, Object>) annotation.upcast().getDeclaredConstructor().newInstance(new Object[0]);
 
-				Set<EventType> targets = upcast.targetTypes().stream()
+				presentsAs = upcast.targetTypes().stream()
 						.map(EventType::of)
 						.collect(Collectors.toSet());
-				mostRecentTypes.put(eventType, targets);
+				mostRecentTypes.put(eventType, presentsAs);
 
 			} catch (NoSuchMethodException e) {
 				throw new RuntimeException(e);
@@ -131,13 +137,33 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 			if  ( assumeUpcasters ) {
 				throw new RuntimeException("legacy Event type %s should be annotated as a @LegacyEvent and configured with an Upcaster".formatted(clazz));
 			}
-			mostRecentTypes.put(eventType, Set.of(eventType)); // no upcasting needed
+			presentsAs = Set.of(eventType);
+			mostRecentTypes.put(eventType, presentsAs); // no upcasting needed
 		}
 
 
-		deserializers.put(key, eventDeserializer);
+		deserializers.put(eventName, eventDeserializer);
+
+		// aliases are read-only: they resolve to the very same deserializer, which carries the canonical
+		// EventType, so an event read through an alias reports the alias as its storedType and the canonical
+		// name as its type -- exactly as an upcast does. Nothing writes an alias: EventType.of(Class) never
+		// returns one.
+		for ( EventType alias: mapping.aliases() ) {
+			claimEventName(alias.name(), clazz);
+			deserializers.put(alias.name(), eventDeserializer);
+			mostRecentTypes.put(alias, presentsAs);
+		}
 	}
-	
+
+	private void claimEventName ( String eventName, Class<?> clazz ) {
+		Class<?> alreadyClaimedBy = classesByEventName.get(eventName);
+		if ( alreadyClaimedBy != null ) {
+			throw new IllegalArgumentException("duplicate event name %s, claimed by both %s and %s -- give one of them a distinct @EventName".formatted(
+					eventName, alreadyClaimedBy.getName(), clazz.getName()));
+		}
+		classesByEventName.put(eventName, clazz);
+	}
+
 	private Set<EventNameAndEventClass> deserializersFor ( Class<?> eventRootClass, Set<EventType> implementedInterfaces ) {
 		Set<EventNameAndEventClass> result = Collections.emptySet();
 		if ( eventRootClass != null && !eventRootClass.equals(Object.class)) {
@@ -188,9 +214,9 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		});
 	}
 	
-	record EventNameAndEventClass (String name, Class<?> clazz) { 
+	record EventNameAndEventClass (String name, Set<EventType> aliases, Class<?> clazz) {
 		public static EventNameAndEventClass of ( Class<?> clazz ) {
-			return new EventNameAndEventClass(EventType.of(clazz).name(), clazz);
+			return new EventNameAndEventClass(EventType.of(clazz).name(), EventType.aliasesOf(clazz), clazz);
 		}
 	}
 
@@ -198,7 +224,12 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 	public boolean canDeserialize(String eventTypeName) {
 		return deserializers.keySet().contains(eventTypeName);
 	}
-	
+
+	@Override
+	public Map<String,Class<?>> registeredEventTypes ( ) {
+		return Map.copyOf(classesByEventName);
+	}
+
 	
 	
 	interface EventDeserializer {

@@ -69,6 +69,13 @@ mvn clean install -DskipTests
 - Converted to full `Event` upon appending to a stream
 - Created via `Event.of(data, tags)`
 
+**EventType:**
+- The stored name of an event, defaulting to the event class's simple name
+- **It is wire format**: renaming or moving an event class breaks reads of everything already stored under
+  the old name, and the name is global to a storage rather than scoped to a stream
+- Override it with `@EventName("...")`, and absorb a rename with `@EventName(value = "...", aliases = "...")`
+- See "Event type names are wire format" under Naming Conventions — read it before renaming an event class
+
 **Tags:**
 - Key-value pairs attached to events for dynamic retrieval
 - Enable querying events across different event types
@@ -478,6 +485,63 @@ sealed interface CustomerEvent {
     record CustomerChurned(String id) implements CustomerEvent { }
 }
 ```
+
+### Event type names are wire format
+
+**The name of an event class is stored data, not an implementation detail.** By default `EventType.of(Class)`
+is `Class.getSimpleName()`, and that string is what goes into `event_type`, what `EventTypesFilter` matches
+on, and what keys the deserializer. Stored events are immutable, so **renaming or moving an event class is a
+breaking change to history**: every event already written keeps the old name, the current class no longer
+claims it, and reads fail with `No mapping found for event type '<old name>'`. Every IDE presents that
+rename as an ordinary refactor.
+
+Two further consequences of names being derived from the simple name:
+
+- **Names are global to a storage, not scoped to a stream.** Two classes with the same simple name in
+  different contexts write indistinguishable `event_type` values into one table. Registered on the same
+  stream that fails loudly (`duplicate event name`); across streams nothing catches it.
+- **The cross-stream case is not a clean failure.** Any read spanning both — a wildcard stream
+  (`EventStreamId.anyContext()`), a store-wide projection — resolves the payload by name alone. Jackson has
+  `FAIL_ON_UNKNOWN_PROPERTIES` on, so a reader record with *fewer* components than the payload throws, but a
+  reader with *more* deserializes happily and defaults the rest, and same-named components coerce across
+  types. **The common outcome is the wrong class populated with another context's data, silently.**
+  `EventTypeNameCollisionTest` pins this down.
+
+**`@EventName` decouples the stored name from the class identifier**, and is the only thing that makes a
+rename safe:
+
+```java
+@EventName("sales.OrderCreated")
+record Created(String orderId, int amountCents) implements SalesEvent { }
+
+// renaming CustomerRegistered -> CustomerOnboarded: the old name stays readable
+@EventName(value = "CustomerOnboarded", aliases = "CustomerRegistered")
+record CustomerOnboarded(String name) implements CustomerEvent { }
+```
+
+- **Unannotated classes are unchanged** — simple name, exactly as before. Adopting `@EventName` on a class
+  that already has history means listing the previous name as an alias, or those events become unreadable.
+- **Aliases are read-only.** Appends always write `value()`; an alias is only matched against names already
+  in storage. On an event read through one, `storedType()` is the alias and `type()` is the canonical name,
+  exactly as for an upcast. A query filtering on the class selects both.
+- **Aliases claim names as strongly as canonical values do** — two classes claiming one name still fail at
+  stream creation, and the message names both classes.
+- **Not `@Inherited`**: event types are records and sealed-interface implementations, so there is no
+  superclass chain to inherit through, and silently sharing a stored name is the hazard being removed.
+- **Alias or upcast?** An alias is a pure *rename*: same payload shape, so the bytes on disk still fit
+  today's record — one annotation edit. `@LegacyEvent` + `Upcast` is for a *reshape*: components added,
+  removed, retyped or split, so a class describing the old shape has to survive to deserialize it. A rename
+  that also reshapes the payload is an upcast. The two compose — a `@LegacyEvent` class can carry its own
+  `@EventName` so it can be renamed or moved in code while keeping the name it was stored under, and upcast
+  targets are named by the same rules.
+- **A collision across streams is logged, not thrown.** `EventStoreImpl` warns when two classes registered
+  on different streams of one store claim the same name. It cannot throw: the store sees only the streams
+  opened through it, and the two classes may have coexisted harmlessly for years.
+- **Renaming stored data is possible but is not the primary path.** `EventStoreImporter` can rewrite
+  `event_type` during a copy, so a rebuild-the-store migration exists for anyone who wants one. Everything
+  above is designed so nobody has to.
+
+`EventTypeNamingTest` and `EventTypeNameCollisionTest` in the TCK cover all of this per backend.
 
 ## Key Design Principles
 

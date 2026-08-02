@@ -82,6 +82,14 @@ mvn clean install -DskipTests
 - Converted to full `Event` upon appending to a stream
 - Created via `Event.of(data, tags)`
 
+**EventType:**
+- The stored name of an event: `EventType.of(Class)` is `Class.getSimpleName()`, with no override
+- Deliberately the *simple* name, not the fully qualified one, so moving a class between packages —
+  the refactor people actually do — costs nothing
+- **The simple name is therefore wire format**, and it is global to a storage rather than scoped to a
+  stream. See "Event type names are wire format" under Naming Conventions before renaming an event class
+  or introducing a second class with an existing simple name
+
 **Tags:**
 - Key-value pairs attached to events for dynamic retrieval
 - Enable querying events across different event types
@@ -560,6 +568,74 @@ sealed interface CustomerEvent {
     record CustomerChurned(String id) implements CustomerEvent { }
 }
 ```
+
+### Event type names are wire format
+
+**An event class's simple name is stored data.** `EventType.of(Class)` is `Class.getSimpleName()`
+(`EventType.java:83`) — there is no annotation, registry or builder hook to override it. That one string is
+what goes into the `event_type` column, what `EventTypesFilter` matches on, and what keys the deserializer
+(`TypedEventPayloadSerializerDeserializer.deserializers`, a `Map<String, EventDeserializer>`).
+
+Using the *simple* name rather than the fully qualified one is deliberate and worth keeping in mind: moving a
+class to another package, splitting a hierarchy across packages, or reorganising modules changes nothing on
+disk. The package is not a wire commitment. **The class name is.**
+
+**Renaming an event class breaks reads of its history.** Stored events are immutable, so every event already
+written keeps the old name while the renamed class claims a new one. Reads then fail with:
+
+```
+No mapping found for event type 'CustomerRegistered'
+```
+
+Every IDE offers that rename as an ordinary refactor, and nothing at compile time objects. Three ways out,
+in the order you would normally reach for them:
+
+1. **Don't rename.** Pick the stored name deliberately when the event is created, and treat it afterwards
+   the way you would a database column name.
+2. **Keep the old name alive in code.** Move a class carrying the old name into a legacy hierarchy, annotate
+   it `@LegacyEvent(upcast = ...)`, and upcast it to the renamed class — see the upcasting sections. This
+   leaves storage untouched and is the only option that needs no access to the database, but it costs a
+   permanent extra class plus an upcaster for what was only a rename.
+3. **Rewrite the stored names.** `UPDATE <prefix>events SET event_type = 'New' WHERE event_type = 'Old';`
+   is a valid migration: no foreign key, check constraint or unique index is keyed on `event_type`, so
+   nothing else in the schema has to change. `idx_events_stream_type_position` includes the column, and
+   Postgres maintains it transparently — on a large table budget for the row and index rewrite, and scope
+   the statement by `stream_context` when the rename applies to one context only.
+   `EventStoreImporter`'s `.transform(src -> Optional.of(EventToImport.from(src).withType(...)))` does the
+   same during a copy, if you would rather rebuild the store than mutate it. Either way history no longer
+   reads exactly as it was written, and the change has to reach every environment, replica and restored
+   backup, plus anything outside this library reading the same table.
+
+**Names are global to a storage, not scoped to a stream.** A stream scopes *reads*; it is not part of a
+type's identity. Two classes with the same simple name in different contexts write indistinguishable
+`event_type` values into one table:
+
+- **On one stream this fails loudly.** Registering both throws
+  `IllegalArgumentException: duplicate event name Created`
+  (`TypedEventPayloadSerializerDeserializer.java:95`). The message names the string only, not the two
+  classes, so grep for the name to find them.
+- **Across streams nothing catches it.** No exception, no warning, at registration or at write time.
+
+**And a read spanning both contexts does not fail cleanly.** A wildcard stream
+(`EventStreamId.anyContext()`), the raw/import path or a store-wide projection resolves the payload by name
+alone. `FAIL_ON_UNKNOWN_PROPERTIES` is enabled, so it looks like a mismatch would be rejected — it usually
+is not. Reading one context's `Created` with the other context's class:
+
+| reader record vs. stored payload | outcome |
+|---|---|
+| more components (`Created(id, amount, dept)` reads `{id, amount}`) | **succeeds**, `dept` defaulted to null |
+| same component names, different types (`int` → `String`, `int` → `short`) | **succeeds**, coerced |
+| same shape, different meaning | **succeeds**, wrong class |
+| fewer components (`Created(id)` reads `{id, amount}`) | throws `UnrecognizedPropertyException` |
+
+Only the *narrower* reader is protected. The usual outcome is the wrong class silently populated with
+another context's data, which surfaces as bad numbers in a projection rather than as an error.
+
+**Practical rule: keep event class simple names unique across an entire storage, not just per stream.** Two
+bounded contexts sharing a store cannot both have a `Created`, a `StatusChanged` or an `Updated`. Prefix
+them (`OrderCreated`, `VacancyCreated`) or give each context its own storage. If two contexts must share a
+name, keep every read scoped to one stream — no wildcard streams, no store-wide projections — and know that
+nothing enforces that from here on.
 
 ## Key Design Principles
 

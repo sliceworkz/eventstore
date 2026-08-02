@@ -1368,7 +1368,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 				parameters.add(event.erasableData());
 
 				// Convert tags to array
-				String[] tagsArray = event.tags().toStrings().toArray(new String[event.tags().tags().size()]);
+				// sized from the string set, not from tags(): a set sized larger than its contents leaves a
+				// trailing null element, which would be written into the text[] column as a NULL tag
+				String[] tagsArray = event.tags().toStrings().toArray(new String[0]);
 				parameters.add(tagsArray);
 			}
 
@@ -1618,7 +1620,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			parameters.add(OffsetDateTime.of(event.timestamp(), ZoneOffset.UTC));
 			parameters.add(event.immutableData());
 			parameters.add(event.erasableData());
-			parameters.add(event.tags().toStrings().toArray(new String[event.tags().tags().size()]));
+			parameters.add(event.tags().toStrings().toArray(new String[0]));
 		}
 
 		List<StoredEvent> imported = new ArrayList<>(chunk.size());
@@ -2151,7 +2153,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 						stmt.setString(4, eventReference==null?null:eventReference.id().value());
 						
 						// Convert tags to array
-						String[] tagsArray = tags.toStrings().toArray(new String[tags.tags().size()]);
+						String[] tagsArray = tags.toStrings().toArray(new String[0]);
 						stmt.setArray(5, writeConnection.createArrayOf("text", (String[]) tagsArray));
 						
 						int rowsAffected = stmt.executeUpdate();

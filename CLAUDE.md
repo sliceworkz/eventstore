@@ -87,6 +87,45 @@ mvn clean install -DskipTests
 - Enable querying events across different event types
 - Core to the Dynamic Consistency Boundary pattern
 - Created via `Tags.of("key", "value")` or `Tags.of(Tag.of("key", "value"))`
+- **`Tag.toString()` is the wire format, not a debugging rendering.** A tag is flattened to
+  `"key:value"` to be persisted and to be matched: the Postgres backend stores `Tags.toStrings()` in a
+  `text[]` column and answers a tag query with `event_tags @> ARRAY[...]` built from the *same*
+  rendering, then hands tags back through `Tags.parse(String[])`. The string is unescaped, and
+  `Tag.parse` splits on the **first** `':'`, strips both halves and maps an empty half to `null` —
+  so `toString`/`parse` is only a round trip for tags whose key has no colon and whose halves are
+  neither empty nor padded. The in-memory backends flatten nothing and match on the `Tag` record,
+  so they cannot fail this way, which is exactly why it stayed invisible: a store that behaves in
+  tests and diverges in production
+- **Construction therefore rejects the shapes that do not survive it**, rather than escaping the
+  stored form — existing rows cannot be rewritten, so the encoding has to stay as it is.
+  `IllegalArgumentException` for: a `':'` in the **key** (`Tag.of("a:b","c")` rendered as `"a:b:c"`,
+  which is also what `Tag.of("a","b:c")` renders to — two logical tags, one stored string); leading
+  or trailing whitespace on either half (`parse` strips it); an empty key or value (`parse` nulls
+  it); and a tag with neither key nor value (renders as `""`, reads back as nothing). Values may
+  contain `':'` freely, and whitespace *inside* a key or value is fine. Whitespace is rejected
+  rather than silently stripped so the mistake surfaces where it is made — a caller handling
+  untrusted input should `strip()` first. `Tag.of(null, "v")` stays legal, because `Tag.parse(":v")`
+  still produces it from history
+- **What that buys: `toString` is injective, so `parse(tag.toString())` is the identity** for every
+  constructible tag. Two distinct tags on one event can no longer be stored as one array element,
+  and a tag read off an `Event` is the tag that was appended — which matters because re-tagging a
+  new event with a tag read back from an old one is an ordinary pattern
+- **`Tag.parse` and `Tags.parse` stay lenient, deliberately.** They are the read path for tags
+  written before any of this was enforced, and they normalise instead of rejecting: a stored
+  `"k: v "` comes back as `Tag.of("k","v")`, a stored `"k:"` as `Tag.of("k")`. Everything they
+  return is constructible, so reading legacy data never throws. Two consequences for legacy rows
+  only: the tag read off such an event is not the tag that was appended, and because `Tags.parse`
+  builds a `Set`, two stored strings normalising to the same tag **collapse into one**
+- **Matching is exact containment, never key-prefix.** `Tag.of("customer")` and
+  `Tag.of("customer","123")` are two different tags on every backend, and a query for the first does
+  **not** return events carrying the second. Users reasonably expect the bare key to act as "any
+  customer"; it does not, and there is no wildcard form. Tag every event with
+  `Tag.of("customer", id)` and query for that; a bare key is a flag, for when the presence of the
+  tag is itself the fact
+- `TagTest`/`TagsTest` pin the round trip and the rejections; `TagRoundTripTest` in the TCK proves
+  per backend that a written tag is found by a query for itself and comes back unchanged, over the
+  full legal character set (colons in values, unicode, newlines, `{`/`,`/quotes that are `text[]`
+  syntax, 1000-character values)
 
 **EventFilter:**
 - Pure matching criteria: event types, tags, and an optional "until" temporal boundary

@@ -166,7 +166,12 @@ public final class JsonEventCodec {
 			JsonNode tagsNode = node.get("tags");
 			if ( tagsNode != null && tagsNode.isArray() ) {
 				for ( JsonNode tagNode : tagsNode ) {
-					String key = tagNode.get("key").asText();
+					// a null key has to come back as null, not as "": asText() on a JSON null renders
+					// the empty string, which is a key Tag rejects, and which used to turn the legal
+					// Tag.of(null, "v") into a different tag on every reload
+					String key = tagNode.has("key") && !tagNode.get("key").isNull()
+							? tagNode.get("key").asText()
+							: null;
 					String value = tagNode.has("value") && !tagNode.get("value").isNull()
 							? tagNode.get("value").asText()
 							: null;

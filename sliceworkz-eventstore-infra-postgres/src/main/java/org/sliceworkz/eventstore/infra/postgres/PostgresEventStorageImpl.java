@@ -64,6 +64,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.postgresql.PGConnection;
 import org.postgresql.PGNotification;
 import org.postgresql.util.PSQLException;
+import org.postgresql.util.ServerErrorMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.sliceworkz.eventstore.events.Bookmark;
@@ -499,7 +500,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			checkIndex(readConnection, prefix + "idx_events_tags");
 			checkIndex(readConnection, prefix + "idx_events_stream_tags");
 			checkIndex(readConnection, prefix + "idx_events_stream_position");
-			checkIndex(readConnection, prefix + "idx_events_stream_idempotency");
+			checkIndex(readConnection, idempotencyIndexName());
 			checkIndex(readConnection, prefix + "idx_bookmarks_event_id");
 
 			LOGGER.info("Database schema validation completed successfully for prefix '{}'", prefix);
@@ -1481,10 +1482,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 					}
 
 					// idempotency conflict: a duplicate (stream, idempotency_key) is silently ignored.
-					// Detect via SQLState 23505 (unique_violation) on the stream-scoped idempotency index,
-					// rather than a substring match on the whole message: this survives the constraint/index
-					// rename and keeps an event_id uniqueness collision from being misrouted into this branch.
-					if ( "23505".equals(e.getSQLState()) && e.getMessage() != null && e.getMessage().contains("idempotency") ) {
+					// Detected via SQLState 23505 (unique_violation) on the stream-scoped idempotency index,
+					// by the index name the server reports rather than a substring match on the message: the
+					// message is translated under a non-English lc_messages, and matching it as a substring
+					// also swallows an event_id or primary-key violation whenever the table prefix happens to
+					// contain the word "idempotency".
+					if ( isIdempotencyKeyViolation(e) ) {
 						return Collections.emptyList();
 					} else {
 						throw new EventStorageException("SQLException during append", e);
@@ -1659,6 +1662,77 @@ public class PostgresEventStorageImpl implements EventStorage {
 		return id.value().toLowerCase(Locale.ROOT);
 	}
 
+	/** SQLSTATE for {@code unique_violation}. */
+	private static final String UNIQUE_VIOLATION = "23505";
+
+	/** Unprefixed name of the partial unique index that scopes idempotency keys to a stream. */
+	private static final String IDEMPOTENCY_INDEX = "idx_events_stream_idempotency";
+
+	/**
+	 * Name of the stream-scoped idempotency index for this storage's table prefix, as
+	 * {@code ensure-schema.sql} writes it.
+	 * <p>
+	 * The identifier there is unquoted, so the server folds it to lower case — hence the
+	 * case-insensitive comparison in {@link #isIdempotencyKeyViolation}. It also truncates identifiers
+	 * at 63 bytes, which this name cannot reach: {@code MAX_PREFIX_LENGTH} caps the prefix at 32
+	 * characters, leaving 61 at most.
+	 *
+	 * @return the unprefixed index name with this storage's prefix applied
+	 */
+	private String idempotencyIndexName ( ) {
+		return prefix + IDEMPOTENCY_INDEX;
+	}
+
+	/**
+	 * The structured error the server sent with a failure, or {@code null} for any {@link SQLException}
+	 * that does not carry one — anything not raised by the server, and anything the driver produced
+	 * itself.
+	 *
+	 * @param e the failure to inspect
+	 * @return the server error message, or {@code null}
+	 */
+	private static ServerErrorMessage serverError ( SQLException e ) {
+		return e instanceof PSQLException psqlException ? psqlException.getServerErrorMessage() : null;
+	}
+
+	/**
+	 * The constraint or index the server blamed for a failed statement, or {@code null} if it did not
+	 * say.
+	 * <p>
+	 * This is the field PostgreSQL fills in on a unique violation, and it names the offending
+	 * <em>index</em> for a violation of a bare {@code CREATE UNIQUE INDEX} just as it names the
+	 * constraint for a table constraint. It is the only structured way to tell one unique violation on
+	 * the events table from another: the message text is translated when the server runs under a
+	 * non-English {@code lc_messages}, and matching it as a substring also picks up the prefixed names
+	 * of the <em>other</em> unique keys on the table.
+	 *
+	 * @param e the failure to inspect
+	 * @return the constraint/index name, or {@code null} if the server did not report one
+	 */
+	private static String serverConstraintName ( SQLException e ) {
+		ServerErrorMessage serverError = serverError(e);
+		return serverError == null ? null : serverError.getConstraint();
+	}
+
+	/**
+	 * Whether a failure is a duplicate of an idempotency key already used on the same stream, as opposed
+	 * to any other unique violation the events table can raise.
+	 * <p>
+	 * Routed by the index name the server reports rather than by the exception message, so that it is
+	 * unaffected by the server's message locale and cannot be triggered by a violation of
+	 * {@code <prefix>events_pkey} or {@code <prefix>events_event_id_key} — which a substring match on
+	 * the message does whenever the caller-supplied table prefix happens to contain the word
+	 * "idempotency". Silently swallowing one of those would report a successful de-duplication for an
+	 * append that in fact wrote nothing.
+	 *
+	 * @param e the failure to classify
+	 * @return {@code true} if the stream-scoped idempotency index rejected the row
+	 */
+	private boolean isIdempotencyKeyViolation ( SQLException e ) {
+		return UNIQUE_VIOLATION.equals(e.getSQLState())
+				&& idempotencyIndexName().equalsIgnoreCase(serverConstraintName(e));
+	}
+
 	/**
 	 * Turns a failed import into the most specific exception the server error allows.
 	 * <p>
@@ -1668,20 +1742,14 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * server does not supply a parseable DETAIL the conflict is still reported, without the specifics.
 	 */
 	private EventStorageException classifyImportFailure ( SQLException e, List<EventToImport> events ) {
-		if ( !"23505".equals(e.getSQLState()) ) {
+		if ( !UNIQUE_VIOLATION.equals(e.getSQLState()) ) {
 			return new EventStorageException("SQLException during import", e);
 		}
 
-		String constraint = null;
-		String detail = null;
-		if ( e instanceof PSQLException psqlException && psqlException.getServerErrorMessage() != null ) {
-			constraint = psqlException.getServerErrorMessage().getConstraint();
-			detail = psqlException.getServerErrorMessage().getDetail();
-		}
+		ServerErrorMessage serverError = serverError(e);
+		List<String> conflictingValues = parseConflictValues(serverError == null ? null : serverError.getDetail());
 
-		List<String> conflictingValues = parseConflictValues(detail);
-
-		if ( constraint != null && constraint.contains("idempotency") ) {
+		if ( isIdempotencyKeyViolation(e) ) {
 			// DETAIL reports (stream_context, stream_purpose, idempotency_key)=(ctx, purpose, key)
 			EventToImport conflicting = conflictingValues.size() == 3
 					? events.stream()

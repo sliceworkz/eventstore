@@ -598,6 +598,84 @@ can pass all of it and still violate the boundary in production.
   `addUntilBoundary`; comparing `event_position` alone is a different order and silently drops events.
   Writers that do not hold the append lock (unconditional appends, `importEvents`, raw SQL) are where the
   inversion actually comes from, which is why the advisory lock below does not subsume this
+- **A long-running *writing* transaction anywhere in the cluster freezes what this store can read.** The
+  barrier above is `event_tx < pg_snapshot_xmin(pg_current_snapshot())`, and `pg_snapshot_xmin` is the
+  oldest transaction id still running — a property of the whole PostgreSQL cluster, not of this store.
+  Every event appended since the oldest open transaction took its id is invisible here until that
+  transaction ends. **Nothing fails and nothing is logged**: reads just stop advancing, projections go
+  quiet, bookmarks stop moving, `SELECT count(*)` in psql shows the events are there, and when the
+  blocker finally ends everything appears at once. `PostgresVisibilityStallTest` demonstrates it end to
+  end.
+  - **Only transactions that have *written* count** — this is what makes the hazard narrow rather than
+    severe, and it is worth being precise about. PostgreSQL assigns a transaction id lazily, at the
+    first write, and only assigned ids enter a snapshot's xmin. A read-only transaction pins nothing,
+    however long it runs, at **any** isolation level including SERIALIZABLE, and so does an `idle in
+    transaction` connection that only ever read. So `pg_dump`, reporting queries, analytics reads and a
+    replica feed are all harmless. What is not harmless: a batch job, an ETL run, a migration, or an
+    `idle in transaction` connection that wrote before going idle. `SELECT … FOR UPDATE` and an explicit
+    `pg_current_xact_id()` also assign an id without writing a row.
+  - **The blocker does not have to touch the events table, or even this database.** Transaction ids are
+    cluster-wide, so a writer in a *different database of the same cluster* pins this store's barrier
+    just as effectively. Verified on PG17 and PG18. The operational rule is therefore "do not share a
+    cluster with long-running write transactions", not "do not share a table".
+  - **Read-your-own-writes does not hold** while a blocker is open: a caller can append successfully and
+    not read the event back. Under DCB that surfaces as an optimistic-locking conflict a retry loop
+    **cannot clear**. The append-side `NOT EXISTS` check deliberately carries no `xmin` filter, so it
+    sees committed events the reader cannot; a decider re-reads its boundary, gets the same stale
+    reference, appends, and conflicts again — for as long as the stall lasts. Not spurious, exactly:
+    there really is a new relevant fact, it is just being withheld from the one party that needs it.
+  - **The append advisory lock does not compound this.** A transaction that has only taken
+    `pg_advisory_xact_lock` holds no transaction id, so neither the lock holder before its INSERT nor
+    any appender blocked behind it pins the barrier. Only the INSERT itself does, for its own duration.
+  - **Diagnosing it.** `backend_xid IS NOT NULL` is the whole predicate — filtering on `state <> 'idle'`
+    or on `xact_start` age reports harmless read-only sessions as suspects:
+    ```sql
+    SELECT pg_snapshot_xmin(pg_current_snapshot());          -- the barrier
+    SELECT pid, datname, usename, application_name, state,
+           now() - xact_start AS held_for, backend_xid, query
+    FROM   pg_stat_activity
+    WHERE  backend_xid IS NOT NULL                            -- only these can stall the store
+    ORDER  BY xact_start;                                     -- the oldest is the culprit
+    ```
+    Deliberately unfiltered by `datname`: the culprit may be in another database of the cluster. Run it
+    as a superuser or as a member of `pg_read_all_stats` — `xact_start`, `query` and `state` come back
+    NULL for other roles' sessions otherwise, and you get a row identifying the blocker with no way to
+    tell how old it is or what it is doing. (`backend_xid` is readable regardless, so the `WHERE` clause
+    still selects the right rows for any role.)
+  - **The library does not meter this**, and there is nothing in the `sliceworkz.eventstore.*` meters
+    that reveals it — they count and time the calls the store makes, all of which keep succeeding
+    throughout a stall. Detection is therefore external, on the database, using the query above.
+    Two notes for whoever wires that up:
+    - **Watch `pg_snapshot_xmin` standing still *while* something holds a transaction id**, not either
+      alone. xmin also stops moving on a completely idle database, so "xmin has not advanced" on its own
+      fires on every quiet store; "a transaction holds an xid" on its own fires on every append in
+      flight. It is the combination that means events are being withheld.
+    - **`now() - xact_start` reads zero for an ordinary application role.** `pg_stat_activity` blanks
+      the columns describing another role's session for anyone who is not a superuser or a member of
+      `pg_read_all_stats`, and blanks them to NULL rather than refusing — so the natural "age of the
+      oldest blocking transaction" check reports a confident all-clear right through a stall another
+      role is causing. `backend_xid` is *not* blanked, so a count of blocking transactions does survive
+      on ordinary privileges; the age does not. Either grant `pg_read_all_stats`, or time the staleness
+      of `pg_snapshot_xmin` from outside instead of asking the server how old the blocker is.
+    - Do **not** measure the effect by counting withheld events: `count(*) … WHERE event_tx >=
+      pg_snapshot_xmin(…)` has no index to use (there is none on `event_tx`), so it is a sequential scan
+      of the whole events table every time it is sampled.
+  - **The store is a mild instance of its own hazard**, which is why this is normal rather than exotic:
+    an append in flight holds a transaction id, so a second append that starts later and commits first
+    cannot read its own event back until the first one finishes. That window is one INSERT long and
+    self-clearing, and `ConcurrentAppendVisibilityTest` is written to tolerate it (it re-polls). The
+    same mechanism, with a blocker that lasts minutes instead of milliseconds, is the hazard above.
+  - **A consequence for anything that would hold the store's *own* connections in a transaction.**
+    Reads currently run on autocommit, which is what keeps the store out of its own blast radius. Moving
+    `query()` to a cursor-based, autocommit-off streaming read would make a long-running read a
+    long-running transaction — and while a purely read-only one still assigns no transaction id and so
+    still pins nothing, that safety rests entirely on the streaming connection never writing. Any design
+    that opens a transaction and reads for minutes needs to hold that property deliberately, or the
+    store becomes its own worst blocker.
+  - **Do not "fix" this by bounding the barrier** — falling back to reading everything committed once
+    xmin has been pinned for a while trades a visible, self-healing stall for silent event loss in
+    exactly the scenario the barrier exists to prevent. `ConcurrentAppendVisibilityTest` is what fails
+    when you try.
 - **Conditional appends are serialized per stream by a `pg_advisory_xact_lock`.** The optimistic-locking
   check is an `INSERT … WHERE NOT EXISTS (…)`, and under PostgreSQL's default READ COMMITTED isolation each
   statement fixes its snapshot when it starts, so two concurrent appends at the same consistency boundary

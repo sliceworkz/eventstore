@@ -64,6 +64,7 @@ class TckBackendCoverageTest {
 	private static final List<String> EXPECTED_BACKENDS = List.of(
 			"org.sliceworkz.eventstore.testing.backend.InMemoryBackend",
 			"org.sliceworkz.eventstore.testing.backend.InMemoryFsBackend",
+			"org.sliceworkz.eventstore.testing.backend.Postgres16Backend",
 			"org.sliceworkz.eventstore.testing.backend.Postgres17Backend",
 			"org.sliceworkz.eventstore.testing.backend.Postgres18Backend");
 

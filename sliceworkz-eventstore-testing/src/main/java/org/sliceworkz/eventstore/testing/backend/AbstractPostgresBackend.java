@@ -67,7 +67,7 @@ public abstract class AbstractPostgresBackend implements EventStoreBackend {
 	 * A {@code ServiceLoader} cannot use this — register {@link Postgres17Backend} /
 	 * {@link Postgres18Backend}, or a named subclass of your own, for that.
 	 *
-	 * @param image the PostgreSQL image tag, e.g. {@code "postgres:16"}
+	 * @param image the PostgreSQL image tag, e.g. {@code "postgres:15"}
 	 * @return a backend pinned to that image
 	 */
 	public static AbstractPostgresBackend forImage ( String image ) {

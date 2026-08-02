@@ -49,18 +49,28 @@ public enum DatabaseInitMode {
 	VALIDATE,
 
 	/**
-	 * Create missing database objects if they do not exist, leaving existing objects untouched.
-	 * After creation, the schema is validated.
+	 * Create missing database objects, bring the functions and triggers up to date, then validate.
 	 * <p>
-	 * This is the default mode. It is safe to run repeatedly — existing tables, indexes,
-	 * functions, and triggers are not modified. If an existing object has an incompatible
-	 * definition, the subsequent validation will detect and report it.
+	 * This is the default mode, and it is safe to run repeatedly and concurrently — the scripts run as
+	 * one transaction under a per-prefix advisory lock, so several instances starting together queue
+	 * rather than race on the system catalogs.
+	 * <p>
+	 * <strong>Tables, columns and indexes are only ever created, never altered.</strong> An existing
+	 * table keeps its definition; a missing index is added. The functions and triggers, by contrast, are
+	 * brought to the definition this release ships: the functions via {@code CREATE OR REPLACE}, the
+	 * triggers by comparing the installed shape and recreating only when it differs. Without that, a
+	 * changed function body would never reach a database that already had the old one, and the store
+	 * would report success while its notifications were dead.
+	 * <p>
+	 * This is not a migration mechanism: there is no version marker, and a change that needs
+	 * {@code ALTER TABLE} still has to be applied by hand. See {@code SCHEMA-MIGRATION.md} in this
+	 * module.
 	 */
 	ENSURE,
 
 	/**
-	 * Drop all event store objects and recreate them from scratch. After creation, the
-	 * schema is validated.
+	 * Drop all event store objects — tables, and the functions the triggers use — and recreate them
+	 * from scratch, then validate. The drop and the recreate are one transaction.
 	 * <p>
 	 * <strong>Warning:</strong> This mode is destructive — all existing event data will be lost.
 	 * Use only for test environments, fresh deployments, or when a clean slate is explicitly needed.

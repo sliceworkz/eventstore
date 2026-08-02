@@ -439,7 +439,7 @@ separate JVMs.
 
 The Postgres backends are `Postgres17Backend` and `Postgres18Backend`; the shared base
 `AbstractPostgresBackend` is abstract on purpose, so no class name can be read as "PostgreSQL,
-unspecified version". `AbstractPostgresBackend.forImage("postgres:16")` covers a version with no
+unspecified version". `AbstractPostgresBackend.forImage("postgres:15")` covers a version with no
 dedicated class (the image tag becomes the backend name, so the version still shows in reports).
 
 **Test Structure:**
@@ -569,6 +569,44 @@ can pass all of it and still violate the boundary in production.
     serialization failures and a third of the throughput, with disjoint boundaries falsely conflicting
     because the planner's choice (seq scan → relation-level `SIRead` lock) decides the granularity.
   - No DDL change, so no migration: the lock is entirely in the write path.
+- **Oldest supported PostgreSQL is 16** (`Builder.OLDEST_SUPPORTED_MAJOR_VERSION`). The schema itself only
+  needs 13 — `xid8`, `pg_current_xact_id()` — but 16 is both the oldest version with a support life worth
+  committing to (13 went end-of-life in November 2025, 14 follows in November 2026, 15 in November 2027)
+  and the oldest this library has ever actually worked on. The docs previously promised 13+ while the
+  compliance run covered 17 and 18 only, and adding a floor backend showed the claim had never held: the
+  conditional append's `SELECT * FROM ( VALUES … )` carried no alias, which PostgreSQL only made optional
+  for FROM-clause subqueries in 16, so **every** conditional append — every DCB consistency check — failed
+  on 15 and older with `VALUES in FROM must have an alias`. The alias (`AS new_events`) is there now and is
+  kept even though 16 does not need it. An older server is **warned about, not rejected**: a hard failure
+  would turn a library upgrade into an outage, and the warning names the version. `Postgres16Backend` is in
+  the TCK service file so the floor is actually exercised — that is what an untested support claim is worth,
+  and why the floor backend earns its CI minute
+- **`ENSURE` brings functions and triggers up to date; tables, columns and indexes are only ever created.**
+  The functions are `CREATE OR REPLACE`d and each trigger is compared against the shape this release wants
+  (`tgtype` plus target function, in a `DO $$` block) and recreated only when it differs — so wrong timing,
+  wrong orientation or a trigger pointing at the wrong function self-heal, while the ordinary startup, where
+  the trigger is already correct, is a catalog read that takes no lock on the events table. `CREATE OR
+  REPLACE TRIGGER` would be simpler but is PG14+ *and* rewrites unconditionally, taking `ACCESS EXCLUSIVE`
+  on every start of every instance. `drop-schema.sql` drops the two functions as well as the tables, which
+  is what makes `INITIALIZE` mean what it says: the triggers go with the tables via `CASCADE`, the functions
+  do not, so before this a stale body survived the "drop and recreate from scratch" mode and the freshly
+  created trigger was wired straight back to it — the store then reported a validated schema with its
+  notifications dead
+- **Schema scripts run as one transaction under a per-prefix advisory lock** (`executeSqlScripts`, keyed on
+  a SHA-256 of the prefix and a scope no stream can produce, sharing `advisoryLockKey` with the append lock).
+  `CREATE TABLE / INDEX / EXTENSION IF NOT EXISTS` is not atomic against a concurrent creator, so before this
+  several instances starting together on a database without the schema raced on the system catalogs and 64 of
+  80 failed to start, on PG17 and PG18 alike. One transaction across *all* scripts also makes `INITIALIZE`'s
+  drop-then-ensure indivisible, so a second instance cannot drop what the first has just recreated
+- **What is still missing: a version marker, and validation of an object's shape.** `checkDatabase()` checks
+  that named tables, columns (type + nullability), functions, triggers and indexes *exist*; it does not check
+  an index's method, columns or uniqueness, a column default, or a function body. So an index rebuilt as the
+  wrong kind, or the idempotency index silently made non-unique, passes validation — and a `VALIDATE`/`NONE`
+  deployment, where a DBA applies DDL, never gets the function repair either. A change needing `ALTER TABLE`
+  still has to be applied by hand (see the manual migrations below). `PostgresSchemaDriftTest` pins down both
+  halves per backend: what `ENSURE` now repairs, and what it still does not. See
+  `sliceworkz-eventstore-infra-postgres/SCHEMA-MIGRATION.md` for the measurements and the recommended
+  version-table design
 - `stream_purpose` defaults to `'default'` in the DDL, matching `EventStreamId.DEFAULT_PURPOSE`. On a database created before this alignment (default was `''`), operators doing raw SQL inserts should run `ALTER TABLE <prefix>events ALTER COLUMN stream_purpose SET DEFAULT 'default';` — no data migration is needed since all events written through the library bind the purpose explicitly
 - **Idempotency keys are scoped per event stream (context + purpose), not per storage/table.** Uniqueness is enforced by the partial unique index `idx_events_stream_idempotency` on `(stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL` (schema validation requires it), so the same key used on two unrelated streams does not collide and dedup behaviour does not depend on how storage instances / prefixes are wired at runtime. The `idempotency_key` is persisted and surfaced on `StoredEvent` when reading (it is not exposed on the public `Event` record). A duplicate append is still silently ignored (returns an empty result). On a database created before this change (when `idempotency_key` had a table-wide `UNIQUE`), migrate with: `ALTER TABLE <prefix>events DROP CONSTRAINT <prefix>events_idempotency_key_key; CREATE UNIQUE INDEX <prefix>idx_events_stream_idempotency ON <prefix>events (stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL;` — no data migration is needed
 - **Importing needed no DDL change**: `event_id` is already a plain `UUID NOT NULL UNIQUE` and `event_timestamp` is nullable with a `CURRENT_TIMESTAMP` default, so both can be supplied explicitly. `importEvents` binds them per row, chunks statements at 5000 rows (9 params/row against the 65535-parameter wire ceiling) inside a single transaction, and matches `RETURNING` rows **by event_id** rather than by row order — with `ON CONFLICT` the returned rows are a subset of the input, so position in the result set means nothing. Conflicts are routed by constraint name from `PSQLException.getServerErrorMessage().getConstraint()`, not by matching message text

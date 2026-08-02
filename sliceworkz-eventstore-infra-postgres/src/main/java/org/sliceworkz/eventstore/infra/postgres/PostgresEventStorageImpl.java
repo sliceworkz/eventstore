@@ -292,7 +292,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 */
 	public PostgresEventStorageImpl ensureDatabase ( ) {
 		LOGGER.info("Ensuring database schema for prefix '{}'", prefix);
-		executeSqlScript("ensure-schema.sql");
+		executeSqlScripts("ensure-schema.sql");
 		checkDatabase();
 		return this;
 	}
@@ -309,38 +309,67 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 */
 	public PostgresEventStorageImpl initializeDatabase ( ) {
 		LOGGER.info("Initializing database schema for prefix '{}' (drop and recreate)", prefix);
-		executeSqlScript("drop-schema.sql");
-		executeSqlScript("ensure-schema.sql");
+		executeSqlScripts("drop-schema.sql", "ensure-schema.sql");
 		checkDatabase();
 		return this;
 	}
 
-	private void executeSqlScript ( String scriptName ) {
+	/**
+	 * Runs the given schema scripts as one transaction, holding {@link #schemaLockKey the schema
+	 * advisory lock} for its duration.
+	 * <p>
+	 * <b>Why the lock.</b> {@code CREATE TABLE / INDEX / EXTENSION IF NOT EXISTS} is not atomic against a
+	 * concurrent creator: the existence check and the catalog insert are separate steps, so several
+	 * instances starting together on a database that does not have the schema yet all find an object
+	 * absent and all try to create it. The losers fail on a system catalog's unique index
+	 * ({@code pg_type_typname_nsp_index}, {@code pg_class_relname_nsp_index}) and, since the script is
+	 * one transaction, roll back entirely and fail to start. Measured before this lock existed: 64 of 80
+	 * instances failed, on PostgreSQL 17 and 18 alike. {@code CREATE OR REPLACE FUNCTION} racing itself
+	 * has the same problem, reported as {@code tuple concurrently updated}.
+	 * <p>
+	 * <b>Why all scripts in one transaction.</b> {@code INITIALIZE} runs drop-then-ensure. Split across
+	 * two transactions it releases the lock in between, so a second instance can drop the schema the
+	 * first has just recreated, and the first's {@link #checkDatabase()} then fails against a database
+	 * that is momentarily empty. One transaction makes the whole drop-and-recreate indivisible.
+	 *
+	 * @param scriptNames classpath resources to run, in order
+	 */
+	private void executeSqlScripts ( String... scriptNames ) {
+		String running = scriptNames.length == 0 ? "" : scriptNames[0];
+		try ( Connection writeConnection = dataSource.getConnection() ) {
+			writeConnection.setAutoCommit(false);
+			try {
+				try ( PreparedStatement lock = writeConnection.prepareStatement(ACQUIRE_SCHEMA_LOCK) ) {
+					lock.setLong(1, schemaLockKey());
+					lock.execute();
+				}
+				for ( String scriptName : scriptNames ) {
+					running = scriptName;
+					try ( Statement statement = writeConnection.createStatement() ) {
+						statement.execute(readSqlScript(scriptName));
+					}
+				}
+				writeConnection.commit();
+			} catch (IOException | SQLException e) {
+				try {
+					writeConnection.rollback();
+				} catch (SQLException rollbackEx) {
+					e.addSuppressed(rollbackEx);
+				}
+				throw e;
+			}
+		} catch (IOException | SQLException e) {
+			throw new EventStorageException("Failed to execute database script: %s".formatted(running), e);
+		}
+	}
+
+	/** Reads a schema script from the classpath and applies the table prefix to it. */
+	private String readSqlScript ( String scriptName ) throws IOException {
 		try (InputStream inputStream = getClass().getClassLoader().getResourceAsStream(scriptName)) {
 			if (inputStream == null) {
 				throw new EventStorageException("Could not find %s in classpath".formatted(scriptName));
 			}
-
-			String sql = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
-			sql = sql.replaceAll("PREFIX_", prefix);
-
-			try ( Connection writeConnection = dataSource.getConnection() ) {
-				writeConnection.setAutoCommit(false);
-				try (Statement statement = writeConnection.createStatement()) {
-					statement.execute(sql);
-				} catch (SQLException e) {
-					try {
-						writeConnection.rollback();
-					} catch (SQLException rollbackEx) {
-						e.addSuppressed(rollbackEx);
-					}
-					throw e;
-				}
-				writeConnection.commit();
-			}
-
-		} catch (IOException | SQLException e) {
-			throw new EventStorageException("Failed to execute database script: %s".formatted(scriptName), e);
+			return new String(inputStream.readAllBytes(), StandardCharsets.UTF_8).replaceAll("PREFIX_", prefix);
 		}
 	}
 
@@ -985,6 +1014,22 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 */
 	private static final String ACQUIRE_APPEND_LOCK = "SELECT pg_advisory_xact_lock(?)";
 
+	/**
+	 * Statement that serializes schema scripts; see {@link #executeSqlScripts} and {@link #schemaLockKey}.
+	 * Textually identical to {@link #ACQUIRE_APPEND_LOCK} but kept separate: the two serialize different
+	 * things and share only the fact that PostgreSQL spells the lock the same way.
+	 */
+	private static final String ACQUIRE_SCHEMA_LOCK = "SELECT pg_advisory_xact_lock(?)";
+
+	/**
+	 * Lock scope for schema scripts. Distinct from every stream scope — those are either
+	 * {@link #ANY_STREAM_SCOPE} or {@code context + UNIT_SEPARATOR + purpose}, and a stream context
+	 * cannot start with a NUL — so schema work never contends with appends. Derived from the prefix as
+	 * well, like the append key, so two storages sharing a database but not a table do not block each
+	 * other.
+	 */
+	private static final String SCHEMA_SCOPE = "\u0000schema";
+
 	/** Lock scope used when an append is not confined to one fully specified stream. */
 	private static final String ANY_STREAM_SCOPE = "\u0000any-stream";
 
@@ -1026,6 +1071,28 @@ public class PostgresEventStorageImpl implements EventStorage {
 			scope = streamId.get().context() + UNIT_SEPARATOR + streamId.get().purpose();
 		}
 
+		return advisoryLockKey(scope);
+	}
+
+	/**
+	 * Advisory lock key that serializes the schema scripts of this prefix against each other; see
+	 * {@link #executeSqlScripts} for what goes wrong without it.
+	 * <p>
+	 * It deliberately shares {@link #advisoryLockKey}'s derivation with {@link #appendLockKey}, on a
+	 * scope no stream can produce, so schema work and appends never contend.
+	 */
+	private long schemaLockKey ( ) {
+		return advisoryLockKey(SCHEMA_SCOPE);
+	}
+
+	/**
+	 * Folds the table prefix and a scope into the 64-bit key {@code pg_advisory_xact_lock} takes.
+	 * <p>
+	 * Collisions are possible — 64 bits of a digest, and PostgreSQL's advisory lock space is global to
+	 * the database — but they can only make two unrelated holders take turns, never let a real conflict
+	 * through.
+	 */
+	private long advisoryLockKey ( String scope ) {
 		try {
 			byte[] digest = MessageDigest.getInstance("SHA-256")
 					.digest((prefix + UNIT_SEPARATOR + scope).getBytes(StandardCharsets.UTF_8));
@@ -1036,7 +1103,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			return key;
 		} catch (NoSuchAlgorithmException e) {
 			// SHA-256 is required of every JRE
-			throw new EventStorageException("SHA-256 is unavailable, cannot derive the append lock key", e);
+			throw new EventStorageException("SHA-256 is unavailable, cannot derive an advisory lock key", e);
 		}
 	}
 
@@ -1057,7 +1124,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 				}
 				sqlBuilder.append(valuesRowFragment);
 			}
-			sqlBuilder.append(") ");
+			// PostgreSQL made the alias optional for a FROM-clause subquery in 16, so it is not strictly
+			// required at the current support floor. It is kept because omitting it is what made every
+			// conditional append fail on 15 and older with "VALUES in FROM must have an alias" — the bug
+			// that went unnoticed for as long as nothing ran below 17. Nothing references the alias; the
+			// rows are consumed positionally by SELECT *.
+			sqlBuilder.append(") AS new_events ");
 
 			List<Object> parameters = new ArrayList<>();
 

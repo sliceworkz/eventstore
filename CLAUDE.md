@@ -819,3 +819,13 @@ can pass all of it and still violate the boundary in production.
 - **Importing needed no DDL change**: `event_id` is already a plain `UUID NOT NULL UNIQUE` and `event_timestamp` is nullable with a `CURRENT_TIMESTAMP` default, so both can be supplied explicitly. `importEvents` binds them per row, chunks statements at 5000 rows (9 params/row against the 65535-parameter wire ceiling) inside a single transaction, and matches `RETURNING` rows **by event_id** rather than by row order — with `ON CONFLICT` the returned rows are a subset of the input, so position in the result set means nothing. Conflicts are routed by constraint name from `PSQLException.getServerErrorMessage().getConstraint()`, not by matching message text
 - **Imported event ids must be UUIDs** (the `::uuid` cast); `importEvents` validates this up front to give a clear error rather than an opaque cast failure
 - **`timestamptz` keeps microseconds and rounds anything finer**, so a nanosecond-precision timestamp (as an in-memory store produces) lands up to half a microsecond away from where it started. This is the only lossy part of an inmem → Postgres → inmem round trip; `EventImportRoundTripTest` pins it down
+- **A `db.properties` *value* never reaches an error message or a log line — only the key does.** Every
+  non-`datasource.` key goes through `HikariConfigurationUtil.setHikariProperty`, and
+  `db.<name>.password` is one of them, so a value interpolated into a message is a database password in
+  every log, stack trace and error reporter downstream. The failure message names the property and the
+  type the setter expected (`Error setting property 'maximumPoolSize' (expected int)`) and stops there;
+  the detail is left to the cause, which for the realistic throwers — a numeric property fed a
+  non-numeric value, a Hikari setter rejecting one — concerns a property that is never a secret. An
+  empty property name (a stray `db.pooled.=x` line) is rejected with that explanation rather than
+  reaching `charAt(0)`. `HikariConfigurationUtilTest` asserts the value is absent from the whole
+  exception chain, not just its top frame

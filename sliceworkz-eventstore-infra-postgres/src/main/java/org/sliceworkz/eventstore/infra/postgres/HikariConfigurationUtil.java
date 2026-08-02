@@ -102,30 +102,45 @@ public class HikariConfigurationUtil {
     }
     
     /**
-     * Sets a property on HikariConfig using reflection to find the appropriate setter
+     * Sets a property on HikariConfig using reflection to find the appropriate setter.
+     * <p>
+     * <strong>The value never appears in the exception message.</strong> Every non-{@code datasource.}
+     * key of the db properties reaches this method, and {@code db.<name>.password} is one of them (see
+     * the example configuration above), so interpolating the value would put a database password into
+     * an exception message and from there into logs, stack traces and error reporters. The property
+     * name is what makes such a failure actionable and is kept; the type the setter expected is kept
+     * too, since the realistic failures are a numeric property fed a non-numeric value and a Hikari
+     * setter rejecting one. The detail is left to the cause.
      */
-    private static void setHikariProperty(HikariConfig config, String propertyName, String value) {
+    static void setHikariProperty(HikariConfig config, String propertyName, String value) {
+        if (propertyName == null || propertyName.isEmpty()) {
+            // a db properties line that is nothing but its prefix, e.g. "db.pooled.=x"
+            throw new IllegalArgumentException("Cannot set a HikariCP property with an empty name: the db properties hold a key consisting of nothing but its 'db.<name>.' prefix");
+        }
+
         // Convert property name to setter method name (e.g., "url" -> "setJdbcUrl", "username" -> "setUsername")
         String methodName = "set" + Character.toUpperCase(propertyName.charAt(0)) + propertyName.substring(1);
-        
+
         // Special case: "url" maps to "setJdbcUrl"
         if ("url".equals(propertyName)) {
             methodName = "setJdbcUrl";
         }
-        
+
+        Class<?> expectedType = null;
         try {
             // Try to find the setter method with String parameter
             Method method = findSetterMethod(config.getClass(), methodName);
-            
+
             if (method != null) {
-                Class<?> paramType = method.getParameterTypes()[0];
-                Object convertedValue = convertValue(value, paramType);
+                expectedType = method.getParameterTypes()[0];
+                Object convertedValue = convertValue(value, expectedType);
                 method.invoke(config, convertedValue);
             } else {
-                LOGGER.warn("Warning: No setter found for property: " + propertyName);
+                LOGGER.warn("No setter found for property: {}", propertyName);
             }
         } catch (Exception e) {
-            throw new RuntimeException("Error setting property " + propertyName + " to value " + value, e);
+            throw new RuntimeException("Error setting property '%s'%s -- the value is omitted because db properties can hold secrets"
+                    .formatted(propertyName, expectedType == null ? "" : " (expected %s)".formatted(expectedType.getSimpleName())), e);
         }
     }
     

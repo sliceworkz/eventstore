@@ -119,7 +119,7 @@ import io.micrometer.core.instrument.Metrics;
  * EventStore eventStore = EventStoreFactory.get().eventStore(storage);
  * }</pre>
  *
- * <h2>Optional uuid-creator Dependency (PostgreSQL 15-17 only)</h2>
+ * <h2>Optional uuid-creator Dependency (PostgreSQL 16-17 only)</h2>
  * From PostgreSQL 18 onwards, event ids are generated server-side via the native
  * {@code uuidv7()} function. On older versions the library generates ids in Java using
  * {@code com.github.f4b6a3:uuid-creator}, which is therefore declared as an
@@ -127,7 +127,7 @@ import io.micrometer.core.instrument.Metrics;
  * <p>
  * Applications certain they will only ever connect to PostgreSQL 18+ may simply omit
  * this dependency from their build and the smaller dependency tree carries through.
- * Applications that may connect to PostgreSQL 15-17 must declare it explicitly:
+ * Applications that may connect to PostgreSQL 16-17 must declare it explicitly:
  * <pre>{@code
  * <dependency>
  *     <groupId>com.github.f4b6a3</groupId>
@@ -190,17 +190,19 @@ public interface PostgresEventStorage {
 		/**
 		 * Oldest PostgreSQL major version this library supports.
 		 * <p>
-		 * The schema itself needs 13 ({@code xid8}, {@code pg_current_xact_id()}), and everything the
-		 * store does still runs there — the floor is a support policy, not a technical limit. PostgreSQL
-		 * 13 reached community end-of-life in November 2025 and 14 follows in November 2026, so 15 is the
-		 * oldest version that will still be receiving fixes for a meaningful period.
+		 * The schema itself needs only 13 ({@code xid8}, {@code pg_current_xact_id()}), but nothing
+		 * below 16 was ever exercised — and when it was, the conditional append turned out to have been
+		 * failing outright on 15 and older for want of an alias on a {@code VALUES} subquery, which
+		 * PostgreSQL made optional in 16. So 16 is both the oldest version with a support life worth
+		 * committing to (13 went end-of-life in November 2025, 14 follows in November 2026, 15 in
+		 * November 2027) and the oldest this library has ever actually worked on.
 		 * <p>
 		 * An older server is <em>warned about, not rejected</em>. Nothing is known to break on 13 or 14,
 		 * and turning a library upgrade into a hard startup failure for someone running a working
 		 * deployment would cost them more than the unsupported configuration does. The warning names the
 		 * version so it shows up in the logs of exactly the deployments that need to plan an upgrade.
 		 */
-		static final int OLDEST_SUPPORTED_MAJOR_VERSION = 15;
+		static final int OLDEST_SUPPORTED_MAJOR_VERSION = 16;
 
 		private String prefix = "";
 		private String name = "psql";

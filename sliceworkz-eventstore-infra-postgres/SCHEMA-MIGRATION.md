@@ -3,15 +3,16 @@
 Review briefing 13 — *No schema migration path; `ENSURE` cannot update an existing object*.
 
 > **Status.** Step C below has **landed**, together with the advisory lock and a support floor of
-> PostgreSQL 15. Sections 1 and 2 describe what was measured *before* that change and are kept as the
+> PostgreSQL 16. Sections 1 and 2 describe what was measured *before* that change and are kept as the
 > record of why it was made; §3.1 says what the fix actually does. Step A (the version table) and the
 > shape-validation gap are still open, and §1.5 is still true of indexes, defaults and column types.
 >
 > `PostgresSchemaDriftTest` was inverted along with the fix and now asserts, per backend, both what
 > `ENSURE` repairs and what it still does not.
 
-Everything below was verified against PostgreSQL 15, 17 and 18 in Testcontainers by
-`PostgresSchemaDriftTest` (postgres module, `src/test`).
+The findings in §1 and §2 were measured on PostgreSQL 17 and 18 in Testcontainers *before* the fix, and
+the scenario names quoted there are the pre-inversion ones. The behaviour now is verified on PostgreSQL
+16, 17 and 18 by `PostgresSchemaDriftTest` (postgres module, `src/test`).
 
 ---
 
@@ -194,19 +195,22 @@ This needs no dependency, no DDL of its own and no version marker. It does **not
 migrations: the two `ALTER TABLE` migrations in `CLAUDE.md` still cannot be expressed this way, and
 a store still cannot tell which schema generation it is talking to.
 
-**Support floor raised to PostgreSQL 15** alongside it. The schema only needs 13, so this is a
-support policy rather than a technical limit — 13 is past community end-of-life and 14 follows in
-November 2026. An older server is warned about, not rejected. `Postgres15Backend` was added to the
-TCK service file so the floor is exercised; before it, the compliance run covered 17 and 18 only
-while the documentation promised 13+.
+**Support floor raised to PostgreSQL 16** alongside it, and `Postgres16Backend` added to the TCK
+service file so the floor is actually exercised. Before that, the compliance run covered 17 and 18
+only while the documentation promised 13+.
 
-That backend paid for itself immediately: **the library did not work on PostgreSQL 15 at all.** The
-conditional append builds `INSERT … SELECT * FROM ( VALUES … )` with no alias on the subquery, which
-PostgreSQL only made optional in 16. Every conditional append — so every DCB consistency check, the
-central operation of this store — failed on 15 with `VALUES in FROM must have an alias`, 18 TCK
-scenarios plus the performance test. The fix is the two words `AS new_events`; nothing references the
-alias. Worth stating plainly: the 13+ support claim in the documentation had never been true for any
-version below 16, and nothing in the build could have said so.
+Adding a floor backend paid for itself on its first run: **the library had never worked below
+PostgreSQL 16 at all.** The conditional append builds `INSERT … SELECT * FROM ( VALUES … )` with no
+alias on the subquery, which PostgreSQL only made optional in 16. Every conditional append — so every
+DCB consistency check, the central operation of this store — failed on 15 with `VALUES in FROM must
+have an alias`: 18 TCK scenarios plus the performance test. The alias (`AS new_events`) is in place
+and is kept even though the floor no longer requires it; nothing references it.
+
+So 16 is both the oldest version with a support life worth committing to (13 went end-of-life in
+November 2025, 14 follows in November 2026, 15 in November 2027) and the oldest version this library
+has ever actually run on. An older server is warned about rather than rejected — a hard failure would
+turn a library upgrade into an outage — but the warning is the only thing standing behind versions
+nothing tests.
 
 ### Step 2 — A: a prefixed version table with ordered steps
 
@@ -337,6 +341,6 @@ Two things briefing 11 does have to do:
    exists to avoid. `PostgresSchemaDriftTest.testTriggerDriftIsRepairedByEnsure` will not catch that;
    it asserts repair, not that a correct trigger is left alone.
 2. **Check the transition-table syntax against the floor.** `REFERENCING NEW TABLE AS …` is
-   PostgreSQL 10+, so it is fine at 15, and `Postgres15Backend` now runs the TCK against the floor.
+   PostgreSQL 10+, so it is fine at 16, and `Postgres16Backend` now runs the TCK against the floor.
 
 Option A is not on briefing 11's critical path and should not block it.

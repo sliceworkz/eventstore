@@ -494,19 +494,19 @@ public class PostgresSchemaDriftTest {
 	 * FUNCTION} — so it is worth running against the floor and not only against the newest releases.
 	 */
 	@Nested
-	class OnPostgres15 extends Tests {
+	class OnPostgres16 extends Tests {
 
-		OnPostgres15 ( ) { super(PostgresContainer.IMAGE_PG15); }
+		OnPostgres16 ( ) { super(PostgresContainer.IMAGE_PG16); }
 
 		@BeforeAll
 		public static void setUpBeforeAll ( ) {
-			PostgresContainer.start(PostgresContainer.IMAGE_PG15);
+			PostgresContainer.start(PostgresContainer.IMAGE_PG16);
 		}
 
 		@AfterAll
 		public static void tearDownAfterAll ( ) {
-			PostgresContainer.stop(PostgresContainer.IMAGE_PG15);
-			PostgresContainer.cleanup(PostgresContainer.IMAGE_PG15);
+			PostgresContainer.stop(PostgresContainer.IMAGE_PG16);
+			PostgresContainer.cleanup(PostgresContainer.IMAGE_PG16);
 		}
 	}
 

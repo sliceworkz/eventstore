@@ -1124,10 +1124,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 				}
 				sqlBuilder.append(valuesRowFragment);
 			}
-			// The alias is required: PostgreSQL only made it optional for a FROM-clause subquery in 16,
-			// and without it every conditional append fails on 15 with "VALUES in FROM must have an
-			// alias". Nothing references the alias — the rows are consumed positionally by SELECT * —
-			// so naming it costs nothing and keeps the statement valid on the oldest supported version.
+			// PostgreSQL made the alias optional for a FROM-clause subquery in 16, so it is not strictly
+			// required at the current support floor. It is kept because omitting it is what made every
+			// conditional append fail on 15 and older with "VALUES in FROM must have an alias" — the bug
+			// that went unnoticed for as long as nothing ran below 17. Nothing references the alias; the
+			// rows are consumed positionally by SELECT *.
 			sqlBuilder.append(") AS new_events ");
 
 			List<Object> parameters = new ArrayList<>();

@@ -439,7 +439,7 @@ separate JVMs.
 
 The Postgres backends are `Postgres17Backend` and `Postgres18Backend`; the shared base
 `AbstractPostgresBackend` is abstract on purpose, so no class name can be read as "PostgreSQL,
-unspecified version". `AbstractPostgresBackend.forImage("postgres:16")` covers a version with no
+unspecified version". `AbstractPostgresBackend.forImage("postgres:15")` covers a version with no
 dedicated class (the image tag becomes the backend name, so the version still shows in reports).
 
 **Test Structure:**
@@ -569,16 +569,18 @@ can pass all of it and still violate the boundary in production.
     serialization failures and a third of the throughput, with disjoint boundaries falsely conflicting
     because the planner's choice (seq scan → relation-level `SIRead` lock) decides the granularity.
   - No DDL change, so no migration: the lock is entirely in the write path.
-- **Oldest supported PostgreSQL is 15** (`Builder.OLDEST_SUPPORTED_MAJOR_VERSION`). The schema itself only
-  needs 13 — `xid8`, `pg_current_xact_id()` — so the floor is a support policy, not a technical limit: 13
-  went end-of-life in November 2025 and 14 follows in November 2026. An older server is **warned about,
-  not rejected**, because nothing is known to break on it and a hard failure would turn a library upgrade
-  into an outage. `Postgres15Backend` is in the TCK service file so the floor is actually exercised;
-  before it was added the compliance run covered 17 and 18 only while the docs promised 13+ — and the
-  library did not in fact work on anything below 16: the conditional append's `SELECT * FROM ( VALUES … )`
-  carried no alias, which PostgreSQL only made optional for FROM-clause subqueries in 16, so **every**
-  conditional append failed on 15 with `VALUES in FROM must have an alias`. It is `AS new_events` now.
-  That is what an untested support claim is worth, and why the floor backend earns its CI minute
+- **Oldest supported PostgreSQL is 16** (`Builder.OLDEST_SUPPORTED_MAJOR_VERSION`). The schema itself only
+  needs 13 — `xid8`, `pg_current_xact_id()` — but 16 is both the oldest version with a support life worth
+  committing to (13 went end-of-life in November 2025, 14 follows in November 2026, 15 in November 2027)
+  and the oldest this library has ever actually worked on. The docs previously promised 13+ while the
+  compliance run covered 17 and 18 only, and adding a floor backend showed the claim had never held: the
+  conditional append's `SELECT * FROM ( VALUES … )` carried no alias, which PostgreSQL only made optional
+  for FROM-clause subqueries in 16, so **every** conditional append — every DCB consistency check — failed
+  on 15 and older with `VALUES in FROM must have an alias`. The alias (`AS new_events`) is there now and is
+  kept even though 16 does not need it. An older server is **warned about, not rejected**: a hard failure
+  would turn a library upgrade into an outage, and the warning names the version. `Postgres16Backend` is in
+  the TCK service file so the floor is actually exercised — that is what an untested support claim is worth,
+  and why the floor backend earns its CI minute
 - **`ENSURE` brings functions and triggers up to date; tables, columns and indexes are only ever created.**
   The functions are `CREATE OR REPLACE`d and each trigger is compared against the shape this release wants
   (`tgtype` plus target function, in a `DO $$` block) and recreated only when it differs — so wrong timing,

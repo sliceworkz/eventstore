@@ -18,10 +18,10 @@
 package org.sliceworkz.eventstore.testing.backend;
 
 /**
- * {@link AbstractPostgresBackend} pinned to PostgreSQL 15, with the no-argument constructor a
+ * {@link AbstractPostgresBackend} pinned to PostgreSQL 16, with the no-argument constructor a
  * {@code ServiceLoader} needs.
  * <p>
- * PostgreSQL 15 is the oldest major version the library supports, which is the whole reason this
+ * PostgreSQL 16 is the oldest major version the library supports, which is the whole reason this
  * backend exists: a support claim nothing runs against is a claim, not a fact. Before it was added,
  * the compliance run covered 17 and 18 only while the documentation promised considerably older
  * versions.
@@ -29,11 +29,11 @@ package org.sliceworkz.eventstore.testing.backend;
  * Like {@link Postgres17Backend} it has no native {@code uuidv7()} and so exercises
  * {@code PostgresLegacyEventStorageImpl}.
  */
-public class Postgres15Backend extends AbstractPostgresBackend {
+public class Postgres16Backend extends AbstractPostgresBackend {
 
-	/** Creates the backend for {@link PostgresContainer#IMAGE_PG15}. */
-	public Postgres15Backend ( ) {
-		super(PostgresContainer.IMAGE_PG15);
+	/** Creates the backend for {@link PostgresContainer#IMAGE_PG16}. */
+	public Postgres16Backend ( ) {
+		super(PostgresContainer.IMAGE_PG16);
 	}
 
 }

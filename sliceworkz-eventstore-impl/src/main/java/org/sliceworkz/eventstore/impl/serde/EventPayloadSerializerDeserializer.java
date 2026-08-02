@@ -18,7 +18,6 @@
 package org.sliceworkz.eventstore.impl.serde;
 
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 import org.sliceworkz.eventstore.events.EventType;
@@ -110,23 +109,6 @@ public interface EventPayloadSerializerDeserializer {
 	 * @return true if this serializer can deserialize the event type, false otherwise
 	 */
 	boolean canDeserialize(String eventTypeName);
-
-	/**
-	 * Returns every stored event name this serializer answers to, mapped to the class that claimed it.
-	 * <p>
-	 * Includes both canonical names and the read-only aliases declared by
-	 * {@link org.sliceworkz.eventstore.events.EventName#aliases()}. Raw mode registers no types and returns
-	 * an empty map.
-	 * <p>
-	 * Event names are global to a storage, not scoped to a stream, so this is what lets a store notice that
-	 * two different classes have claimed the same name on two different streams -- a collision that is
-	 * otherwise entirely silent.
-	 *
-	 * @return the registered event names and their classes (never null)
-	 */
-	default Map<String,Class<?>> registeredEventTypes ( ) {
-		return Map.of();
-	}
 
 	/**
 	 * Registers current domain event types for serialization/deserialization.

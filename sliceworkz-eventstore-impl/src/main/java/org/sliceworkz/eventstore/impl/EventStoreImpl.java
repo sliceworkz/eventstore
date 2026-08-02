@@ -29,7 +29,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -68,6 +68,7 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 
@@ -161,6 +162,64 @@ public class EventStoreImpl implements EventStore {
 	private final Set<EventStreamImpl<?>> subscribedStreams = ConcurrentHashMap.newKeySet();
 
 	/**
+	 * The payload serializers this store has built so far, one per distinct pair of event root class
+	 * sets. Shared by every stream opened with the same mapping.
+	 * <p>
+	 * A serde is by far the expensive part of {@link #getEventStream}: its constructor builds two
+	 * Jackson {@code JsonMapper}s and registering the root classes walks the sealed hierarchy
+	 * reflectively, instantiating an {@code Upcast} per {@code @LegacyEvent}. Building one costs
+	 * roughly 20µs and 40KB, but the mappers matter far more than that suggests — Jackson caches its
+	 * per-type serializers and deserializers <em>inside the mapper</em>, so a serde built per call
+	 * hands every stream a cold cache and makes the first serialize of each record type re-run bean
+	 * introspection. Measured on a 24-record hierarchy, that turns a query through a freshly obtained
+	 * stream into roughly four times the work of the same query through a stream that is kept.
+	 * Sharing the serde is what lets those caches warm up once.
+	 * <p>
+	 * Only the serde is shared, never the {@link EventStreamImpl}. A stream carries subscriber lists
+	 * and a subscribed flag, so handing the same instance to two callers would make one caller's
+	 * {@code close()} end the other's subscriptions; a serde has no lifecycle at all. It is written
+	 * once, inside {@link #serdeFor}, and only read afterwards — the two Jackson mappers are immutable
+	 * and thread-safe, and the type maps are never touched again after registration — so publishing it
+	 * through this map is safe.
+	 * <p>
+	 * Held per store rather than statically: the key references {@code Class} objects, and a static
+	 * cache would pin their class loaders for the life of the JVM. Its size is bounded by the number of
+	 * distinct root class sets the application opens streams with, which is a property of the code
+	 * rather than of the traffic.
+	 */
+	private final ConcurrentHashMap<SerdeKey, EventPayloadSerializerDeserializer> serdes = new ConcurrentHashMap<>();
+
+	/**
+	 * The highest appended event position per meter tag set, one holder shared by every stream that
+	 * meters under those tags.
+	 * <p>
+	 * This exists because {@code sliceworkz.eventstore.append.position} is a gauge, and a gauge cannot
+	 * be re-registered: Micrometer keeps the first registration for a given name and tags and ignores
+	 * every later one. A per-stream holder therefore left only the very first stream's gauge live, and
+	 * — since Micrometer references gauge state weakly — the series went permanently {@code NaN} as
+	 * soon as that one stream was collected, which in the documented per-operation usage is almost
+	 * immediately. Keeping the holder here, and registering the gauge exactly once against it, makes
+	 * every stream sharing those tags report into the series that is actually being observed.
+	 */
+	private final ConcurrentHashMap<io.micrometer.core.instrument.Tags, AtomicLong> highestAppendedPositions = new ConcurrentHashMap<>();
+
+	/**
+	 * Identifies a payload serializer by the mappings it was built from, which is everything that
+	 * distinguishes one from another.
+	 * <p>
+	 * The {@link EventStreamId} deliberately plays no part: the same stream can be opened with
+	 * different event root classes, and two streams sharing a mapping can share a serde whatever their
+	 * ids. The sets are copied on the way in, so a caller mutating the set it passed cannot corrupt the
+	 * key of an already-cached entry.
+	 */
+	private record SerdeKey ( Set<Class<?>> eventRootClasses, Set<Class<?>> historicalEventRootClasses ) {
+		SerdeKey {
+			eventRootClasses = Set.copyOf(eventRootClasses);
+			historicalEventRootClasses = Set.copyOf(historicalEventRootClasses);
+		}
+	}
+
+	/**
 	 * How long {@link #close()} waits for each notification executor to finish before logging and
 	 * moving on. The tasks are short-lived listener callbacks, so this only covers a listener that
 	 * ignores interruption.
@@ -248,18 +307,50 @@ public class EventStoreImpl implements EventStore {
 			throw new EventStorageClosedException("event store on storage '%s' is closed".formatted(eventStorage.name()));
 		}
 
-		EventPayloadSerializerDeserializer serde;
-		if ( eventRootClasses != null && eventRootClasses.size() > 0 ) {
-			// use typed event payloads, mapped to Java objects
-			serde = EventPayloadSerializerDeserializer.typed();
-			eventRootClasses.forEach(serde::registerEventTypes);
-			historicalEventRootClasses.forEach(serde::registerLegacyEventTypes);
-		} else {
-			// no type mappings, all events payload will be String type
-			serde = EventPayloadSerializerDeserializer.raw();
+		return new EventStreamImpl<EVENT_TYPE> ( eventStorage, eventStreamId, serdeFor(eventRootClasses, historicalEventRootClasses) );
+	}
+
+	/**
+	 * Returns this store's serde for the given mappings, building it on first use.
+	 * <p>
+	 * See {@link #serdes} for why it is shared rather than built per call, and why sharing it is safe
+	 * where sharing a stream would not be. A root class set that fails to register — a non-sealed
+	 * interface, a duplicate event name, a {@code @LegacyEvent} without an upcaster — leaves nothing
+	 * cached, so the same call fails the same way next time instead of the failure being remembered.
+	 */
+	private EventPayloadSerializerDeserializer serdeFor ( Set<Class<?>> eventRootClasses, Set<Class<?>> historicalEventRootClasses ) {
+		if ( eventRootClasses == null || eventRootClasses.isEmpty() ) {
+			// no type mappings, all event payloads will be String type
+			return serdes.computeIfAbsent(new SerdeKey(Set.of(), Set.of()), key -> EventPayloadSerializerDeserializer.raw());
 		}
-		
-		return new EventStreamImpl<EVENT_TYPE> ( eventStorage, eventStreamId, serde );
+		// use typed event payloads, mapped to Java objects
+		return serdes.computeIfAbsent(new SerdeKey(eventRootClasses, historicalEventRootClasses), key -> {
+			EventPayloadSerializerDeserializer serde = EventPayloadSerializerDeserializer.typed();
+			key.eventRootClasses().forEach(serde::registerEventTypes);
+			key.historicalEventRootClasses().forEach(serde::registerLegacyEventTypes);
+			return serde;
+		});
+	}
+
+	/**
+	 * Returns the holder backing {@code sliceworkz.eventstore.append.position} for the given tags,
+	 * registering the gauge against it the first time those tags are seen.
+	 * <p>
+	 * See {@link #highestAppendedPositions} for why the holder outlives the stream that asks for it.
+	 * The gauge is registered with a strong reference so that it survives even if this map is ever
+	 * given a weaker retention policy, and reads {@code NaN} until something is actually appended,
+	 * which is what {@link Long#MIN_VALUE} stands in for.
+	 */
+	private AtomicLong highestAppendedPositionFor ( io.micrometer.core.instrument.Tags baseTags ) {
+		return highestAppendedPositions.computeIfAbsent(baseTags, tags -> {
+			AtomicLong holder = new AtomicLong(Long.MIN_VALUE);
+			Gauge.builder("sliceworkz.eventstore.append.position", holder,
+						h -> { long value = h.get(); return value == Long.MIN_VALUE ? Double.NaN : (double) value; })
+				.tags(tags)
+				.strongReference(true)
+				.register(meterRegistry);
+			return holder;
+		});
 	}
 
 	class EventStreamImpl<EVENT_TYPE> implements EventStream<EVENT_TYPE>, EventStoreListener {
@@ -281,7 +372,12 @@ public class EventStoreImpl implements EventStore {
 		private Timer timerAppend;
 
 		private final io.micrometer.core.instrument.Tags baseTags;
-		private final AtomicReference<Long> gaugeHighestEventPosition = new AtomicReference<>();
+
+		/**
+		 * Backs {@code sliceworkz.eventstore.append.position}. Owned by the store and shared with every
+		 * other stream metering under the same tags — see {@link EventStoreImpl#highestAppendedPositions}.
+		 */
+		private final AtomicLong gaugeHighestEventPosition;
 
 		private final List<EventStreamEventuallyConsistentAppendListener> eventuallyConsistentSubscribers = new CopyOnWriteArrayList<>();
 		private final List<EventStreamConsistentAppendListener<EVENT_TYPE>> consistentSubscribers = new CopyOnWriteArrayList<>();
@@ -317,8 +413,9 @@ public class EventStoreImpl implements EventStore {
 			this.timerQuery = meterRegistry.timer("sliceworkz.eventstore.query.duration", baseTags);
 			this.timerAppend = meterRegistry.timer("sliceworkz.eventstore.append.duration", baseTags);
 
-			// register gauge for highest event position
-			meterRegistry.gauge("sliceworkz.eventstore.append.position", baseTags, gaugeHighestEventPosition, ref->{Long val = ref.get(); return val != null ? val.doubleValue() : Double.NaN;});
+			// pick up the shared holder for the highest event position, registering its gauge if this is
+			// the first stream to meter under these tags
+			this.gaugeHighestEventPosition = highestAppendedPositionFor(baseTags);
 
 			// increment number of stream objects created
 			meterRegistry.counter("sliceworkz.eventstore.stream.create", baseTags).increment();
@@ -523,7 +620,7 @@ public class EventStoreImpl implements EventStore {
 					.map(Event::reference)
 					.mapToLong(EventReference::position)
 					.max()
-					.ifPresent(maxPosition -> gaugeHighestEventPosition.updateAndGet(current -> current==null?maxPosition:Math.max(current, maxPosition)));
+					.ifPresent(maxPosition -> gaugeHighestEventPosition.updateAndGet(current -> Math.max(current, maxPosition)));
 
 				// ... and dispatch events directly back to the kernel for update of consistent readmodels etc...
 				LOGGER.debug("Notifying {} consistent clients of stream {} about append of {} events", consistentSubscribers.size(), streamToAppendTo, appendedEvents.size());

@@ -1394,7 +1394,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 					}
 				}
 
-				if ( appendCriteria.expectedLastEventReference() != null && appendCriteria.expectedLastEventReference().isPresent()  ) {
+				if ( appendCriteria.expectedLastEventReference().isPresent() ) {
 
 					// Look for events after the expected last one, over the same (tx, position) order
 					// readers see and EventReference.happenedAfter defines. See addCursorBoundary: on a

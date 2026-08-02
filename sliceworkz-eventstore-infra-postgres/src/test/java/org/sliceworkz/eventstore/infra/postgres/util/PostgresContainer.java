@@ -25,6 +25,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -78,10 +79,7 @@ public class PostgresContainer {
 	}
 
 	public static DataSource dataSource ( String image ) {
-		PostgreSQLContainer container = CONTAINERS.get(image);
-		if ( container == null ) {
-			throw new IllegalStateException("PostgresContainer.start(\"" + image + "\") was not called");
-		}
+		PostgreSQLContainer container = container(image);
 		HikariConfig config = new HikariConfig();
 		config.setUsername(container.getUsername());
 		config.setPassword(container.getPassword());
@@ -99,6 +97,96 @@ public class PostgresContainer {
 		if ( dataSource != null && !dataSource.isClosed() ) {
 			dataSource.close();
 		}
+	}
+
+	/**
+	 * A pool for another database and another role in the same container, <em>not</em> tracked in the
+	 * per-image slot {@link #dataSource(String)} uses — the caller closes what it gets.
+	 * <p>
+	 * Needed by tests that manipulate database-scoped state, an installed extension above all: the
+	 * shared {@code integration-tests-db} carries the schemas of every other test in the JVM, and
+	 * dropping {@code btree_gin} there would take their combined stream+tags index with it. Such a test
+	 * creates its own database with {@link #createDatabase} and works in there.
+	 *
+	 * @param image    the container to connect to
+	 * @param database a database in that container, e.g. one made by {@link #createDatabase}
+	 * @param username the role to connect as, e.g. one made by {@link #createRole}
+	 * @param password that role's password
+	 * @return a pool the caller is responsible for closing
+	 */
+	public static HikariDataSource dataSource ( String image, String database, String username, String password ) {
+		HikariConfig config = new HikariConfig();
+		config.setUsername(username);
+		config.setPassword(password);
+		config.setJdbcUrl(jdbcUrl(image, database));
+		return new HikariDataSource(config);
+	}
+
+	/** JDBC url for another database in the given container, as the superuser's url minus its database. */
+	public static String jdbcUrl ( String image, String database ) {
+		return "jdbc:postgresql://" + container(image).getHost() + ":"
+			+ container(image).getFirstMappedPort() + "/" + database;
+	}
+
+	/**
+	 * Creates a database in the given container, dropping any leftover of the same name first.
+	 * <p>
+	 * {@code CREATE DATABASE} cannot run inside a transaction block, so this deliberately uses a plain
+	 * autocommit connection rather than going through a pool with a transaction on it.
+	 */
+	public static void createDatabase ( String image, String database ) throws SQLException {
+		asSuperuser(image, statement -> {
+			statement.execute("DROP DATABASE IF EXISTS " + database);
+			statement.execute("CREATE DATABASE " + database);
+		});
+	}
+
+	/**
+	 * Creates a login role, dropping any leftover of the same name first. Roles are cluster-wide, so
+	 * the name has to be unique across every test sharing a container, not just within a database.
+	 */
+	public static void createRole ( String image, String role, String password ) throws SQLException {
+		asSuperuser(image, statement -> {
+			statement.execute("DROP ROLE IF EXISTS " + role);
+			statement.execute("CREATE ROLE " + role + " LOGIN PASSWORD '" + password + "'");
+		});
+	}
+
+	/** Runs statements as the container's superuser, against its default database. */
+	public static void asSuperuser ( String image, SqlWork work ) throws SQLException {
+		asSuperuser(image, container(image).getJdbcUrl(), work);
+	}
+
+	/**
+	 * Runs statements as the container's superuser, against a named database — schema-level and
+	 * extension-level work has to happen inside the database it concerns, unlike a {@code GRANT} on the
+	 * database itself, which can be issued from anywhere in the cluster.
+	 */
+	public static void asSuperuserIn ( String image, String database, SqlWork work ) throws SQLException {
+		asSuperuser(image, jdbcUrl(image, database), work);
+	}
+
+	private static void asSuperuser ( String image, String url, SqlWork work ) throws SQLException {
+		PostgreSQLContainer container = container(image);
+		try ( Connection connection = DriverManager.getConnection(
+					url, container.getUsername(), container.getPassword());
+			  Statement statement = connection.createStatement() ) {
+			work.run(statement);
+		}
+	}
+
+	/** Statements to run on a connection this helper owns. */
+	@FunctionalInterface
+	public interface SqlWork {
+		void run ( Statement statement ) throws SQLException;
+	}
+
+	private static PostgreSQLContainer container ( String image ) {
+		PostgreSQLContainer container = CONTAINERS.get(image);
+		if ( container == null ) {
+			throw new IllegalStateException("PostgresContainer.start(\"" + image + "\") was not called");
+		}
+		return container;
 	}
 
 	/**

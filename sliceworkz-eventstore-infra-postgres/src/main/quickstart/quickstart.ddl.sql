@@ -86,7 +86,50 @@ CREATE TABLE IF NOT EXISTS events (
 	-- btree_gin extension to index the scalar stream columns alongside the tag array.
 	-- NB: GIN cannot serve ORDER BY event_position, so the B-tree indexes are kept for
 	-- ordered stream replay; this index is additive, for stream-scoped tag lookups.
-	CREATE EXTENSION IF NOT EXISTS btree_gin;
+	--
+	-- Guarded rather than a bare CREATE EXTENSION IF NOT EXISTS. Both reasons concern only the very
+	-- first start against a database that does not have the extension yet -- afterwards this is a
+	-- catalog read that issues no DDL at all -- but on that first start the whole script is one
+	-- transaction, so a failure here rolls the entire schema back and the store does not come up.
+	--
+	-- Privileges. btree_gin is trusted (since PostgreSQL 13), so no superuser is needed -- but
+	-- installing it requires CREATE on the *database*, which is a different privilege from CREATE on
+	-- the schema. The ordinary locked-down setup (GRANT CREATE ON SCHEMA app TO app_role, nothing on
+	-- the database) is therefore a role that creates every other object in this script and fails on
+	-- this one statement, with a bare "permission denied to create extension" as the only clue. The
+	-- pre-check is what makes the DBA-installs-it-once split work: an unprivileged role runs this
+	-- script forever after without touching the extension. The handler makes the remaining case name
+	-- its two remedies instead of leaving them to be deduced.
+	--
+	-- Concurrency. An extension is database-scoped, while the schema advisory lock the caller holds is
+	-- keyed on the table prefix -- so two stores with *different* prefixes starting together are not
+	-- serialized against each other here, and race on pg_extension_name_index exactly as the tables
+	-- used to race on pg_type_typname_nsp_index before that lock existed. duplicate_object (the
+	-- extension appeared between the check and the CREATE) and unique_violation (the raw catalog
+	-- conflict) both mean the same harmless thing: someone else has just installed it. By the time
+	-- either surfaces the winner has committed -- a conflicting catalog insert blocks until it does --
+	-- so the opclasses the index below needs are visible to this transaction.
+	DO $ext$ BEGIN
+	  IF NOT EXISTS ( SELECT 1 FROM pg_extension WHERE extname = 'btree_gin' ) THEN
+	    BEGIN
+	      CREATE EXTENSION btree_gin;
+	    EXCEPTION
+	      WHEN duplicate_object OR unique_violation THEN
+	        NULL;
+	      WHEN insufficient_privilege THEN
+	        RAISE EXCEPTION 'The eventstore requires the btree_gin extension, and this role may not create it'
+	          USING ERRCODE = 'insufficient_privilege',
+	                DETAIL  = 'btree_gin is a trusted extension, so no superuser is involved, but creating it '
+	                          'requires CREATE on the current database -- a different privilege from CREATE on '
+	                          'the schema. That is why this role can create every other object in the event '
+	                          'store schema and not this one. It is needed for the combined stream+tags GIN '
+	                          'index, which schema validation requires.',
+	                HINT    = 'Either have a DBA run "CREATE EXTENSION btree_gin;" in this database once, after '
+	                          'which this schema script needs no extra privilege at any later start, or grant '
+	                          'the privilege with "GRANT CREATE ON DATABASE <database> TO <role>;".';
+	    END;
+	  END IF;
+	END $ext$;
 	CREATE INDEX IF NOT EXISTS idx_events_stream_tags ON events USING GIN (
 	    stream_context,
 	    stream_purpose,

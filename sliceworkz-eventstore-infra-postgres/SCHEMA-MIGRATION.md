@@ -311,6 +311,25 @@ only a `NOTICE … skipping`. So the DBA-installs-once / app-runs-unprivileged s
 today for that line, which softens review item 14 considerably. It is still worth splitting the
 extension out so a `VALIDATE`-only app never issues DDL at all.
 
+> **Update: the extension statement is now guarded, and two things the correction above missed have
+> been fixed with it.** Re-measured on the PostgreSQL 16 floor:
+>
+> - The privilege that matters is `CREATE` on the **database**, and the deployment that trips over it
+>   is not an exotic one: `GRANT CREATE ON SCHEMA app TO app_role` with nothing on the database is a
+>   role that creates every table, index, function and trigger in `ensure-schema.sql` and fails on this
+>   single statement. Since §2's fix made the scripts one transaction, that failure rolls the whole
+>   schema back — the store does not start, having created nothing, on a bare "permission denied".
+> - The per-prefix schema advisory lock from §2 does **not** serialize this statement, because an
+>   extension is database-scoped. Two stores with different prefixes starting together on a database
+>   without `btree_gin` race on `pg_extension_name_index` — the same class of catalog race §2 fixed for
+>   tables, reproduced here as `duplicate key value violates unique constraint "pg_extension_name_index"`.
+>
+> `ensure-schema.sql` now pre-checks `pg_extension` (so the installed case issues no DDL at all and
+> logs no `NOTICE`, which is the "split it out" ask above), swallows `duplicate_object` /
+> `unique_violation` as a concurrent installer, and turns `insufficient_privilege` into an error naming
+> both remedies. `PostgresBtreeGinPrivilegeTest` covers all of it; the postgres README carries the
+> privilege table. A `VALIDATE`/`NONE` app still issues no DDL, as before.
+
 For the split deployment (app runs `NONE` or `VALIDATE`, a DBA applies DDL) the mechanism must emit
 its steps as a script a DBA can apply. The project already has exactly this wiring: the
 `quickstart.ddl.sql` DBA script is **generated at build time** from `ensure-schema.sql` by the

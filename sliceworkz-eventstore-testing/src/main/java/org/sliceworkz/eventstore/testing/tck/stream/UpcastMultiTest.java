@@ -106,6 +106,44 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 		assertEquals(CurrentEvent.CustomerChurned.class, events.get(3).data().getClass());
 	}
 
+	/**
+	 * A limit counts stored events, and upcasting is what makes that observable.
+	 * <p>
+	 * The limit is what the storage query is given — a SQL {@code LIMIT} on a SQL backend — so it is
+	 * spent before an upcaster has run. Position 1 upcasts into two events and position 2 into none,
+	 * so reading one stored event returns two events, and reading two returns two as well. Neither
+	 * equals the limit, and both are correct: trimming the first case would return a fragment of a
+	 * stored event and leave a cursor pointing into its middle, and padding the second would mean
+	 * reading past what the caller asked for.
+	 * <p>
+	 * Pinned rather than merely documented because it is the kind of behaviour a future "fix" looks
+	 * reasonable: re-applying the limit to the enriched events would satisfy the phrase "at most n
+	 * events" and break {@code Projector}'s cursor, which counts stored events to decide when a batch
+	 * has exhausted the stream.
+	 */
+	@ForEachBackend
+	void testLimitCountsStoredEventsNotUpcastedOnes() {
+		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
+
+		// one stored event read (position 1), which upcasts into CustomerRegistered + AddressRecorded
+		List<Event<CurrentEvent>> fromOne = stream.query(EventQuery.matchAll().limit(1)).toList();
+		assertEquals(2, fromOne.size(), "a stored event upcasting into two returns both");
+		assertEquals(CurrentEvent.CustomerRegistered.class, fromOne.get(0).data().getClass());
+		assertEquals(CurrentEvent.AddressRecorded.class, fromOne.get(1).data().getClass());
+
+		// two stored events read (positions 1 and 2); position 2 upcasts into nothing
+		List<Event<CurrentEvent>> fromTwo = stream.query(EventQuery.matchAll().limit(2)).toList();
+		assertEquals(2, fromTwo.size(), "a stored event upcasting into nothing contributes nothing");
+		assertEquals(CurrentEvent.CustomerRegistered.class, fromTwo.get(0).data().getClass());
+		assertEquals(CurrentEvent.AddressRecorded.class, fromTwo.get(1).data().getClass());
+
+		// three stored events read: position 3 upcasts one-to-one and takes the count to three
+		assertEquals(3, stream.query(EventQuery.matchAll().limit(3)).count());
+
+		// a caller who needs exactly n events limits the returned stream, on events already read
+		assertEquals(1, stream.query(EventQuery.matchAll().limit(1)).limit(1).count());
+	}
+
 	@ForEachBackend
 	void testForwardQueryFilteredEventTypesIncludeUpcasted() {
 		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();

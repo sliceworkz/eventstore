@@ -172,7 +172,7 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 *
 	 * @param query the query criteria specifying which events to retrieve and in which direction
 	 * @param cursor optional reference for pagination (after for forward, before for backward), null to start from the beginning/end
-	 * @param limit maximum number of events to return (overrides the query's own limit)
+	 * @param limit how many stored events to read (overrides the query's own limit); see {@link #query(EventQuery)} for why that is not always the number of events returned
 	 * @param storedEventCursorTracker callback invoked with each raw stored event's reference before upcasting, useful for advancing cursors past events that upcast to zero enriched events
 	 * @return a Stream of events matching the query criteria
 	 * @see EventQuery
@@ -188,7 +188,7 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 *
 	 * @param query the query criteria specifying which events to retrieve and in which direction
 	 * @param cursor optional reference for pagination (after for forward, before for backward), null to start from the beginning/end
-	 * @param limit maximum number of events to return (overrides the query's own limit)
+	 * @param limit how many stored events to read (overrides the query's own limit); see {@link #query(EventQuery)} for why that is not always the number of events returned
 	 * @return a Stream of events matching the query criteria
 	 * @see EventQuery
 	 * @see Limit
@@ -198,17 +198,28 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	}
 
 	/**
-	 * Queries events from the stream starting from a specific cursor reference.
+	 * Queries events from the stream starting from a specific cursor reference, respecting the query's
+	 * own direction and limit.
 	 * <p>
-	 * Convenience method for paginated queries without an explicit limit.
-	 * The direction is determined by the query ({@link EventQuery#backwards()}).
+	 * Convenience method for paginated queries. The direction comes from the query
+	 * ({@link EventQuery#backwards()}) and so does the limit ({@link EventQuery#limit(long)}), exactly
+	 * as for {@link #query(EventQuery)} — a cursor says where to start reading, not how much to read.
+	 * To override the query's own limit, pass one explicitly through
+	 * {@link #query(EventQuery, EventReference, Limit)}, or {@link Limit#none()} there to read to the
+	 * end of the stream.
+	 * <p>
+	 * This overload used to substitute {@link Limit#none()} for the query's limit, which made the
+	 * natural way to page — {@code query(q.limit(500), cursor)} — an unbounded read of everything past
+	 * the cursor: fetched from storage and held in heap, since a storage query materialises its whole
+	 * result set before returning it. It degraded silently, the caller still receiving its first 500
+	 * events, having paid for all of them.
 	 *
-	 * @param query the query criteria specifying which events to retrieve and in which direction
+	 * @param query the query criteria specifying which events to retrieve, in which direction, and how many
 	 * @param cursor optional reference for pagination, null to start from the beginning/end
 	 * @return a Stream of events matching the query criteria
 	 */
 	default Stream<Event<DOMAIN_EVENT_TYPE>> query ( EventQuery query, EventReference cursor ) {
-		return query(query, cursor, Limit.none());
+		return query(query, cursor, query.limit());
 	}
 
 	/**
@@ -216,7 +227,16 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * <p>
 	 * If the query has a backward direction (via {@link EventQuery#backwards()}), events are returned
 	 * in reverse chronological order. If the query has a limit (via {@link EventQuery#limit(long)}),
-	 * at most that many events are returned. Otherwise, returns all events in forward order.
+	 * that many events are read from storage. Otherwise, returns all events in forward order.
+	 * <p>
+	 * <b>A limit counts stored events, which is what upcasting makes visible.</b> It is what the
+	 * storage query is given, so it bounds the work and the memory — that is its job. Ordinarily it is
+	 * also the number of events you get back, because a stored event yields exactly one. Where an
+	 * {@link org.sliceworkz.eventstore.events.Upcast @Upcast} method turns one stored event into
+	 * several, or into none, the count returned is not the count read: {@code limit(1)} over a stored
+	 * event that upcasts into two returns both — truncating them would hand back half of one stored
+	 * event and leave a cursor pointing into its middle. Read it as "read n stored events", not as
+	 * "return at most n events".
 	 *
 	 * @param query the query criteria specifying which events to retrieve
 	 * @return a Stream of events matching the query criteria

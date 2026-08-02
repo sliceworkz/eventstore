@@ -423,10 +423,25 @@ public class EventStoreImpl implements EventStore {
 			meterQuery.increment(); // one query done
 			QueryDirection direction = query.isBackwards() ? QueryDirection.BACKWARD : QueryDirection.FORWARD;
 			EventFilter originalFilter = query.filter();
-			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query),Optional.of(eventStreamId), cursor, limit, direction)
+
+			// Time the storage fetch itself, and nothing else. The pipeline built on top of it -- peek,
+			// upcasting, filtering -- is lazy, so wrapping the whole expression in timerQuery.record(...)
+			// would time the construction of that pipeline rather than any work: microseconds, whatever
+			// the query costs. It happens to report the fetch today only because every backend
+			// materialises its whole result set before returning (EventStorage.query is eager by
+			// contract), which puts the fetch inside the supplier by accident rather than by design.
+			// Measuring the storage call explicitly says what the metric means and keeps it saying it if
+			// a backend ever streams its result set instead.
+			// Deserialisation and upcasting are deliberately outside this timer: they happen per element
+			// as the caller consumes, are counted separately by sliceworkz.eventstore.query.event, and
+			// are the caller's pace, not the store's.
+			Stream<StoredEvent> storedEvents =
+				timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query), Optional.of(eventStreamId), cursor, limit, direction));
+
+			return storedEvents
 				.peek(se -> storedEventCursorTracker.accept(se.reference()))
 				.flatMap(se->enrichAfterQuery(se, direction))
-				.filter(e->originalFilter.matches(e)));
+				.filter(e->originalFilter.matches(e));
 		}
 
 		private Stream<Event<EVENT_TYPE>> enrichAfterQuery ( StoredEvent storedEvent, QueryDirection direction ) {

@@ -264,34 +264,23 @@ half of that.
 ## 3b. Upgrading an existing eventstore
 
 **This is not a fresh-stores-only change.** Point the current version at a database an older release
-created and, on the default `ENSURE`, it upgrades in place. `PostgresSchemaUpgradeTest` starts from
-`legacy-ensure-schema.sql` — a database shaped the way an older release built it, with events already
-in it — and asserts the whole outcome on PG16 and PG18.
+created and, on the default `ENSURE`, it upgrades in place: existing events are untouched, the notify
+functions are replaced with this release's bodies, the triggers are verified and recreated only if
+their shape differs, and objects a newer release added (`idx_events_stream_tags`,
+`idx_events_stream_idempotency`) are created.
 
-**What the upgrade does:**
+**What it does not do** is anything needing `ALTER TABLE` — still the manual list in `CLAUDE.md`. Two
+of those survive an upgrade: the pre-alignment `stream_purpose DEFAULT ''`, and the old table-wide
+`UNIQUE (idempotency_key)`. The second is worth knowing before upgrading: the new per-stream partial
+unique index is created *alongside* the old constraint, so idempotency ends up correct but stricter
+than intended until the constraint is dropped — a key reused on a different stream is still rejected.
 
-| | |
-|---|---|
-| existing events | untouched — nothing is dropped, moved or rewritten |
-| the notify functions | replaced with this release's bodies |
-| the triggers | verified, and recreated only if their shape differs |
-| objects a newer release added | created (e.g. `idx_events_stream_tags`, `idx_events_stream_idempotency`) |
-| notifications | verified working end to end after the upgrade |
+**Two caveats:**
 
-**What it does not do** — anything needing `ALTER TABLE`, which is still the manual list in
-`CLAUDE.md`. The test asserts these two survive the upgrade rather than pretending otherwise:
-
-- the pre-alignment `stream_purpose DEFAULT ''`;
-- the old table-wide `UNIQUE (idempotency_key)`. Note the new per-stream partial unique index *is*
-  created alongside it, so idempotency is correct but stricter than intended until the old
-  constraint is dropped — a key reused on a different stream is still rejected.
-
-**Two caveats worth stating plainly:**
-
-- **`VALIDATE` and `NONE` do not upgrade anything.** They never run the script, so a deployment
-  pinned to either keeps the old function bodies and gets no repair — and validation cannot see that,
-  which is the gap in §1.4. For the DBA-applies-DDL split, the regenerated `quickstart.ddl.sql` is
-  the script to apply.
+- **`VALIDATE` and `NONE` upgrade nothing.** They never run the script, so a deployment pinned to
+  either keeps the old function bodies and gets no repair — and validation cannot see that, which is
+  the gap in §1.4. For the DBA-applies-DDL split, the regenerated `quickstart.ddl.sql` is the script
+  to apply.
 - **A trigger whose shape has drifted is recreated**, which takes a brief `ACCESS EXCLUSIVE` lock on
   the events table. On the first start after this upgrade that is a one-off; afterwards the
   comparison finds the trigger correct and takes no lock at all.

@@ -72,7 +72,21 @@ package org.sliceworkz.eventstore.stream;
  */
 public record EventStreamId ( String context, String purpose ) {
 
-	private static final String DEFAULT_PURPOSE = "default";
+	/**
+	 * The purpose given to a stream created with {@link #forContext(String)} or {@link #defaultPurpose()}:
+	 * {@code "default"}.
+	 * <p>
+	 * Public because it is a storage-level value, not only a Java one. It is what the library binds into
+	 * the {@code stream_purpose} column for a context that never sets a purpose, and what the PostgreSQL
+	 * DDL carries as that column's default — so anyone writing rows by hand, building an interop layer,
+	 * or querying the events table directly needs the exact string this library agrees on rather than a
+	 * literal copied from documentation.
+	 * <p>
+	 * Note that this is a compile-time constant, so a reference to it is inlined into the calling class.
+	 * Changing it would therefore not be a drop-in replacement — but it is stored data (see the
+	 * {@code stream_purpose} notes in the project documentation), so it is not going to change.
+	 */
+	public static final String DEFAULT_PURPOSE = "default";
 
 	/**
 	 * Creates an EventStreamId for a specific context with the default purpose.
@@ -242,6 +256,10 @@ public record EventStreamId ( String context, String purpose ) {
 	 * <p>
 	 * This is useful for scenarios where a general stream (e.g., "customer#anyPurpose") needs to
 	 * append events to specific instances (e.g., "customer#123").
+	 * <p>
+	 * A wildcard concretizes nothing: {@code forContext("customer").anyPurpose()} does <em>not</em>
+	 * concretize itself, or any other wildcard-purpose stream, because it supplies no purpose to fill
+	 * the other's wildcard in with.
 	 *
 	 * @param otherStreamId the stream ID to check if this stream concretizes it
 	 * @return true if this stream ID concretizes the other stream ID, false otherwise
@@ -249,7 +267,10 @@ public record EventStreamId ( String context, String purpose ) {
 	 */
 	public boolean concretizes ( EventStreamId otherStreamId ) {
 		// if the other stream is of the type "<businessObject>#<anyPurpose>" and this is "<businessObject>#<id>"
-		return otherStreamId.isAnyPurpose() && !otherStreamId.isAnyContext() && otherStreamId.context().equals(this.context);
+		return otherStreamId.isAnyPurpose()
+				&& !otherStreamId.isAnyContext()
+				&& !this.isAnyPurpose()                             // a wildcard fills in nothing
+				&& otherStreamId.context().equals(this.context);
 	}
 
 	/**

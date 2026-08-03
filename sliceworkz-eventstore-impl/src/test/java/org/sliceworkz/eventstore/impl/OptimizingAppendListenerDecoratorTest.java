@@ -32,7 +32,7 @@ import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
 
-class OptimizingApendListenerDecoratorTest {
+class OptimizingAppendListenerDecoratorTest {
 
 	/**
 	 * Enough pairs to catch a lost notification; the window is narrow, so the count is what makes this
@@ -59,7 +59,7 @@ class OptimizingApendListenerDecoratorTest {
 		try ( ExecutorService notifiers = Executors.newVirtualThreadPerTaskExecutor() ) {
 			for ( int pair = 0; pair < RACING_PAIRS; pair++ ) {
 				AtomicReference<EventReference> seenByDelegate = new AtomicReference<>();
-				OptimizingApendListenerDecorator decorator = new OptimizingApendListenerDecorator(
+				OptimizingAppendListenerDecorator decorator = new OptimizingAppendListenerDecorator(
 						reference -> {
 							seenByDelegate.set(reference);
 							return reference;
@@ -105,7 +105,7 @@ class OptimizingApendListenerDecoratorTest {
 			deliveries.incrementAndGet();
 			return reference;
 		};
-		OptimizingApendListenerDecorator decorator = new OptimizingApendListenerDecorator(counting);
+		OptimizingAppendListenerDecorator decorator = new OptimizingAppendListenerDecorator(counting);
 
 		EventReference reference = reference(1);
 		decorator.eventsAppended(reference);
@@ -125,7 +125,7 @@ class OptimizingApendListenerDecoratorTest {
 		CountDownLatch releaseListener = new CountDownLatch(1);
 		AtomicReference<EventReference> seenByDelegate = new AtomicReference<>();
 
-		OptimizingApendListenerDecorator decorator = new OptimizingApendListenerDecorator(reference -> {
+		OptimizingAppendListenerDecorator decorator = new OptimizingAppendListenerDecorator(reference -> {
 			listenerEntered.countDown();
 			try {
 				releaseListener.await(5, TimeUnit.SECONDS);

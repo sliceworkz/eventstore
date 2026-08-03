@@ -1009,7 +1009,7 @@ can pass all of it and still violate the boundary in production.
   function emits one `pg_notify` per distinct `(stream_context, stream_purpose)` in the transition table,
   carrying that stream's maximum over the total `(event_tx, event_position)` order. It was `FOR EACH ROW`,
   which meant a 1000-event append queued 1000 notifications and an import chunk queued 5000 — all but one
-  per stream discarded by `OptimizingApendListenerDecorator` after being built as JSON, written to the
+  per stream discarded by `OptimizingAppendListenerDecorator` after being built as JSON, written to the
   cluster-wide async queue, sent over the wire, parsed by Jackson and fanned out to every listener.
   Measured on the PG16 floor, a 100k-row insert: the notification count falls from 100.000 to exactly 1,
   and trigger time roughly halves — 1230ms to 460ms on one run, 808ms to 369ms on another (the absolute
@@ -1050,7 +1050,9 @@ can pass all of it and still violate the boundary in production.
   every listener has consumed, so a stalled listener does make usage accumulate monotonically across
   transactions — but from a base low enough that the amplification was a throughput and latency problem,
   not a correctness-of-operation one.
-- `stream_purpose` defaults to `'default'` in the DDL, matching `EventStreamId.DEFAULT_PURPOSE`. On a database created before this alignment (default was `''`), operators doing raw SQL inserts should run `ALTER TABLE <prefix>events ALTER COLUMN stream_purpose SET DEFAULT 'default';` — no data migration is needed since all events written through the library bind the purpose explicitly
+- `stream_purpose` defaults to `'default'` in the DDL, matching `EventStreamId.DEFAULT_PURPOSE` — a public
+  constant, so an interop layer can bind the same value the library does rather than copy the literal out
+  of this file. On a database created before this alignment (default was `''`), operators doing raw SQL inserts should run `ALTER TABLE <prefix>events ALTER COLUMN stream_purpose SET DEFAULT 'default';` — no data migration is needed since all events written through the library bind the purpose explicitly
 - **Idempotency keys are scoped per event stream (context + purpose), not per storage/table.** Uniqueness is enforced by the partial unique index `idx_events_stream_idempotency` on `(stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL` (schema validation requires it), so the same key used on two unrelated streams does not collide and dedup behaviour does not depend on how storage instances / prefixes are wired at runtime. The `idempotency_key` is persisted and surfaced on `StoredEvent` when reading (it is not exposed on the public `Event` record). A duplicate append is still silently ignored (returns an empty result). On a database created before this change (when `idempotency_key` had a table-wide `UNIQUE`), migrate with: `ALTER TABLE <prefix>events DROP CONSTRAINT <prefix>events_idempotency_key_key; CREATE UNIQUE INDEX <prefix>idx_events_stream_idempotency ON <prefix>events (stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL;` — no data migration is needed
   - **The duplicate is recognised by the index the server names, never by the message text.** Both the
     append and the import path go through `isIdempotencyKeyViolation`, which pairs SQLSTATE 23505 with

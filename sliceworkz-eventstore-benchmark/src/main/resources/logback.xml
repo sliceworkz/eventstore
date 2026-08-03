@@ -20,26 +20,6 @@
 -->
 <configuration>
 
-    <!-- loki appender -->
-    <appender name="LOKI" class="com.github.loki4j.logback.Loki4jAppender">
-        <http>
-            <url>http://localhost:3100/loki/api/v1/push</url>
-	        <!--<useProtobufApi>true</useProtobufApi>-->
-        </http>
-            <labels>
-            	app=eventstore-benchmark
-            </labels>
-            <message>
-                <pattern>[%thread] %-5level %logger{36} - %msg%n</pattern>
-            </message>
-        <structuredMetadata>off</structuredMetadata>
-	    <batch>
-	        <!--<maxItems>1</maxItems>-->
-	        <timeoutMs>1000</timeoutMs>
-	    </batch>
-	    <verbose>true</verbose>
-    </appender>
-    
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
             <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
@@ -55,11 +35,6 @@
 
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>
-        <!-- ENABLE THIS TO SEND LOGFILES TO LOKI (RUN VIA `docker compose up`) 
-        <appender-ref ref="LOKI"/>
-        -->
-    </root>  
-    
-    <logger name="com.github.loki4j" level="WARN"/>
+    </root>
 
 </configuration>

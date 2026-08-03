@@ -63,7 +63,6 @@ import org.sliceworkz.eventstore.spi.EventStorage.QueryDirection;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
-import org.sliceworkz.eventstore.stream.EventStreamConsistentAppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentBookmarkListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -85,7 +84,7 @@ import io.micrometer.core.instrument.Timer;
  * <ul>
  *   <li>Creating and managing {@link EventStream} instances for specific stream IDs</li>
  *   <li>Coordinating event serialization/deserialization via {@link EventPayloadSerializerDeserializer}</li>
- *   <li>Managing consistent and eventually consistent event notifications to subscribers</li>
+ *   <li>Managing eventually consistent event and bookmark notifications to subscribers</li>
  *   <li>Supporting both typed (Java objects) and raw (JSON) event payload modes</li>
  *   <li>Handling optimistic locking and DCB (Dynamic Consistency Boundary) compliance</li>
  * </ul>
@@ -496,7 +495,6 @@ public class EventStoreImpl implements EventStore {
 		private final AtomicLong gaugeHighestEventPosition;
 
 		private final List<EventStreamEventuallyConsistentAppendListener> eventuallyConsistentSubscribers = new CopyOnWriteArrayList<>();
-		private final List<EventStreamConsistentAppendListener<EVENT_TYPE>> consistentSubscribers = new CopyOnWriteArrayList<>();
 		private final List<EventStreamEventuallyConsistentBookmarkListener> bookmarkSubscribers = new CopyOnWriteArrayList<>();
 
 		/**
@@ -600,7 +598,6 @@ public class EventStoreImpl implements EventStore {
 				subscribedStreams.remove(this);
 			}
 			eventuallyConsistentSubscribers.clear();
-			consistentSubscribers.clear();
 			bookmarkSubscribers.clear();
 		}
 
@@ -609,20 +606,6 @@ public class EventStoreImpl implements EventStore {
 			checkStoreNotClosed();
 			this.eventuallyConsistentSubscribers.add(new OptimizingApendListenerDecorator(eventuallyConsistentSubscriber));
 			subscribeToStorage();
-		}
-
-		/**
-		 * {@inheritDoc}
-		 * <p>
-		 * Deliberately does <em>not</em> register with the storage. A consistent subscriber is notified
-		 * inline by {@link #append}, on this very object, and never through a storage notification — so it
-		 * needs no registration, and it cannot be orphaned by one being absent: reaching it at all means
-		 * holding this stream to append through.
-		 */
-		@Override
-		public void subscribe(EventStreamConsistentAppendListener<EVENT_TYPE> consistentSubscriber) {
-			checkStoreNotClosed();
-			this.consistentSubscribers.add(consistentSubscriber);
 		}
 
 		@Override
@@ -744,43 +727,13 @@ public class EventStoreImpl implements EventStore {
 				throw optimisticLockingException;
 			}
 
-			// ... and dispatch events directly back to the kernel for update of consistent readmodels etc.
-			// Deliberately outside the try above: the events are committed by now, so nothing that happens
-			// here can change whether the append succeeded, and nothing here may be mistaken for the
-			// storage's own OptimisticLockingException.
-			LOGGER.debug("Notifying {} consistent clients of stream {} about append of {} events", consistentSubscribers.size(), streamToAppendTo, appendedEvents.size());
-			consistentSubscribers.forEach(s->notifyQuietly(s, appendedEvents, streamToAppendTo));
-
+			// The appended events -- typed, with their assigned references -- are handed straight back to
+			// the caller, which is the whole of this store's read-your-own-writes story. There is no
+			// inline listener to dispatch to: anything wanting to react to an append on the appending
+			// thread is code the appending caller can simply write after this call returns.
 			return appendedEvents;
 		}
 
-		/**
-		 * Notifies one consistent subscriber, containing its failure.
-		 * <p>
-		 * The subscriber runs after {@link org.sliceworkz.eventstore.spi.EventStorage#append} has returned,
-		 * which means after the events are durably committed and visible to every other reader — there is no
-		 * transaction left to join, nothing to roll back and nothing to veto. Letting its exception out of
-		 * {@code append} would therefore report a write that succeeded as one that failed, and the caller
-		 * would not even receive the events it just wrote: a retry loop reacting to that appends them twice.
-		 * <p>
-		 * Containing it per subscriber also keeps one broken subscriber from starving the others. They are
-		 * notified in subscription order, and the notification a failing subscriber missed is the only one
-		 * lost — the ones after it are still delivered, which is exactly the guarantee a "consistent"
-		 * subscriber exists for.
-		 * <p>
-		 * A subscriber that needs to signal its failure to the appending caller can do so directly: it runs
-		 * on that caller's thread, in that caller's call stack, and is that caller's own code.
-		 */
-		private void notifyQuietly ( EventStreamConsistentAppendListener<EVENT_TYPE> subscriber, List<Event<EVENT_TYPE>> appendedEvents, EventStreamId streamAppendedTo ) {
-			try {
-				subscriber.eventsAppended(appendedEvents);
-			} catch ( Exception e ) {
-				LOGGER.error("consistent append listener {} failed handling {} event(s) appended to stream {}; "
-						+ "the append itself succeeded and the events are stored: {}",
-						subscriber.getClass().getName(), appendedEvents.size(), streamAppendedTo, e.getMessage(), e);
-			}
-		}
-		
 		/**
 		 * Traces back all current event types to their legacy historical ones, so a full query is done on older and newer ones
 		 */
@@ -847,9 +800,9 @@ public class EventStoreImpl implements EventStore {
 		 * projection that throws throws out of here, so the projection stops advancing with nothing in the
 		 * application's own logs to say why.
 		 * <p>
-		 * Logging it and moving on matches what the storage backends already do with their own listeners,
-		 * and what {@link #notifyQuietly(EventStreamConsistentAppendListener, List, EventStreamId)} does on
-		 * the append thread: a listener's failure is never anybody else's failure, and never silent.
+		 * Logging it and moving on matches what the storage backends already do with their own listeners
+		 * ({@code notifyQuietly} in the in-memory backends, and the Postgres LISTEN/NOTIFY monitors): a
+		 * listener's failure is never anybody else's failure, and never silent.
 		 */
 		private void notifyQuietly ( EventStreamEventuallyConsistentAppendListener subscriber, EventReference atLeastUntil ) {
 			try {

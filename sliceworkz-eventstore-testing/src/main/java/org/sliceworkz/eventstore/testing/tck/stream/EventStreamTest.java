@@ -45,7 +45,6 @@ import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.testing.AbstractEventStoreTest;
 import org.sliceworkz.eventstore.testing.ForEachBackend;
-import org.sliceworkz.eventstore.testing.tck.mock.MockConsistentAppendListener;
 import org.sliceworkz.eventstore.testing.tck.mock.MockDomainEventWithNonSealedInterface.DomainEventPartOfMockDomainEventWithNonSealedInterface;
 import org.sliceworkz.eventstore.testing.tck.mock.MockDomainEventWithNonSealedInterface;
 import org.sliceworkz.eventstore.testing.tck.mock.MockEventuallyConsistentAppendListener;
@@ -58,7 +57,6 @@ import org.sliceworkz.eventstore.testing.tck.mockdomain.OtherMockDomainEvent.Ano
 import org.sliceworkz.eventstore.testing.tck.mockdomain.OtherMockDomainEvent;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
-import org.sliceworkz.eventstore.stream.EventStreamConsistentAppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
@@ -114,22 +112,16 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		EventStream<MockDomainEvent> s2 = eventStore().getEventStream(stream, MockDomainEvent.class);
 		EventStream<OtherMockDomainEvent> s3 = eventStore().getEventStream(otherStream, OtherMockDomainEvent.class);
 
-		MockConsistentAppendListener<MockDomainEvent> s1cal = new MockConsistentAppendListener<>();
+		// s1 and s2 are two handles on the *same* logical stream: a subscriber on either must hear about
+		// an append made through the other, which is what makes this a subscription to the stream rather
+		// than a callback on one caller's own writes
 		MockEventuallyConsistentAppendListener s1ecal = new MockEventuallyConsistentAppendListener();
-
-		s1.subscribe(s1cal);
 		s1.subscribe(s1ecal);
 
-		MockConsistentAppendListener<MockDomainEvent> s2cal = new MockConsistentAppendListener<>();
 		MockEventuallyConsistentAppendListener s2ecal = new MockEventuallyConsistentAppendListener();
-
-		s2.subscribe(s2cal);
 		s2.subscribe(s2ecal);
 
-		MockConsistentAppendListener<OtherMockDomainEvent> s3cal = new MockConsistentAppendListener<>();
 		MockEventuallyConsistentAppendListener s3ecal = new MockEventuallyConsistentAppendListener();
-
-		s3.subscribe(s3cal);
 		s3.subscribe(s3ecal);
 
 		// first append via the first stream instance ...
@@ -144,15 +136,12 @@ public class EventStreamTest extends AbstractEventStoreTest {
 			secondAppendRef.equals(s1ecal.lastReference()) && secondAppendRef.equals(s2ecal.lastReference());
 		waitBecauseOfEventualConsistency(bothEventualListenersNotifiedUpToSecondAppend);
 
-		assertEquals(2, s1cal.count());
 		assertTrue(s1ecal.count() >= 1); // at least once, up to twice depending on timing
 		assertEquals(secondAppendRef, s1ecal.lastReference());
 
-		assertEquals(0, s2cal.count());  // consistent listener not notified by other stream instance
-		assertTrue(s2ecal.count() >= 1); // eventually consistent listener is notified
+		assertTrue(s2ecal.count() >= 1); // the other handle on the same stream is notified too
 		assertEquals(secondAppendRef, s2ecal.lastReference());
 
-		assertEquals(0, s3cal.count());  // other stream, shouldn't be notified
 		assertNull(s3ecal.lastReference()); // other stream, shouldn't be notified
 
 		// ... now append via the other stream instance on the same logical stream
@@ -163,13 +152,9 @@ public class EventStreamTest extends AbstractEventStoreTest {
 			thirdAppendRef.equals(s1ecal.lastReference()) && thirdAppendRef.equals(s2ecal.lastReference());
 		waitBecauseOfEventualConsistency(bothEventualListenersNotifiedUpToThirdAppend);
 
-		assertEquals(2, s1cal.count());
 		assertEquals(thirdAppendRef, s1ecal.lastReference());
-
-		assertEquals(1, s2cal.count());
 		assertEquals(thirdAppendRef, s2ecal.lastReference());
 
-		assertEquals(0, s3cal.count());  // other stream, shouldn't be notified
 		assertNull(s3ecal.lastReference()); // other stream, shouldn't be notified
 
 		// ... and now append on another logical stream
@@ -179,13 +164,9 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		BooleanSupplier s3EventualListenerNotified = () -> fourthAppendRef.equals(s3ecal.lastReference());
 		waitBecauseOfEventualConsistency(s3EventualListenerNotified);
 
-		assertEquals(2, s1cal.count());  // other stream, shouldn't be notified
 		assertEquals(thirdAppendRef, s1ecal.lastReference()); // other stream, shouldn't be notified
-
-		assertEquals(1, s2cal.count());  // other stream, shouldn't be notified
 		assertEquals(thirdAppendRef, s2ecal.lastReference()); // other stream, shouldn't be notified
 
-		assertEquals(1, s3cal.count());
 		assertEquals(fourthAppendRef, s3ecal.lastReference());
 	}
 
@@ -460,23 +441,18 @@ public class EventStreamTest extends AbstractEventStoreTest {
 
 		SlowMockListener l = new SlowMockListener(100);
 
-		// make sure we're synchronously updated with the latest events
-		es.subscribe(new EventStreamConsistentAppendListener<MockDomainEvent>() {
-			@Override
-			public void eventsAppended(List<? extends Event<MockDomainEvent>> events) {
-				if ( events.getLast().reference().position() <= 4 ) { // assume we won't "query" the last one ...
-					l.mockLastQueried(events.getLast().reference());
-				}
-			}
-		});
-
 		es.subscribe(l);
 
-		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none()));
-		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("2"), Tags.none()));
-		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("3"), Tags.none()));
-		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("4"), Tags.none()));
-		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("5"), Tags.none()));
+		// the appending caller tells the listener how far it has already been brought up to date. This is
+		// what append's return value is for: the events are typed and carry their references, so reacting
+		// to your own write on the appending thread needs no subscription
+		for ( String payload : List.of("1", "2", "3", "4", "5") ) {
+			List<Event<MockDomainEvent>> appended =
+				es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent(payload), Tags.none()));
+			if ( appended.getLast().reference().position() <= 4 ) { // assume we won't "query" the last one ...
+				l.mockLastQueried(appended.getLast().reference());
+			}
+		}
 
 		await()
 			.atMost(Duration.ofMillis(5000))

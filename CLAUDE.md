@@ -365,9 +365,10 @@ stream owns is its subscriptions.
   clears the listeners; the handle stays usable for query, append and bookmark, and subscribing again
   re-registers it. A stream is a cheap per-operation handle, not a connection — there is nothing to
   protect by poisoning it. Idempotent, and closing a never-subscribed stream is a no-op.
-- **Consistent append listeners need no registration.** `EventStreamConsistentAppendListener` is called
-  inline by `append()` on the same object, never through a storage notification, so subscribing one
-  registers nothing. `close()` still discards it.
+- **There is only one kind of append listener, and it is eventually consistent.** To react to your own
+  append on the appending thread, nothing is subscribed: the typed events, with their assigned
+  references, are the return value of `append()`. See the listener section below for why the
+  inline-callback variant was removed rather than kept.
 - **What makes it cheap is that the expensive part is shared, not rebuilt.** `getEventStream` allocates a
   stream object and resolves ~10 Micrometer meters (a map lookup each, since Micrometer dedups by name +
   tags) — about **2µs and 1KB**. The payload serde is *not* rebuilt: `EventStoreImpl` caches one per
@@ -405,47 +406,52 @@ one that relies on that default, by asserting a closed stream becomes unreachabl
 notifications can catch it: a closed stream has already discarded its listeners, so it stays quiet whether
 or not the storage let go of it.
 
-### Listeners: what "consistent" promises, and what a listener failure costs
+### Listeners: one kind, eventually consistent, and what a failure costs
 
-**Neither listener runs in a transaction.** `EventStorage.append` commits before it returns — on Postgres
-the `COMMIT` is issued inside it, on the in-memory backends the events are in the log — and *then*
-`EventStreamImpl.append` calls the consistent subscribers. So a listener cannot join the append, be rolled
-back with it, or veto it: by the time it runs, the events are durable and every other reader can see them.
-The interface javadoc used to claim all three ("within the append transaction", "the same transaction
-context", "may affect the append operation"); it now describes what actually happens.
+**`append()` returns the events it wrote** — typed, with their assigned references, the same list the
+caller would otherwise have had to query back. That is the whole of this store's read-your-own-writes
+story, and it is why there is exactly one listener interface:
+`EventStreamEventuallyConsistentAppendListener`. To react to your own append on the appending thread,
+write the code after the call.
 
-- **"Consistent" means read-your-own-writes for the appending caller**, and nothing wider.
-  `EventStreamConsistentAppendListener` is notified only about appends made through *the very stream object
-  it was subscribed on* — not another handle on the same logical stream, not another process
-  (`EventStreamTest.testSubscribeListener` asserts exactly that). Streams are cheap per-operation handles,
-  so in practice it is a callback on your own writes, not a subscription. It is not even notified *first*:
-  the storage raises its own notification inside `append`, so the eventually-consistent listeners may
-  already be running when the consistent one is called. Nothing orders the two.
-- **A listener failure never fails the append, and never damages a bystander.** Both paths contain each
-  listener's exception, log it at ERROR and carry on to the next listener. On the append thread the
-  bystander is the appending caller: propagating told it a committed write had failed, and gave it no
-  events back, so a retry loop appended them a second time — the events cannot be un-appended, which is
-  what makes reporting failure a lie rather than a warning. On the notification thread the bystanders are
-  the other subscribers of that notification, which an escaping throwable skipped entirely.
-- **Every subscriber is offered every append**, in subscription order. A failure costs exactly one
-  delivery to one listener; the next append reaches it again. Nothing replays what it missed, so a listener
-  that must not lose progress belongs behind a `Projector` reading from a bookmark, not here.
-- **A listener that wants to tell its caller it failed still can.** A consistent listener runs on the
-  appending thread, in that caller's call stack, and is that caller's own code — catching inside the
-  listener and acting on it after `append` returns costs three lines and, unlike propagation, leaves the
-  caller holding the events it wrote.
-- **The eventually-consistent side had the sharper version of the same bug.** An exception out of
-  `eventsAppended` ended the whole notification task and surfaced on the virtual thread's
-  uncaught-exception handler: a bare stack trace on `System.err`, at no level, under no logger name,
-  attributed to nothing. `Projector.eventsAppended` calls `run()`, which rethrows a `ProjectorException`,
-  so the ordinary case — a projection that throws — was a read model that stopped advancing with nothing
-  in the application's own logs to say why. Same rule now applies there and to bookmark listeners, which
-  is also what the storage backends have always done with their own listeners (`notifyQuietly` in
-  `InMemoryEventStorageImpl`, and the Postgres LISTEN/NOTIFY monitors).
-- `AppendListenerFailureTest` in the TCK pins all of it per backend: the append succeeds and returns its
-  events, the event is in the stream afterwards, the listeners after a throwing one are still notified in
-  order, a listener that throws is notified again next time, and a throwing eventually-consistent listener
-  does not starve the one behind it.
+**There used to be a second one, `EventStreamConsistentAppendListener`, removed in 0.10.0.** Worth knowing
+why, because the reasoning generalises:
+
+- **It was an observer over a value the caller already held.** It was called inline by `append()` with the
+  *same list object* `append()` was about to return, so every use of it was a worse-spelled version of
+  using the return value: no `try/catch` around it, a registration to `close()`, and no ordering guarantee
+  against the eventually-consistent listeners.
+- **It was not a subscription to the stream.** It fired only for appends made through *the very stream
+  object* it was subscribed on — not another handle on the same logical stream, not another process. Since
+  streams are cheap per-operation handles, subscriber and appender had to be the same component, which is
+  exactly the case the return value covers.
+- **Its name outranked its javadoc.** Sitting next to `EventStreamEventuallyConsistentAppendListener` it
+  read as "the strong one", so it got picked for safety it never had — which is how its javadoc came to
+  promise a transaction ("within the append transaction", "the same transaction context", "may affect the
+  append operation"), none of which was ever true. There is no transaction at that point: `EventStorage.append`
+  commits before it returns, on Postgres by issuing the `COMMIT` inside it, in memory by having the events
+  in the log. Correcting the prose would have left the name making the same promise.
+- **Migration is mechanical**: `stream.subscribe((List<Event<E>> events) -> handle(events))` followed by
+  `stream.append(criteria, e)` becomes `handle(stream.append(criteria, e))`. Anything that must react to
+  appends made *elsewhere* was never served by it and wants the eventually-consistent listener.
+
+**A listener failure is never anybody else's failure, and never silent.** Each subscriber's exception is
+contained, logged at ERROR, and the next subscriber still gets the notification.
+
+- **The bystanders are the other subscribers.** An escaping throwable used to end the whole notification
+  task, so every subscriber after the failing one missed that append too.
+- **It used to be invisible as well.** The throwable surfaced on the virtual thread's uncaught-exception
+  handler: a bare stack trace on `System.err`, at no level, under no logger name, attributed to nothing.
+  `Projector.eventsAppended` calls `run()`, which rethrows a `ProjectorException`, so the ordinary case — a
+  projection that throws — was a read model that stopped advancing with nothing in the application's own
+  logs to say why. Bookmark listeners get the same containment.
+- This is what the storage backends have always done with their own listeners (`notifyQuietly` in
+  `InMemoryEventStorageImpl`, and the Postgres LISTEN/NOTIFY monitors), after the same bug there.
+- **Nothing replays what a failing listener missed.** It is notified again on the next append; the
+  notification it failed on is gone. A listener that must not lose progress belongs behind a `Projector`
+  reading from a bookmark.
+- `AppendListenerFailureTest` in the TCK pins it per backend: a throwing subscriber does not starve the one
+  behind it, and notifications keep arriving for both afterwards.
 
 ### Metrics: what the stream meters cost, and the cap on `purpose`
 

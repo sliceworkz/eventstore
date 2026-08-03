@@ -22,13 +22,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
-import org.sliceworkz.eventstore.stream.EventStreamConsistentAppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.testing.AbstractEventStoreTest;
 import org.sliceworkz.eventstore.testing.ForEachBackend;
@@ -46,16 +44,6 @@ public class EventStorePerformanceTest extends AbstractEventStoreTest {
 		EventStream<MockDomainEvent> eventStream = createEventStream();
 
 		List<? extends Event<? extends MockDomainEvent>> result = null;
-
-		AtomicInteger counter = new AtomicInteger();
-
-		eventStream.subscribe(new EventStreamConsistentAppendListener<MockDomainEvent>() {
-
-			@Override
-			public void eventsAppended(List<? extends Event<MockDomainEvent>> events) {
-				counter.incrementAndGet();
-			}
-		});
 
 		System.out.println("starting");
 
@@ -76,7 +64,6 @@ public class EventStorePerformanceTest extends AbstractEventStoreTest {
 		assertEquals(COUNT, result.iterator().next().reference().position());
 
 		System.out.println("ms                : " + ms);
-		System.out.println("counter (async)   : " + counter.get());
 		System.out.println("appended event/sec: " + eventsPerSecond);
 	}
 

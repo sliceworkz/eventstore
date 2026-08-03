@@ -299,8 +299,12 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * Subscribes to be notified when events are appended to this stream (eventually consistent).
 	 * <p>
 	 * This subscription provides eventual consistency guarantees - the listener may be notified
-	 * slightly after the append has completed. Useful for async processing where immediate
-	 * consistency is not required.
+	 * slightly after the append has completed, on a notification thread rather than the appending one.
+	 * It hears about every append to the stream, whoever made it.
+	 * <p>
+	 * To react to <em>your own</em> append on the appending thread, there is nothing to subscribe: the
+	 * typed events, with their assigned references, are the return value of
+	 * {@link EventSink#append(AppendCriteria, java.util.List)}.
 	 * <p>
 	 * Subscribing registers this source with the underlying storage, which then keeps it alive until
 	 * {@link #close()}. Close the source when the subscription is no longer wanted — see {@link #close()}.
@@ -309,21 +313,6 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * @see #close()
 	 */
 	void subscribe ( EventStreamEventuallyConsistentAppendListener listener );
-
-	/**
-	 * Subscribes to be notified when events are appended to this stream (strongly consistent).
-	 * <p>
-	 * This subscription provides strong consistency guarantees - the listener is notified
-	 * synchronously as part of the append operation. The listener receives the typed domain events.
-	 * <p>
-	 * Unlike the eventually consistent overloads, this needs no registration with the storage: the
-	 * listener is called inline by the append, so reaching it means holding this source anyway.
-	 * {@link #close()} still discards it.
-	 *
-	 * @param listener the listener to receive append notifications with typed events
-	 * @see #close()
-	 */
-	void subscribe ( EventStreamConsistentAppendListener<DOMAIN_EVENT_TYPE> listener );
 
 	/**
 	 * Subscribes to be notified when bookmarks are placed in this stream (eventually consistent).

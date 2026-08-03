@@ -36,8 +36,7 @@
  *
  * <h2>Event Subscriptions:</h2>
  * <ul>
- *   <li>{@link org.sliceworkz.eventstore.stream.EventStreamConsistentAppendListener} - Immediate notification with full events</li>
- *   <li>{@link org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener} - Delayed notification with reference only</li>
+ *   <li>{@link org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener} - Delayed notification with reference only, about every append to the stream</li>
  *   <li>{@link org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentBookmarkListener} - Notification on bookmark updates</li>
  * </ul>
  *
@@ -72,9 +71,14 @@
  *     // Concurrent modification detected - retry with fresh data
  * }
  *
- * // Subscribe to new events
- * stream.subscribe((EventStreamConsistentAppendListener<CustomerEvent>) events -> {
- *     events.forEach(event -> System.out.println("New event: " + event.data()));
+ * // React to your own append: the typed events are simply the return value
+ * List<Event<CustomerEvent>> appended = stream.append(AppendCriteria.none(), Event.of(...));
+ * appended.forEach(event -> System.out.println("New event: " + event.data()));
+ *
+ * // Subscribe to appends made by anyone, on any handle, in any process
+ * stream.subscribe((EventStreamEventuallyConsistentAppendListener) atLeastUntil -> {
+ *     // query the stream up to atLeastUntil and process what is new
+ *     return atLeastUntil;
  * });
  * }</pre>
  *

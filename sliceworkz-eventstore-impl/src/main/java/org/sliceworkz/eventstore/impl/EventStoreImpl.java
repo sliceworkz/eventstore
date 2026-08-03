@@ -64,7 +64,6 @@ import org.sliceworkz.eventstore.spi.EventStorage.QueryDirection;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
-import org.sliceworkz.eventstore.stream.EventStreamConsistentAppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentBookmarkListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -86,7 +85,7 @@ import io.micrometer.core.instrument.Timer;
  * <ul>
  *   <li>Creating and managing {@link EventStream} instances for specific stream IDs</li>
  *   <li>Coordinating event serialization/deserialization via {@link EventPayloadSerializerDeserializer}</li>
- *   <li>Managing consistent and eventually consistent event notifications to subscribers</li>
+ *   <li>Managing eventually consistent event and bookmark notifications to subscribers</li>
  *   <li>Supporting both typed (Java objects) and raw (JSON) event payload modes</li>
  *   <li>Handling optimistic locking and DCB (Dynamic Consistency Boundary) compliance</li>
  * </ul>
@@ -497,7 +496,6 @@ public class EventStoreImpl implements EventStore {
 		private final AtomicLong gaugeHighestEventPosition;
 
 		private final List<EventStreamEventuallyConsistentAppendListener> eventuallyConsistentSubscribers = new CopyOnWriteArrayList<>();
-		private final List<EventStreamConsistentAppendListener<EVENT_TYPE>> consistentSubscribers = new CopyOnWriteArrayList<>();
 		private final List<EventStreamEventuallyConsistentBookmarkListener> bookmarkSubscribers = new CopyOnWriteArrayList<>();
 
 		/**
@@ -601,7 +599,6 @@ public class EventStoreImpl implements EventStore {
 				subscribedStreams.remove(this);
 			}
 			eventuallyConsistentSubscribers.clear();
-			consistentSubscribers.clear();
 			bookmarkSubscribers.clear();
 		}
 
@@ -610,20 +607,6 @@ public class EventStoreImpl implements EventStore {
 			checkStoreNotClosed();
 			this.eventuallyConsistentSubscribers.add(new OptimizingAppendListenerDecorator(eventuallyConsistentSubscriber));
 			subscribeToStorage();
-		}
-
-		/**
-		 * {@inheritDoc}
-		 * <p>
-		 * Deliberately does <em>not</em> register with the storage. A consistent subscriber is notified
-		 * inline by {@link #append}, on this very object, and never through a storage notification — so it
-		 * needs no registration, and it cannot be orphaned by one being absent: reaching it at all means
-		 * holding this stream to append through.
-		 */
-		@Override
-		public void subscribe(EventStreamConsistentAppendListener<EVENT_TYPE> consistentSubscriber) {
-			checkStoreNotClosed();
-			this.consistentSubscribers.add(consistentSubscriber);
 		}
 
 		@Override
@@ -740,18 +723,18 @@ public class EventStoreImpl implements EventStore {
 					.mapToLong(EventReference::position)
 					.max()
 					.ifPresent(maxPosition -> gaugeHighestEventPosition.updateAndGet(current -> Math.max(current, maxPosition)));
-
-				// ... and dispatch events directly back to the kernel for update of consistent readmodels etc...
-				LOGGER.debug("Notifying {} consistent clients of stream {} about append of {} events", consistentSubscribers.size(), streamToAppendTo, appendedEvents.size());
-				consistentSubscribers.forEach(s->s.eventsAppended(appendedEvents));
 			} catch (OptimisticLockingException optimisticLockingException) {
 				meterAppendOptimisticLock.increment();
 				throw optimisticLockingException;
 			}
 
+			// The appended events -- typed, with their assigned references -- are handed straight back to
+			// the caller, which is the whole of this store's read-your-own-writes story: code reacting to
+			// an append on the appending thread is code that caller writes after this call returns.
+			// Subscribers hear about it through the storage notification, on a thread of their own.
 			return appendedEvents;
 		}
-		
+
 		/**
 		 * Traces back all current event types to their legacy historical ones, so a full query is done on older and newer ones
 		 */
@@ -788,7 +771,7 @@ public class EventStoreImpl implements EventStore {
 				// schedule for execution on different thread to notify/interrupt any waiting eventual consistent processors
 				submitOrDropIfClosed(executorServiceForEventAppends, ( ) -> {
 						LOGGER.debug("Notifying {} eventually consistent clients of stream {} about append up until at least {}", eventuallyConsistentSubscribers.size(), eventStreamId, newEventsInStore.atLeastUntil());
-						eventuallyConsistentSubscribers.stream().forEach(s->s.eventsAppended(newEventsInStore.atLeastUntil()));
+						eventuallyConsistentSubscribers.stream().forEach(s->notifyQuietly(s, newEventsInStore.atLeastUntil()));
 				});
 			}
 		}
@@ -803,8 +786,50 @@ public class EventStoreImpl implements EventStore {
 			// schedule for execution on different thread to notify/interrupt any waiting eventual consistent processors
 			submitOrDropIfClosed(executorServiceForBookmarkUpdates, ( ) -> {
 					LOGGER.debug("Notifying {} eventually consistent bookmark listeners on {} of update for {} to {}", bookmarkSubscribers.size(), eventStreamId, bookmarkPlaced.reader(), bookmarkPlaced.bookmark());
-					bookmarkSubscribers.stream().forEach(s->s.bookmarkUpdated(bookmarkPlaced.reader(), bookmarkPlaced.bookmark()));
+					bookmarkSubscribers.stream().forEach(s->notifyQuietly(s, bookmarkPlaced));
 			});
+		}
+
+		/**
+		 * Notifies one eventually consistent append subscriber, containing its failure.
+		 * <p>
+		 * Uncontained, the throwable does not merely end that subscriber's notification: it ends the whole
+		 * task, so every subscriber after it in the list misses this append too, and it surfaces on the
+		 * notification thread's uncaught-exception handler — a bare stack trace on {@code System.err}, at no
+		 * level, under no logger name, attributed to nothing. A {@link org.sliceworkz.eventstore.projection.Projector}
+		 * subscribed here is the ordinary case: its {@code eventsAppended} runs the projection, and a
+		 * projection that throws throws out of here, so the projection stops advancing with nothing in the
+		 * application's own logs to say why.
+		 * <p>
+		 * Logging it and moving on matches what the storage backends already do with their own listeners
+		 * ({@code notifyQuietly} in the in-memory backends, and the Postgres LISTEN/NOTIFY monitors): a
+		 * listener's failure is never anybody else's failure, and never silent.
+		 */
+		private void notifyQuietly ( EventStreamEventuallyConsistentAppendListener subscriber, EventReference atLeastUntil ) {
+			try {
+				subscriber.eventsAppended(atLeastUntil);
+			} catch ( Exception e ) {
+				// through the decorator every subscriber is wrapped in, so the name is one the caller recognises
+				EventStreamEventuallyConsistentAppendListener subscribed =
+					( subscriber instanceof OptimizingAppendListenerDecorator decorator ) ? decorator.delegate() : subscriber;
+				LOGGER.error("eventually consistent append listener {} failed handling the append notification up until at least {} on stream {}: {}",
+						subscribed.getClass().getName(), atLeastUntil, eventStreamId, e.getMessage(), e);
+			}
+		}
+
+		/**
+		 * Notifies one bookmark subscriber, containing its failure — see
+		 * {@link #notifyQuietly(EventStreamEventuallyConsistentAppendListener, EventReference)}, which this
+		 * exists for the same reasons. The bookmark executor is single-threaded, so an escaping throwable
+		 * additionally costs a thread, replaced by the pool.
+		 */
+		private void notifyQuietly ( EventStreamEventuallyConsistentBookmarkListener subscriber, BookmarkPlacedNotification bookmarkPlaced ) {
+			try {
+				subscriber.bookmarkUpdated(bookmarkPlaced.reader(), bookmarkPlaced.bookmark());
+			} catch ( Exception e ) {
+				LOGGER.error("bookmark listener {} failed handling the bookmark update for reader {} to {} on stream {}: {}",
+						subscriber.getClass().getName(), bookmarkPlaced.reader(), bookmarkPlaced.bookmark(), eventStreamId, e.getMessage(), e);
+			}
 		}
 
 		/**

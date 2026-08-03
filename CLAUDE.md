@@ -365,9 +365,9 @@ stream owns is its subscriptions.
   clears the listeners; the handle stays usable for query, append and bookmark, and subscribing again
   re-registers it. A stream is a cheap per-operation handle, not a connection — there is nothing to
   protect by poisoning it. Idempotent, and closing a never-subscribed stream is a no-op.
-- **Consistent append listeners need no registration.** `EventStreamConsistentAppendListener` is called
-  inline by `append()` on the same object, never through a storage notification, so subscribing one
-  registers nothing. `close()` still discards it.
+- **There is only one kind of append listener, and it is eventually consistent.** To react to your own
+  append on the appending thread, nothing is subscribed: the typed events, with their assigned
+  references, are the return value of `append()`.
 - **What makes it cheap is that the expensive part is shared, not rebuilt.** `getEventStream` allocates a
   stream object and resolves ~10 Micrometer meters (a map lookup each, since Micrometer dedups by name +
   tags) — about **2µs and 1KB**. The payload serde is *not* rebuilt: `EventStoreImpl` caches one per
@@ -404,6 +404,37 @@ backend written before it still compiles — and `EventStreamSubscriptionLifecyc
 one that relies on that default, by asserting a closed stream becomes unreachable. No count of delivered
 notifications can catch it: a closed stream has already discarded its listeners, so it stays quiet whether
 or not the storage let go of it.
+
+### Listeners: one kind, eventually consistent, and what a failure costs
+
+**`append()` returns the events it wrote** — typed, with their assigned references, the same list the
+caller would otherwise have had to query back. That is the whole of this store's read-your-own-writes
+story, and it is why there is exactly one listener interface:
+`EventStreamEventuallyConsistentAppendListener`. To react to your own append on the appending thread,
+write the code after the call.
+
+**No listener runs in a transaction, and none can veto an append.** `EventStorage.append` commits before
+it returns — on Postgres by issuing the `COMMIT` inside it, in memory by having the events in the log — so
+by the time anything is notified, the events are durable and every other reader can see them. A
+notification is an announcement, never a vote.
+
+**A listener failure is never anybody else's failure, and never silent.** Each subscriber's exception is
+contained, logged at ERROR, and the next subscriber still gets the notification.
+
+- **The bystanders are the other subscribers.** An escaping throwable used to end the whole notification
+  task, so every subscriber after the failing one missed that append too.
+- **It used to be invisible as well.** The throwable surfaced on the virtual thread's uncaught-exception
+  handler: a bare stack trace on `System.err`, at no level, under no logger name, attributed to nothing.
+  `Projector.eventsAppended` calls `run()`, which rethrows a `ProjectorException`, so the ordinary case — a
+  projection that throws — was a read model that stopped advancing with nothing in the application's own
+  logs to say why. Bookmark listeners get the same containment.
+- This is what the storage backends have always done with their own listeners (`notifyQuietly` in
+  `InMemoryEventStorageImpl`, and the Postgres LISTEN/NOTIFY monitors), after the same bug there.
+- **Nothing replays what a failing listener missed.** It is notified again on the next append; the
+  notification it failed on is gone. A listener that must not lose progress belongs behind a `Projector`
+  reading from a bookmark.
+- `AppendListenerFailureTest` in the TCK pins it per backend: a throwing subscriber does not starve the one
+  behind it, and notifications keep arriving for both afterwards.
 
 ### Metrics: what the stream meters cost, and the cap on `purpose`
 

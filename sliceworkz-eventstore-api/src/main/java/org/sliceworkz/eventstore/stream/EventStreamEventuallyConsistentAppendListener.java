@@ -22,18 +22,22 @@ import org.sliceworkz.eventstore.events.EventReference;
 /**
  * Listener interface for receiving eventually consistent notifications when events are appended to an event stream.
  * <p>
- * This listener provides asynchronous, eventually consistent notification of newly appended events. Unlike
- * {@link EventStreamConsistentAppendListener}, this listener receives only an {@link EventReference} indicating
- * the position of the last appended event, not the full event data. This makes it lightweight and suitable for
- * triggering asynchronous processing workflows.
+ * This listener provides asynchronous, eventually consistent notification of newly appended events. It receives
+ * only an {@link EventReference} indicating the position of the last appended event, not the full event data,
+ * which makes it lightweight and suitable for triggering asynchronous processing workflows. It is notified about
+ * every append to the stream, whoever made it — including appends made by another process.
  * <p>
  * The notification occurs asynchronously after the append operation has completed, providing eventual consistency
  * guarantees. This means:
  * <ul>
  *   <li>The listener is invoked after the append operation completes</li>
  *   <li>The listener receives only an event reference, not the actual events</li>
- *   <li>Processing occurs asynchronously, outside the append transaction</li>
- *   <li>Exceptions thrown by the listener do not affect the append operation</li>
+ *   <li>Processing occurs asynchronously, on a notification thread rather than the appending one</li>
+ *   <li>Exceptions thrown by the listener do not affect the append operation: they are logged at ERROR by
+ *       the event store, the remaining listeners are still notified, and the failing listener simply misses
+ *       that notification. It will be notified again on the next append, but nothing replays the one it
+ *       missed — a listener that must not lose progress should be driving a
+ *       {@link org.sliceworkz.eventstore.projection.Projector} from a bookmark</li>
  *   <li>There may be a delay between the append and the notification</li>
  * </ul>
  * <p>
@@ -49,8 +53,10 @@ import org.sliceworkz.eventstore.events.EventReference;
  * To process the actual events, query the stream starting after your last processed reference up to the
  * provided reference.
  * <p>
- * For immediate, transactional event processing with full event data, use
- * {@link EventStreamConsistentAppendListener} instead.
+ * To react to your <em>own</em> append on the appending thread, there is nothing to subscribe: the typed
+ * events, with their assigned references, are the return value of
+ * {@link EventSink#append(org.sliceworkz.eventstore.stream.AppendCriteria, java.util.List)}. Note that this
+ * listener does not run in a transaction either — by the time it is called the events are long committed.
  *
  * <h2>Example Usage:</h2>
  * <pre>{@code
@@ -91,7 +97,6 @@ import org.sliceworkz.eventstore.events.EventReference;
  * );
  * }</pre>
  *
- * @see EventStreamConsistentAppendListener
  * @see EventSource#subscribe(EventStreamEventuallyConsistentAppendListener)
  * @see EventStream
  * @see EventReference
@@ -116,8 +121,9 @@ public interface EventStreamEventuallyConsistentAppendListener {
 	 * <p>
 	 * Implementation notes:
 	 * <ul>
-	 *   <li>This method is called asynchronously, outside the append transaction</li>
-	 *   <li>Exceptions thrown by this method do not affect the append operation</li>
+	 *   <li>This method is called asynchronously, on a notification thread, after the events are committed</li>
+	 *   <li>Exceptions thrown by this method do not affect the append operation; they are logged at ERROR
+	 *       and the remaining listeners are still notified</li>
 	 *   <li>The reference represents at least the last appended event, possibly more</li>
 	 *   <li>Multiple appends may be batched into a single notification</li>
 	 *   <li>Process events by querying the stream with the provided reference as the upper bound</li>

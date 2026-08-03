@@ -1329,6 +1329,26 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 	}
 
+	/**
+	 * Appends events, pairing each {@code RETURNING} row with the input event at the same index.
+	 * <p>
+	 * Nothing promises that order — {@code RETURNING} is not in the SQL standard, and PostgreSQL
+	 * documents only "a row per row actually inserted". It holds because the {@code NOT EXISTS} below
+	 * is <em>uncorrelated</em>: it references the events table and bound parameters, never a column of
+	 * {@code new_events}. PostgreSQL therefore evaluates it once as an InitPlan and applies it as a
+	 * One-Time Filter over the VALUES list, and every node in that plan preserves order. Being
+	 * all-or-nothing is also what makes the {@code storedEvents.size() != events.size()} check below a
+	 * sound conflict detector — the statement inserts every row or none, never a subset.
+	 * <p>
+	 * Correlating that predicate with {@code new_events} would let the planner turn it into an
+	 * anti-join, which reorders and would silently mispair every event with another's id and position.
+	 * Note the rows would still carry ascending positions, since the reordering precedes the insert, so
+	 * a defensive monotonicity check would not catch it.
+	 * <p>
+	 * {@code importEvents} keys on the id it supplied instead, because {@code ON CONFLICT} makes its
+	 * result a subset of its input. That is not an option here: from PG18 the id comes from a
+	 * server-side {@code uuidv7()}, and {@code RETURNING} cannot return a source-only ordinal to key on.
+	 */
 	@Override
 	public List<StoredEvent> append(AppendCriteria appendCriteria, Optional<EventStreamId> streamId, List<EventToStore> events) {
 		checkNotClosed();

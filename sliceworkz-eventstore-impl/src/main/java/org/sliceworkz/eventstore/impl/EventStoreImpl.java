@@ -739,16 +739,46 @@ public class EventStoreImpl implements EventStore {
 					.mapToLong(EventReference::position)
 					.max()
 					.ifPresent(maxPosition -> gaugeHighestEventPosition.updateAndGet(current -> Math.max(current, maxPosition)));
-
-				// ... and dispatch events directly back to the kernel for update of consistent readmodels etc...
-				LOGGER.debug("Notifying {} consistent clients of stream {} about append of {} events", consistentSubscribers.size(), streamToAppendTo, appendedEvents.size());
-				consistentSubscribers.forEach(s->s.eventsAppended(appendedEvents));
 			} catch (OptimisticLockingException optimisticLockingException) {
 				meterAppendOptimisticLock.increment();
 				throw optimisticLockingException;
 			}
 
+			// ... and dispatch events directly back to the kernel for update of consistent readmodels etc.
+			// Deliberately outside the try above: the events are committed by now, so nothing that happens
+			// here can change whether the append succeeded, and nothing here may be mistaken for the
+			// storage's own OptimisticLockingException.
+			LOGGER.debug("Notifying {} consistent clients of stream {} about append of {} events", consistentSubscribers.size(), streamToAppendTo, appendedEvents.size());
+			consistentSubscribers.forEach(s->notifyQuietly(s, appendedEvents, streamToAppendTo));
+
 			return appendedEvents;
+		}
+
+		/**
+		 * Notifies one consistent subscriber, containing its failure.
+		 * <p>
+		 * The subscriber runs after {@link org.sliceworkz.eventstore.spi.EventStorage#append} has returned,
+		 * which means after the events are durably committed and visible to every other reader — there is no
+		 * transaction left to join, nothing to roll back and nothing to veto. Letting its exception out of
+		 * {@code append} would therefore report a write that succeeded as one that failed, and the caller
+		 * would not even receive the events it just wrote: a retry loop reacting to that appends them twice.
+		 * <p>
+		 * Containing it per subscriber also keeps one broken subscriber from starving the others. They are
+		 * notified in subscription order, and the notification a failing subscriber missed is the only one
+		 * lost — the ones after it are still delivered, which is exactly the guarantee a "consistent"
+		 * subscriber exists for.
+		 * <p>
+		 * A subscriber that needs to signal its failure to the appending caller can do so directly: it runs
+		 * on that caller's thread, in that caller's call stack, and is that caller's own code.
+		 */
+		private void notifyQuietly ( EventStreamConsistentAppendListener<EVENT_TYPE> subscriber, List<Event<EVENT_TYPE>> appendedEvents, EventStreamId streamAppendedTo ) {
+			try {
+				subscriber.eventsAppended(appendedEvents);
+			} catch ( Exception e ) {
+				LOGGER.error("consistent append listener {} failed handling {} event(s) appended to stream {}; "
+						+ "the append itself succeeded and the events are stored: {}",
+						subscriber.getClass().getName(), appendedEvents.size(), streamAppendedTo, e.getMessage(), e);
+			}
 		}
 		
 		/**
@@ -787,7 +817,7 @@ public class EventStoreImpl implements EventStore {
 				// schedule for execution on different thread to notify/interrupt any waiting eventual consistent processors
 				submitOrDropIfClosed(executorServiceForEventAppends, ( ) -> {
 						LOGGER.debug("Notifying {} eventually consistent clients of stream {} about append up until at least {}", eventuallyConsistentSubscribers.size(), eventStreamId, newEventsInStore.atLeastUntil());
-						eventuallyConsistentSubscribers.stream().forEach(s->s.eventsAppended(newEventsInStore.atLeastUntil()));
+						eventuallyConsistentSubscribers.stream().forEach(s->notifyQuietly(s, newEventsInStore.atLeastUntil()));
 				});
 			}
 		}
@@ -802,8 +832,50 @@ public class EventStoreImpl implements EventStore {
 			// schedule for execution on different thread to notify/interrupt any waiting eventual consistent processors
 			submitOrDropIfClosed(executorServiceForBookmarkUpdates, ( ) -> {
 					LOGGER.debug("Notifying {} eventually consistent bookmark listeners on {} of update for {} to {}", eventuallyConsistentSubscribers.size(), eventStreamId, bookmarkPlaced.reader(), bookmarkPlaced.bookmark());
-					bookmarkSubscribers.stream().forEach(s->s.bookmarkUpdated(bookmarkPlaced.reader(), bookmarkPlaced.bookmark()));
+					bookmarkSubscribers.stream().forEach(s->notifyQuietly(s, bookmarkPlaced));
 			});
+		}
+
+		/**
+		 * Notifies one eventually consistent append subscriber, containing its failure.
+		 * <p>
+		 * Uncontained, the throwable does not merely end that subscriber's notification: it ends the whole
+		 * task, so every subscriber after it in the list misses this append too, and it surfaces on the
+		 * notification thread's uncaught-exception handler — a bare stack trace on {@code System.err}, at no
+		 * level, under no logger name, attributed to nothing. A {@link org.sliceworkz.eventstore.projection.Projector}
+		 * subscribed here is the ordinary case: its {@code eventsAppended} runs the projection, and a
+		 * projection that throws throws out of here, so the projection stops advancing with nothing in the
+		 * application's own logs to say why.
+		 * <p>
+		 * Logging it and moving on matches what the storage backends already do with their own listeners,
+		 * and what {@link #notifyQuietly(EventStreamConsistentAppendListener, List, EventStreamId)} does on
+		 * the append thread: a listener's failure is never anybody else's failure, and never silent.
+		 */
+		private void notifyQuietly ( EventStreamEventuallyConsistentAppendListener subscriber, EventReference atLeastUntil ) {
+			try {
+				subscriber.eventsAppended(atLeastUntil);
+			} catch ( Exception e ) {
+				// through the decorator every subscriber is wrapped in, so the name is one the caller recognises
+				EventStreamEventuallyConsistentAppendListener subscribed =
+					( subscriber instanceof OptimizingApendListenerDecorator decorator ) ? decorator.delegate() : subscriber;
+				LOGGER.error("eventually consistent append listener {} failed handling the append notification up until at least {} on stream {}: {}",
+						subscribed.getClass().getName(), atLeastUntil, eventStreamId, e.getMessage(), e);
+			}
+		}
+
+		/**
+		 * Notifies one bookmark subscriber, containing its failure — see
+		 * {@link #notifyQuietly(EventStreamEventuallyConsistentAppendListener, EventReference)}, which this
+		 * exists for the same reasons. The bookmark executor is single-threaded, so an escaping throwable
+		 * additionally costs a thread, replaced by the pool.
+		 */
+		private void notifyQuietly ( EventStreamEventuallyConsistentBookmarkListener subscriber, BookmarkPlacedNotification bookmarkPlaced ) {
+			try {
+				subscriber.bookmarkUpdated(bookmarkPlaced.reader(), bookmarkPlaced.bookmark());
+			} catch ( Exception e ) {
+				LOGGER.error("bookmark listener {} failed handling the bookmark update for reader {} to {} on stream {}: {}",
+						subscriber.getClass().getName(), bookmarkPlaced.reader(), bookmarkPlaced.bookmark(), eventStreamId, e.getMessage(), e);
+			}
 		}
 
 		/**

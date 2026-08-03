@@ -32,8 +32,12 @@ import org.sliceworkz.eventstore.events.EventReference;
  * <ul>
  *   <li>The listener is invoked after the append operation completes</li>
  *   <li>The listener receives only an event reference, not the actual events</li>
- *   <li>Processing occurs asynchronously, outside the append transaction</li>
- *   <li>Exceptions thrown by the listener do not affect the append operation</li>
+ *   <li>Processing occurs asynchronously, on a notification thread rather than the appending one</li>
+ *   <li>Exceptions thrown by the listener do not affect the append operation: they are logged at ERROR by
+ *       the event store, the remaining listeners are still notified, and the failing listener simply misses
+ *       that notification. It will be notified again on the next append, but nothing replays the one it
+ *       missed — a listener that must not lose progress should be driving a
+ *       {@link org.sliceworkz.eventstore.projection.Projector} from a bookmark</li>
  *   <li>There may be a delay between the append and the notification</li>
  * </ul>
  * <p>
@@ -49,8 +53,9 @@ import org.sliceworkz.eventstore.events.EventReference;
  * To process the actual events, query the stream starting after your last processed reference up to the
  * provided reference.
  * <p>
- * For immediate, transactional event processing with full event data, use
- * {@link EventStreamConsistentAppendListener} instead.
+ * To react to your <em>own</em> appends inline, on the appending thread and with the full event data
+ * already in hand, use {@link EventStreamConsistentAppendListener} instead. Neither listener runs in a
+ * transaction — by the time either is called the events are committed.
  *
  * <h2>Example Usage:</h2>
  * <pre>{@code

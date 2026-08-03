@@ -36,7 +36,7 @@
  *
  * <h2>Event Subscriptions:</h2>
  * <ul>
- *   <li>{@link org.sliceworkz.eventstore.stream.EventStreamConsistentAppendListener} - Immediate notification with full events</li>
+ *   <li>{@link org.sliceworkz.eventstore.stream.EventStreamConsistentAppendListener} - Inline notification, with full events, about appends made through the very stream object subscribed on</li>
  *   <li>{@link org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener} - Delayed notification with reference only</li>
  *   <li>{@link org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentBookmarkListener} - Notification on bookmark updates</li>
  * </ul>

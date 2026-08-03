@@ -405,6 +405,48 @@ one that relies on that default, by asserting a closed stream becomes unreachabl
 notifications can catch it: a closed stream has already discarded its listeners, so it stays quiet whether
 or not the storage let go of it.
 
+### Listeners: what "consistent" promises, and what a listener failure costs
+
+**Neither listener runs in a transaction.** `EventStorage.append` commits before it returns — on Postgres
+the `COMMIT` is issued inside it, on the in-memory backends the events are in the log — and *then*
+`EventStreamImpl.append` calls the consistent subscribers. So a listener cannot join the append, be rolled
+back with it, or veto it: by the time it runs, the events are durable and every other reader can see them.
+The interface javadoc used to claim all three ("within the append transaction", "the same transaction
+context", "may affect the append operation"); it now describes what actually happens.
+
+- **"Consistent" means read-your-own-writes for the appending caller**, and nothing wider.
+  `EventStreamConsistentAppendListener` is notified only about appends made through *the very stream object
+  it was subscribed on* — not another handle on the same logical stream, not another process
+  (`EventStreamTest.testSubscribeListener` asserts exactly that). Streams are cheap per-operation handles,
+  so in practice it is a callback on your own writes, not a subscription. It is not even notified *first*:
+  the storage raises its own notification inside `append`, so the eventually-consistent listeners may
+  already be running when the consistent one is called. Nothing orders the two.
+- **A listener failure never fails the append, and never damages a bystander.** Both paths contain each
+  listener's exception, log it at ERROR and carry on to the next listener. On the append thread the
+  bystander is the appending caller: propagating told it a committed write had failed, and gave it no
+  events back, so a retry loop appended them a second time — the events cannot be un-appended, which is
+  what makes reporting failure a lie rather than a warning. On the notification thread the bystanders are
+  the other subscribers of that notification, which an escaping throwable skipped entirely.
+- **Every subscriber is offered every append**, in subscription order. A failure costs exactly one
+  delivery to one listener; the next append reaches it again. Nothing replays what it missed, so a listener
+  that must not lose progress belongs behind a `Projector` reading from a bookmark, not here.
+- **A listener that wants to tell its caller it failed still can.** A consistent listener runs on the
+  appending thread, in that caller's call stack, and is that caller's own code — catching inside the
+  listener and acting on it after `append` returns costs three lines and, unlike propagation, leaves the
+  caller holding the events it wrote.
+- **The eventually-consistent side had the sharper version of the same bug.** An exception out of
+  `eventsAppended` ended the whole notification task and surfaced on the virtual thread's
+  uncaught-exception handler: a bare stack trace on `System.err`, at no level, under no logger name,
+  attributed to nothing. `Projector.eventsAppended` calls `run()`, which rethrows a `ProjectorException`,
+  so the ordinary case — a projection that throws — was a read model that stopped advancing with nothing
+  in the application's own logs to say why. Same rule now applies there and to bookmark listeners, which
+  is also what the storage backends have always done with their own listeners (`notifyQuietly` in
+  `InMemoryEventStorageImpl`, and the Postgres LISTEN/NOTIFY monitors).
+- `AppendListenerFailureTest` in the TCK pins all of it per backend: the append succeeds and returns its
+  events, the event is in the stream afterwards, the listeners after a throwing one are still notified in
+  order, a listener that throws is notified again next time, and a throwing eventually-consistent listener
+  does not starve the one behind it.
+
 ### Metrics: what the stream meters cost, and the cap on `purpose`
 
 Every meter the store registers is tagged `context`, `purpose`, `typed`, `storage`, and two of them

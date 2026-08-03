@@ -58,6 +58,19 @@ public class OptimizingApendListenerDecorator implements EventStreamEventuallyCo
      *
      * @param delegate the listener to decorate with optimization logic; must not be null
      */
+    /**
+     * The listener this decorator delivers to — the one the caller actually subscribed.
+     * <p>
+     * Every eventually consistent subscriber is wrapped in one of these, so anything reporting on a
+     * subscriber (a log line naming the one that failed, say) has to look through the decorator to say
+     * something the caller recognises.
+     *
+     * @return the decorated listener, never null
+     */
+    public EventStreamEventuallyConsistentAppendListener delegate ( ) {
+        return delegate;
+    }
+
     public OptimizingApendListenerDecorator(EventStreamEventuallyConsistentAppendListener delegate) {
         this.delegate = delegate;
         this.lock = new ReentrantLock();

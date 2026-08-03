@@ -311,10 +311,16 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	void subscribe ( EventStreamEventuallyConsistentAppendListener listener );
 
 	/**
-	 * Subscribes to be notified when events are appended to this stream (strongly consistent).
+	 * Subscribes to be notified, inline, about appends made through <em>this</em> source object.
 	 * <p>
-	 * This subscription provides strong consistency guarantees - the listener is notified
-	 * synchronously as part of the append operation. The listener receives the typed domain events.
+	 * The listener is called synchronously by {@link EventSink#append} on the appending thread, once the
+	 * events are stored, and receives the full typed domain events. It is not a subscription to the logical
+	 * stream: an append made through another source object on the same stream, or by another process, does
+	 * not reach it — use {@link #subscribe(EventStreamEventuallyConsistentAppendListener)} for that.
+	 * <p>
+	 * There is no transaction: the events are already committed when the listener runs, so it cannot veto
+	 * the append, and an exception it throws is logged rather than failing the append. See
+	 * {@link EventStreamConsistentAppendListener} for the full semantics.
 	 * <p>
 	 * Unlike the eventually consistent overloads, this needs no registration with the storage: the
 	 * listener is called inline by the append, so reaching it means holding this source anyway.

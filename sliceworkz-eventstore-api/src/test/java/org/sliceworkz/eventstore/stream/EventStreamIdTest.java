@@ -72,6 +72,29 @@ public class EventStreamIdTest {
 		assertFalse(EventStreamId.forContext("customer").withPurpose("123").concretizes(EventStreamId.anyContext().withPurpose("123")));
 	}
 
+	/**
+	 * A wildcard supplies no purpose, so it concretizes nothing — not another wildcard-purpose stream
+	 * in the same context, and not itself. The javadoc has always said so ("This stream has a specific
+	 * purpose (not a wildcard)"); the implementation used to check only the other three conditions.
+	 */
+	@Test
+	void testWildcardPurposeConcretizesNothing ( ) {
+		EventStreamId customerAnyPurpose = EventStreamId.forContext("customer").anyPurpose();
+		EventStreamId otherCustomerAnyPurpose = EventStreamId.forContext("customer").anyPurpose();
+		EventStreamId supplierAnyPurpose = EventStreamId.forContext("supplier").anyPurpose();
+
+		assertFalse(customerAnyPurpose.concretizes(otherCustomerAnyPurpose));
+		assertFalse(customerAnyPurpose.concretizes(customerAnyPurpose));
+		assertFalse(customerAnyPurpose.concretizes(supplierAnyPurpose));
+		assertFalse(EventStreamId.anyContext().concretizes(customerAnyPurpose));
+
+		// canAppendTo is unaffected: two equal wildcard streams already matched on equals(), and the
+		// append path rejects a read-only target regardless -- which is why this was never reachable
+		// through append().
+		assertTrue(customerAnyPurpose.canAppendTo(otherCustomerAnyPurpose));
+		assertTrue(customerAnyPurpose.isReadOnly());
+	}
+
 	@Test
 	void testToString ( ) {
 		EventStreamId i = EventStreamId.anyContext();

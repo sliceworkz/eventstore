@@ -347,9 +347,10 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * maintain only one bookmark per stream. Tags can be attached to bookmarks for
 	 * additional metadata (e.g., processing status, reader state).
 	 *
-	 * @param reader the unique name/identifier of the reader placing the bookmark
+	 * @param reader the unique name/identifier of the reader placing the bookmark; must not be null
 	 * @param reference the event reference to bookmark (the last processed event)
 	 * @param tags optional tags to attach to the bookmark for metadata
+	 * @throws NullPointerException if {@code reader} is null
 	 */
 	void placeBookmark ( String reader, EventReference reference, Tags tags );
 
@@ -359,8 +360,9 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * Returns the last bookmarked position for the specified reader, allowing
 	 * the reader to resume processing from where it left off.
 	 *
-	 * @param reader the unique name/identifier of the reader
+	 * @param reader the unique name/identifier of the reader; must not be null
 	 * @return an Optional containing the bookmarked EventReference if found, empty if no bookmark exists
+	 * @throws NullPointerException if {@code reader} is null
 	 */
 	Optional<EventReference> getBookmark ( String reader );
 
@@ -394,8 +396,9 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * stream.query(EventQuery.matchAll()).forEach(this::processEvent);
 	 * }</pre>
 	 *
-	 * @param reader the unique name/identifier of the reader whose bookmark should be removed
+	 * @param reader the unique name/identifier of the reader whose bookmark should be removed; must not be null
 	 * @return an Optional containing the previous bookmarked EventReference if one existed, empty otherwise
+	 * @throws NullPointerException if {@code reader} is null
 	 */
 	Optional<EventReference> removeBookmark ( String reader );
 

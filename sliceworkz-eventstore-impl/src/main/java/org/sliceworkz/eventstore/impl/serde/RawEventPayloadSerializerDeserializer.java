@@ -20,10 +20,10 @@ package org.sliceworkz.eventstore.impl.serde;
 import java.util.List;
 import java.util.Set;
 
+import org.sliceworkz.eventstore.events.EventDeserializationException;
 import org.sliceworkz.eventstore.events.EventType;
 
 import tools.jackson.core.JacksonException;
-import tools.jackson.databind.DatabindException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
 
@@ -57,10 +57,13 @@ public class RawEventPayloadSerializerDeserializer extends AbstractEventPayloadS
 				object = nodeImmutableData; // with erasable merged in
 			}
 
-		} catch (DatabindException e) {
-			throw new RuntimeException("Failed to deserialize event data: DatabindException", e);
 		} catch (JacksonException e) {
-			throw new RuntimeException("Failed to deserialize event data: JacksonException", e);
+			// One catch, not two: DatabindException is a JacksonException, and naming which of the two
+			// it was added nothing the cause does not already say.
+			throw new EventDeserializationException(serialized.type(),
+					"Failed to parse stored JSON for event type '%s' in raw mode: %s".formatted(
+							serialized.type().name(), e.getOriginalMessage()),
+					e);
 		}
 		return List.of(new TypeAndPayload(serialized.type(), object));
 	}

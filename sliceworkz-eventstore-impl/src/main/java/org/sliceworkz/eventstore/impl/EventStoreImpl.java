@@ -42,6 +42,7 @@ import org.sliceworkz.eventstore.MeterOptions;
 import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
+import org.sliceworkz.eventstore.events.EventDeserializationException;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
@@ -666,7 +667,15 @@ public class EventStoreImpl implements EventStore {
 
 		@SuppressWarnings("unchecked")
 		private Stream<Event<EVENT_TYPE>> enrich ( StoredEvent storedEvent, QueryDirection direction ) {
-			List<TypeAndPayload> results = serde.deserialize(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.immutableData(), storedEvent.erasableData()));
+			List<TypeAndPayload> results;
+			try {
+				results = serde.deserialize(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.immutableData(), storedEvent.erasableData()));
+			} catch (EventDeserializationException e) {
+				// The serde is handed a type and two JSON strings, so it cannot say *which* stored event
+				// failed -- and that is the one fact a caller needs to dead-letter or skip a poison event.
+				// This is the only layer that knows both.
+				throw e.withReference(storedEvent.reference());
+			}
 			// For backward queries, reverse the upcasted sub-events so they appear in descending order,
 			// consistent with the overall backward traversal of stored events.
 			if ( direction == QueryDirection.BACKWARD ) {

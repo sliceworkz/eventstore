@@ -28,6 +28,8 @@ import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.events.Event;
+import org.sliceworkz.eventstore.events.EventDeserializationException;
+import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.query.EventQuery;
@@ -109,10 +111,14 @@ public class EventDeserializationEvolutionTest extends AbstractEventStoreTest {
 				OrderEventV3WithRemovedField.class);
 
 		// This should fail because the stored JSON contains "product" which is unknown to V3
-		RuntimeException exception = assertThrows(RuntimeException.class,
+		EventDeserializationException exception = assertThrows(EventDeserializationException.class,
 				() -> v3Stream.query(EventQuery.matchAll()).toList());
 
-		assertEquals(true, exception.getMessage().contains("Failed to deserialize event data"),
+		assertEquals(EventType.ofType("OrderPlaced"), exception.getEventType());
+		assertEquals(true, exception.getMessage().contains("Failed to deserialize stored event type 'OrderPlaced'"),
 				"Expected deserialization failure due to unknown property, but got: " + exception.getMessage());
+		// the message names the record it could not be read onto, which is the half Jackson does not say
+		assertEquals(true, exception.getMessage().contains(OrderEventV3WithRemovedField.OrderPlaced.class.getName()),
+				"Expected the target record to be named, but got: " + exception.getMessage());
 	}
 }

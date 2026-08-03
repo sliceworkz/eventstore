@@ -197,6 +197,11 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * The cursor is purely a technical optimization — it does not affect which events match the query,
 	 * only where the scan starts. The 'until' reference in the EventQuery is the functional boundary
 	 * that determines query results.
+	 * <p>
+	 * <strong>Deserialization is lazy.</strong> Storage has finished reading by the time this returns, but
+	 * each event's payload is converted as the returned Stream is consumed — so an
+	 * {@link org.sliceworkz.eventstore.events.EventDeserializationException} for a stored event this
+	 * stream's type mappings cannot read is thrown from the caller's terminal operation, not from here.
 	 *
 	 * @param query the query criteria specifying which events to retrieve and in which direction
 	 * @param cursor optional reference for pagination (after for forward, before for backward), null to start from the beginning/end
@@ -291,6 +296,11 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 *
 	 * @param eventId the unique identifier of the stored event to retrieve
 	 * @return a list of events produced from the stored event, or an empty list if not found
+	 * @throws org.sliceworkz.eventstore.events.EventDeserializationException if the stored event cannot be
+	 *         read through this stream's type mappings. Unlike {@link #query(EventQuery)} this method is
+	 *         eager, so the failure surfaces here — which makes a raw-mode stream
+	 *         ({@code eventStore.getEventStream(EventStreamId.anyContext())}) the way to inspect an event
+	 *         a typed stream chokes on
 	 */
 	List<Event<DOMAIN_EVENT_TYPE>> getEventById ( EventId eventId );
 

@@ -21,6 +21,7 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.AnnotatedElement;
 
 import org.sliceworkz.eventstore.events.Erasable;
+import org.sliceworkz.eventstore.events.EventSerializationException;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.PartlyErasable;
 
@@ -96,6 +97,7 @@ public abstract class AbstractEventPayloadSerializerDeserializer implements Even
 	public TypeAndSerializedPayload serialize ( Object payload ) {
 		String immutableData = null;
 		String erasableData = null;
+		EventType eventType = payload == null ? null : EventType.of(payload);
 		try {
 
 			immutableData = immutableDataMapper
@@ -112,9 +114,16 @@ public abstract class AbstractEventPayloadSerializerDeserializer implements Even
 	        }
 	        
 		} catch (Exception e) {
-			throw new RuntimeException("Failed to serialize event data", e);
+			// The payload class is named explicitly rather than left to the cause: a Jackson failure
+			// reports the field path it choked on, which is only half of "which event cannot be stored".
+			throw new EventSerializationException(eventType,
+					"Failed to serialize event data for type '%s' (%s): %s".formatted(
+							eventType == null ? "?" : eventType.name(),
+							payload == null ? "null payload" : payload.getClass().getName(),
+							e.getMessage()),
+					e);
 		}
-		return new TypeAndSerializedPayload(EventType.of(payload), immutableData, erasableData);
+		return new TypeAndSerializedPayload(eventType, immutableData, erasableData);
 	}
 
 	protected void deepMerge(ObjectNode target, ObjectNode source) {

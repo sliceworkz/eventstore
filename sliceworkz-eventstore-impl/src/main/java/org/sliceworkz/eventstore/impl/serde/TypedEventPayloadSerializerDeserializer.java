@@ -27,12 +27,12 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import org.sliceworkz.eventstore.events.EventDeserializationException;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.LegacyEvent;
 import org.sliceworkz.eventstore.events.Upcast;
 
 import tools.jackson.core.JacksonException;
-import tools.jackson.databind.DatabindException;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
@@ -57,21 +57,33 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 	
 	@Override
 	public List<TypeAndPayload> deserialize ( TypeAndSerializedPayload serialized ) {
-		List<TypeAndPayload> result;
-		try {
-			EventDeserializer deserializer = deserializers.get(serialized.type().name());
-			if ( deserializer == null  ) {
-				throw new RuntimeException("No mapping found for event type '" + serialized.type().name() + "'");
-			}
-			result = deserializer.deserialize(serialized.immutablePayload(), serialized.erasablePayload());
-		} catch (Exception e) {
-			if ( deserializers.keySet().isEmpty() ) {
-				throw new RuntimeException("Failed to deserialize event data for type '%s', no EventType mappings configured. Pass the Event root Class when creating the EventStream".formatted(serialized.type().name()) , e);
-			} else {
-				throw new RuntimeException("Failed to deserialize event data for type '%s', known mappings for %s".formatted(serialized.type().name(), deserializers.keySet()) , e);
-			}
+		EventType storedType = serialized.type();
+
+		// "No mapping" is resolved before the try rather than thrown inside it. It used to be thrown into
+		// the catch below and immediately re-wrapped, so the message naming the missing type only ever
+		// reached a user as the cause of a second, vaguer one.
+		EventDeserializer deserializer = deserializers.get(storedType.name());
+		if ( deserializer == null ) {
+			throw new EventDeserializationException(storedType, deserializers.isEmpty()
+					? "No mapping found for event type '%s': this stream has no event types registered. Pass the Event root Class when creating the EventStream."
+							.formatted(storedType.name())
+					: "No mapping found for event type '%s'. Known mappings: %s. Either the stream was opened without the Event root Class covering it, or the event class was renamed (its simple name is the stored name)."
+							.formatted(storedType.name(), knownMappings()));
 		}
-		return result;
+
+		try {
+			return deserializer.deserialize(serialized.immutablePayload(), serialized.erasablePayload());
+		} catch (EventDeserializationException e) {
+			// already precise about what failed -- wrapping it again would only bury the message
+			throw e;
+		} catch (RuntimeException e) {
+			throw new EventDeserializationException(storedType,
+					"Failed to deserialize event data for type '%s': %s".formatted(storedType.name(), e.getMessage()), e);
+		}
+	}
+
+	private String knownMappings ( ) {
+		return deserializers.keySet().stream().sorted().collect(Collectors.joining(", ", "[", "]"));
 	}
 	
 	@Override
@@ -102,34 +114,44 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		if ( clazz.isAnnotationPresent(LegacyEvent.class)) {
 
 			if ( !assumeUpcasters ) {
-				throw new RuntimeException("Event type %s should not be annotated as a @LegacyEvent, or moved to the legacy Event types".formatted(clazz));
+				throw new IllegalArgumentException("Event type %s should not be annotated as a @LegacyEvent, or moved to the legacy Event types".formatted(clazz));
 			}
 
 			LegacyEvent annotation = clazz.getAnnotation(LegacyEvent.class);
+			Class<? extends Upcast<?,?>> upcastClass = annotation.upcast();
 			Upcast<Object, Object> upcast;
 			try {
-
-				upcast = (Upcast<Object, Object>) annotation.upcast().getDeclaredConstructor().newInstance(new Object[0]);
-
-				Set<EventType> targets = upcast.targetTypes().stream()
-						.map(EventType::of)
-						.collect(Collectors.toSet());
-				mostRecentTypes.put(eventType, targets);
-
-			} catch (NoSuchMethodException e) {
-				throw new RuntimeException(e);
+				upcast = (Upcast<Object, Object>) upcastClass.getDeclaredConstructor().newInstance(new Object[0]);
 			} catch (InvocationTargetException e) {
-				throw new RuntimeException(e);
-			} catch (InstantiationException e) {
-				throw new RuntimeException(e);
-			} catch (IllegalAccessException e) {
-				throw new RuntimeException(e);
+				// the constructor ran and threw: report what it threw, not the reflective wrapper
+				throw new IllegalArgumentException(
+						"Upcaster %s declared by @LegacyEvent on %s threw from its no-argument constructor: %s".formatted(
+								upcastClass.getName(), clazz.getName(), e.getTargetException()),
+						e.getTargetException());
+			} catch (ReflectiveOperationException e) {
+				// NoSuchMethod (no no-arg constructor -- an inner class needs to be static), Instantiation
+				// (abstract or an interface) or IllegalAccess (not public). All are "the annotation names a
+				// class that cannot be instantiated", and all three used to arrive as a bare
+				// RuntimeException naming neither the upcaster nor the event.
+				throw new IllegalArgumentException(
+						"Upcaster %s declared by @LegacyEvent on %s cannot be instantiated: %s. It needs a public no-argument constructor, and must be a concrete, non-inner (or static nested) class."
+								.formatted(upcastClass.getName(), clazz.getName(), e),
+						e);
 			}
-			eventDeserializer = new InstantiationAndUpcastEventDeserializer(eventDeserializer, upcast);
+
+			Set<Class<?>> targetClasses = upcast.targetTypes();
+			if ( targetClasses == null ) {
+				throw new IllegalArgumentException(
+						"Upcaster %s declared by @LegacyEvent on %s returned null from targetTypes(); return an empty Set for an upcaster that produces no events."
+								.formatted(upcastClass.getName(), clazz.getName()));
+			}
+			mostRecentTypes.put(eventType, targetClasses.stream().map(EventType::of).collect(Collectors.toSet()));
+
+			eventDeserializer = new InstantiationAndUpcastEventDeserializer(eventDeserializer, upcast, upcastClass);
 
 		} else {
 			if  ( assumeUpcasters ) {
-				throw new RuntimeException("legacy Event type %s should be annotated as a @LegacyEvent and configured with an Upcaster".formatted(clazz));
+				throw new IllegalArgumentException("legacy Event type %s should be annotated as a @LegacyEvent and configured with an Upcaster".formatted(clazz));
 			}
 			mostRecentTypes.put(eventType, Set.of(eventType)); // no upcasting needed
 		}
@@ -234,10 +256,14 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 					object = immutableDataMapper.treeToValue(nodeImmutableData, eventClass);
 				}
 
-			} catch (DatabindException e) {
-				throw new RuntimeException(e);
 			} catch (JacksonException e) {
-				throw new RuntimeException(e);
+				// One catch, not two: DatabindException is a JacksonException, and both used to throw a
+				// bare RuntimeException(e) -- no message of their own, so the only thing a user saw was
+				// Jackson's field-level complaint with nothing saying which event class it was aimed at.
+				throw new EventDeserializationException(eventType,
+						"Failed to deserialize stored event type '%s' onto %s: %s".formatted(
+								eventType.name(), eventClass.getName(), e.getOriginalMessage()),
+						e);
 			}
 			return List.of(new TypeAndPayload(eventType, object));
 		}
@@ -247,17 +273,35 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 	class InstantiationAndUpcastEventDeserializer implements EventDeserializer {
 
 		private final Upcast<Object,Object> upcaster;
+		private final Class<?> upcasterClass;
 		private final EventDeserializer deser;
 
-		public InstantiationAndUpcastEventDeserializer ( EventDeserializer deser, Upcast<Object,Object> upcaster ) {
+		public InstantiationAndUpcastEventDeserializer ( EventDeserializer deser, Upcast<Object,Object> upcaster, Class<?> upcasterClass ) {
 			this.deser = deser;
 			this.upcaster = upcaster;
+			this.upcasterClass = upcasterClass;
 		}
 
 		@Override
 		public List<TypeAndPayload> deserialize ( String immutablePayload, String erasablePayload ) {
-			Object historicalEvent = deser.deserialize(immutablePayload, erasablePayload).getFirst().eventData();
-			List<Object> upcastedEvents = upcaster.upcast(historicalEvent);
+			TypeAndPayload historical = deser.deserialize(immutablePayload, erasablePayload).getFirst();
+			List<Object> upcastedEvents;
+			try {
+				upcastedEvents = upcaster.upcast(historical.eventData());
+			} catch (RuntimeException e) {
+				// An upcaster is application code running on the read path, and Upcast's own javadoc warns
+				// that legacy data may not satisfy a current record's validation. Its failure used to be
+				// indistinguishable from Jackson failing to parse the JSON; name the upcaster instead.
+				throw new EventDeserializationException(historical.type(),
+						"Upcaster %s threw while upcasting stored event type '%s': %s".formatted(
+								upcasterClass.getName(), historical.type().name(), e),
+						e);
+			}
+			if ( upcastedEvents == null ) {
+				throw new EventDeserializationException(historical.type(),
+						"Upcaster %s returned null for stored event type '%s'; return an empty List to drop an event."
+								.formatted(upcasterClass.getName(), historical.type().name()));
+			}
 			return upcastedEvents.stream()
 					.map(e -> new TypeAndPayload(EventType.of(e), e))
 					.toList();

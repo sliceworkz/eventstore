@@ -367,8 +367,7 @@ stream owns is its subscriptions.
   protect by poisoning it. Idempotent, and closing a never-subscribed stream is a no-op.
 - **There is only one kind of append listener, and it is eventually consistent.** To react to your own
   append on the appending thread, nothing is subscribed: the typed events, with their assigned
-  references, are the return value of `append()`. See the listener section below for why the
-  inline-callback variant was removed rather than kept.
+  references, are the return value of `append()`.
 - **What makes it cheap is that the expensive part is shared, not rebuilt.** `getEventStream` allocates a
   stream object and resolves ~10 Micrometer meters (a map lookup each, since Micrometer dedups by name +
   tags) — about **2µs and 1KB**. The payload serde is *not* rebuilt: `EventStoreImpl` caches one per
@@ -414,26 +413,10 @@ story, and it is why there is exactly one listener interface:
 `EventStreamEventuallyConsistentAppendListener`. To react to your own append on the appending thread,
 write the code after the call.
 
-**There used to be a second one, `EventStreamConsistentAppendListener`, removed in 0.10.0.** Worth knowing
-why, because the reasoning generalises:
-
-- **It was an observer over a value the caller already held.** It was called inline by `append()` with the
-  *same list object* `append()` was about to return, so every use of it was a worse-spelled version of
-  using the return value: no `try/catch` around it, a registration to `close()`, and no ordering guarantee
-  against the eventually-consistent listeners.
-- **It was not a subscription to the stream.** It fired only for appends made through *the very stream
-  object* it was subscribed on — not another handle on the same logical stream, not another process. Since
-  streams are cheap per-operation handles, subscriber and appender had to be the same component, which is
-  exactly the case the return value covers.
-- **Its name outranked its javadoc.** Sitting next to `EventStreamEventuallyConsistentAppendListener` it
-  read as "the strong one", so it got picked for safety it never had — which is how its javadoc came to
-  promise a transaction ("within the append transaction", "the same transaction context", "may affect the
-  append operation"), none of which was ever true. There is no transaction at that point: `EventStorage.append`
-  commits before it returns, on Postgres by issuing the `COMMIT` inside it, in memory by having the events
-  in the log. Correcting the prose would have left the name making the same promise.
-- **Migration is mechanical**: `stream.subscribe((List<Event<E>> events) -> handle(events))` followed by
-  `stream.append(criteria, e)` becomes `handle(stream.append(criteria, e))`. Anything that must react to
-  appends made *elsewhere* was never served by it and wants the eventually-consistent listener.
+**No listener runs in a transaction, and none can veto an append.** `EventStorage.append` commits before
+it returns — on Postgres by issuing the `COMMIT` inside it, in memory by having the events in the log — so
+by the time anything is notified, the events are durable and every other reader can see them. A
+notification is an announcement, never a vote.
 
 **A listener failure is never anybody else's failure, and never silent.** Each subscriber's exception is
 contained, logged at ERROR, and the next subscriber still gets the notification.

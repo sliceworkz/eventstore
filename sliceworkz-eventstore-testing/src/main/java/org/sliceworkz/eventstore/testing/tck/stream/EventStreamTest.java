@@ -113,8 +113,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		EventStream<OtherMockDomainEvent> s3 = eventStore().getEventStream(otherStream, OtherMockDomainEvent.class);
 
 		// s1 and s2 are two handles on the *same* logical stream: a subscriber on either must hear about
-		// an append made through the other, which is what makes this a subscription to the stream rather
-		// than a callback on one caller's own writes
+		// an append made through the other, since it is the stream that is subscribed to, not the handle
 		MockEventuallyConsistentAppendListener s1ecal = new MockEventuallyConsistentAppendListener();
 		s1.subscribe(s1ecal);
 

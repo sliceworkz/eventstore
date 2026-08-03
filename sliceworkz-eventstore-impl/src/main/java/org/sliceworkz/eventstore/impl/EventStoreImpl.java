@@ -728,9 +728,9 @@ public class EventStoreImpl implements EventStore {
 			}
 
 			// The appended events -- typed, with their assigned references -- are handed straight back to
-			// the caller, which is the whole of this store's read-your-own-writes story. There is no
-			// inline listener to dispatch to: anything wanting to react to an append on the appending
-			// thread is code the appending caller can simply write after this call returns.
+			// the caller, which is the whole of this store's read-your-own-writes story: code reacting to
+			// an append on the appending thread is code that caller writes after this call returns.
+			// Subscribers hear about it through the storage notification, on a thread of their own.
 			return appendedEvents;
 		}
 

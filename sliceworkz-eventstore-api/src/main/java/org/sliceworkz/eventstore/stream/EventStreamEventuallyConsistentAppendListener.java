@@ -132,7 +132,13 @@ public interface EventStreamEventuallyConsistentAppendListener {
 	 * @param atLeastUntil reference to at least the last appended event, never null
 	 * @return the reference to the last event actually processed or queried by this listener,
 	 *         which may be equal to or ahead of the {@code atLeastUntil} parameter if the
-	 *         listener proactively queried further events; never null
+	 *         listener proactively queried further events. A reference <em>behind</em>
+	 *         {@code atLeastUntil}, and null for "I processed nothing", both mean this listener is
+	 *         caught up to {@code atLeastUntil}: the store stops delivering and the next append is
+	 *         what brings it back. Returning null to ask to be told again does not work — it used to
+	 *         make the store re-deliver without pausing, which is why null now has a defined meaning
+	 *         rather than being left to the caller. {@link org.sliceworkz.eventstore.projection.Projector}
+	 *         returns null whenever its query matched no events
 	 */
 	EventReference eventsAppended ( EventReference atLeastUntil );
 

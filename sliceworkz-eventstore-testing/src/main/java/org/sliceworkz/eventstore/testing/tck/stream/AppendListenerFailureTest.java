@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.sliceworkz.eventstore.events.Event;
@@ -89,5 +90,47 @@ public class AppendListenerFailureTest extends AbstractEventStoreTest {
 		waitBecauseOfEventualConsistency(() -> seenByBystander.contains(secondAppend));
 
 		assertTrue(seenByBystander.size() >= 2, "expected notifications for both appends, saw " + seenByBystander);
+	}
+
+	/**
+	 * A listener saying it processed nothing is saying it is caught up, not asking to be told again.
+	 * <p>
+	 * The decorator stops delivering once the listener has reached the target it was notified about, and it
+	 * used to learn that only from a non-null return — so a listener returning null left it with nothing to
+	 * compare against and nothing to reach, and it re-delivered the same target without pausing. Not an
+	 * exotic listener either: {@code Projector.eventsAppended} returns {@code run().lastEventReference()},
+	 * which is null whenever the query matched no events, so any subscribed projector whose event type had
+	 * not occurred yet burned a core from the first unrelated append to its stream until the first matching
+	 * one — nothing thrown, nothing logged.
+	 * <p>
+	 * The bound is loose on purpose. The distinction being drawn is not a subtle one: before this, a single
+	 * append produced deliveries at roughly 700.000 a second for as long as the process ran, so anything in
+	 * single figures separates "restrained" from "spinning" without depending on timing.
+	 */
+	@ForEachBackend
+	void testListenerReportingNoProgressIsNotRedeliveredTo ( ) {
+		AtomicInteger deliveries = new AtomicInteger();
+		List<EventReference> seenByBystander = new CopyOnWriteArrayList<>();
+
+		stream.subscribe((EventStreamEventuallyConsistentAppendListener) atLeastUntil -> {
+			deliveries.incrementAndGet();
+			return null; // "I processed nothing" -- what Projector returns when its query matched no events
+		});
+		stream.subscribe((EventStreamEventuallyConsistentAppendListener) atLeastUntil -> {
+			seenByBystander.add(atLeastUntil);
+			return atLeastUntil;
+		});
+
+		EventReference appended =
+			stream.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none())).getLast().reference();
+
+		// the bystander is what makes a low delivery count meaningful: it proves the notification round trip
+		// ran, so a bounded count is restraint rather than the notification never having arrived
+		waitBecauseOfEventualConsistency(() -> seenByBystander.contains(appended));
+		waitBecauseOfEventualConsistency(() -> deliveries.get() >= 1);
+
+		int settled = deliveries.get();
+		assertTrue(settled <= 10,
+			"one append must not be re-delivered to a listener reporting no progress, but it was delivered " + settled + " times");
 	}
 }

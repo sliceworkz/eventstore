@@ -436,6 +436,22 @@ contained, logged at ERROR, and the next subscriber still gets the notification.
 - `AppendListenerFailureTest` in the TCK pins it per backend: a throwing subscriber does not starve the one
   behind it, and notifications keep arriving for both afterwards.
 
+**A listener that returns null is caught up, not asking to be told again.** `OptimizingAppendListenerDecorator`
+keeps delivering until the listener has reached the target it was notified about, and it used to learn that
+only from a non-null return — so a null left it with nothing to compare against and nothing to reach, and it
+re-delivered the same target without pausing: ~700.000 deliveries a second on one pinned virtual thread.
+
+- **The ordinary listener hits this, not an exotic one.** `Projector.eventsAppended` returns
+  `run().lastEventReference()`, which is null whenever the query matched no events — so *any* subscribed
+  projector whose event type had not occurred yet burned a core from the first unrelated append to its
+  stream until the first matching one. Nothing threw, nothing was logged, and it cleared itself the moment
+  one matching event arrived, which is why it survived: it looks like load, not like a bug.
+- Null and a reference *behind* the target now mean the same thing — caught up to the target. Nothing is
+  lost by that: the next append carries a later reference, which is after this one and so still delivered.
+- The interface has always documented the return as "never null"; `Projector` has always violated it, so
+  null is given a defined meaning rather than left to whoever reads the contract more carefully.
+- `AppendListenerFailureTest.testListenerReportingNoProgressIsNotRedeliveredTo` pins it per backend.
+
 ### Metrics: what the stream meters cost, and the cap on `purpose`
 
 Every meter the store registers is tagged `context`, `purpose`, `typed`, `storage`, and two of them

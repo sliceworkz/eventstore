@@ -156,9 +156,18 @@ public class OptimizingAppendListenerDecorator implements EventStreamEventuallyC
             
             try {
                 EventReference lastSeenByDelegate = delegate.eventsAppended(target);
-                if ( lastSeenByDelegate != null ) {
-                	lastNotifiedReference.set(lastSeenByDelegate.happenedAfter(target)?lastSeenByDelegate:target);
-                }
+                // Advance to the target whatever the delegate reports, and past it only when it reports
+                // going further. Null -- "I processed nothing" -- has to count as reaching the target too,
+                // because this loop only stops once the target has been reached: a delegate that keeps
+                // returning null left it with nothing to compare against and nothing to reach, so it
+                // re-delivered the same target without pausing, measured at ~700.000 deliveries a second
+                // on one pinned virtual thread. That is not an exotic listener. Projector.eventsAppended
+                // returns run().lastEventReference(), which is null whenever the query matched no events,
+                // so any subscribed projector whose event type had not occurred yet burned a core from the
+                // first unrelated append to its stream until the first matching one -- nothing failing,
+                // nothing logged, just a core gone. No notification is lost by advancing here: the next
+                // append carries a later reference, which is after this one and so still delivered.
+                lastNotifiedReference.set((lastSeenByDelegate != null) && lastSeenByDelegate.happenedAfter(target)? lastSeenByDelegate:target);
             } finally {
                 lock.lock();
                 updateInProgress = false;

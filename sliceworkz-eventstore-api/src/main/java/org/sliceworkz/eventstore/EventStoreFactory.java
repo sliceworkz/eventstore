@@ -65,6 +65,29 @@ public interface EventStoreFactory {
 	EventStore eventStore ( EventStorage eventStorage, MeterRegistry meterRegistry );
 
 	/**
+	 * Creates an EventStore instance with explicit control over how much detail its meters carry.
+	 * <p>
+	 * The store tags every meter with the stream's context and purpose, and a purpose used the way the
+	 * examples use it — {@code forContext("customer").withPurpose("123")} — takes one value per entity.
+	 * {@link MeterOptions} caps how many distinct purposes get their own series before the rest are
+	 * pooled; see that class for what the alternative costs. The two-argument overloads apply
+	 * {@link MeterOptions#defaults()}, so a store that is never told otherwise is still bounded.
+	 * <p>
+	 * The default implementation ignores the options and delegates to
+	 * {@link #eventStore(EventStorage, MeterRegistry)}, so that a factory written before this method
+	 * existed still compiles and runs. The factory shipped with this library overrides it.
+	 *
+	 * @param eventStorage the storage backend implementation
+	 * @param meterRegistry the Micrometer meter registry for collecting metrics and observability data
+	 * @param meterOptions how much detail the store's meters may carry
+	 * @return a new EventStore instance using the provided storage
+	 * @see MeterOptions
+	 */
+	default EventStore eventStore ( EventStorage eventStorage, MeterRegistry meterRegistry, MeterOptions meterOptions ) {
+		return eventStore ( eventStorage, meterRegistry );
+	}
+
+	/**
 	 * Creates an EventStore instance backed by the provided storage implementation using the global meter registry.
 	 * <p>
 	 * This convenience method uses {@link Metrics#globalRegistry} for observability, which provides

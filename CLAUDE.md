@@ -395,7 +395,8 @@ stream owns is its subscriptions.
   because Micrometer holds gauge state *weakly*. With a per-stream holder only the first stream ever
   created for a tag set was wired to the series, and the series went permanently `NaN` as soon as that
   stream was collected — which, in the per-operation usage recommended above, is almost immediately.
-  Nothing failed; the metric was just stuck. `AppendPositionGaugeTest` covers it.
+  Nothing failed; the metric was just stuck. `AppendPositionGaugeTest` covers it. The tag set it is held
+  per is bounded — see the metrics section below for why that matters and what it costs when it is not.
 
 For backends: `EventStorage.unsubscribe(EventStoreListener)` is the SPI counterpart, and `subscribe` must
 hold listeners **strongly** and be idempotent per listener. `unsubscribe` has a no-op `default` so a
@@ -403,6 +404,59 @@ backend written before it still compiles — and `EventStreamSubscriptionLifecyc
 one that relies on that default, by asserting a closed stream becomes unreachable. No count of delivered
 notifications can catch it: a closed stream has already discarded its listeners, so it stays quiet whether
 or not the storage let go of it.
+
+### Metrics: what the stream meters cost, and the cap on `purpose`
+
+Every meter the store registers is tagged `context`, `purpose`, `typed`, `storage`, and two of them
+(`query.event`, `append.event`) add `eventtype` on top. `context` is a code-level concept, so its
+cardinality is a property of the application. **`purpose` is not**: it is documented as "an optional
+secondary identifier … (e.g. customer ID, order number)", and half the examples in this repository are
+`forContext("customer").withPurpose("123")`. Used that way it takes one value per entity.
+
+- **Nothing evicts a meter.** A Micrometer registry keeps every meter it has ever registered, so the cost
+  follows the number of distinct purposes the process has *ever seen*, not how many streams are alive.
+  Dropping the stream handle — the per-operation usage this document recommends — releases none of it.
+- **Measured, per distinct purpose** (in-memory store, two event types, `SimpleMeterRegistry`):
+  **15 meters** (+2 per further event type), **~5.5 KB of heap**, **18 Prometheus series** and ~2.4 KB
+  of scrape body. At 10.000 purposes that was 150.000 meters, 53 MB and a 23 MB scrape; at 100.000 it
+  extrapolates to ~550 MB and 1.8M series. Nothing fails — the numbers stay correct and the process just
+  gets heavier for as long as it runs, which is why this survived so long.
+- **So the `purpose` tag is capped.** A store tags the first `MeterOptions.maxPurposeTagValues()`
+  distinct purposes it sees (**default 1000**) and reports every purpose after that as `_other`, logging
+  one WARN naming the purpose that tripped it. Below the cap nothing changes — that is exactly the case
+  where a per-purpose breakdown is worth having — and above it the meters stay flat while the events are
+  still counted, pooled under `_other`. Re-measured at 10.000 purposes: 15.015 meters instead of 150.000,
+  and a 2.3 MB scrape instead of 23 MB.
+- **Admission is first-come-first-served and permanent.** A purpose that got its own tag value keeps it
+  for the life of the store, so a dashboard built on that series does not lose it when traffic widens.
+  The flip side is that *which* purposes get through is arrival order and not stable across restarts —
+  the accepted cost of a bound that needs no configuration. Past the cap a per-purpose breakdown was not
+  going to be readable anyway.
+- **Configuring it** — the two-argument factory calls and every existing caller keep working unchanged
+  and get the default cap:
+  ```java
+  // purpose is an entity id here: never break down by it
+  EventStoreFactory.get().eventStore(storage, registry, MeterOptions.withoutPurposeBreakdown());
+
+  // a broad but genuinely bounded set of purposes
+  EventStoreFactory.get().eventStore(storage, registry, MeterOptions.withMaxPurposeTagValues(5000));
+
+  // same thing through the storage builders' buildStore()
+  InMemoryEventStorage.newBuilder().meterOptions(MeterOptions.withoutPurposeBreakdown()).buildStore();
+  ```
+  `MeterOptions.withUnlimitedPurposeTagValues()` restores the old unbounded behaviour, which is only safe
+  where purpose is low-cardinality by construction.
+- **A Micrometer `MeterFilter` is not a substitute**, which is why this lives in the library. A filter
+  runs at registration, and the store keys its `append.position` gauge state on the tags it *asked* for —
+  so with `MeterFilter.denyNameStartsWith("sliceworkz")`, a registry holding **zero** meters still leaves
+  the store growing by ~730 bytes per distinct purpose. The cap is applied where the tag value is chosen,
+  so it bounds the meters, the `eventtype` cross product and that map in one place.
+- **`context` is deliberately not capped.** It names a bounded context and comes from the code, not from
+  the traffic. A store whose *context* is per-entity has the same problem with none of the protection —
+  don't do that.
+- `MeterPurposeCardinalityTest` pins the cap, the pooling, the permanence of an admitted purpose, that
+  the default applies to a store nobody configured, and that the cap holds exactly under concurrent first
+  use of distinct purposes.
 
 ### Typical Usage Pattern
 

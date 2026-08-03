@@ -28,6 +28,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
+import org.sliceworkz.eventstore.MeterOptions;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageException;
@@ -213,6 +214,7 @@ public interface PostgresEventStorage {
 		private Duration notificationStartupTimeout = PostgresEventStorageImpl.DEFAULT_NOTIFICATION_STARTUP_TIMEOUT;
 		private Limit limit = Limit.none();
 		private MeterRegistry meterRegistry = Metrics.globalRegistry;
+		private MeterOptions meterOptions = MeterOptions.defaults();
 
 		private Builder ( ) {
 
@@ -486,6 +488,24 @@ public interface PostgresEventStorage {
 			return this;
 		}
 
+		/**
+		 * Configures how much detail the meters of the store returned by {@link #buildStore()} may carry.
+		 * <p>
+		 * Defaults to {@link MeterOptions#defaults()}, which caps the {@code purpose} tag at
+		 * {@link MeterOptions#DEFAULT_MAX_PURPOSE_TAG_VALUES} distinct values. Ignored by {@link #build()},
+		 * which returns a storage rather than a store — pass the options to
+		 * {@link org.sliceworkz.eventstore.EventStoreFactory#eventStore(EventStorage, MeterRegistry, MeterOptions)}
+		 * there instead.
+		 *
+		 * @param meterOptions how much detail the store's meters may carry
+		 * @return this Builder instance for method chaining
+		 * @see MeterOptions
+		 */
+		public Builder meterOptions ( MeterOptions meterOptions ) {
+			this.meterOptions = meterOptions;
+			return this;
+		}
+
 
 		/**
 		 * Builds and returns the configured {@link EventStorage} implementation.
@@ -614,7 +634,7 @@ public interface PostgresEventStorage {
 			// the storage is created here and never handed to the caller, so the returned store owns it:
 			// closing that store is the only way this storage will ever be closed
 			EventStorage eventStorage = build();
-			return EventStore.owning(EventStoreFactory.get().eventStore(eventStorage, meterRegistry), eventStorage);
+			return EventStore.owning(EventStoreFactory.get().eventStore(eventStorage, meterRegistry, meterOptions), eventStorage);
 		}
 
 		/**

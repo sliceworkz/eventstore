@@ -29,6 +29,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
@@ -37,6 +38,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.sliceworkz.Banner;
 import org.sliceworkz.eventstore.EventStore;
+import org.sliceworkz.eventstore.MeterOptions;
 import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
@@ -146,6 +148,33 @@ public class EventStoreImpl implements EventStore {
 	private final MeterRegistry meterRegistry;
 
 	/**
+	 * How much detail this store's meters may carry — in practice, how many distinct {@code purpose}
+	 * tag values it will report before pooling the rest. See {@link #purposeTagValueFor}.
+	 */
+	private final MeterOptions meterOptions;
+
+	/**
+	 * The {@code purpose} values this store has admitted as their own tag value, and how many there
+	 * are. Every purpose beyond {@link MeterOptions#maxPurposeTagValues()} is reported as
+	 * {@link MeterOptions#OVERFLOW_PURPOSE_TAG_VALUE} instead — see {@link #purposeTagValueFor}.
+	 * <p>
+	 * The count is held separately rather than read off the set because the admission decision has to
+	 * be made against a value that cannot be observed mid-update: {@code size()} on a
+	 * {@code ConcurrentHashMap}-backed set is an estimate under concurrent writes, and an estimate
+	 * that reads low is a cap that does not hold. Rejected purposes are deliberately not remembered —
+	 * memoising them would grow a map with exactly the cardinality this is here to bound.
+	 */
+	private final Set<String> admittedPurposeTagValues = ConcurrentHashMap.newKeySet();
+	private final AtomicInteger admittedPurposeTagValueCount = new AtomicInteger();
+
+	/**
+	 * Whether this store has already said that it hit the purpose cap. The warning is worth logging
+	 * once — it means a dimension of the metrics is now pooled — and worth logging only once, since
+	 * the store reaches this path on every stream it hands out afterwards.
+	 */
+	private final AtomicBoolean purposeCardinalityWarningLogged = new AtomicBoolean();
+
+	/**
 	 * Guards {@link #close()} so that it runs once, and marks this store as unusable afterwards.
 	 */
 	private final AtomicBoolean closed = new AtomicBoolean();
@@ -200,6 +229,12 @@ public class EventStoreImpl implements EventStore {
 	 * soon as that one stream was collected, which in the documented per-operation usage is almost
 	 * immediately. Keeping the holder here, and registering the gauge exactly once against it, makes
 	 * every stream sharing those tags report into the series that is actually being observed.
+	 * <p>
+	 * It is keyed on the tags <em>after</em> {@link #purposeTagValueFor} has bounded them, which is what
+	 * keeps this map bounded too. That matters beyond tidiness: a caller who filters these meters away
+	 * with a Micrometer {@code MeterFilter} cannot reach this map — a filter runs at registration, and
+	 * this is keyed on the tags the store asked for — so with an unbounded purpose it would go on
+	 * growing behind a registry holding no meters at all, at roughly 730 bytes per distinct purpose.
 	 */
 	private final ConcurrentHashMap<io.micrometer.core.instrument.Tags, AtomicLong> highestAppendedPositions = new ConcurrentHashMap<>();
 
@@ -240,21 +275,42 @@ public class EventStoreImpl implements EventStore {
 	 *   <li>Event append operations</li>
 	 *   <li>Query performance</li>
 	 * </ul>
+	 * The {@code purpose} tag is capped at {@link MeterOptions#DEFAULT_MAX_PURPOSE_TAG_VALUES} distinct
+	 * values by this constructor; use the three-argument one to change that.
 	 *
 	 * @param eventStorage the storage backend implementation (in-memory, PostgreSQL, etc.)
 	 * @param meterRegistry the Micrometer meter registry for collecting metrics; use {@link io.micrometer.core.instrument.Metrics#globalRegistry} if unsure
 	 * @throws IllegalArgumentException if eventStorage or meterRegistry is null
 	 */
 	protected EventStoreImpl ( EventStorage eventStorage, MeterRegistry meterRegistry ) {
+		this(eventStorage, meterRegistry, MeterOptions.defaults());
+	}
+
+	/**
+	 * Constructs a new EventStoreImpl with explicit control over how much detail its meters carry.
+	 * <p>
+	 * See {@link MeterOptions} for what the meters cost per distinct {@code purpose} and why they are
+	 * capped by default. The two-argument constructor applies {@link MeterOptions#defaults()}.
+	 *
+	 * @param eventStorage the storage backend implementation (in-memory, PostgreSQL, etc.)
+	 * @param meterRegistry the Micrometer meter registry for collecting metrics; use {@link io.micrometer.core.instrument.Metrics#globalRegistry} if unsure
+	 * @param meterOptions how much detail this store's meters may carry
+	 * @throws IllegalArgumentException if eventStorage, meterRegistry or meterOptions is null
+	 */
+	protected EventStoreImpl ( EventStorage eventStorage, MeterRegistry meterRegistry, MeterOptions meterOptions ) {
 		if ( eventStorage == null ) {
 			throw new IllegalArgumentException("eventStorage cannot be null");
 		}
 		if ( meterRegistry == null ) {
 			throw new IllegalArgumentException("meterRegistry cannot be null.  Consider using Metrics.globalRegistry as a no-op fallback");
 		}
+		if ( meterOptions == null ) {
+			throw new IllegalArgumentException("meterOptions cannot be null.  Use MeterOptions.defaults() for the default behaviour");
+		}
 		this.eventStorage = eventStorage;
 		this.meterRegistry = meterRegistry;
-		
+		this.meterOptions = meterOptions;
+
 		ThreadFactory threadFactory = Thread.ofVirtual().name("eventually-consistent-listener-notifier/" + eventStorage.name(), 0).factory();
 		this.executorServiceForEventAppends = Executors.newThreadPerTaskExecutor(threadFactory);
 
@@ -353,6 +409,66 @@ public class EventStoreImpl implements EventStore {
 		});
 	}
 
+	/**
+	 * Returns the value to put in the {@code purpose} meter tag for a stream: the purpose itself while
+	 * this store is still under its cap of distinct purposes, and
+	 * {@link MeterOptions#OVERFLOW_PURPOSE_TAG_VALUE} once it is not.
+	 * <p>
+	 * This is the one place the cap is applied, and everything tagged downstream inherits it: the
+	 * per-stream counters and timers, the {@code eventtype} cross product on {@code query.event} and
+	 * {@code append.event}, and {@link #highestAppendedPositions}. See {@link MeterOptions} for what an
+	 * uncapped purpose costs and why the default is not "whatever the application produces".
+	 * <p>
+	 * Admission is first-come-first-served and permanent — a purpose that got a tag value keeps it for
+	 * the life of the store — so the series a dashboard is built on do not come and go. A purpose that
+	 * did not get one is <em>not</em> recorded anywhere, which is what makes this bounded: remembering
+	 * the rejections would cost exactly the cardinality being avoided. The price is that the check runs
+	 * per stream handle rather than once per purpose, but it is a set lookup on a path that already
+	 * resolves a dozen meters.
+	 */
+	private String purposeTagValueFor ( String purpose ) {
+		int max = meterOptions.maxPurposeTagValues();
+		if ( max == 0 ) {
+			return MeterOptions.OVERFLOW_PURPOSE_TAG_VALUE;
+		}
+		if ( admittedPurposeTagValues.contains(purpose) ) {
+			return purpose;
+		}
+		// Claim a slot before adding, so that concurrent first-time purposes cannot both see room and
+		// push the store over its cap. Losing the race to add means another thread admitted the same
+		// purpose meanwhile, and the slot this thread claimed goes back.
+		while ( true ) {
+			int admitted = admittedPurposeTagValueCount.get();
+			if ( admitted >= max ) {
+				warnAboutPurposeCardinality(purpose, max);
+				return MeterOptions.OVERFLOW_PURPOSE_TAG_VALUE;
+			}
+			if ( admittedPurposeTagValueCount.compareAndSet(admitted, admitted + 1) ) {
+				break;
+			}
+		}
+		if ( !admittedPurposeTagValues.add(purpose) ) {
+			admittedPurposeTagValueCount.decrementAndGet();
+		}
+		return purpose;
+	}
+
+	/**
+	 * Says once, on the first purpose that has to be pooled, that this store's meters are no longer
+	 * broken down by purpose. Names the purpose that tripped it, so the value itself shows whether this
+	 * is a purpose used as an entity id (the usual cause) or a cap set too low.
+	 */
+	private void warnAboutPurposeCardinality ( String purpose, int max ) {
+		if ( purposeCardinalityWarningLogged.compareAndSet(false, true) ) {
+			STORE_LOGGER.warn(
+				"event store on storage '{}' has now seen {} distinct stream purposes, its configured maximum; "
+				+ "meters for further purposes -- starting with '{}' -- are tagged purpose='{}' instead. "
+				+ "This keeps the number of meters bounded: every distinct purpose costs ~15 meters and ~5.5KB of heap that no registry ever reclaims. "
+				+ "If purpose is an entity id here, pass MeterOptions.withoutPurposeBreakdown(); if this is a genuinely broad but bounded set, raise MeterOptions.withMaxPurposeTagValues(int)",
+				eventStorage.name(), max, purpose, MeterOptions.OVERFLOW_PURPOSE_TAG_VALUE);
+		}
+	}
+
 	class EventStreamImpl<EVENT_TYPE> implements EventStream<EVENT_TYPE>, EventStoreListener {
 
 		private final Logger LOGGER = LoggerFactory.getLogger(EventStreamImpl.class);
@@ -395,7 +511,9 @@ public class EventStoreImpl implements EventStore {
 			this.serde = serde;
 
 			String tagContextValue = Optional.ofNullable(eventStreamId.context()).orElse(""); // null is not allowed
-			String tagPurposeValue = Optional.ofNullable(eventStreamId.purpose()).orElse(""); // null is not allowed
+			// bounded rather than taken verbatim: purpose is documented as an entity id in half the
+			// examples, and every distinct value here is a permanent set of meters -- see purposeTagValueFor
+			String tagPurposeValue = purposeTagValueFor(Optional.ofNullable(eventStreamId.purpose()).orElse("")); // null is not allowed
 			String tagTypedValue = String.valueOf(serde.isTyped());
 			
 			this.baseTags = io.micrometer.core.instrument.Tags

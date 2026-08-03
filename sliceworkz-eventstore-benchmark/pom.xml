@@ -41,8 +41,7 @@
 		
 		<javalin.version>7.2.2</javalin.version>
 		<logback.version>1.6.1</logback.version>
-		<loki-logback.version>2.1.0</loki-logback.version>
-		
+
 	</properties>
 	
 	<dependencies>
@@ -74,12 +73,7 @@
 			<artifactId>logback-classic</artifactId>
 			<version>${logback.version}</version>
 		</dependency>
-	    <dependency>
-	        <groupId>com.github.loki4j</groupId>
-	        <artifactId>loki-logback-appender</artifactId>
-	        <version>${loki-logback.version}</version>
-	    </dependency>
-	    
+
 		<dependency>
 		    <groupId>org.postgresql</groupId>
 		    <artifactId>postgresql</artifactId>

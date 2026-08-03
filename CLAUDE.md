@@ -631,6 +631,67 @@ still raises.
 timestamp directly into a store — useful for fixtures, but it bypasses `append()` and everything that path
 guarantees.
 
+### When a payload cannot be converted
+
+The serde layer throws two named types, both unchecked, both in the **api** module
+(`org.sliceworkz.eventstore.events`) so a caller never imports from `...impl.serde` to catch one. It used to
+throw a bare `RuntimeException` in fourteen places, several with no message of their own and two with no
+cause, which left "the event cannot be read" and "the database is down" distinguishable only by matching on
+message text.
+
+- **`EventSerializationException`** — from `append`, for a payload that cannot be written. Nothing is stored.
+- **`EventDeserializationException`** — for a stored event this stream's type mappings cannot read. Carries
+  `getEventType()` (the name in *storage*, which is not necessarily a type any current class claims) and
+  `getReference()`.
+
+**Neither is ever worth retrying, and that is the whole point of the split.** A failure to convert a payload
+is a property of the payload and the mappings, identical on the next attempt and on every other instance; an
+`EventStorageException` from the same call may be a dropped connection. A retry loop that cannot tell them
+apart either retries forever on a poison event or gives up on a blip.
+
+- **A deserialization failure is a poison event, not a broken store.** The storage read *succeeded*. The
+  realistic causes are configuration and history rather than bugs: a stream opened without the root class
+  covering a stored type, a record that has since lost a component the stored JSON still carries
+  (`FAIL_ON_UNKNOWN_PROPERTIES` is enabled deliberately), a renamed event class, or an `@Upcast` throwing on
+  legacy data that does not satisfy a current validation rule.
+- **`getReference()` is what makes the type useful rather than merely tidy.** The serde is handed a type name
+  and two JSON strings and cannot say *which* stored event failed, so `EventStreamImpl.enrich` attaches the
+  reference on the way out (`withReference`, which carries message, cause and stack trace over). Its `id()`
+  goes to `getEventById` on a **raw** stream — one with no mappings has nothing to fail on — so the stored
+  JSON can be read even though the typed stream chokes on it.
+- **Through a `Projector` the type is the *only* signal.** `run()` wraps everything it catches in
+  `ProjectorException`, so a dropped connection and an unreadable event arrive identically; `getCause()`
+  being an `EventDeserializationException` is what separates them. Careful:
+  `ProjectorException.getEventReference()` is the last event *handled*, and the offending event never
+  reached the projection — `EventDeserializationException.getReference()` is the one that names it.
+- **Deserialization is lazy, so it surfaces from the caller's terminal operation**, not from `query()`.
+  `getEventById` is eager and throws directly. `append` deserializes the events it just wrote in order to
+  return them, so a payload that serializes but cannot be read back fails *there*, as a deserialization
+  failure, with the event already stored.
+
+**Misconfiguration is `IllegalArgumentException`, not a serde type.** A `@LegacyEvent` on a class registered
+as current, a current class registered as legacy, and an upcaster that cannot be instantiated are all
+properties of the `Class` handed to `getEventStream`; they fail at stream creation, before anything is read
+or written, and there is no recovery but to fix the code. Two checks in the same method were already typed
+that way (duplicate event name, non-sealed interface), so this is consistency rather than new surface. The
+messages now name the upcaster *and* the event class and keep the reflective cause — a bare
+`RuntimeException(NoSuchMethodException)` said neither.
+
+**Why there is no common root for everything the library throws.** A root only pays for itself if catching
+"anything from this library" is useful, and it is not: the failures need opposite responses
+(`OptimisticLockingException` → retry immediately; `EventStorageException` → retry with backoff; serde →
+never), so a root would mostly encourage the broad catch this split exists to avoid. It would also be
+incomplete — the registration failures are `IllegalArgumentException` and would sit outside it — and
+reparenting `OptimisticLockingException` and `ProjectorException`, which callers already catch by name, is a
+change to load-bearing public API for no demonstrated caller. The two types here extend `RuntimeException`
+directly and nothing depends on that, so a root stays cheap to add if a caller ever turns up who needs one.
+
+`SerdeFailureTest` in the TCK pins all of this down per backend: the reference that comes back really does
+identify the offending stored event (it is fetched again in raw mode), an upcaster that throws is reported as
+an upcaster rather than as a parse failure, and the exception is wrapped exactly once — the typed serde used
+to catch its own exception and re-wrap it, so the message naming the missing type only ever reached a user as
+the cause of a second, vaguer one.
+
 ## Testing
 
 Testing support lives in **`sliceworkz-eventstore-testing`**, a published module (compile scope; add

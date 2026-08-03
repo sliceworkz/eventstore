@@ -27,6 +27,8 @@ import java.util.Collections;
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.Event;
+import org.sliceworkz.eventstore.events.EventDeserializationException;
+import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImplTest.ProblematicParsing.ProblematicParsingRecord;
 import org.sliceworkz.eventstore.spi.EventStorage;
@@ -62,16 +64,21 @@ public class InMemoryEventStorageImplTest {
 		// no type mapping done
 		EventStore eventStore = InMemoryEventStorage.newBuilder().buildStore();
 		
-		RuntimeException e = assertThrows(RuntimeException.class, ()->
+		EventDeserializationException e = assertThrows(EventDeserializationException.class, ()->
 			eventStore.getEventStream(EventStreamId.forContext("ctx").withPurpose("purpose"), ProblematicParsing.class).append(
-					AppendCriteria.none(), 
+					AppendCriteria.none(),
 					Collections.singletonList(
 							Event.of(new ProblematicParsingRecord("value"), Tags.none())
 					)
 			)
 		);
-		assertEquals("Failed to deserialize event data for type 'ProblematicParsingRecord', known mappings for [ProblematicParsingRecord]", e.getMessage());
-		assertEquals("Unrecognized property \"derivedValueThatIsNotPartOfRecord\" (class org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImplTest$ProblematicParsing$ProblematicParsingRecord), not marked as ignorable (one known property: \"value\")", e.getCause().getCause().getMessage().split("\n")[0]);
+		// The event is written, and then fails on the way back out: append() returns enriched events, so
+		// a payload that serializes but cannot be read back surfaces as a deserialization failure.
+		assertEquals("Failed to deserialize stored event type 'ProblematicParsingRecord' onto org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImplTest$ProblematicParsing$ProblematicParsingRecord: Unrecognized property \"derivedValueThatIsNotPartOfRecord\" (class org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImplTest$ProblematicParsing$ProblematicParsingRecord), not marked as ignorable", e.getMessage());
+		// one wrapping layer, not two: Jackson's own complaint is the direct cause
+		assertEquals("Unrecognized property \"derivedValueThatIsNotPartOfRecord\" (class org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImplTest$ProblematicParsing$ProblematicParsingRecord), not marked as ignorable (one known property: \"value\")", e.getCause().getMessage().split("\n")[0]);
+		assertEquals(EventType.ofType("ProblematicParsingRecord"), e.getEventType());
+		assertTrue(e.getReference().isPresent(), "the stream layer should name the stored event that failed");
 	}
 	
 	sealed interface ProblematicParsing {

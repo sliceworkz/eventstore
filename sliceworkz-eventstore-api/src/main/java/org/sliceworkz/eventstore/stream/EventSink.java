@@ -117,6 +117,9 @@ public interface EventSink<DOMAIN_EVENT_TYPE> {
 	 * @param events the list of ephemeral events to append
 	 * @return a list of fully-formed Events with assigned references and metadata
 	 * @throws OptimisticLockingException if append criteria are violated (new relevant facts detected)
+	 * @throws org.sliceworkz.eventstore.events.EventSerializationException if an event's payload cannot be
+	 *         written; nothing is stored. A property of the payload class, so never worth retrying —
+	 *         unlike an {@link org.sliceworkz.eventstore.spi.EventStorageException} from the same call
 	 * @see AppendCriteria
 	 */
 	List<Event<DOMAIN_EVENT_TYPE>> append ( AppendCriteria appendCriteria, List<EphemeralEvent<? extends DOMAIN_EVENT_TYPE>> events );
@@ -140,6 +143,7 @@ public interface EventSink<DOMAIN_EVENT_TYPE> {
 	 * @return a list of fully-formed Events with assigned references and metadata
 	 * @throws OptimisticLockingException if append criteria are violated (new relevant facts detected)
 	 * @throws IllegalArgumentException if the target stream is not compatible with this EventSink's stream ID, or if the target stream is read-only
+	 * @throws org.sliceworkz.eventstore.events.EventSerializationException if an event's payload cannot be written; nothing is stored
 	 * @see #append(AppendCriteria, List)
 	 */
 	List<Event<DOMAIN_EVENT_TYPE>> append ( AppendCriteria appendCriteria, List<EphemeralEvent<? extends DOMAIN_EVENT_TYPE>> events, EventStreamId streamToAppendTo );
@@ -154,6 +158,7 @@ public interface EventSink<DOMAIN_EVENT_TYPE> {
 	 * @param event the ephemeral event to append
 	 * @return a list containing the single fully-formed Event with assigned reference and metadata
 	 * @throws OptimisticLockingException if append criteria are violated
+	 * @throws org.sliceworkz.eventstore.events.EventSerializationException if the event's payload cannot be written; nothing is stored
 	 */
 	default List<Event<DOMAIN_EVENT_TYPE>> append ( AppendCriteria appendCriteria, EphemeralEvent<? extends DOMAIN_EVENT_TYPE> event ) {
 		return append(appendCriteria, Collections.singletonList(event));

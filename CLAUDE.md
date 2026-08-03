@@ -768,7 +768,35 @@ can pass all of it and still violate the boundary in production.
 - Uses HikariCP for connection pooling
 - Separate DataSource for monitoring queries (optional, defaults to main DataSource)
 - Tests use Testcontainers for isolated PostgreSQL instances
-- Requires the `btree_gin` extension (a standard contrib extension, available on the major managed Postgres offerings). Schema initialization runs `CREATE EXTENSION IF NOT EXISTS btree_gin` and schema validation requires `idx_events_stream_tags`, a combined stream+tags GIN index that serves DCB reads scoping by stream *and* filtering by tags in one index. The B-tree indexes are retained for ordered stream replay (GIN cannot serve `ORDER BY`)
+- Requires the `btree_gin` extension (a standard contrib extension, available on the major managed Postgres offerings). Schema initialization installs it and schema validation requires `idx_events_stream_tags`, a combined stream+tags GIN index that serves DCB reads scoping by stream *and* filtering by tags in one index. The B-tree indexes are retained for ordered stream replay (GIN cannot serve `ORDER BY`)
+- **Installing that extension needs `CREATE` on the *database*, which is not `CREATE` on the schema.**
+  `btree_gin` is *trusted* (PG13+), so no superuser is involved — but a role granted `CREATE` on its
+  schema and nothing on the database, the ordinary locked-down deployment, creates every table, index,
+  function and trigger here and then cannot create the extension. Because the schema scripts are one
+  transaction, that is not a missing index: the whole schema rolls back and the store does not start.
+  See "Database privileges" in the postgres module's README for the table of what each
+  `DatabaseInitMode` needs.
+  - **The DBA-installs-it-once split is the recommended answer, and it costs the application role
+    nothing afterwards.** `ensure-schema.sql` pre-checks `pg_extension` and skips the statement
+    entirely when the extension is present, so an unprivileged role starts against it indefinitely —
+    not even a `NOTICE`. (A bare `CREATE EXTENSION IF NOT EXISTS` would also have worked, since
+    PostgreSQL's `IF NOT EXISTS` short-circuit precedes its privilege check, but it puts a `NOTICE` in
+    every startup log and issues DDL a `VALIDATE`-style deployment has no business issuing.)
+  - **The remaining failure names its remedies.** A `RAISE` in the `insufficient_privilege` handler
+    reports the extension, the privilege distinction, and both ways out (`CREATE EXTENSION btree_gin`
+    once, or `GRANT CREATE ON DATABASE`), instead of a bare `permission denied to create extension`
+    wrapped in `Failed to execute database script`.
+  - **The schema advisory lock does not cover this statement**, because it is keyed on the table prefix
+    while an extension is database-scoped. Two stores with *different* prefixes starting together on a
+    database without `btree_gin` therefore raced on `pg_extension_name_index` exactly as the tables
+    used to race on `pg_type_typname_nsp_index` — the loser rolling its whole schema back. The block
+    swallows `duplicate_object` and `unique_violation`: by the time either surfaces the winner has
+    committed (a conflicting catalog insert blocks until it does), so the opclasses the index needs are
+    visible to the loser's transaction, and it goes on to create its index.
+  - **Where the extension lives is not a constraint.** `CREATE EXTENSION btree_gin SCHEMA extensions`,
+    the convention on several managed offerings, serves the index with no `search_path` change and no
+    `USAGE` grant on that schema — default operator class resolution is not `search_path`-filtered.
+  - `PostgresBtreeGinPrivilegeTest` pins all four down per backend (16, 17, 18).
 - **Ordering is the `(event_tx, event_position)` tuple everywhere — reads, the `until` boundary, and the
   optimistic-locking check.** `event_position` is a `bigserial` taken at insert time and `event_tx` is
   `pg_current_xact_id()`, assigned independently, so the two orders genuinely disagree: a transaction can

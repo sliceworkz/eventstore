@@ -43,10 +43,15 @@ import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendLis
  * The optimization leverages the return value of {@link EventStreamEventuallyConsistentAppendListener#eventsAppended(EventReference)}
  * to track what the delegate listener has actually processed, allowing it to skip notifications
  * for event references already handled.
+ * <p>
+ * <strong>Internal.</strong> Every listener passed to {@code subscribe(...)} is wrapped in one of these
+ * by the store itself, so there is no reason for a caller to name this class — wrapping a listener
+ * before subscribing it only gets it wrapped twice. It lives in the implementation package the
+ * ServiceLoader exists to hide, and carries no compatibility promise.
  *
  * @see EventStreamEventuallyConsistentAppendListener
  */
-public class OptimizingApendListenerDecorator implements EventStreamEventuallyConsistentAppendListener {
+public class OptimizingAppendListenerDecorator implements EventStreamEventuallyConsistentAppendListener {
     private final EventStreamEventuallyConsistentAppendListener delegate;
     private final ReentrantLock lock;
     private final AtomicReference<EventReference> lastNotifiedReference;
@@ -58,6 +63,14 @@ public class OptimizingApendListenerDecorator implements EventStreamEventuallyCo
      *
      * @param delegate the listener to decorate with optimization logic; must not be null
      */
+    public OptimizingAppendListenerDecorator(EventStreamEventuallyConsistentAppendListener delegate) {
+        this.delegate = delegate;
+        this.lock = new ReentrantLock();
+        this.lastNotifiedReference = new AtomicReference<>();
+        this.nextEventReference = new AtomicReference<>();
+        this.updateInProgress = false;
+    }
+
     /**
      * The listener this decorator delivers to — the one the caller actually subscribed.
      * <p>
@@ -69,14 +82,6 @@ public class OptimizingApendListenerDecorator implements EventStreamEventuallyCo
      */
     public EventStreamEventuallyConsistentAppendListener delegate ( ) {
         return delegate;
-    }
-
-    public OptimizingApendListenerDecorator(EventStreamEventuallyConsistentAppendListener delegate) {
-        this.delegate = delegate;
-        this.lock = new ReentrantLock();
-        this.lastNotifiedReference = new AtomicReference<>();
-        this.nextEventReference = new AtomicReference<>();
-        this.updateInProgress = false;
     }
 
     /**

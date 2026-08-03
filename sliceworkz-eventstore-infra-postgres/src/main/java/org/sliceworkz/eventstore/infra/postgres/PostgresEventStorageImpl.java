@@ -2215,7 +2215,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 					}
 					
 					try ( PreparedStatement stmt = writeConnection.prepareStatement(sql) ) {
-						stmt.setString(1, reader.toString());
+						stmt.setString(1, reader);
 						stmt.setLong(2, eventReference == null?0:eventReference.position());
 						stmt.setString(3, eventReference == null?"0":Long.toUnsignedString(eventReference.tx()));
 						stmt.setString(4, eventReference==null?null:eventReference.id().value());
@@ -2258,8 +2258,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 				writeConnection.setAutoCommit(false);
 				
 				try ( PreparedStatement stmt = writeConnection.prepareStatement(sql) ) {
-					stmt.setString(1, reader.toString());
-					
+					stmt.setString(1, reader);
+
 					stmt.executeUpdate();
 					writeConnection.commit();
 				}

@@ -19,6 +19,7 @@ package org.sliceworkz.eventstore.impl;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -604,7 +605,7 @@ public class EventStoreImpl implements EventStore {
 		@Override
 		public void subscribe(EventStreamEventuallyConsistentAppendListener eventuallyConsistentSubscriber) {
 			checkStoreNotClosed();
-			this.eventuallyConsistentSubscribers.add(new OptimizingApendListenerDecorator(eventuallyConsistentSubscriber));
+			this.eventuallyConsistentSubscribers.add(new OptimizingAppendListenerDecorator(eventuallyConsistentSubscriber));
 			subscribeToStorage();
 		}
 
@@ -780,11 +781,11 @@ public class EventStoreImpl implements EventStore {
 			if ( closed.get() ) {
 				return; // see notify(AppendsToEventStoreNotification)
 			}
-			LOGGER.debug("Must asynchronously notify {} eventually consistent bookmark listeners on {} of update for {} to {}", eventuallyConsistentSubscribers.size(), eventStreamId, bookmarkPlaced.reader(), bookmarkPlaced.bookmark());
+			LOGGER.debug("Must asynchronously notify {} eventually consistent bookmark listeners on {} of update for {} to {}", bookmarkSubscribers.size(), eventStreamId, bookmarkPlaced.reader(), bookmarkPlaced.bookmark());
 
 			// schedule for execution on different thread to notify/interrupt any waiting eventual consistent processors
 			submitOrDropIfClosed(executorServiceForBookmarkUpdates, ( ) -> {
-					LOGGER.debug("Notifying {} eventually consistent bookmark listeners on {} of update for {} to {}", eventuallyConsistentSubscribers.size(), eventStreamId, bookmarkPlaced.reader(), bookmarkPlaced.bookmark());
+					LOGGER.debug("Notifying {} eventually consistent bookmark listeners on {} of update for {} to {}", bookmarkSubscribers.size(), eventStreamId, bookmarkPlaced.reader(), bookmarkPlaced.bookmark());
 					bookmarkSubscribers.stream().forEach(s->notifyQuietly(s, bookmarkPlaced));
 			});
 		}
@@ -810,7 +811,7 @@ public class EventStoreImpl implements EventStore {
 			} catch ( Exception e ) {
 				// through the decorator every subscriber is wrapped in, so the name is one the caller recognises
 				EventStreamEventuallyConsistentAppendListener subscribed =
-					( subscriber instanceof OptimizingApendListenerDecorator decorator ) ? decorator.delegate() : subscriber;
+					( subscriber instanceof OptimizingAppendListenerDecorator decorator ) ? decorator.delegate() : subscriber;
 				LOGGER.error("eventually consistent append listener {} failed handling the append notification up until at least {} on stream {}: {}",
 						subscribed.getClass().getName(), atLeastUntil, eventStreamId, e.getMessage(), e);
 			}
@@ -851,6 +852,7 @@ public class EventStoreImpl implements EventStore {
 		@Override
 		public void placeBookmark(String reader, EventReference reference, Tags tags) {
 			checkStoreNotClosed();
+			requireReader(reader);
 			meterBookmarkPlace.increment();
 			eventStorage.bookmark(reader, reference, tags);
 		}
@@ -868,8 +870,29 @@ public class EventStoreImpl implements EventStore {
 		@Override
 		public Optional<EventReference> getBookmark(String reader) {
 			checkStoreNotClosed();
+			requireReader(reader);
 			meterBookmarkGet.increment();
-			return eventStorage.getBookmark(reader.toString());
+			return eventStorage.getBookmark(reader);
+		}
+
+		/**
+		 * Rejects a null reader name here, rather than letting one reach a backend.
+		 * <p>
+		 * A reader name is the whole identity of a bookmark, so a null one is a programming error in
+		 * every case. What it is not is a defined one: the backends disagree about it. The in-memory
+		 * stores keep bookmarks in a {@link java.util.HashMap}, which accepts a null key happily and
+		 * stores a bookmark nobody can name; PostgreSQL has {@code reader TEXT PRIMARY KEY}, so a null
+		 * reaches the database and comes back as a not-null violation on a place, and as a silent
+		 * no-op on a remove and an empty {@code Optional} on a get, because {@code WHERE reader = NULL}
+		 * matches nothing.
+		 * <p>
+		 * Two of those paths used to be guarded accidentally, by a {@code reader.toString()} on a value
+		 * already typed {@code String}. Removing those calls (they convert nothing) would have taken the
+		 * guard with them, so the check is made explicit and uniform instead — one place, same answer on
+		 * every backend, and it names the parameter.
+		 */
+		private void requireReader ( String reader ) {
+			Objects.requireNonNull(reader, "reader must not be null");
 		}
 
 		@Override

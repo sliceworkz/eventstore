@@ -193,6 +193,39 @@ mvn clean install -DskipTests
 - Used for building read models from event streams
 - Optionally defines an `initQuery()` for the savepoint pattern (see below)
 
+**BatchAwareProjection — the seam between a projection's own store and the bookmark:**
+- A `BatchAwareProjection` commits its own work in `afterBatch`, and the bookmark saying how far it has
+  come lives in the event store. There is no transaction across the two, so the ordering is the whole
+  guarantee: **the batch is committed first and bookmarked second**, which makes a crash in that window
+  cost a re-projection and never a silent skip. At-least-once, deliberately, in that direction
+- **The bookmark is placed after every batch, not once per run.** It used to be written after the whole
+  `run()` loop, so a catch-up that committed 2000 batches and then died replayed all of them — the window
+  was the entire run rather than the 500 events the batch boundary suggests. The cost of the change is one
+  bookmark upsert per batch during a replay, which is what the bookmark is for
+- **A batch that fails takes the projector's cursor back with it.** `afterBatch` is called inside the
+  try, not from a `finally`: a commit that throws now rolls `lastEventReference` back to where the batch
+  started and is reported as a `ProjectorException` like any other projection failure. Before, it escaped
+  the projector as a bare `RuntimeException` **past** the bookmark placement while the in-memory cursor
+  stayed advanced — so the rolled-back batch's events were skipped for good, and a later successful batch
+  bookmarked over the hole. Nothing threw where anyone would see it, and downstream the untyped throwable
+  missed the `catch ( ProjectorException )` that would have stopped the processor, landing in a catch-all
+  that immediately looped: a projection whose commits kept failing re-queried and re-projected at full
+  thread speed
+- **A batch is ended exactly once.** `cancelBatch` is not called after an `afterBatch` that threw — that
+  projection has already released what it held — and a `cancelBatch` that throws is logged and attached
+  to the original failure as a **suppressed** exception rather than replacing it. It used to replace it,
+  so a poison event whose rollback also failed was reported as a rollback problem, sending whoever read
+  the log to the wrong store. `BatchAwareProjection.cancelBatch` had always documented the containment;
+  only now does it happen
+- **Where a re-projection would duplicate rather than merely repeat, the projection should hold its own
+  position.** `afterBatch` is handed the batch's last `EventReference` for exactly this: write it into the
+  same store, in the same transaction, and resume from it. Two stores that cannot share a transaction
+  cannot be made exactly-once any other way. `sliceworkz-eventmodeling`'s `SqlReadModelProjector` is the
+  worked example
+- `ProjectorBatchDurabilityTest` in the TCK pins all of it per backend: the bookmark visible from inside
+  the *second* batch already names the first, a failed commit is a `ProjectorException` and its events
+  come round again, and a failing rollback keeps the cause
+
 **Projection initQuery (Savepoint Pattern):**
 - Projections can define an optional `initQuery()` (default returns `null`) that runs before the main `eventQuery()`
 - Enables the savepoint pattern: a backward query with limit 1 finds the most recent savepoint event that summarizes prior state

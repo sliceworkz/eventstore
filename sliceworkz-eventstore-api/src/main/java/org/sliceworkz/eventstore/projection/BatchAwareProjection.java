@@ -118,8 +118,12 @@ public interface BatchAwareProjection<EVENT_TYPE> extends Projection<EVENT_TYPE>
 	 * After this method is called, the exception will be wrapped in a {@link ProjectorException}
 	 * and propagated to the caller.  No call to {@link #afterBatch(Optional)} will follow after this one.
 	 * <p>
+	 * It is <b>not</b> called after an {@link #afterBatch(Optional)} that threw: a batch is ended
+	 * exactly once, and a projection whose commit failed has already released what it held.
+	 * <p>
 	 * This method should handle exceptions gracefully and should not throw exceptions itself.
-	 * Any exceptions thrown from this method will be logged but otherwise ignored.
+	 * Any exception thrown from this method is logged and attached to the failure being handled as a
+	 * suppressed exception — it never replaces it, because the cause is what the caller needs.
 	 *
 	 * @see #beforeBatch()
 	 * @see #afterBatch(Optional)
@@ -133,7 +137,22 @@ public interface BatchAwareProjection<EVENT_TYPE> extends Projection<EVENT_TYPE>
 	 * {@link #when(org.sliceworkz.eventstore.events.Event)}. Use this to commit transactions,
 	 * flush accumulated changes, or clean up resources.
 	 * <p>
-	 * This method is not called if {@link #cancelBatch()} was called due to an error. 
+	 * This method is not called if {@link #cancelBatch()} was called due to an error.
+	 * <p>
+	 * <b>Throwing means the batch did not land.</b> The {@link Projector} treats it exactly like a
+	 * failure during processing: the exception is wrapped in a {@link ProjectorException} and reported
+	 * to the caller, and the projector's cursor is taken back to where the batch started, so the
+	 * events are offered again on the next run rather than skipped. Do not swallow a failed commit
+	 * here — a projection that reports success for work it did not persist loses those events with
+	 * nothing raised anywhere.
+	 * <p>
+	 * <b>Why {@code lastEventReference} is handed over.</b> The projector bookmarks it in the event
+	 * store <i>after</i> this method returns, so a crash in that window re-projects the batch. Where
+	 * that would duplicate rather than merely repeat work — a projection writing to a durable store of
+	 * its own — record this reference in that same store, inside the same transaction this method
+	 * commits, and resume from it. That makes the projection's own store the authority on how far it
+	 * has come, which is the only way to be exactly-once across two stores that cannot share a
+	 * transaction. The alternative is to make {@code when} idempotent.
 	 *
 	 * @param lastEventReference the reference of the last event processed in this batch,
 	 *                          or empty if no events matched the projection's query

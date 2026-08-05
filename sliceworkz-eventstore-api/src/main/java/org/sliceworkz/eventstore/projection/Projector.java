@@ -314,6 +314,9 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 
 			Optional<EventReference> lastReadAtStart = lastEventReference;
 
+			// what the bookmark already holds, so a batch that moved nothing places nothing
+			Optional<EventReference> bookmarked = lastReadAtStart;
+
 			// in order to avoid memory issues, we'll loop in batches om MAX_EVENTS_PER_QUERY, until no more events are found in the stream
 			Limit limit =  Limit.to(maxEventsPerQuery).orIfLower(projection.eventQuery().limit());
 
@@ -327,6 +330,13 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 			while ( !done ) {
 
 				Batch batch = new Batch(projection);
+
+				// where this batch started. A batch that does not land takes the cursor back with it:
+				// the projection rolled its own work back, so a cursor left beyond it would skip those
+				// events for good on the next run
+				Optional<EventReference> cursorBeforeBatch = lastEventReference;
+				EventReference lastReadBeforeBatch = lastRead;
+
 				try {
 
 					queriesDone++;
@@ -359,13 +369,25 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 					if ( !done && limit.isSet() && storedEventsCount.get() < limit.value() ) {
 						done = true;
 					}
+
+					// Ending the batch belongs inside the try, not in a finally. A projection commits
+					// here, and a commit that fails means this batch did not land -- which has to reach
+					// the catch below so the cursor goes back and the caller is told, rather than
+					// escaping past the bookmark as a bare RuntimeException.
+					batch.stopBatchIfNeeded(lastEventReference);
+
 				} catch ( Throwable t ) {
-					batch.failBatchIfNeeded();
+					batch.failBatchIfNeeded(t);
+					lastEventReference = cursorBeforeBatch;
+					lastRead = lastReadBeforeBatch;
 					exception = new ProjectorException(t, currentEventReference);
 					break;
-				} finally {
-					batch.stopBatchIfNeeded(lastEventReference);
 				}
+
+				// The batch is durable now, so the bookmark may record it -- and does so per batch
+				// rather than per run, because everything committed before a crash and not bookmarked
+				// is projected a second time on restart.
+				bookmarked = placeBookmarkIfMoved(bookmarked);
 
 				if ( queryTotalLimit.isSet() && eventsStreamed >= queryTotalLimit.value() ) {
 					break;
@@ -376,17 +398,33 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 				}
 			}
 
-
-			// if we have something new to put in the bookmark
 			if ( bookmarkReader != null && lastEventReference != null && lastEventReference.isPresent() ) {
-				if ( !lastEventReference.equals(lastReadAtStart)) {
-					es.placeBookmark(bookmarkReader, lastEventReference.get(), bookmarkTags);
-				}
 				LOGGER.debug("readmodel {} updated until {} with {} queries", projection, lastEventReference, queriesDone);
 			}
-			
-			
+
+
 			return new ProjectorRunResult ( new ProjectorMetrics ( eventsStreamed, eventsHandled, queriesDone, lastEventReference==null?null:lastEventReference.orElse(null), mostRecentEventReference), exception );
+		}
+
+		/**
+		 * Writes the bookmark when the cursor has moved past what it already holds, and reports where
+		 * it now stands.
+		 * <p>
+		 * Called once per committed batch. The ordering is load-bearing and one-directional: the batch
+		 * is durable before the bookmark names it, so a crash in between costs a re-projection of that
+		 * batch and never a silently skipped one. That is what makes projection at-least-once rather
+		 * than at-most-once, and it is why a projection writing to a store of its own wants to record
+		 * its own position inside its own transaction -- see {@link BatchAwareProjection#afterBatch}.
+		 */
+		private Optional<EventReference> placeBookmarkIfMoved ( Optional<EventReference> bookmarked ) {
+			if ( bookmarkReader == null || lastEventReference == null || lastEventReference.isEmpty() ) {
+				return bookmarked;
+			}
+			if ( lastEventReference.equals(bookmarked) ) {
+				return bookmarked;
+			}
+			es.placeBookmark(bookmarkReader, lastEventReference.get(), bookmarkTags);
+			return lastEventReference;
 		}
 	
 		private Event<CONSUMED_EVENT_TYPE> offerEventToProjection ( Event<CONSUMED_EVENT_TYPE> e, Projection<CONSUMED_EVENT_TYPE> projection, EventReference until, Batch batch ) {
@@ -1003,9 +1041,11 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 	 * and invoking the appropriate lifecycle methods at the correct times:
 	 * <ul>
 	 *   <li>{@link #startBatchIfNeeded(Event)} - Calls {@link BatchAwareProjection#beforeBatch()} before the first event</li>
-	 *   <li>{@link #failBatchIfNeeded()} - Calls {@link BatchAwareProjection#cancelBatch()} on error</li>
+	 *   <li>{@link #failBatchIfNeeded(Throwable)} - Calls {@link BatchAwareProjection#cancelBatch()} on error</li>
 	 *   <li>{@link #stopBatchIfNeeded(Optional)} - Calls {@link BatchAwareProjection#afterBatch(Optional)} after the batch</li>
 	 * </ul>
+	 * <p>
+	 * A batch is ended exactly once — by one of the last two, never both.
 	 * <p>
 	 * If the projection does not implement {@link BatchAwareProjection}, all methods are no-ops.
 	 */
@@ -1013,7 +1053,11 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 
 		private BatchAwareProjection<CONSUMED_EVENT_TYPE> batchAwareProjection;
 		private boolean started;
-		private boolean failed;
+
+		// afterBatch or cancelBatch has been entered. A batch is ended exactly once, whichever way it
+		// went: a projection whose commit threw has already released whatever it held, and rolling it
+		// back afterwards would be a second ending of a transaction that no longer exists
+		private boolean ended;
 
 		/**
 		 * Creates a new Batch instance for the given projection.
@@ -1051,12 +1095,29 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		 * Cancels the batch if needed by calling {@link BatchAwareProjection#cancelBatch()}.
 		 * <p>
 		 * This method is called when an exception occurs during batch processing.
-		 * It will only invoke the callback if the batch was actually started.
+		 * It will only invoke the callback if the batch was actually started and has not already
+		 * been ended by {@link #stopBatchIfNeeded(Optional)}.
+		 * <p>
+		 * A {@code cancelBatch()} that throws is contained and attached to the failure that caused it
+		 * as a suppressed exception, never allowed to replace it: a rollback failing is a consequence
+		 * of whatever went wrong, and reporting the consequence instead of the cause is how a poison
+		 * event comes to be reported as a rollback problem. This is what
+		 * {@link BatchAwareProjection#cancelBatch()} has always documented.
+		 *
+		 * @param cause the failure being handled, which stays the one reported
 		 */
-		void failBatchIfNeeded ( ) {
-			if ( batchAwareProjection != null && started ) {
-				batchAwareProjection.cancelBatch();
-				failed = true;
+		void failBatchIfNeeded ( Throwable cause ) {
+			if ( batchAwareProjection != null && started && !ended ) {
+				ended = true;
+				try {
+					batchAwareProjection.cancelBatch();
+				} catch ( Throwable cancelFailure ) {
+					LOGGER.error("cancelBatch of {} failed while handling {} -- reporting the original failure",
+							projection, cause, cancelFailure);
+					if ( cause != null && cancelFailure != cause ) {
+						cause.addSuppressed(cancelFailure);
+					}
+				}
 			}
 		}
 
@@ -1064,12 +1125,16 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		 * Stops the batch if needed by calling {@link BatchAwareProjection#afterBatch(Optional)}.
 		 * <p>
 		 * This method is called after successfully processing all events in a batch.
-		 * It will only invoke the callback if the batch was actually started.
+		 * It will only invoke the callback if the batch was actually started and has not already
+		 * been ended.
+		 * <p>
+		 * Anything it throws is the caller's to handle: it means the batch did not land.
 		 *
 		 * @param lastEventReference the reference of the last event processed, or empty if none
 		 */
 		void stopBatchIfNeeded ( Optional<EventReference> lastEventReference ) {
-			if ( batchAwareProjection != null && started && !failed ) {
+			if ( batchAwareProjection != null && started && !ended ) {
+				ended = true;
 				batchAwareProjection.afterBatch(lastEventReference);
 			}
 		}

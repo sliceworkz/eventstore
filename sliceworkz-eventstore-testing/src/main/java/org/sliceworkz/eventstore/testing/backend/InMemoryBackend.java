@@ -51,7 +51,11 @@ public class InMemoryBackend implements EventStoreBackend {
 
 	@Override
 	public boolean supports ( Capability capability ) {
-		return capability != Capability.RAW_STORAGE_ACCESS;
+		// exhaustive, so a new capability forces a deliberate decision here
+		return switch (capability) {
+			case IMPORT, TABLE_PREFIX, RESULT_LIMIT, LEASE -> true;
+			case RAW_STORAGE_ACCESS -> false;
+		};
 	}
 
 }

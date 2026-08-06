@@ -88,11 +88,18 @@ public interface EventStoreBackend {
 	 * unsupported capability are skipped rather than failed — see {@link ForEachBackend#requires()}.
 	 *
 	 * @param capability the capability in question
-	 * @return {@code true} if supported; the default supports everything except
-	 *         {@link Capability#RAW_STORAGE_ACCESS}
+	 * @return {@code true} if supported; see the default's switch for what is assumed by default
 	 */
 	default boolean supports ( Capability capability ) {
-		return capability != Capability.RAW_STORAGE_ACCESS;
+		// Exhaustive on purpose: a new capability added to the enum fails compilation here until a
+		// deliberate default is chosen for it. The old default returned true for anything unknown,
+		// which is the wrong direction for a capability whose SPI methods default to throwing —
+		// every backend written before the capability existed would have claimed support it does
+		// not have, and its TCK run would fail instead of skip.
+		return switch ( capability ) {
+			case IMPORT, TABLE_PREFIX, RESULT_LIMIT -> true;
+			case RAW_STORAGE_ACCESS, LEASE -> false;
+		};
 	}
 
 	/**
@@ -134,7 +141,17 @@ public interface EventStoreBackend {
 		 * {@link #dataSource(EventStorage)} returns a usable handle on the underlying database, so
 		 * a scenario can modify stored data out of band.
 		 */
-		RAW_STORAGE_ACCESS
+		RAW_STORAGE_ACCESS,
+
+		/**
+		 * The lease operations backing leader election —
+		 * {@link EventStorage#requestLease(EventStorage.LeaseRequest)},
+		 * {@link EventStorage#releaseLease(String, String)} and {@link EventStorage#getLeases()} —
+		 * are implemented. The SPI defaults throw {@code UnsupportedOperationException}, so this is
+		 * genuinely optional; the default here is {@code false} so a backend written before leases
+		 * existed skips the lease scenarios instead of failing them.
+		 */
+		LEASE
 
 	}
 

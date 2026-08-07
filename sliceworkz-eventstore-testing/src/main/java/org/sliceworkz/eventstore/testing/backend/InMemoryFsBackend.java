@@ -81,7 +81,7 @@ public class InMemoryFsBackend implements EventStoreBackend {
 	public boolean supports ( Capability capability ) {
 		// one store per directory, so a table prefix has nothing to separate
 		return switch (capability) {
-			case IMPORT, RESULT_LIMIT -> true;
+			case IMPORT, RESULT_LIMIT, LEASE -> true;
 			case TABLE_PREFIX, RAW_STORAGE_ACCESS -> false;
 		};
 	}

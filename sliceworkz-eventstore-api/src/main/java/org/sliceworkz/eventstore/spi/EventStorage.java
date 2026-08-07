@@ -17,12 +17,15 @@
  */
 package org.sliceworkz.eventstore.spi;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
 
 import org.sliceworkz.eventstore.events.Bookmark;
+import org.sliceworkz.eventstore.events.Lease;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
@@ -156,7 +159,8 @@ public interface EventStorage extends AutoCloseable {
 	 *   <li><b>Terminal.</b> A closed storage cannot be reopened.</li>
 	 *   <li><b>Operations throw afterwards.</b> {@link #query}, {@link #append}, {@link #importEvents},
 	 *       {@link #getEventById}, {@link #subscribe}, {@link #bookmark}, {@link #getBookmark},
-	 *       {@link #getBookmarks} and {@link #removeBookmark} throw
+	 *       {@link #getBookmarks}, {@link #removeBookmark}, {@link #requestLease},
+	 *       {@link #releaseLease} and {@link #getLeases} throw
 	 *       {@link EventStorageClosedException} once the storage is closed. Continuing to serve reads
 	 *       and writes while notifications are dead is not an acceptable alternative: it strands
 	 *       projections silently. {@link #name()} keeps working, so logging and diagnostics do not
@@ -582,6 +586,180 @@ public interface EventStorage extends AutoCloseable {
 	 * @see #getBookmark(String)
 	 */
 	List<Bookmark> getBookmarks ( );
+
+	/**
+	 * Requests — or renews — a named lease for the given owner, registering the owner as a live
+	 * contender either way. This is the single operation behind leader election: every contender
+	 * calls it periodically (well within {@link LeaseRequest#ttl()}), and the returned
+	 * {@link LeaseStatus} tells it what it is right now.
+	 * <p>
+	 * Semantics, which every implementation must honour identically:
+	 * <ul>
+	 *   <li><b>Acquisition.</b> If the lease does not exist, or exists but has expired — its last
+	 *       heartbeat is older than the time-to-live it was requested with, measured on the
+	 *       <b>storage's clock</b> — the caller becomes the owner. The fencing token is one higher
+	 *       than the previous owner's (starting at 1), and the response is {@link LeaseStatus#LEADER}.</li>
+	 *   <li><b>Renewal.</b> If the caller already owns the lease, its heartbeat and priority are
+	 *       refreshed and the fencing token is unchanged. The response is {@link LeaseStatus#LEADER} —
+	 *       unless a <em>live</em> contender with a <b>strictly higher</b> priority exists, in which
+	 *       case it is {@link LeaseStatus#LEADER_STEP_DOWN_REQUESTED}: the caller still holds the
+	 *       lease and remains the only legitimate processor, but is asked to finish its current work
+	 *       and {@link #releaseLease(String, String) release}. The storage never revokes a live lease
+	 *       itself; a leader that cannot step down safely may keep renewing. Contenders with an equal
+	 *       or lower priority never trigger a step-down request.</li>
+	 *   <li><b>Standby.</b> If another owner holds a live lease, the caller is recorded as a live
+	 *       contender at its requested priority and gets {@link LeaseStatus#STANDBY}. A contender is
+	 *       considered live while its own last request is younger than the time-to-live it passed.</li>
+	 * </ul>
+	 * <p>
+	 * The single-writer guarantee this gives a caller: between two calls that both returned
+	 * {@code LEADER} (or {@code LEADER_STEP_DOWN_REQUESTED}) no other owner has held the lease —
+	 * provided the caller stops acting as leader the moment it can no longer <em>confirm</em> a
+	 * renewal within the ttl it requested. A caller whose renewal call fails or hangs must demote
+	 * itself on its own clock rather than assume it is still the leader; expiry on the storage clock
+	 * plus self-demotion on the caller clock is what keeps two leaders from overlapping (modulo a
+	 * caller paused beyond its ttl, which no lease can prevent — the fencing token exists so such a
+	 * zombie's writes can be recognised).
+	 * <p>
+	 * Expiry never depends on any contender's clock, so contenders' clocks need not agree with each
+	 * other or with the storage. Callers only measure durations (their own polling interval and the
+	 * time since their last confirmed renewal), never compare instants across machines.
+	 *
+	 * @param request the lease name, owner identity, priority and time-to-live (must not be null)
+	 * @return the caller's resulting status, never null
+	 * @throws EventStorageException if an error occurs while reading or writing the lease
+	 * @throws UnsupportedOperationException if this storage implementation does not support leases
+	 * @see #releaseLease(String, String)
+	 * @see #getLeases()
+	 */
+	default LeaseResponse requestLease ( LeaseRequest request ) {
+		throw new UnsupportedOperationException("%s does not support leases".formatted(name()));
+	}
+
+	/**
+	 * Releases a lease held by the given owner, so the next {@link #requestLease(LeaseRequest)} by
+	 * any contender acquires it immediately instead of waiting out the time-to-live. The owner's
+	 * contender registration is withdrawn as well.
+	 * <p>
+	 * A release makes the lease immediately expired; it does not erase it. The record — most
+	 * importantly its fencing token — survives, so the next acquisition still increments over it:
+	 * fencing tokens stay strictly monotonic per lease across releases, never resetting.
+	 * <p>
+	 * Idempotent and forgiving: releasing a lease the owner does not hold — because it expired and
+	 * was taken over, or was never acquired — does nothing and does not throw. A release never
+	 * touches a lease currently held by a <em>different</em> owner.
+	 *
+	 * @param leaseName the name of the lease to release
+	 * @param owner the owner releasing it; only a lease held by exactly this owner is released
+	 * @throws EventStorageException if an error occurs while releasing the lease
+	 * @throws UnsupportedOperationException if this storage implementation does not support leases
+	 * @see #requestLease(LeaseRequest)
+	 */
+	default void releaseLease ( String leaseName, String owner ) {
+		throw new UnsupportedOperationException("%s does not support leases".formatted(name()));
+	}
+
+	/**
+	 * Retrieves all leases currently recorded by this storage, including expired ones that have not
+	 * been taken over yet (an expired lease keeps its last owner and heartbeat until someone else
+	 * acquires it — liveness is judged against {@link Lease#heartbeatAt()}, not against presence in
+	 * this list).
+	 * <p>
+	 * Like bookmarks, leases are addressed globally by name, so the returned list spans the entire
+	 * storage. The list is a snapshot taken at call time; order is unspecified.
+	 *
+	 * @return a snapshot list of all leases; empty if none exist
+	 * @throws EventStorageException if an error occurs while reading leases
+	 * @throws UnsupportedOperationException if this storage implementation does not support leases
+	 * @see Lease
+	 */
+	default List<Lease> getLeases ( ) {
+		throw new UnsupportedOperationException("%s does not support leases".formatted(name()));
+	}
+
+	/**
+	 * A request to acquire or renew a lease — the input to {@link #requestLease(LeaseRequest)}.
+	 * <p>
+	 * The time-to-live is the window within which the owner must renew: a lease whose last
+	 * heartbeat is older than this, on the storage's clock, is expired and acquirable by anyone.
+	 * The caller must therefore call {@link #requestLease(LeaseRequest)} well within every ttl —
+	 * a third of it is a sensible interval, leaving two failed attempts before leadership lapses.
+	 *
+	 * @param leaseName the globally unique name of the lease (must not be null or blank)
+	 * @param owner the identity of the requester; must be stable for the requester's lifetime and
+	 *              unique among contenders (must not be null or blank)
+	 * @param priority the requester's priority; a live contender with a strictly higher priority
+	 *                 makes the storage ask the current owner to step down
+	 * @param ttl the time-to-live of the granted or renewed lease (must be positive)
+	 */
+	record LeaseRequest ( String leaseName, String owner, long priority, Duration ttl ) {
+
+		public LeaseRequest {
+			Objects.requireNonNull(leaseName, "leaseName must not be null");
+			Objects.requireNonNull(owner, "owner must not be null");
+			Objects.requireNonNull(ttl, "ttl must not be null");
+			if ( leaseName.isBlank() ) {
+				throw new IllegalArgumentException("leaseName must not be blank");
+			}
+			if ( owner.isBlank() ) {
+				throw new IllegalArgumentException("owner must not be blank");
+			}
+			if ( ttl.isNegative() || ttl.isZero() ) {
+				throw new IllegalArgumentException("ttl must be positive, but was " + ttl);
+			}
+		}
+
+	}
+
+	/**
+	 * The outcome of a {@link #requestLease(LeaseRequest)} call.
+	 *
+	 * @param status what the caller is after this call — see {@link LeaseStatus}
+	 * @param fencingToken the lease's current fencing token: the caller's own token when it is the
+	 *                     leader, the current holder's when it is standing by. Strictly increases on
+	 *                     every ownership change, stable across renewals
+	 * @param currentOwner the owner holding the lease after this call (the caller itself when leader)
+	 */
+	record LeaseResponse ( LeaseStatus status, long fencingToken, String currentOwner ) {
+
+		public LeaseResponse {
+			Objects.requireNonNull(status, "status must not be null");
+			Objects.requireNonNull(currentOwner, "currentOwner must not be null");
+		}
+
+	}
+
+	/**
+	 * What a contender is, as answered by {@link #requestLease(LeaseRequest)}.
+	 *
+	 * @see LeaseResponse
+	 */
+	enum LeaseStatus {
+
+		/**
+		 * The caller holds the lease: it is the single legitimate processor until the ttl it
+		 * requested runs out, and renewing within the ttl extends that indefinitely.
+		 */
+		LEADER,
+
+		/**
+		 * The caller still holds the lease — everything {@link #LEADER} means still applies — but a
+		 * live contender with a strictly higher priority is waiting. The caller should finish its
+		 * current unit of work and {@link #releaseLease(String, String) release}, so the
+		 * higher-priority contender acquires on its next request instead of waiting out the ttl.
+		 * The storage never enforces this; a caller that keeps renewing keeps the lease.
+		 */
+		LEADER_STEP_DOWN_REQUESTED,
+
+		/**
+		 * Another owner holds a live lease. The caller has been recorded as a live contender at its
+		 * requested priority and should simply keep requesting: it acquires when the lease expires,
+		 * is released, or — if its priority is strictly higher — when the owner honours the
+		 * step-down request.
+		 */
+		STANDBY
+
+	}
 
 	/**
 	 * Notification sent when new events are appended to the event store.

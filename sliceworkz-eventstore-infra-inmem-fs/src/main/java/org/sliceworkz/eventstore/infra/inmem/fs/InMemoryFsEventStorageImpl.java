@@ -32,6 +32,7 @@ import java.util.stream.Stream;
 import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
+import org.sliceworkz.eventstore.events.Lease;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.query.EventQuery;
@@ -163,6 +164,25 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 	public void removeBookmark ( String reader ) {
 		delegate.removeBookmark(reader);
 		deleteBookmark(reader);
+	}
+
+	// Leases are deliberately NOT persisted: a lease held by a process that no longer runs must
+	// expire, not be resurrected on reload. Forwarded explicitly all the same — inheriting the SPI
+	// defaults would make this storage claim "unsupported" while its delegate supports them.
+
+	@Override
+	public LeaseResponse requestLease ( LeaseRequest request ) {
+		return delegate.requestLease(request);
+	}
+
+	@Override
+	public void releaseLease ( String leaseName, String owner ) {
+		delegate.releaseLease(leaseName, owner);
+	}
+
+	@Override
+	public List<Lease> getLeases ( ) {
+		return delegate.getLeases();
 	}
 
 	/**

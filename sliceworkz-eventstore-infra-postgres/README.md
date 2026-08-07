@@ -23,12 +23,16 @@ Every mode needs these at runtime. They come for free when the role created the 
 DBA created them, they have to be granted:
 
 ```sql
-GRANT SELECT, INSERT                 ON <prefix>events    TO <role>;
-GRANT SELECT, INSERT, UPDATE, DELETE ON <prefix>bookmarks TO <role>;
+GRANT SELECT, INSERT                 ON <prefix>events           TO <role>;
+GRANT SELECT, INSERT, UPDATE, DELETE ON <prefix>bookmarks        TO <role>;
+GRANT SELECT, INSERT, UPDATE         ON <prefix>leases           TO <role>;
+GRANT SELECT, INSERT, UPDATE, DELETE ON <prefix>lease_contenders TO <role>;
 GRANT USAGE                          ON SEQUENCE <prefix>events_event_position_seq TO <role>;
 ```
 
-Events are never updated or deleted — the store only ever appends to that table.
+Events are never updated or deleted — the store only ever appends to that table. Lease rows are
+never deleted either (a release backdates the heartbeat so the fencing token survives), so the
+leases table needs no `DELETE`; contender rows are pruned, so that table does.
 
 **`CREATE` on the schema and `CREATE` on the database are different privileges**, and this is the
 one place the difference shows. `btree_gin` is a *trusted* extension (PostgreSQL 13+), so installing

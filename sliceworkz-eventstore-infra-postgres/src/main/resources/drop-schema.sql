@@ -34,3 +34,6 @@ DROP TABLE IF EXISTS PREFIX_events CASCADE;
 -- wired straight back to it.
 DROP FUNCTION IF EXISTS PREFIX_notify_event_appended() CASCADE;
 DROP FUNCTION IF EXISTS PREFIX_notify_bookmark_placed() CASCADE;
+
+DROP TABLE IF EXISTS PREFIX_leases CASCADE;
+DROP TABLE IF EXISTS PREFIX_lease_contenders CASCADE;

@@ -71,6 +71,7 @@ import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
+import org.sliceworkz.eventstore.events.Lease;
 import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventFilter;
@@ -484,6 +485,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 			// Check bookmarks table
 			checkBookmarksTable(readConnection);
 
+			// Check lease tables (leader election)
+			checkLeasesTable(readConnection);
+			checkLeaseContendersTable(readConnection);
+
 			// Check functions
 			checkFunction(readConnection, prefix + "notify_event_appended");
 			checkFunction(readConnection, prefix + "notify_bookmark_placed");
@@ -553,6 +558,42 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 		// Check foreign key constraint
 		checkForeignKey(connection, tableName, "fk_bookmarks_event_id");
+
+		LOGGER.debug("Table {} validated successfully", tableName);
+	}
+
+	private void checkLeasesTable(Connection connection) throws SQLException {
+		String tableName = prefix + "leases";
+		LOGGER.debug("Checking table: {}", tableName);
+
+		if (!tableExists(connection, tableName)) {
+			throw new EventStorageException("Required table '%s' does not exist".formatted(tableName));
+		}
+
+		checkColumn(connection, tableName, "lease_name", "text", false);
+		checkColumn(connection, tableName, "lease_owner", "text", false);
+		checkColumn(connection, tableName, "priority", "bigint", false);
+		checkColumn(connection, tableName, "fencing_token", "bigint", false);
+		checkColumn(connection, tableName, "ttl_millis", "bigint", false);
+		checkColumn(connection, tableName, "acquired_at", "timestamp with time zone", false);
+		checkColumn(connection, tableName, "heartbeat_at", "timestamp with time zone", false);
+
+		LOGGER.debug("Table {} validated successfully", tableName);
+	}
+
+	private void checkLeaseContendersTable(Connection connection) throws SQLException {
+		String tableName = prefix + "lease_contenders";
+		LOGGER.debug("Checking table: {}", tableName);
+
+		if (!tableExists(connection, tableName)) {
+			throw new EventStorageException("Required table '%s' does not exist".formatted(tableName));
+		}
+
+		checkColumn(connection, tableName, "lease_name", "text", false);
+		checkColumn(connection, tableName, "contender", "text", false);
+		checkColumn(connection, tableName, "priority", "bigint", false);
+		checkColumn(connection, tableName, "ttl_millis", "bigint", false);
+		checkColumn(connection, tableName, "heartbeat_at", "timestamp with time zone", false);
 
 		LOGGER.debug("Table {} validated successfully", tableName);
 	}
@@ -1255,6 +1296,19 @@ public class PostgresEventStorageImpl implements EventStorage {
 	/** Lock scope used when an append is not confined to one fully specified stream. */
 	private static final String ANY_STREAM_SCOPE = "\u0000any-stream";
 
+	/**
+	 * Lock scope prefix for lease operations; see {@link #leaseLockKey}. NUL-prefixed like
+	 * {@link #SCHEMA_SCOPE}, so no stream scope can collide with it.
+	 */
+	private static final String LEASE_SCOPE = "\u0000lease";
+
+	/**
+	 * Statement that serializes the contenders for one lease; see {@link #leaseLockKey}. Textually the
+	 * same lock statement as the append and schema ones, kept separate because it serializes a
+	 * different thing.
+	 */
+	private static final String ACQUIRE_LEASE_LOCK = "SELECT pg_advisory_xact_lock(?)";
+
 	/** Separates the parts of a lock scope, so that ("ab","c") and ("a","bc") cannot hash alike. */
 	private static final char UNIT_SEPARATOR = '\u001F';
 
@@ -1305,6 +1359,22 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 */
 	private long schemaLockKey ( ) {
 		return advisoryLockKey(SCHEMA_SCOPE);
+	}
+
+	/**
+	 * Advisory lock key that serializes {@code requestLease}/{@code releaseLease} calls for one lease,
+	 * so the expiry check and the takeover are one indivisible step: two contenders racing an expired
+	 * lease cannot both read it as expired and both acquire it. Keyed per lease name, so contenders
+	 * for different leases never take turns, and derived exactly like the append and schema keys —
+	 * from a scope no stream can produce, so lease traffic never contends with an append, and never
+	 * with an event query, which takes no lock at all.
+	 * <p>
+	 * Transaction-scoped ({@code pg_advisory_xact_lock}), held only for the few statements of one
+	 * lease request — and a transaction that has only taken an advisory lock holds no transaction id,
+	 * so a waiting contender does not pin {@code pg_snapshot_xmin} and cannot stall event visibility.
+	 */
+	private long leaseLockKey ( String leaseName ) {
+		return advisoryLockKey(LEASE_SCOPE + UNIT_SEPARATOR + leaseName);
 	}
 
 	/**
@@ -2294,6 +2364,242 @@ public class PostgresEventStorageImpl implements EventStorage {
 		} catch (SQLException e) {
 			throw new EventStorageException("Failed to close connection", e);
 		}
+	}
+
+	/*
+	 * One short transaction on the ordinary pool: advisory lock (per lease, holds no transaction id),
+	 * contender upsert, acquire-or-renew upsert, contender check, commit. Every temporal comparison is
+	 * now() on the database server — no contender clock ever enters the SQL — and nothing here touches
+	 * the events table or takes any lock an event query or append takes, so election traffic can
+	 * neither delay event reads nor be stalled by the pg_snapshot_xmin visibility barrier.
+	 */
+	@Override
+	public LeaseResponse requestLease ( LeaseRequest request ) {
+		checkNotClosed();
+		if ( request == null ) {
+			throw new IllegalArgumentException("lease request must not be null");
+		}
+
+		String registerContender = """
+			INSERT INTO %slease_contenders (lease_name, contender, priority, ttl_millis, heartbeat_at)
+			VALUES (?, ?, ?, ?, now())
+			ON CONFLICT (lease_name, contender)
+			DO UPDATE SET
+				priority = EXCLUDED.priority,
+				ttl_millis = EXCLUDED.ttl_millis,
+				heartbeat_at = now()
+		""".formatted(prefix);
+
+		// prune contender rows dead for many times their own ttl; opportunistic housekeeping only,
+		// liveness below never depends on it
+		String pruneContenders = """
+			DELETE FROM %slease_contenders
+			WHERE lease_name = ?
+			  AND heartbeat_at < now() - (ttl_millis * 10 * interval '1 millisecond')
+		""".formatted(prefix);
+
+		// the WHERE keeps the update away from a live lease of another owner: the row only changes for
+		// a renewal by the current owner or a takeover of an expired lease. The fencing token bumps on
+		// takeover and only then; acquired_at survives a renewal.
+		String acquireOrRenew = """
+			INSERT INTO %sleases AS l (lease_name, lease_owner, priority, fencing_token, ttl_millis, acquired_at, heartbeat_at)
+			VALUES (?, ?, ?, 1, ?, now(), now())
+			ON CONFLICT (lease_name)
+			DO UPDATE SET
+				lease_owner = EXCLUDED.lease_owner,
+				priority = EXCLUDED.priority,
+				fencing_token = CASE WHEN l.lease_owner = EXCLUDED.lease_owner THEN l.fencing_token ELSE l.fencing_token + 1 END,
+				ttl_millis = EXCLUDED.ttl_millis,
+				acquired_at = CASE WHEN l.lease_owner = EXCLUDED.lease_owner THEN l.acquired_at ELSE now() END,
+				heartbeat_at = now()
+			WHERE l.lease_owner = EXCLUDED.lease_owner
+			   OR l.heartbeat_at < now() - (l.ttl_millis * interval '1 millisecond')
+			RETURNING fencing_token
+		""".formatted(prefix);
+
+		String readHolder = """
+			SELECT lease_owner, fencing_token
+			FROM %sleases
+			WHERE lease_name = ?
+		""".formatted(prefix);
+
+		String liveHigherPriorityContender = """
+			SELECT EXISTS (
+				SELECT 1
+				FROM %slease_contenders
+				WHERE lease_name = ?
+				  AND contender <> ?
+				  AND priority > ?
+				  AND heartbeat_at >= now() - (ttl_millis * interval '1 millisecond')
+			) AS waiting
+		""".formatted(prefix);
+
+		try ( Connection connection = dataSource.getConnection() ) {
+			try {
+				connection.setAutoCommit(false);
+
+				try ( PreparedStatement lock = connection.prepareStatement(ACQUIRE_LEASE_LOCK) ) {
+					lock.setLong(1, leaseLockKey(request.leaseName()));
+					lock.execute();
+				}
+
+				try ( PreparedStatement stmt = connection.prepareStatement(registerContender) ) {
+					stmt.setString(1, request.leaseName());
+					stmt.setString(2, request.owner());
+					stmt.setLong(3, request.priority());
+					stmt.setLong(4, request.ttl().toMillis());
+					stmt.executeUpdate();
+				}
+
+				try ( PreparedStatement stmt = connection.prepareStatement(pruneContenders) ) {
+					stmt.setString(1, request.leaseName());
+					stmt.executeUpdate();
+				}
+
+				Long ownFencingToken = null;
+				try ( PreparedStatement stmt = connection.prepareStatement(acquireOrRenew) ) {
+					stmt.setString(1, request.leaseName());
+					stmt.setString(2, request.owner());
+					stmt.setLong(3, request.priority());
+					stmt.setLong(4, request.ttl().toMillis());
+					try ( ResultSet rs = stmt.executeQuery() ) {
+						if ( rs.next() ) {
+							ownFencingToken = rs.getLong("fencing_token");
+						}
+					}
+				}
+
+				LeaseResponse response;
+				if ( ownFencingToken == null ) {
+					// filtered out by the WHERE: another owner holds a live lease. Read it for the
+					// response — under the advisory lock nothing about this lease can change between
+					// the two statements
+					try ( PreparedStatement stmt = connection.prepareStatement(readHolder) ) {
+						stmt.setString(1, request.leaseName());
+						try ( ResultSet rs = stmt.executeQuery() ) {
+							if ( !rs.next() ) {
+								throw new EventStorageException("lease '%s' vanished between check and read; this cannot happen under the per-lease advisory lock".formatted(request.leaseName()));
+							}
+							response = new LeaseResponse(LeaseStatus.STANDBY, rs.getLong("fencing_token"), rs.getString("lease_owner"));
+						}
+					}
+				} else {
+					boolean stepDownRequested;
+					try ( PreparedStatement stmt = connection.prepareStatement(liveHigherPriorityContender) ) {
+						stmt.setString(1, request.leaseName());
+						stmt.setString(2, request.owner());
+						stmt.setLong(3, request.priority());
+						try ( ResultSet rs = stmt.executeQuery() ) {
+							rs.next();
+							stepDownRequested = rs.getBoolean("waiting");
+						}
+					}
+					LeaseStatus status = stepDownRequested ? LeaseStatus.LEADER_STEP_DOWN_REQUESTED : LeaseStatus.LEADER;
+					response = new LeaseResponse(status, ownFencingToken, request.owner());
+				}
+
+				connection.commit();
+				return response;
+
+			} catch (SQLException e) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackEx) {
+					e.addSuppressed(rollbackEx);
+				}
+				throw new EventStorageException("Failed to request lease '%s' for owner '%s'".formatted(request.leaseName(), request.owner()), e);
+			}
+		} catch (SQLException e) {
+			throw new EventStorageException("Failed to close connection", e);
+		}
+	}
+
+	@Override
+	public void releaseLease ( String leaseName, String owner ) {
+		checkNotClosed();
+
+		// backdate rather than delete: the fencing token must survive a release, or the next owner
+		// would mint token 1 again and a superseded leader's stamp would look current
+		String release = """
+			UPDATE %sleases
+			SET heartbeat_at = to_timestamp(0)
+			WHERE lease_name = ? AND lease_owner = ?
+		""".formatted(prefix);
+
+		String withdrawContender = """
+			DELETE FROM %slease_contenders
+			WHERE lease_name = ? AND contender = ?
+		""".formatted(prefix);
+
+		try ( Connection connection = dataSource.getConnection() ) {
+			try {
+				connection.setAutoCommit(false);
+
+				try ( PreparedStatement lock = connection.prepareStatement(ACQUIRE_LEASE_LOCK) ) {
+					lock.setLong(1, leaseLockKey(leaseName));
+					lock.execute();
+				}
+
+				try ( PreparedStatement stmt = connection.prepareStatement(release) ) {
+					stmt.setString(1, leaseName);
+					stmt.setString(2, owner);
+					stmt.executeUpdate();
+				}
+
+				try ( PreparedStatement stmt = connection.prepareStatement(withdrawContender) ) {
+					stmt.setString(1, leaseName);
+					stmt.setString(2, owner);
+					stmt.executeUpdate();
+				}
+
+				connection.commit();
+
+			} catch (SQLException e) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackEx) {
+					e.addSuppressed(rollbackEx);
+				}
+				throw new EventStorageException("Failed to release lease '%s' for owner '%s'".formatted(leaseName, owner), e);
+			}
+		} catch (SQLException e) {
+			throw new EventStorageException("Failed to close connection", e);
+		}
+	}
+
+	@Override
+	public List<Lease> getLeases ( ) {
+		checkNotClosed();
+		String sql = """
+			SELECT lease_name, lease_owner, priority, fencing_token, ttl_millis, acquired_at, heartbeat_at
+			FROM %sleases
+		""".formatted(prefix);
+
+		List<Lease> leases = new ArrayList<>();
+		try ( Connection readConnection = dataSource.getConnection() ) {
+			readConnection.setAutoCommit(true);
+			try ( PreparedStatement stmt = readConnection.prepareStatement(sql);
+			      ResultSet rs = stmt.executeQuery() ) {
+				while ( rs.next() ) {
+					Calendar utc = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
+					Instant acquiredAt = rs.getTimestamp("acquired_at", utc).toInstant();
+					Instant heartbeatAt = rs.getTimestamp("heartbeat_at", utc).toInstant();
+					leases.add(new Lease(
+							rs.getString("lease_name"),
+							rs.getString("lease_owner"),
+							rs.getLong("priority"),
+							rs.getLong("fencing_token"),
+							acquiredAt,
+							heartbeatAt,
+							Duration.ofMillis(rs.getLong("ttl_millis"))));
+				}
+			} catch ( SQLException e ) {
+				throw new EventStorageException("Failed to list leases", e);
+			}
+		} catch ( SQLException e ) {
+			throw new EventStorageException("Failed to close connection", e);
+		}
+		return leases;
 	}
 
 	Limit effectiveLimit ( Limit softLimit ) {

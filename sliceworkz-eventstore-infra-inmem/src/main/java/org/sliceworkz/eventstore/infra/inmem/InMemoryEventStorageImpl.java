@@ -17,6 +17,7 @@
  */
 package org.sliceworkz.eventstore.infra.inmem;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -39,6 +40,7 @@ import org.slf4j.LoggerFactory;
 import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
+import org.sliceworkz.eventstore.events.Lease;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
@@ -122,6 +124,13 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	// (un)subscription, and notifying must not block appends.
 	private final CopyOnWriteArrayList<EventStoreListener> listeners = new CopyOnWriteArrayList<>();
 	private Map<String,Bookmark> bookmarks = new HashMap<>();
+	// Leases are runtime coordination state, not data: they are neither preloaded nor persisted (the
+	// filesystem-backed decorator snapshots events and bookmarks, deliberately not leases — a lease
+	// held by a process that no longer runs must expire, not be resurrected). Real contention happens
+	// within one storage instance, so tests can elect between two contenders on any backend; in a
+	// single-process deployment the only contender trivially wins.
+	private Map<String,Lease> leases = new HashMap<>();
+	private Map<String,Map<String,LeaseContender>> leaseContenders = new HashMap<>();
 	private JsonMapper jsonMapper;
 	private Limit absoluteLimit;
 	private long txCounter;
@@ -511,6 +520,67 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		listeners.forEach(l->notifyQuietly(l, notification));
 	}
 
+	/*
+	 * Synchronized like every other state-touching operation here, which is what makes the
+	 * expiry check and the takeover one atomic step: two contenders racing an expired lease
+	 * cannot both acquire it.
+	 */
+	@Override
+	public synchronized LeaseResponse requestLease ( LeaseRequest request ) {
+		checkNotClosed();
+		if ( request == null ) {
+			throw new IllegalArgumentException("lease request must not be null");
+		}
+		Instant now = Instant.now();
+
+		// register (or refresh) the caller as a live contender, and prune contenders long gone
+		Map<String,LeaseContender> contenders = leaseContenders.computeIfAbsent(request.leaseName(), k -> new HashMap<>());
+		contenders.put(request.owner(), new LeaseContender(request.priority(), now, request.ttl()));
+		contenders.values().removeIf(c -> c.heartbeatAt().plus(c.ttl().multipliedBy(10)).isBefore(now));
+
+		Lease current = leases.get(request.leaseName());
+		boolean acquirable = current == null || current.isExpiredAt(now) || current.owner().equals(request.owner());
+		if ( !acquirable ) {
+			return new LeaseResponse(LeaseStatus.STANDBY, current.fencingToken(), current.owner());
+		}
+
+		boolean ownershipChange = current == null || !current.owner().equals(request.owner());
+		long fencingToken = current == null ? 1 : ownershipChange ? current.fencingToken() + 1 : current.fencingToken();
+		Instant acquiredAt = ownershipChange ? now : current.acquiredAt();
+		leases.put(request.leaseName(), new Lease(request.leaseName(), request.owner(), request.priority(), fencingToken, acquiredAt, now, request.ttl()));
+
+		boolean higherPriorityContenderWaiting = contenders.entrySet().stream()
+				.anyMatch(e -> !e.getKey().equals(request.owner())
+						&& e.getValue().priority() > request.priority()
+						&& !e.getValue().heartbeatAt().plus(e.getValue().ttl()).isBefore(now));
+		LeaseStatus status = higherPriorityContenderWaiting ? LeaseStatus.LEADER_STEP_DOWN_REQUESTED : LeaseStatus.LEADER;
+		return new LeaseResponse(status, fencingToken, request.owner());
+	}
+
+	@Override
+	public synchronized void releaseLease ( String leaseName, String owner ) {
+		checkNotClosed();
+		Lease current = leases.get(leaseName);
+		if ( current != null && current.owner().equals(owner) ) {
+			// force-expire rather than delete: the fencing token must survive the release, or the
+			// next owner would mint token 1 again and a superseded leader's stamp would look current
+			leases.put(leaseName, new Lease(leaseName, current.owner(), current.priority(), current.fencingToken(), current.acquiredAt(), Instant.EPOCH, current.ttl()));
+		}
+		Map<String,LeaseContender> contenders = leaseContenders.get(leaseName);
+		if ( contenders != null ) {
+			contenders.remove(owner);
+			if ( contenders.isEmpty() ) {
+				leaseContenders.remove(leaseName);
+			}
+		}
+	}
+
+	@Override
+	public synchronized List<Lease> getLeases ( ) {
+		checkNotClosed();
+		return List.copyOf(leases.values());
+	}
+
 	/**
 	 * Determines the effective limit to apply to a query based on both soft and absolute limits.
 	 * <p>
@@ -615,6 +685,13 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	 * is scoped per stream (context + purpose) rather than globally across the storage instance.
 	 */
 	private record IdempotencyScope ( EventStreamId stream, String idempotencyKey ) {
+	}
+
+	/**
+	 * A contender for a lease: its priority, and the heartbeat + ttl its liveness is judged by.
+	 * Liveness uses the contender's <em>own</em> requested ttl, mirroring how the lease itself expires.
+	 */
+	private record LeaseContender ( long priority, Instant heartbeatAt, Duration ttl ) {
 	}
 
 }

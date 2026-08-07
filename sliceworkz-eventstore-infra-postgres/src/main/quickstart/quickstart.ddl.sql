@@ -302,3 +302,40 @@ DO $$ BEGIN
         EXECUTE FUNCTION notify_bookmark_placed();
   END IF;
 END $$;
+
+
+
+---- LEASES (leader election)
+
+-- Coordination state, deliberately outside the event log: lease reads and writes never touch the
+-- events table, take no lock any event query or append takes, and are not subject to the
+-- pg_snapshot_xmin visibility barrier — a stalled event reader must not look like an expired lease,
+-- and lease traffic must never delay an event read. Every timestamp in these tables is written and
+-- compared with the database server's clock only; no contender's clock ever enters a comparison.
+--
+-- An expired or released lease keeps its row (release just backdates heartbeat_at), because the
+-- fencing token must survive: it increments on every change of ownership and may never be handed
+-- out twice.
+
+CREATE TABLE IF NOT EXISTS leases (
+      lease_name TEXT PRIMARY KEY,
+      lease_owner TEXT NOT NULL,
+      priority BIGINT NOT NULL,
+      fencing_token BIGINT NOT NULL,
+      ttl_millis BIGINT NOT NULL,
+      acquired_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      heartbeat_at TIMESTAMP WITH TIME ZONE NOT NULL
+  );
+
+-- One row per (lease, contender), refreshed on every requestLease call. A contender is live while
+-- its heartbeat is younger than its own ttl; a live contender with a strictly higher priority than
+-- the current owner turns the owner's renewals into step-down requests. Rows long dead are pruned
+-- opportunistically during requests.
+CREATE TABLE IF NOT EXISTS lease_contenders (
+      lease_name TEXT NOT NULL,
+      contender TEXT NOT NULL,
+      priority BIGINT NOT NULL,
+      ttl_millis BIGINT NOT NULL,
+      heartbeat_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      PRIMARY KEY (lease_name, contender)
+  );

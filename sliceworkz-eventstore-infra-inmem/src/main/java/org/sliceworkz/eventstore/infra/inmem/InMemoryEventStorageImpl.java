@@ -514,6 +514,17 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	@Override
 	public synchronized void bookmark(String reader, EventReference eventReference, Tags tags ) {
 		checkNotClosed();
+		// A bookmark is a position in this store's log, so a reference the store never stored --
+		// typically one from a different store -- is a caller error. The Postgres backend rejects it
+		// through the fk_bookmarks_event_id foreign key; checking here keeps the write-side contract
+		// identical across backends (BookmarksTest in the TCK pins both). Matching the foreign key,
+		// the check is on the event id alone, and a rejected bookmark leaves a previously placed one
+		// untouched.
+		if ( eventReference != null && !eventsById.containsKey(eventReference.id()) ) {
+			throw new EventStorageException(
+				"Cannot place bookmark for reader '%s': %s does not reference an event stored in this event storage"
+					.formatted(reader, eventReference));
+		}
 		Tags effectiveTags = tags == null ? Tags.none() : tags;
 		bookmarks.put(reader, new Bookmark(reader, eventReference, effectiveTags, Instant.now()));
 		BookmarkPlacedNotification notification = new BookmarkPlacedNotification(reader, eventReference);

@@ -345,11 +345,20 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * processing from where they left off. Each reader is identified by name and can
 	 * maintain only one bookmark per stream. Tags can be attached to bookmarks for
 	 * additional metadata (e.g., processing status, reader state).
+	 * <p>
+	 * The reference must name an event this storage has stored: a bookmark is a position in the
+	 * store's log, and a reference the store has never seen — typically one taken from a
+	 * <em>different</em> store or prefix — is a caller error, rejected with
+	 * {@link org.sliceworkz.eventstore.spi.EventStorageException} rather than stored as a cursor that
+	 * would poison the reader. A rejected update leaves any previously placed bookmark untouched.
 	 *
 	 * @param reader the unique name/identifier of the reader placing the bookmark; must not be null
-	 * @param reference the event reference to bookmark (the last processed event)
+	 * @param reference the event reference to bookmark (the last processed event); must reference an
+	 *        event stored in this storage
 	 * @param tags optional tags to attach to the bookmark for metadata
 	 * @throws NullPointerException if {@code reader} is null
+	 * @throws org.sliceworkz.eventstore.spi.EventStorageException if {@code reference} does not
+	 *         reference an event stored in this storage
 	 */
 	void placeBookmark ( String reader, EventReference reference, Tags tags );
 

@@ -485,6 +485,52 @@ re-delivered the same target without pausing: ~700.000 deliveries a second on on
   null is given a defined meaning rather than left to whoever reads the contract more carefully.
 - `AppendListenerFailureTest.testListenerReportingNoProgressIsNotRedeliveredTo` pins it per backend.
 
+### Leases: electing one processor among several instances
+
+**The storage can hold named leases, which is what a framework builds leader election on** — one
+instance of a deployment holds a lease and processes; the others stand by and take over when it
+expires or is released. Three optional SPI methods on `EventStorage` (`UnsupportedOperationException`
+defaults, the `importEvents` precedent; `Capability.LEASE` gates the TCK scenarios, and its
+`supports()` default answers **false**, so a backend written before leases existed skips them —
+which is also why `supports()` is now an exhaustive switch rather than "true for anything new"):
+
+- **`requestLease(LeaseRequest)` is acquisition, renewal and contender registration in one call**,
+  made periodically by every contender (a third of the ttl is a sensible interval). It answers
+  `LEADER`, `STANDBY`, or `LEADER_STEP_DOWN_REQUESTED` — still leader, but a live contender with a
+  **strictly higher** priority is waiting, so finish the current work and `releaseLease`. The storage
+  never revokes a live lease itself; a step-down is always the holder's own act. Equal priority never
+  triggers a step-down
+- **Expiry is judged on the storage's clock, never a contender's.** A lease whose heartbeat is older
+  than the ttl it was requested with is expired and acquirable. Contenders only ever measure
+  durations on their own clocks (their polling interval, the time since their last *confirmed*
+  renewal) — the single-writer guarantee is "storage-clock expiry plus self-demotion on the caller
+  clock before the ttl", and it holds up to a caller paused beyond its ttl, which no lease can
+  prevent and the fencing token exists to expose
+- **The fencing token strictly increases on every ownership change and never resets** — a release
+  *backdates the heartbeat* rather than deleting the row, precisely so the token survives (the TCK
+  caught the delete-based version minting token 1 twice). Renewals keep the token
+- **In-memory backends contend for real within one storage instance** (the same `synchronized` that
+  gives them DCB atomicity), so a single process trivially wins everything while a test can genuinely
+  elect between two contenders on any backend. The fs decorator forwards explicitly and deliberately
+  does not persist leases: a lease held by a process that no longer runs must expire, not be
+  resurrected on reload
+- **On Postgres, leases are two tables outside the event log** (`<prefix>leases`,
+  `<prefix>lease_contenders`), written in one short transaction on the ordinary pool, serialized per
+  lease by a `pg_advisory_xact_lock` on a NUL-prefixed scope (`leaseLockKey`, sharing
+  `advisoryLockKey` with the append and schema locks, colliding with neither). Consequences worth
+  spelling out: election traffic takes no lock any event query or append takes; a waiting contender
+  holds no transaction id, and the lease writes are milliseconds — so leases neither pin
+  `pg_snapshot_xmin` nor are subject to it (which is also why a lease is deliberately **not**
+  modelled as events: event reads sit behind the xmin barrier, and one long writing transaction
+  anywhere in the cluster would make every lease look expired at once). All timestamps compare via
+  `now()` in SQL only. `checkDatabase()` validates both tables, so `VALIDATE`/`NONE` deployments
+  notice an un-migrated database; the README's privilege table carries the grants (the leases table
+  needs no `DELETE` — releases update; contender rows are pruned, so that table does)
+- `LeaseTest` in the TCK pins the state machine per backend: acquire/renew/expire/release, the
+  step-down protocol and its lapse with a dead contender, fencing monotonicity across takeovers and
+  releases, independence of distinct leases, post-close behaviour — and, load-bearing above all,
+  that exactly one of N concurrent contenders wins an acquirable lease
+
 ### Metrics: what the stream meters cost, and the cap on `purpose`
 
 Every meter the store registers is tagged `context`, `purpose`, `typed`, `storage`, and two of them

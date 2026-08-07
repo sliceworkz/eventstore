@@ -512,6 +512,11 @@ public interface EventStorage extends AutoCloseable {
 	 * After successfully storing a bookmark, implementations must notify all subscribed
 	 * listeners via {@link BookmarkPlacedNotification}.
 	 * <p>
+	 * Implementations must reject a reference that does not name an event stored in this storage,
+	 * throwing {@link EventStorageException} and leaving any previously stored bookmark for the
+	 * reader untouched. The check is on the event id alone — the position and transaction carried by
+	 * the reference are not cross-validated. The TCK's {@code BookmarksTest} pins this contract.
+	 * <p>
 	 * Typical Usage:
 	 * <pre>{@code
 	 * // Process events and bookmark progress

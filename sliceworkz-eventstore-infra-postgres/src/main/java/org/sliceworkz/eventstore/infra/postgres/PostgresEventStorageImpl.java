@@ -1757,6 +1757,15 @@ public class PostgresEventStorageImpl implements EventStorage {
 	/** SQLSTATE for {@code unique_violation}. */
 	private static final String UNIQUE_VIOLATION = "23505";
 
+	private static final String FOREIGN_KEY_VIOLATION = "23503";
+
+	/**
+	 * Name of the foreign key from the bookmarks table to the events table, as
+	 * {@code ensure-schema.sql} writes it. Constraint names are table-scoped in PostgreSQL, so the
+	 * name carries no table prefix and is shared by every store in a schema without colliding.
+	 */
+	private static final String BOOKMARKS_EVENT_FK = "fk_bookmarks_event_id";
+
 	/** Unprefixed name of the partial unique index that scopes idempotency keys to a stream. */
 	private static final String IDEMPOTENCY_INDEX = "idx_events_stream_idempotency";
 
@@ -1823,6 +1832,20 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private boolean isIdempotencyKeyViolation ( SQLException e ) {
 		return UNIQUE_VIOLATION.equals(e.getSQLState())
 				&& idempotencyIndexName().equalsIgnoreCase(serverConstraintName(e));
+	}
+
+	/**
+	 * Whether a failed bookmark upsert was rejected because the reference names an event this store
+	 * never stored — the {@code fk_bookmarks_event_id} foreign key — as opposed to any other failure
+	 * the statement can produce. Routed by the constraint name the server reports, for the same
+	 * reasons as {@link #isIdempotencyKeyViolation}.
+	 *
+	 * @param e the failure to classify
+	 * @return {@code true} if the bookmarks-to-events foreign key rejected the row
+	 */
+	private static boolean isBookmarkEventFkViolation ( SQLException e ) {
+		return FOREIGN_KEY_VIOLATION.equals(e.getSQLState())
+				&& BOOKMARKS_EVENT_FK.equalsIgnoreCase(serverConstraintName(e));
 	}
 
 	/**
@@ -2326,6 +2349,14 @@ public class PostgresEventStorageImpl implements EventStorage {
 						writeConnection.rollback();
 					} catch (SQLException rollbackEx) {
 						e.addSuppressed(rollbackEx);
+					}
+					if ( isBookmarkEventFkViolation(e) ) {
+						// a bookmark is a position in this store's log, so a reference the store never
+						// stored -- typically one from a different store or prefix -- is a caller error,
+						// named as such rather than surfacing as an opaque SQL failure
+						throw new EventStorageException(
+							"Cannot place bookmark for reader '%s': %s does not reference an event stored in this event storage"
+								.formatted(reader, eventReference), e);
 					}
 					throw new EventStorageException("Failed to bookmark event for reader: " + reader, e);
 				}

@@ -244,6 +244,19 @@ END $$;
 
 ---- BOOKMARKING
 
+-- The foreign key rejects a bookmark naming an event this store never stored -- the realistic
+-- mistake being a reference from a different store or prefix -- and the in-memory backend enforces
+-- the same rule, so the write-side contract is identical on every backend (BookmarksTest in the TCK
+-- pins it).
+--
+-- Deliberately NO "ON DELETE CASCADE". An absent bookmark means "replay from the beginning", which
+-- for a dispatcher is duplicate publishing to an external system -- and an event deletion (retention
+-- pruning, surgical removal of a poison event) reaches exactly the bookmarks of readers still
+-- pointing into the deleted range: the lagging ones, silently, with no notification (the bookmark
+-- trigger fires on INSERT/UPDATE only). A dangling cursor, by contrast, is harmless: reads compare
+-- the stored (event_tx, event_position) and never join back to the events row. So the default
+-- NO ACTION is the right policy -- deleting events out from under an outstanding bookmark fails
+-- loudly, and whoever prunes decides explicitly what to do with the reader.
 CREATE TABLE IF NOT EXISTS PREFIX_bookmarks (
       reader TEXT PRIMARY KEY,
       event_position BIGINT NOT NULL,
@@ -254,7 +267,6 @@ CREATE TABLE IF NOT EXISTS PREFIX_bookmarks (
       CONSTRAINT fk_bookmarks_event_id
           FOREIGN KEY (event_id)
           REFERENCES PREFIX_events(event_id)
-          ON DELETE CASCADE
   );
 
   CREATE INDEX IF NOT EXISTS PREFIX_idx_bookmarks_event_id ON PREFIX_bookmarks(event_id);

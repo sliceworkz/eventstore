@@ -20,6 +20,7 @@ package org.sliceworkz.eventstore.testing.tck.stream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Instant;
@@ -31,6 +32,7 @@ import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventQuery;
+import org.sliceworkz.eventstore.spi.EventStorageException;
 import org.sliceworkz.eventstore.testing.AbstractEventStoreTest;
 import org.sliceworkz.eventstore.testing.ForEachBackend;
 import org.sliceworkz.eventstore.testing.tck.mock.MockDomainEvent.FirstDomainEvent;
@@ -117,6 +119,47 @@ public class BookmarksTest extends AbstractEventStoreTest {
 		List<Bookmark> bookmarks = s.getBookmarks();
 		assertEquals(1, bookmarks.size());
 		assertEquals(Tags.parse("phase:second"), bookmarks.get(0).tags());
+	}
+
+	/**
+	 * A bookmark is a position in the store's log, so a reference the store never stored — typically
+	 * one taken from a <em>different</em> store or prefix in a miswired multi-store setup — is a
+	 * caller error, rejected loudly at write time rather than stored as a cursor that poisons the
+	 * reader. The Postgres backend enforces this through the {@code fk_bookmarks_event_id} foreign
+	 * key; the in-memory backends check the event id against their log. The check is on the event id
+	 * alone, matching the foreign key.
+	 */
+	@ForEachBackend
+	void bookmarkNamingNoStoredEventIsRejected ( ) {
+		EventReference real = appendOne();
+		EventStream<MockDomainEvent> s = stream();
+
+		// same position and tx as a stored event, but an id the store has never seen
+		EventReference fabricated = EventReference.create(real.position(), real.tx());
+		assertThrows(EventStorageException.class,
+				() -> s.placeBookmark("misdirected-reader", fabricated, Tags.none()),
+				"a bookmark must name an event this storage stored");
+		assertTrue(s.getBookmarks().isEmpty(), "the rejected bookmark must not have been stored");
+	}
+
+	/**
+	 * The rejection must not damage what was already there: a reader whose bookmark update is
+	 * rejected keeps its previous bookmark — reference and tags — rather than being reset.
+	 */
+	@ForEachBackend
+	void rejectedBookmarkLeavesThePreviousOneInPlace ( ) {
+		EventReference real = appendOne();
+		EventStream<MockDomainEvent> s = stream();
+		s.placeBookmark("guarded-reader", real, Tags.parse("phase:before"));
+
+		EventReference fabricated = EventReference.create(real.position(), real.tx());
+		assertThrows(EventStorageException.class,
+				() -> s.placeBookmark("guarded-reader", fabricated, Tags.parse("phase:after")));
+
+		List<Bookmark> bookmarks = s.getBookmarks();
+		assertEquals(1, bookmarks.size());
+		assertEquals(real, bookmarks.get(0).reference(), "the previous bookmark must survive the rejected update");
+		assertEquals(Tags.parse("phase:before"), bookmarks.get(0).tags());
 	}
 
 	@ForEachBackend

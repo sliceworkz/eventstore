@@ -485,6 +485,37 @@ re-delivered the same target without pausing: ~700.000 deliveries a second on on
   null is given a defined meaning rather than left to whoever reads the contract more carefully.
 - `AppendListenerFailureTest.testListenerReportingNoProgressIsNotRedeliveredTo` pins it per backend.
 
+### Bookmarks: a cursor that must name a stored event, and a foreign key that never cascades
+
+- **`placeBookmark` rejects a reference this storage never stored** — `EventStorageException`, nothing
+  written, and a previously placed bookmark for that reader stays. The realistic mistake it catches is a
+  reference from a *different* store or prefix in a miswired multi-store setup, which would otherwise
+  poison the reader's cursor silently. Postgres enforces it with the `fk_bookmarks_event_id` foreign key
+  (recognised by the constraint name the server reports, like the idempotency index — never by message
+  text); the in-memory store checks its log under the same monitor that guards `append`. The contract is
+  documented on `EventStorage.bookmark`, and `BookmarksTest` in the TCK pins it per backend — before
+  this, the backends genuinely diverged: Postgres rejected, in-memory accepted anything, and no TCK
+  scenario said which was intended
+- **The check is on the event id alone, matching the foreign key.** The `(tx, position)` pair that
+  cursor comparisons actually order by is not cross-validated — a bookmark carrying a stored id with a
+  wrong position still passes. Keep that in mind before reading the constraint as "the bookmark is
+  valid": it says the event exists, not that the cursor is coherent
+- **The foreign key deliberately does not cascade.** An absent bookmark means "replay from the
+  beginning" — for a dispatcher in the eventmodeling framework, duplicate publishing to an external
+  system, the worst outcome it documents. `ON DELETE CASCADE` handed exactly that to the readers least
+  able to afford it: an event deletion (retention pruning, surgically removing a poison event) cascades
+  away the bookmarks of readers still pointing into the deleted range — the *lagging* ones — silently,
+  with no notification, since the bookmark trigger fires on INSERT/UPDATE only. A dangling cursor is
+  harmless by contrast: reads compare the stored `(event_tx, event_position)` and never join back to the
+  events row. With the default NO ACTION, deleting events out from under an outstanding bookmark fails
+  loudly, and whoever prunes decides explicitly what happens to the reader
+- **Migration for a database created while the cascade existed**: `ENSURE` only ever creates tables, so
+  an existing database keeps its constraint until migrated by hand —
+  `ALTER TABLE <prefix>bookmarks DROP CONSTRAINT fk_bookmarks_event_id; ALTER TABLE <prefix>bookmarks
+  ADD CONSTRAINT fk_bookmarks_event_id FOREIGN KEY (event_id) REFERENCES <prefix>events(event_id);` —
+  no data migration is needed. `checkDatabase()` validates the constraint by name only, not its delete
+  rule, so an un-migrated database still starts, with the old cascade behaviour
+
 ### Leases: electing one processor among several instances
 
 **The storage can hold named leases, which is what a framework builds leader election on** — one

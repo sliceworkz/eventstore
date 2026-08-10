@@ -88,8 +88,8 @@ public class InMemoryFsEventStorageImplTest {
 
 		// Verify JSON files exist on disk (filenames include dynamic timestamps)
 		Path eventsDir = tempDir.resolve("events");
-		assertTrue(eventFileExists(eventsDir, "0000000001-00001-0-"));
-		assertTrue(eventFileExists(eventsDir, "0000000001-00002-0-"));
+		assertTrue(eventFileExists(eventsDir, "0000000001-000001-0-"));
+		assertTrue(eventFileExists(eventsDir, "0000000001-000002-0-"));
 
 		// Second instance: reload from disk
 		{
@@ -106,6 +106,40 @@ public class InMemoryFsEventStorageImplTest {
 			assertEquals("CustomerNameChanged", events.get(1).type().name());
 			assertTrue(events.get(0).tags().containsAll(Tags.of("customer", "123")));
 		}
+	}
+
+	@Test
+	void testEventFileWithLegacyPositionPaddingStillLoads ( @TempDir Path tempDir ) throws IOException {
+		EventStreamId streamId = EventStreamId.forContext("customer").withPurpose("123");
+
+		// First instance: append an event, then rename its file to the pre-%06d five-digit padding
+		{
+			EventStore store = InMemoryFsEventStorage.newBuilder()
+					.directory(tempDir)
+					.name("legacy-padding-test")
+					.buildStore();
+
+			EventStream<TestEvent> stream = store.getEventStream(streamId, TestEvent.class);
+			stream.append(AppendCriteria.none(), List.of(
+					Event.of(new TestEvent.CustomerRegistered("John"), Tags.none())
+			));
+		}
+		Path eventsDir = tempDir.resolve("events");
+		Path current = findEventFile(eventsDir, "0000000001-000001-0-");
+		Path legacy = eventsDir.resolve(current.getFileName().toString().replace("-000001-", "-00001-"));
+		Files.move(current, legacy);
+
+		// Second instance: the loader orders by the reference inside the JSON, never by filename,
+		// so a directory written before the padding change reloads unchanged
+		EventStore store2 = InMemoryFsEventStorage.newBuilder()
+				.directory(tempDir)
+				.name("legacy-padding-test-2")
+				.buildStore();
+
+		EventStream<TestEvent> stream2 = store2.getEventStream(streamId, TestEvent.class);
+		List<Event<TestEvent>> events = stream2.query(EventQuery.matchAll()).toList();
+		assertEquals(1, events.size());
+		assertEquals("CustomerRegistered", events.get(0).type().name());
 	}
 
 	@Test
@@ -227,7 +261,7 @@ public class InMemoryFsEventStorageImplTest {
 		));
 
 		// Verify JSON file is human-readable
-		String json = Files.readString(findEventFile(tempDir.resolve("events"), "0000000001-00001-0-"));
+		String json = Files.readString(findEventFile(tempDir.resolve("events"), "0000000001-000001-0-"));
 		assertTrue(json.contains("\"context\" : \"ctx\""));
 		assertTrue(json.contains("\"purpose\" : \"p\""));
 		assertTrue(json.contains("\"type\" : \"CustomerRegistered\""));

@@ -201,7 +201,7 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 
 	private void persistEvent ( StoredEvent event ) {
 		try {
-			String fileName = "%010d-%05d-%d-%s.json".formatted(event.reference().tx(), event.reference().position(), event.reference().index(), TIMESTAMP_FORMAT.format(event.timestamp()));
+			String fileName = "%010d-%06d-%d-%s.json".formatted(event.reference().tx(), event.reference().position(), event.reference().index(), TIMESTAMP_FORMAT.format(event.timestamp()));
 			Path filePath = eventsDir.resolve(fileName);
 			Files.writeString(filePath, eventCodec.write(event));
 		} catch ( IOException e ) {

@@ -62,8 +62,8 @@ import io.micrometer.core.instrument.Metrics;
  * <pre>
  * eventstore-data/
  *   events/
- *     0000000001-00001-0-2026-04-02-10-30-00-0000.json
- *     0000000002-00002-0-2026-04-02-10-30-01-0000.json
+ *     0000000001-000001-0-2026-04-02-10-30-00-0000.json
+ *     0000000002-000002-0-2026-04-02-10-30-01-0000.json
  *     ...
  *   bookmarks/
  *     my-projection.json

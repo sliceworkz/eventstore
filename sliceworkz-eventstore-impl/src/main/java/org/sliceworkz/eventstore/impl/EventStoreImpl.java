@@ -479,6 +479,7 @@ public class EventStoreImpl implements EventStore {
 		private final EventPayloadSerializerDeserializer serde;
 
 		private Counter meterAppend;
+		private Counter meterAppendDeduplicated;
 		private Counter meterAppendOptimisticLock;
 		private Counter meterQuery;
 		private Counter meterGetEvent;
@@ -521,6 +522,7 @@ public class EventStoreImpl implements EventStore {
 
 			// prepare counters for metering
 			this.meterAppend = meterRegistry.counter("sliceworkz.eventstore.append", baseTags);
+			this.meterAppendDeduplicated = meterRegistry.counter("sliceworkz.eventstore.append.deduplicated", baseTags);
 			this.meterQuery = meterRegistry.counter("sliceworkz.eventstore.query", baseTags);
 			this.meterAppendOptimisticLock = meterRegistry.counter("sliceworkz.eventstore.append.optimisticlock", baseTags);
 			this.meterGetEvent = meterRegistry.counter("sliceworkz.eventstore.get.event", baseTags);
@@ -723,8 +725,22 @@ public class EventStoreImpl implements EventStore {
 			// append events to the eventstore (with optimistic locking)
 			List<Event<EVENT_TYPE>> appendedEvents;
 			try {
-				appendedEvents = timerAppend.record(()->eventStorage.append(appendCriteria, Optional.of(streamToAppendTo), reduce(events, streamToAppendTo)).stream().flatMap(se->enrich(se, QueryDirection.FORWARD)).toList());
+				List<EventToStore> eventsToStore = reduce(events, streamToAppendTo);
+				List<StoredEvent> storedEvents = timerAppend.record(()->eventStorage.append(appendCriteria, Optional.of(streamToAppendTo), eventsToStore));
+				appendedEvents = storedEvents.stream().flatMap(se->enrich(se, QueryDirection.FORWARD)).toList();
 				meterAppend.increment();
+
+				// A duplicate idempotency key is swallowed by storage -- the event is not written and the
+				// call reports success -- so submitted minus stored is the one place the de-duplication is
+				// observable: append counts calls and append.event counts submitted events, and one call
+				// can carry several, so no two meters can be subtracted to recover it. Counted on the
+				// stored events, not the enriched result, whose size upcasting can change. Splitting the
+				// storage call out of the pipeline also narrows timerAppend to the storage append alone,
+				// which is what timerQuery deliberately measures on the read side.
+				int deduplicatedEvents = events.size() - storedEvents.size();
+				if ( deduplicatedEvents > 0 ) {
+					meterAppendDeduplicated.increment(deduplicatedEvents);
+				}
 
 				// update highest event position gauge
 				appendedEvents.stream()

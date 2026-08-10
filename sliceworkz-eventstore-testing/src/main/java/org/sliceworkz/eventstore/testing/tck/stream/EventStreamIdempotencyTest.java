@@ -19,6 +19,7 @@ package org.sliceworkz.eventstore.testing.tck.stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.sql.Connection;
@@ -28,6 +29,8 @@ import java.util.List;
 import javax.sql.DataSource;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.sliceworkz.eventstore.EventStore;
+import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventQuery;
@@ -41,6 +44,9 @@ import org.sliceworkz.eventstore.testing.ForEachBackend;
 import org.sliceworkz.eventstore.testing.StorageOptions;
 import org.sliceworkz.eventstore.testing.tck.mockdomain.MockDomainEvent;
 import org.sliceworkz.eventstore.testing.tck.mockdomain.MockDomainEvent.FirstDomainEvent;
+
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 /**
  * What an idempotency key does, and — just as important — what it must not do.
@@ -113,6 +119,48 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 
 		assertEquals(1, stream.query(EventQuery.matchAll()).count());
 		assertEquals(1, otherStream.query(EventQuery.matchAll()).count());
+	}
+
+	/**
+	 * A swallowed duplicate is visible on {@code sliceworkz.eventstore.append.deduplicated}, and
+	 * nowhere else.
+	 * <p>
+	 * The de-duplication is otherwise silent by design: the call succeeds and returns an empty list.
+	 * The surrounding meters cannot recover it — {@code sliceworkz.eventstore.append} counts calls and
+	 * {@code append.event} counts submitted events, and one call can carry several events, so their
+	 * difference means nothing in general. A caller wanting to tell "n events ingested" from "n calls,
+	 * some de-duplicated" reads this counter; a clean run reads 0.
+	 */
+	@ForEachBackend
+	void aSwallowedDuplicateIsCountedOnTheDeduplicatedMeter ( ) {
+
+		SimpleMeterRegistry registry = new SimpleMeterRegistry();
+		try ( EventStore meteredStore = EventStoreFactory.get().eventStore(eventStorage(), registry) ) {
+			EventStream<MockDomainEvent> meteredStream = meteredStore
+					.getEventStream(EventStreamId.forContext("app").withPurpose("default"), MockDomainEvent.class);
+
+			// the counter exists from the moment the stream does, reading 0 -- a series that only
+			// appears once something is de-duplicated cannot be told apart from a broken scrape
+			Counter deduplicated = registry.find("sliceworkz.eventstore.append.deduplicated").counter();
+			assertNotNull(deduplicated, "no sliceworkz.eventstore.append.deduplicated counter was registered");
+			assertEquals(0.0, deduplicated.count());
+
+			meteredStream.append(AppendCriteria.none(),
+					Event.of(new FirstDomainEvent("1"), Tags.none()).withIdempotencyKey("order-4711"));
+			assertEquals(0.0, deduplicated.count(), "a clean append must not count as de-duplicated");
+
+			meteredStream.append(AppendCriteria.none(),
+					Event.of(new FirstDomainEvent("2"), Tags.none()).withIdempotencyKey("order-4711"));
+			assertEquals(1.0, deduplicated.count(), "a swallowed duplicate did not reach the deduplicated meter");
+
+			// an ordinary un-keyed append leaves the counter where it was
+			meteredStream.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("3"), Tags.none()));
+			assertEquals(1.0, deduplicated.count());
+
+			// and the meter only reports, it does not change what the caller sees: one event was
+			// de-duplicated, two were stored
+			assertEquals(2, meteredStream.query(EventQuery.matchAll()).count());
+		}
 	}
 
 	/**

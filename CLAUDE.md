@@ -611,6 +611,12 @@ secondary identifier … (e.g. customer ID, order number)", and half the example
 - **`context` is deliberately not capped.** It names a bounded context and comes from the code, not from
   the traffic. A store whose *context* is per-entity has the same problem with none of the protection —
   don't do that.
+- **`sliceworkz.eventstore.append.deduplicated`** counts events an append submitted and storage silently
+  swallowed as idempotency-key duplicates (`submitted − stored`, incremented in `EventStreamImpl.append`).
+  It exists because the de-duplication is otherwise invisible in the meters: `append` counts calls,
+  `append.event` counts submitted events, and one call can carry several events, so no subtraction
+  recovers it. A clean run reads 0. Tagged like the other stream meters, and pinned per backend by
+  `EventStreamIdempotencyTest.aSwallowedDuplicateIsCountedOnTheDeduplicatedMeter`.
 - `MeterPurposeCardinalityTest` pins the cap, the pooling, the permanence of an admitted purpose, that
   the default applies to a store nobody configured, and that the cap holds exactly under concurrent first
   use of distinct purposes.

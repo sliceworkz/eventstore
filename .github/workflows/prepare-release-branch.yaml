@@ -13,10 +13,14 @@ on:
           - major
           - minor
 
+# No official maven:4.0.0-rc-6 Docker image is published yet, so install the
+# Maven 4 RC from the Apache archive instead of using a job container.
+env:
+  MAVEN_VERSION: 4.0.0-rc-6
+
 jobs:
   version-bump:
     runs-on: ubuntu-latest
-    container: maven:4.0.0-rc-5-eclipse-temurin-21
     permissions:
       contents: write
         
@@ -38,7 +42,13 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-      
+
+      - name: Install Maven ${{ env.MAVEN_VERSION }}
+        run: |
+          curl -fsSL "https://archive.apache.org/dist/maven/maven-4/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" \
+            | tar -xz -C "$HOME"
+          echo "$HOME/apache-maven-${MAVEN_VERSION}/bin" >> "$GITHUB_PATH"
+
       - name: Extract current version
         id: current_version
         run: |

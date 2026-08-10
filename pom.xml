@@ -33,7 +33,7 @@
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		
-		<maven.minimal-version>4.0.0-rc-5</maven.minimal-version>
+		<maven.minimal-version>4.0.0-rc-6</maven.minimal-version>
 		
 		<maven.maven-pgp-plugin.version>3.2.8</maven.maven-pgp-plugin.version>
 		<maven.maven-versions-plugin.version>2.21.0</maven.maven-versions-plugin.version>

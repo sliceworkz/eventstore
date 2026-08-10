@@ -10,7 +10,7 @@ permissions:
   actions: read
 
 env:
-  MAVEN_VERSION: 4.0.0-rc-5
+  MAVEN_VERSION: 4.0.0-rc-6
 
 jobs:
   release:

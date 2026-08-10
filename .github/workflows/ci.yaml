@@ -5,13 +5,17 @@ run-name: "ci build - mvn package [${{ github.ref_name }}]"
 on:
   workflow_dispatch:
   push:
-    branches: [ "develop", "feature/*", "release/*", "claude/maven-4-upgrade-7h2lge" ]
+    branches: [ "develop", "feature/*", "release/*", "claude/maven-4-rc6-update-test-ub9ris" ]
+
+# No official maven:4.0.0-rc-6 Docker image is published yet, so install the
+# Maven 4 RC from the Apache archive instead of using a job container.
+env:
+  MAVEN_VERSION: 4.0.0-rc-6
 
 jobs:
   build:
 
     runs-on: ubuntu-latest
-    container: maven:4.0.0-rc-5-eclipse-temurin-21
 
     steps:
     - uses: actions/checkout@v4
@@ -21,5 +25,10 @@ jobs:
         java-version: '21'
         distribution: 'temurin'
         cache: maven
+    - name: Install Maven ${{ env.MAVEN_VERSION }}
+      run: |
+        curl -fsSL "https://archive.apache.org/dist/maven/maven-4/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" \
+          | tar -xz -C "$HOME"
+        echo "$HOME/apache-maven-${MAVEN_VERSION}/bin" >> "$GITHUB_PATH"
     - name: Build with Maven
       run: mvn -B package --file pom.xml

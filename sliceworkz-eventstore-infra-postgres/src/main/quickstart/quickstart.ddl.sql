@@ -351,3 +351,42 @@ CREATE TABLE IF NOT EXISTS lease_contenders (
       heartbeat_at TIMESTAMP WITH TIME ZONE NOT NULL,
       PRIMARY KEY (lease_name, contender)
   );
+
+
+---- SHREDDING KEYS
+
+-- One row per data encryption key. A key protects every Shreddable value appended for one
+-- (subject_type, subject_id, category), and destroying it is what erasure means: the events are never
+-- touched, so the ciphertext stays byte-identical in the table, in WAL, on replicas and in every
+-- backup, and becomes unreadable everywhere at the same instant.
+--
+-- The row deliberately survives the erasure. key_material is set to NULL and shredded_at / shredded_reason
+-- are stamped, which is the only audit trail an erasure leaves anywhere -- and it keeps the key id
+-- resolving to "erased" rather than to "unknown", so a reader can tell a destroyed key from a key
+-- belonging to some other store.
+--
+-- No foreign key to events, in either direction. Events name their keys through ordinary
+-- dek: tags, and a constraint would either block pruning events or cascade keys away with them.
+
+CREATE TABLE IF NOT EXISTS shredding_keys (
+      key_id TEXT PRIMARY KEY,
+      subject_type TEXT NOT NULL,
+      subject_id TEXT NOT NULL,
+      subject_category TEXT NOT NULL,
+      key_material BYTEA,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      shredded_at TIMESTAMP WITH TIME ZONE,
+      shredded_reason TEXT
+  );
+
+-- Serves both hot paths: resolving the active key for a subject on append, and finding every key a
+-- subject holds when erasing. Partial on the un-shredded rows, because that is what both look for and
+-- because the shredded rows accumulate for good.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shredding_keys_active
+    ON shredding_keys (subject_type, subject_id, subject_category)
+    WHERE key_material IS NOT NULL;
+
+-- Erasure looks up every key ever minted for a subject, shredded ones included: a subject appended for
+-- after an earlier erasure holds a second key, and missing it would leave that data readable.
+CREATE INDEX IF NOT EXISTS idx_shredding_keys_subject
+    ON shredding_keys (subject_type, subject_id, subject_category);

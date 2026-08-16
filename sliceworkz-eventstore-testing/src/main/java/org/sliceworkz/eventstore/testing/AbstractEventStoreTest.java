@@ -29,7 +29,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
+import org.sliceworkz.eventstore.MeterOptions;
+import org.sliceworkz.eventstore.shredding.AesGcmShreddingCodec;
+import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
 import org.sliceworkz.eventstore.spi.EventStorage;
+
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 /**
  * Base class for tests that need an {@link EventStore} over some {@link EventStorage}.
@@ -142,6 +147,36 @@ public abstract class AbstractEventStoreTest {
 	 */
 	protected EventStorage eventStorage ( ) {
 		return eventStorage;
+	}
+
+	/**
+	 * An event store over the same storage that can protect and erase personal data.
+	 * <p>
+	 * Built on the key store this backend supplies — the SQL table on PostgreSQL, the file-backed one on
+	 * inmem-fs, in-memory otherwise — so the shredding scenarios exercise each backend's own key
+	 * storage rather than the same in-memory implementation every time.
+	 * <p>
+	 * Created fresh on each call, and the caller need not close it: the store does not own the storage,
+	 * and none of the shipped key stores owns a resource the storage will not release.
+	 *
+	 * @return a store with shredding configured, over {@link #eventStorage()}
+	 */
+	protected EventStore eventStoreWithShredding ( ) {
+		return eventStoreWithShredding(backend().shreddingKeyStore(eventStorage()));
+	}
+
+	/**
+	 * An event store over the same storage, protecting personal data with a key store of your choosing.
+	 * <p>
+	 * For scenarios that need to drive the key store directly — asserting what an erasure recorded, or
+	 * standing in a key store that fails, to check that an outage is not reported as an erasure.
+	 *
+	 * @param shreddingKeyStore where keys are minted, resolved and destroyed
+	 * @return a store with shredding configured, over {@link #eventStorage()}
+	 */
+	protected EventStore eventStoreWithShredding ( ShreddingKeyStore shreddingKeyStore ) {
+		return EventStoreFactory.get().eventStore(eventStorage(), new SimpleMeterRegistry(), MeterOptions.defaults(),
+				AesGcmShreddingCodec.over(shreddingKeyStore));
 	}
 
 	/**

@@ -20,6 +20,7 @@ package org.sliceworkz.eventstore.impl;
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.MeterOptions;
+import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.spi.EventStorage;
 
 import io.micrometer.core.instrument.MeterRegistry;
@@ -80,6 +81,21 @@ public class EventStoreFactoryImpl implements EventStoreFactory {
 	@Override
 	public EventStore eventStore(EventStorage eventStorage, MeterRegistry meterRegistry, MeterOptions meterOptions) {
 		return new EventStoreImpl(eventStorage, meterRegistry, meterOptions);
+	}
+
+	/**
+	 * Creates an {@link EventStoreImpl} that can protect and erase personal data.
+	 *
+	 * @param eventStorage the storage backend for persisting and retrieving events
+	 * @param meterRegistry the Micrometer meter registry for collecting metrics
+	 * @param meterOptions how much detail the store's meters may carry
+	 * @param shreddingCodec seals and unseals {@link org.sliceworkz.eventstore.shredding.Shreddable}
+	 *                       values, or null for a store without shredding
+	 * @return a new EventStore instance
+	 */
+	@Override
+	public EventStore eventStore(EventStorage eventStorage, MeterRegistry meterRegistry, MeterOptions meterOptions, ShreddingCodec shreddingCodec) {
+		return new EventStoreImpl(eventStorage, meterRegistry, meterOptions, shreddingCodec);
 	}
 
 }

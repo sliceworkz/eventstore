@@ -489,6 +489,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 			checkLeasesTable(readConnection);
 			checkLeaseContendersTable(readConnection);
 
+			// Check the shredding key table (GDPR erasure by key destruction)
+			checkShreddingKeysTable(readConnection);
+
 			// Check functions
 			checkFunction(readConnection, prefix + "notify_event_appended");
 			checkFunction(readConnection, prefix + "notify_bookmark_placed");
@@ -558,6 +561,36 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 		// Check foreign key constraint
 		checkForeignKey(connection, tableName, "fk_bookmarks_event_id");
+
+		LOGGER.debug("Table {} validated successfully", tableName);
+	}
+
+	/**
+	 * Validates the table holding data encryption keys.
+	 * <p>
+	 * Worth validating even on a deployment that never runs {@code ENSURE}: without this table an append
+	 * carrying personal data fails at the first {@code Shreddable}, and — worse — an erasure request has
+	 * nowhere to destroy anything, which is a compliance failure rather than an outage.
+	 */
+	private void checkShreddingKeysTable(Connection connection) throws SQLException {
+		String tableName = prefix + "shredding_keys";
+		LOGGER.debug("Checking table: {}", tableName);
+
+		if (!tableExists(connection, tableName)) {
+			throw new EventStorageException("Required table '%s' does not exist".formatted(tableName));
+		}
+
+		checkColumn(connection, tableName, "key_id", "text", false);
+		checkColumn(connection, tableName, "subject_type", "text", false);
+		checkColumn(connection, tableName, "subject_id", "text", false);
+		checkColumn(connection, tableName, "subject_category", "text", false);
+		// nullable: a shredded key keeps its row with the material gone, which is the audit trail
+		checkColumn(connection, tableName, "key_material", "bytea", true);
+		// NOT NULL with a default, unlike events.event_timestamp: a key with no creation time cannot be
+		// audited, and nothing writes this column explicitly, so the default always supplies it
+		checkColumn(connection, tableName, "created_at", "timestamp with time zone", false);
+		checkColumn(connection, tableName, "shredded_at", "timestamp with time zone", true);
+		checkColumn(connection, tableName, "shredded_reason", "text", true);
 
 		LOGGER.debug("Table {} validated successfully", tableName);
 	}

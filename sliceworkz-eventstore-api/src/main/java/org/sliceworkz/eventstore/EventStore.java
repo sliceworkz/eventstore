@@ -18,8 +18,13 @@
 package org.sliceworkz.eventstore;
 
 import java.util.Collections;
+import java.util.Optional;
 import java.util.Set;
 
+import org.sliceworkz.eventstore.shredding.DataSubject;
+import org.sliceworkz.eventstore.shredding.ErasureReason;
+import org.sliceworkz.eventstore.shredding.ErasureReport;
+import org.sliceworkz.eventstore.shredding.ShreddingAudit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -193,5 +198,71 @@ public interface EventStore extends AutoCloseable {
 	default <DOMAIN_EVENT_TYPE> EventStream<DOMAIN_EVENT_TYPE> getEventStream ( EventStreamId eventStreamId, Class<?> eventRootClass, Class<?> historicalEventRootClass ) {
 		return getEventStream(eventStreamId, Collections.singleton(eventRootClass), Collections.singleton(historicalEventRootClass));
 	}
-	
+
+	/**
+	 * Erases a data subject's personal data by destroying the keys that protect it.
+	 * <p>
+	 * Every {@link org.sliceworkz.eventstore.shredding.Shreddable} value sealed for this subject becomes
+	 * permanently unreadable, and reads return
+	 * {@link org.sliceworkz.eventstore.shredding.Shreddable.Shredded} in its place. Everything else on
+	 * those events is untouched: the non-personal payload, the tags, the timestamps and the pseudonymous
+	 * identifiers all keep working, so ledgers still reconcile and the audit trail still holds.
+	 * <pre>{@code
+	 * ErasureReport report = eventStore.erase(
+	 *         DataSubject.of("customer", "alice-42"),
+	 *         ErasureReason.of("GDPR art.17 request #4711"));
+	 *
+	 * report.keysShredded();   // 1
+	 * }</pre>
+	 *
+	 * <p>
+	 * <b>Nothing in the events table is written.</b> The stored events stay byte-identical. That is what makes this an erasure rather than an overwrite:
+	 * there is no new row version to vacuum, nothing new in the write-ahead log, and the ciphertext
+	 * already sitting in replicas, archives and last night's backup becomes unreadable at the same
+	 * instant, with nothing to chase. It also means the append-only log stays append-only, so nothing
+	 * disturbs event ordering, outstanding bookmarks or the physical layout the indexes assume.
+	 *
+	 * <p>
+	 * <b>Idempotent.</b> Erasing a subject that holds no keys — never appended for, or erased already — reports
+	 * {@link ErasureReport#isNoop()} rather than failing. Data appended for the subject <em>after</em> an
+	 * erasure gets a fresh key and is readable; only what was sealed under the destroyed keys is gone.
+	 *
+	 * <p>
+	 * <b>Erasure notifies nothing.</b> Read models, caches, search indexes and downstream systems that already
+	 * copied the personal data keep their copies, and projections hold bookmarks so they will not re-read
+	 * the affected events on their own. Re-projecting anything that materialised the erased data is the
+	 * application's responsibility.
+	 *
+	 * @param subject whose data to erase; the unit of erasure is a
+	 *                {@link org.sliceworkz.eventstore.shredding.DataSubject}, not a field or an event
+	 * @param reason  why, recorded alongside the destroyed key — the events record nothing about the
+	 *                erasure, so this is the whole audit trail
+	 * @return what was destroyed
+	 * @throws UnsupportedOperationException if this store has no
+	 *         {@link org.sliceworkz.eventstore.shredding.ShreddingCodec} configured, and so holds no keys
+	 * @throws org.sliceworkz.eventstore.shredding.ShreddingException if the key store cannot be reached
+	 * @throws IllegalArgumentException if either argument is null
+	 * @see org.sliceworkz.eventstore.shredding.Shreddable
+	 */
+	default ErasureReport erase ( DataSubject subject, ErasureReason reason ) {
+		throw new UnsupportedOperationException(
+				"this event store has no ShreddingCodec configured, so it holds no keys to destroy; configure shredding on the storage builder or via EventStoreFactory.eventStore(...)");
+	}
+
+	/**
+	 * Reading which data subjects hold protected data and which erasures have happened.
+	 * <p>
+	 * The events record nothing about an erasure — they are never rewritten — so the key store is the
+	 * only account of it, and this is how a console or a compliance report reads that account. It hands
+	 * out no key material and cannot decrypt anything.
+	 * <p>
+	 * Empty on a store with no shredding configured, or whose key store cannot enumerate.
+	 *
+	 * @return the audit view, or empty if there is none
+	 * @see ShreddingAudit
+	 */
+	default Optional<ShreddingAudit> shreddingAudit ( ) {
+		return Optional.empty();
+	}
+
 }

@@ -17,8 +17,13 @@
  */
 package org.sliceworkz.eventstore;
 
+import java.util.Optional;
 import java.util.Set;
 
+import org.sliceworkz.eventstore.shredding.DataSubject;
+import org.sliceworkz.eventstore.shredding.ErasureReason;
+import org.sliceworkz.eventstore.shredding.ErasureReport;
+import org.sliceworkz.eventstore.shredding.ShreddingAudit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -48,6 +53,16 @@ final class OwningEventStore implements EventStore {
 	@Override
 	public <DOMAIN_EVENT_TYPE> EventStream<DOMAIN_EVENT_TYPE> getEventStream ( EventStreamId eventStreamId, Set<Class<?>> eventRootClasses, Set<Class<?>> historicalEventRootClasses ) {
 		return eventStore.getEventStream(eventStreamId, eventRootClasses, historicalEventRootClasses);
+	}
+
+	@Override
+	public ErasureReport erase ( DataSubject subject, ErasureReason reason ) {
+		return eventStore.erase(subject, reason);
+	}
+
+	@Override
+	public Optional<ShreddingAudit> shreddingAudit ( ) {
+		return eventStore.shreddingAudit();
 	}
 
 	/**

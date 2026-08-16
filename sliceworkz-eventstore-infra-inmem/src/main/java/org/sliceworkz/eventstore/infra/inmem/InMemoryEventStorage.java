@@ -25,6 +25,9 @@ import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.MeterOptions;
 import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.query.Limit;
+import org.sliceworkz.eventstore.shredding.AesGcmShreddingCodec;
+import org.sliceworkz.eventstore.shredding.ShreddingCodec;
+import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 
@@ -150,6 +153,7 @@ public interface InMemoryEventStorage {
 		private Limit limit = Limit.none();
 		private MeterRegistry meterRegistry = Metrics.globalRegistry;
 		private MeterOptions meterOptions = MeterOptions.defaults();
+		private ShreddingCodec shreddingCodec;
 		private String name = "inmem-%s".formatted(System.identityHashCode(this)); // default unique name in case different objects are used
 		private List<StoredEvent> initialEvents = List.of();
 		private Map<String, Bookmark> initialBookmarks = Map.of();
@@ -232,6 +236,39 @@ public interface InMemoryEventStorage {
 		 * @return this Builder instance for method chaining
 		 * @see MeterOptions
 		 */
+		/**
+		 * Protects the {@link org.sliceworkz.eventstore.shredding.Shreddable} values in this store's
+		 * events with the shipped AES-256-GCM codec, holding keys in the given key store.
+		 * <p>
+		 * Without this, registering an event type that declares a {@code Shreddable} component fails at
+		 * stream creation rather than storing personal data in the clear.
+		 * <pre>{@code
+		 * EventStore store = InMemoryEventStorage.newBuilder()
+		 *         .shredding(new InMemoryShreddingKeyStore())
+		 *         .buildStore();
+		 * }</pre>
+		 * The key store is the caller's to close, following the same rule the library applies to a
+		 * {@code DataSource}: what you pass in, you own.
+		 *
+		 * @param shreddingKeyStore where keys are minted, resolved and destroyed
+		 * @return this builder for method chaining
+		 */
+		public Builder shredding ( ShreddingKeyStore shreddingKeyStore ) {
+			this.shreddingCodec = AesGcmShreddingCodec.over(shreddingKeyStore);
+			return this;
+		}
+
+		/**
+		 * Protects personal data with a codec of your own, taking over encryption as well as key storage.
+		 *
+		 * @param shreddingCodec seals and unseals protected values
+		 * @return this builder for method chaining
+		 */
+		public Builder shredding ( ShreddingCodec shreddingCodec ) {
+			this.shreddingCodec = shreddingCodec;
+			return this;
+		}
+
 		public Builder meterOptions ( MeterOptions meterOptions ) {
 			this.meterOptions = meterOptions;
 			return this;
@@ -326,7 +363,7 @@ public interface InMemoryEventStorage {
 			// the storage is created here and never handed to the caller, so the returned store owns it:
 			// closing that store is the only way this storage will ever be closed
 			EventStorage eventStorage = build();
-			return EventStore.owning(EventStoreFactory.get().eventStore(eventStorage, meterRegistry, meterOptions), eventStorage);
+			return EventStore.owning(EventStoreFactory.get().eventStore(eventStorage, meterRegistry, meterOptions, shreddingCodec), eventStorage);
 		}
 	}
 	

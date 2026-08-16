@@ -31,6 +31,9 @@ import org.sliceworkz.eventstore.events.EventDeserializationException;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.LegacyEvent;
 import org.sliceworkz.eventstore.events.Upcast;
+import org.sliceworkz.eventstore.shredding.Shreddable;
+import org.sliceworkz.eventstore.shredding.ShreddingCodec;
+import org.sliceworkz.eventstore.shredding.ShreddingException;
 
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.node.ObjectNode;
@@ -50,6 +53,21 @@ import tools.jackson.databind.node.ObjectNode;
  * @see EventPayloadSerializerDeserializer#typed()
  */
 public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloadSerializerDeserializer {
+
+	/**
+	 * Builds a typed serde with no shredding support. Registering an event type that declares a
+	 * {@link Shreddable} component on it fails.
+	 */
+	public TypedEventPayloadSerializerDeserializer ( ) {
+		super();
+	}
+
+	/**
+	 * @param shreddingCodec seals and unseals {@link Shreddable} values, or null for no shredding
+	 */
+	public TypedEventPayloadSerializerDeserializer ( ShreddingCodec shreddingCodec ) {
+		super(shreddingCodec);
+	}
 
 	private final Map<String,EventDeserializer> deserializers = new HashMap<>();
 	private final Map<EventType, Set<EventType>> mostRecentTypes = new HashMap<>();
@@ -75,6 +93,11 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 			return deserializer.deserialize(serialized.immutablePayload(), serialized.erasablePayload());
 		} catch (EventDeserializationException e) {
 			// already precise about what failed -- wrapping it again would only bury the message
+			throw e;
+		} catch (ShreddingException e) {
+			// A key store that could not be reached is retryable; an unreadable event is not. Wrapping
+			// this in EventDeserializationException would tell a caller to give up on an event that is
+			// perfectly readable once the key store is back, and a Projector would bookmark past it.
 			throw e;
 		} catch (RuntimeException e) {
 			throw new EventDeserializationException(storedType,
@@ -105,6 +128,15 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		String key = eventName;
 		if ( deserializers.containsKey(key) ) {
 			throw new IllegalArgumentException("duplicate event name " + key);
+		}
+
+		if ( shreddingCodec == null && declaresShreddable(clazz) ) {
+			// Fails here, at stream creation, rather than on the first append: a store with no codec has
+			// no key to seal with, so it would write personal data in the clear and leave nothing to
+			// destroy when an erasure is asked for.
+			throw new IllegalArgumentException(
+					"event type %s declares a Shreddable component but this store has no ShreddingCodec configured; personal data would be stored in the clear and could never be erased. Configure shredding on the storage builder, or via EventStoreFactory.eventStore(storage, registry, meterOptions, codec)."
+							.formatted(clazz.getName()));
 		}
 
 		EventType eventType = EventType.ofType(eventName);
@@ -243,20 +275,25 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 			try {
 
 				if ( erasablePayload == null ) {
-					object = immutableDataMapper.readValue(immutablePayload, eventClass);
+					object = objectMapper.readValue(immutablePayload, eventClass);
 				} else {
-					// reconstruct the full object by merging
-					ObjectNode nodeImmutableData = (ObjectNode) immutableDataMapper.readTree(immutablePayload);
-					ObjectNode nodeErasableData = (ObjectNode) erasableDataMapper.readTree(erasablePayload);
+					// A legacy event, written when payloads were split across two documents. Nothing
+					// writes the second one any more; see AbstractEventPayloadSerializerDeserializer.
+					ObjectNode nodeImmutableData = (ObjectNode) objectMapper.readTree(immutablePayload);
+					ObjectNode nodeErasableData = (ObjectNode) objectMapper.readTree(erasablePayload);
 
-					// Merge erasable data into immutable data
 					deepMerge(nodeImmutableData, nodeErasableData);
 
 					// Directly convert the merged JsonNode to the target class without string roundtrip
-					object = immutableDataMapper.treeToValue(nodeImmutableData, eventClass);
+					object = objectMapper.treeToValue(nodeImmutableData, eventClass);
 				}
 
 			} catch (JacksonException e) {
+				if ( e.getCause() instanceof ShreddingException shredding ) {
+					// Jackson wraps whatever a ValueDeserializer throws. Unwrap so that "the key store is
+					// unreachable" does not arrive as "this event can never be read".
+					throw shredding;
+				}
 				// One catch, not two: DatabindException is a JacksonException, and both used to throw a
 				// bare RuntimeException(e) -- no message of their own, so the only thing a user saw was
 				// Jackson's field-level complaint with nothing saying which event class it was aimed at.

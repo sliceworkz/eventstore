@@ -25,6 +25,8 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.sliceworkz.eventstore.infra.inmem.fs.InMemoryFsEventStorage;
+import org.sliceworkz.eventstore.infra.inmem.fs.shredding.InMemoryFsShreddingKeyStore;
+import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.testing.EventStoreBackend;
 import org.sliceworkz.eventstore.testing.StorageOptions;
@@ -101,6 +103,24 @@ public class InMemoryFsBackend implements EventStoreBackend {
 		} catch (IOException e) {
 			// best effort, see above
 		}
+	}
+
+
+	/**
+	 * A file-backed key store in the same temporary directory as the events, so the TCK exercises the
+	 * file format, the load-at-startup path and the rewrite-on-erasure that keeps destroyed key material
+	 * out of the file.
+	 *
+	 * @param storage the storage the keys will protect events in
+	 * @return a key store in the storage's own directory
+	 */
+	@Override
+	public ShreddingKeyStore shreddingKeyStore ( EventStorage storage ) {
+		Path directory = directories.get(storage);
+		if ( directory == null ) {
+			throw new IllegalStateException("no directory known for storage " + storage.name());
+		}
+		return new InMemoryFsShreddingKeyStore(directory);
 	}
 
 }

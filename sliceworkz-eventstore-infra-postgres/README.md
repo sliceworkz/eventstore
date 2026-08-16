@@ -27,12 +27,54 @@ GRANT SELECT, INSERT                 ON <prefix>events           TO <role>;
 GRANT SELECT, INSERT, UPDATE, DELETE ON <prefix>bookmarks        TO <role>;
 GRANT SELECT, INSERT, UPDATE         ON <prefix>leases           TO <role>;
 GRANT SELECT, INSERT, UPDATE, DELETE ON <prefix>lease_contenders TO <role>;
+GRANT SELECT, INSERT, UPDATE         ON <prefix>shredding_keys   TO <role>;
 GRANT USAGE                          ON SEQUENCE <prefix>events_event_position_seq TO <role>;
 ```
 
 Events are never updated or deleted — the store only ever appends to that table. Lease rows are
 never deleted either (a release backdates the heartbeat so the fencing token survives), so the
 leases table needs no `DELETE`; contender rows are pruned, so that table does.
+
+The shredding key table needs no `DELETE` either, and deliberately: erasing a data subject *updates*
+the row, nulling `key_material` and stamping `shredded_at` and `shredded_reason`. Keeping the row is
+what leaves the erasure an audit trail — the events themselves record nothing about it — and what
+lets a key id keep resolving to "erased" rather than to "unknown". Granting `DELETE` here would let
+an erasure be made untraceable.
+
+### Migrating a database created before shredding existed
+
+`ENSURE` only ever creates tables, so it adds this one on the next start of an existing database and
+nothing else is needed. A `VALIDATE` or `NONE` deployment, where a DBA applies DDL by hand, needs:
+
+```sql
+CREATE TABLE IF NOT EXISTS <prefix>shredding_keys (
+      key_id TEXT PRIMARY KEY,
+      subject_type TEXT NOT NULL,
+      subject_id TEXT NOT NULL,
+      subject_category TEXT NOT NULL,
+      key_material BYTEA,
+      created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      shredded_at TIMESTAMP WITH TIME ZONE,
+      shredded_reason TEXT
+  );
+
+CREATE UNIQUE INDEX IF NOT EXISTS <prefix>idx_shredding_keys_active
+    ON <prefix>shredding_keys (subject_type, subject_id, subject_category)
+    WHERE key_material IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS <prefix>idx_shredding_keys_subject
+    ON <prefix>shredding_keys (subject_type, subject_id, subject_category);
+```
+
+No data migration: the table starts empty, and events written before shredding existed carry no
+sealed values. `checkDatabase()` validates the table, so an un-migrated database is reported at
+startup rather than at the first erasure request — which is the failure worth catching early, since
+an erasure with nowhere to destroy anything is a compliance problem rather than an outage.
+
+There is deliberately **no foreign key** between this table and `<prefix>events`, in either
+direction. Events name their keys through ordinary `dek:` tags; a constraint would either block
+pruning events or cascade keys away with them, and a cascade here would erase data nobody asked to
+erase.
 
 **`CREATE` on the schema and `CREATE` on the database are different privileges**, and this is the
 one place the difference shows. `btree_gin` is a *trusted* extension (PostgreSQL 13+), so installing

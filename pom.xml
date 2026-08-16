@@ -66,6 +66,7 @@
 		<!-- infra implementations -->
 		<module>sliceworkz-eventstore-infra-inmem</module>
 		<module>sliceworkz-eventstore-infra-inmem-fs</module>
+		<module>sliceworkz-eventstore-infra-file</module>
 		<module>sliceworkz-eventstore-infra-postgres</module>
 
 		<!-- testing support: backend harness, shared TCK scenarios and the application fixture -->

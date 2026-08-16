@@ -86,6 +86,11 @@
 			</dependency>
 			<dependency>
 				<groupId>org.sliceworkz</groupId>
+				<artifactId>sliceworkz-eventstore-infra-file</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>org.sliceworkz</groupId>
 				<artifactId>sliceworkz-eventstore-infra-postgres</artifactId>
 				<version>${project.version}</version>
 			</dependency>

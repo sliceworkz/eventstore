@@ -58,6 +58,13 @@ public final class PositionIndex {
 	private long count;
 
 	/**
+	 * Creates an empty index, holding nothing until the log is replayed into it.
+	 */
+	public PositionIndex ( ) {
+
+	}
+
+	/**
 	 * Records where the next event lives.
 	 *
 	 * @param position the event's position, which must be exactly one past the last one added
@@ -97,7 +104,11 @@ public final class PositionIndex {
 		return new Location(segmentChunks.get(chunk)[slot], offsetChunks.get(chunk)[slot]);
 	}
 
-	/** @return how many events the log holds, which is also the highest position in it */
+	/**
+	 * How many events the log holds.
+	 *
+	 * @return the count, which is also the highest position in the log
+	 */
 	public long count ( ) {
 		return count;
 	}

@@ -25,6 +25,8 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.sliceworkz.eventstore.infra.file.FileEventStorage;
+import org.sliceworkz.eventstore.infra.file.shredding.FileShreddingKeyStore;
+import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.testing.EventStoreBackend;
 import org.sliceworkz.eventstore.testing.StorageOptions;
@@ -101,6 +103,23 @@ public class FileBackend implements EventStoreBackend {
 			case IMPORT, RESULT_LIMIT, LEASE -> true;
 			case TABLE_PREFIX, RAW_STORAGE_ACCESS -> false;
 		};
+	}
+
+	/**
+	 * A key store in the same temporary directory as the events, so the shredding scenarios exercise
+	 * this backend's own file format, its load-at-startup path, and the rewrite-on-erasure that keeps
+	 * destroyed key material out of the file.
+	 *
+	 * @param storage the storage whose events the keys protect
+	 * @return a key store in that storage's own directory
+	 */
+	@Override
+	public ShreddingKeyStore shreddingKeyStore ( EventStorage storage ) {
+		Path directory = directories.get(storage);
+		if ( directory == null ) {
+			throw new IllegalStateException("no directory known for storage " + storage.name());
+		}
+		return new FileShreddingKeyStore(directory);
 	}
 
 	private static void deleteRecursively ( Path directory ) {

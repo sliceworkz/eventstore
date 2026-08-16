@@ -65,6 +65,9 @@ public final class BinaryFormat {
 	/** {@code "SWBK"} — one bookmark record. */
 	public static final int MAGIC_BOOKMARK = 0x4B425753;
 
+	/** {@code "SWKY"} — one shredding key record. */
+	public static final int MAGIC_KEY = 0x594B5753;
+
 	/** magic + bodyLength + crc32c, in front of every frame body. */
 	public static final int FRAME_HEADER_BYTES = 12;
 

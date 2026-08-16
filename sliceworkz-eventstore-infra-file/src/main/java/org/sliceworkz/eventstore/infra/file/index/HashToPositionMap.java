@@ -112,7 +112,11 @@ public final class HashToPositionMap {
 		return 0;
 	}
 
-	/** @return how many keys are indexed */
+	/**
+	 * How many keys this map holds.
+	 *
+	 * @return the number of indexed keys
+	 */
 	public int size ( ) {
 		return size;
 	}

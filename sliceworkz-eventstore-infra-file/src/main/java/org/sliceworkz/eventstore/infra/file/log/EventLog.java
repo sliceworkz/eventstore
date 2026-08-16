@@ -141,12 +141,20 @@ public final class EventLog implements AutoCloseable {
 		}
 	}
 
-	/** @return the position the next appended event will take */
+	/**
+	 * The position the next appended event will take.
+	 *
+	 * @return one past the highest committed position
+	 */
 	public long nextPosition ( ) {
 		return nextPosition;
 	}
 
-	/** @return the transaction number of the last committed batch, or zero if the log is empty */
+	/**
+	 * The transaction number of the last committed batch.
+	 *
+	 * @return that number, or zero if the log is empty
+	 */
 	public long lastTx ( ) {
 		return lastTx;
 	}

@@ -586,7 +586,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 		checkColumn(connection, tableName, "subject_category", "text", false);
 		// nullable: a shredded key keeps its row with the material gone, which is the audit trail
 		checkColumn(connection, tableName, "key_material", "bytea", true);
-		checkColumn(connection, tableName, "created_at", "timestamp with time zone", true);
+		// NOT NULL with a default, unlike events.event_timestamp: a key with no creation time cannot be
+		// audited, and nothing writes this column explicitly, so the default always supplies it
+		checkColumn(connection, tableName, "created_at", "timestamp with time zone", false);
 		checkColumn(connection, tableName, "shredded_at", "timestamp with time zone", true);
 		checkColumn(connection, tableName, "shredded_reason", "text", true);
 

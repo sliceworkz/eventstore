@@ -37,8 +37,10 @@ import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.shredding.DataSubject;
 import org.sliceworkz.eventstore.shredding.ErasureReason;
 import org.sliceworkz.eventstore.shredding.ErasureReport;
+import org.sliceworkz.eventstore.shredding.KeyAuditQuery;
 import org.sliceworkz.eventstore.shredding.KeyId;
 import org.sliceworkz.eventstore.shredding.Shreddable;
+import org.sliceworkz.eventstore.shredding.ShreddingAudit;
 import org.sliceworkz.eventstore.shredding.ShreddingException;
 import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -271,6 +273,93 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		// re-appending would store a placeholder no later read could tell from real data
 		assertThrows(RuntimeException.class,
 				() -> payments.append(AppendCriteria.none(), Event.of(erased, Tags.none())));
+	}
+
+	@ForEachBackend
+	void theAuditReportsWhoHoldsProtectedDataAndWhatWasErased ( ) {
+		EventStore store = eventStoreWithShredding();
+		store.getEventStream(STREAM, PaymentEvent.class)
+				.append(AppendCriteria.none(), Event.of(transfer(), Tags.none()));
+
+		ShreddingAudit audit = store.shreddingAudit().orElseThrow(
+				() -> new AssertionError("the shipped key stores must all be able to report on themselves"));
+
+		assertEquals(new ShreddingAudit.ShreddingTotals(2, 2, 0), audit.totals());
+
+		List<ShreddingAudit.KeyRecord> alicesKeys = audit.keys(KeyAuditQuery.forSubject(ALICE));
+		assertEquals(1, alicesKeys.size());
+		ShreddingAudit.KeyRecord aliceKey = alicesKeys.getFirst();
+		assertEquals(ALICE, aliceKey.subject());
+		assertFalse(aliceKey.isShredded());
+		assertNotNull(aliceKey.createdAt());
+		// the record must be enough to find the events under this key, which is a dek: tag query
+		assertEquals(1, store.getEventStream(STREAM, PaymentEvent.class)
+				.query(EventQuery.forEvents(org.sliceworkz.eventstore.query.EventTypesFilter.any(),
+						Tags.of(KeyId.TAG_KEY, aliceKey.id().value())))
+				.count());
+
+		store.erase(ALICE, ErasureReason.of("GDPR art.17 request #4711"));
+
+		// the erasure log: what was destroyed, when, and on whose authority. Nothing else records it --
+		// the events are byte-identical to what they were before.
+		List<ShreddingAudit.KeyRecord> erasures = audit.keys(KeyAuditQuery.all().onlyShredded());
+		assertEquals(1, erasures.size());
+		ShreddingAudit.KeyRecord erased = erasures.getFirst();
+		assertEquals(aliceKey.id(), erased.id());
+		assertTrue(erased.isShredded());
+		assertEquals(Optional.of(ErasureReason.of("GDPR art.17 request #4711")), erased.reason());
+		assertTrue(erased.shreddedAt().isPresent());
+
+		// Bob is untouched, and Alice no longer holds a live key
+		assertEquals(new ShreddingAudit.ShreddingTotals(1, 1, 1), audit.totals());
+		assertEquals(List.of(), audit.keys(KeyAuditQuery.forSubject(ALICE)).stream().filter(k -> !k.isShredded()).toList());
+	}
+
+	@ForEachBackend
+	void theAuditNeverHandsOutKeyMaterial ( ) {
+		EventStore store = eventStoreWithShredding();
+		store.getEventStream(STREAM, PaymentEvent.class)
+				.append(AppendCriteria.none(), Event.of(transfer(), Tags.none()));
+
+		ShreddingAudit audit = store.shreddingAudit().orElseThrow();
+		ShreddingAudit.KeyRecord record = audit.keys(KeyAuditQuery.all()).getFirst();
+
+		// The whole reason this is a separate interface rather than another method on the key store: a
+		// dashboard credential granted it can see *that* data is protected and never *what* it is. If a
+		// component is ever added to KeyRecord that could carry key bytes, this fails.
+		assertFalse(record.toString().contains("SecretKey"), record.toString());
+		for ( java.lang.reflect.RecordComponent component : ShreddingAudit.KeyRecord.class.getRecordComponents() ) {
+			assertFalse(SecretKey.class.isAssignableFrom(component.getType()),
+					"KeyRecord.%s hands out key material".formatted(component.getName()));
+		}
+	}
+
+	@ForEachBackend
+	void theAuditNarrowsByCategoryAndIsBounded ( ) {
+		EventStore store = eventStoreWithShredding();
+		EventStream<PaymentEvent> payments = store.getEventStream(STREAM, PaymentEvent.class);
+
+		DataSubject marketing = ALICE.withCategory("marketing");
+		payments.append(AppendCriteria.none(), Event.of(
+				new StrictlyValidated("v-1", Shreddable.of("alice@example.org", marketing)), Tags.none()));
+		payments.append(AppendCriteria.none(), Event.of(transfer(), Tags.none()));
+
+		// three keys now: Alice/default, Alice/marketing, Bob/default
+		assertEquals(3, audit(store).keys(KeyAuditQuery.all()).size());
+		assertEquals(1, audit(store).keys(KeyAuditQuery.all().withCategory("marketing")).size());
+		assertEquals(2, audit(store).keys(KeyAuditQuery.forSubject("customer", "alice-42")).size());
+
+		// "erase marketing, retain financial" is a category away, and the audit has to show that
+		store.erase(marketing, ErasureReason.of("marketing consent withdrawn"));
+		assertEquals(new ShreddingAudit.ShreddingTotals(2, 2, 1), audit(store).totals());
+
+		// and the limit is honoured, because a store running for years holds more keys than any caller
+		// meant to page through by accident
+		assertEquals(2, audit(store).keys(KeyAuditQuery.all().withLimit(2)).size());
+	}
+
+	private ShreddingAudit audit ( EventStore store ) {
+		return store.shreddingAudit().orElseThrow();
 	}
 
 	private TransferMade transfer ( ) {

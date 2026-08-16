@@ -102,6 +102,17 @@ public interface ShreddingCodec extends AutoCloseable {
 	ErasureReport shred ( DataSubject subject, ErasureReason reason );
 
 	/**
+	 * Reading which subjects hold protected data and which erasures have happened, without the means to
+	 * decrypt any of it.
+	 *
+	 * @return the audit view, or empty if the underlying key store cannot provide one
+	 * @see ShreddingAudit
+	 */
+	default Optional<ShreddingAudit> audit ( ) {
+		return Optional.empty();
+	}
+
+	/**
 	 * Releases whatever this codec holds — a key cache, connections, a key store it owns.
 	 * <p>
 	 * Idempotent, and never throws. A codec handed to a storage builder is closed with the storage.

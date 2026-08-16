@@ -18,11 +18,13 @@
 package org.sliceworkz.eventstore;
 
 import java.util.Collections;
+import java.util.Optional;
 import java.util.Set;
 
 import org.sliceworkz.eventstore.shredding.DataSubject;
 import org.sliceworkz.eventstore.shredding.ErasureReason;
 import org.sliceworkz.eventstore.shredding.ErasureReport;
+import org.sliceworkz.eventstore.shredding.ShreddingAudit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -247,5 +249,20 @@ public interface EventStore extends AutoCloseable {
 				"this event store has no ShreddingCodec configured, so it holds no keys to destroy; configure shredding on the storage builder or via EventStoreFactory.eventStore(...)");
 	}
 
+	/**
+	 * Reading which data subjects hold protected data and which erasures have happened.
+	 * <p>
+	 * The events record nothing about an erasure — they are never rewritten — so the key store is the
+	 * only account of it, and this is how a console or a compliance report reads that account. It hands
+	 * out no key material and cannot decrypt anything.
+	 * <p>
+	 * Empty on a store with no shredding configured, or whose key store cannot enumerate.
+	 *
+	 * @return the audit view, or empty if there is none
+	 * @see ShreddingAudit
+	 */
+	default Optional<ShreddingAudit> shreddingAudit ( ) {
+		return Optional.empty();
+	}
 
 }

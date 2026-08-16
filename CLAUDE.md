@@ -907,6 +907,59 @@ PostgresEventStorage.newBuilder().shredding(myKmsCodec).buildStore(); // take ov
   algorithm without rewriting history. That agility, not the choice of cipher, is the real defence
   against harvest-now-decrypt-later.
 
+**Rotation only ever applies forward, and that is the design rather than an omission.** There is no way
+to rotate a live key and re-seal what it protects, because re-sealing means rewriting stored events —
+the one thing this design exists to avoid. Events staying byte-identical is what makes destroying a key
+reach every copy of them (WAL, replicas, backups) with nothing to chase; a re-seal would have to reach
+all of those too, and would not. So:
+
+- **A subject whose keys are shredded gets a fresh key** for anything appended afterwards, and
+  everything sealed under the old key stays sealed under it for as long as that ciphertext exists.
+  Erasing twice therefore destroys two keys, not one — which is why `shred` matches on *every* key a
+  subject has ever held, not just the active one.
+- **What can change without rewriting anything is the algorithm**, recorded per sealed value. New
+  appends can use a new one while old events keep decrypting under the one they were written with. For
+  a long-lived log that agility is what rotation is usually reached for anyway.
+- **A key-encrypting key can be rotated freely**, since that lives inside an implementor's own codec or
+  key store and never touches the events. That is where a KMS's rotation story belongs.
+
+**A key store can report on itself, without being able to decrypt anything.** `ShreddingAudit` —
+`EventStore.shreddingAudit()`, or `ShreddingKeyStore.audit()` — answers which subjects hold protected
+data and which erasures have happened, and is the *only* way to read that: the events record nothing
+about an erasure, since they are never rewritten, so the key store is the whole account of it.
+
+```java
+ShreddingAudit audit = eventStore.shreddingAudit().orElseThrow();
+
+audit.totals();                                          // subjects with live keys, live keys, shredded keys
+audit.keys(KeyAuditQuery.forSubject("customer", "alice-42"));   // one person, every category
+audit.keys(KeyAuditQuery.all().onlyShredded());                 // the erasure log: what, when, on whose authority
+```
+
+- **`KeyRecord` carries no key material, and no method here returns any.** That separation is the whole
+  reason this is a second interface rather than another method on the key store: a dashboard credential
+  granted it can see *that* data is protected and *when* it was erased, and never *what* it was. The
+  Postgres implementation does not merely refrain from reading `key_material` — the column is absent
+  from every statement it issues, so key bytes cannot reach a log or a heap dump through this path.
+- **Bounded, with no cursor.** `KeyAuditQuery` always carries a limit (default 500). A store running for
+  years holds one row per subject per category and never prunes the shredded ones, and unlike an event
+  query there is nothing to resume from — so an accidental full enumeration is not offered.
+- **Which *events* hold data under a key is not answered here** — the key store has never seen an event.
+  That is an ordinary tag query, since each event carries its keys as `dek:` tags:
+  `EventQuery.forEvents(EventTypesFilter.any(), Tags.of(KeyId.TAG_KEY, record.id().value()))`.
+- **Optional, like leases.** A key store fronting a KMS that does not enumerate returns empty and
+  callers do without; all three shipped key stores implement it.
+
+**The Postgres key store caches resolved keys with a TTL, default one hour**
+(`PostgresShreddingKeyStore.DEFAULT_CACHE_TTL`). Without a cache, replaying a stream costs a query per
+protected value; with an unbounded one, an erasure performed by *another* instance would never be
+noticed. An erasure performed by *this* instance drops its entries immediately, so the ttl bounds only
+the cross-instance case — which makes it the outer edge of "erased" for a multi-instance deployment, and
+a number worth stating in a data protection notice rather than discovering. `Duration.ZERO` disables the
+cache and makes an erasure effective everywhere at once, at a query per protected value. A key that was
+never seen is deliberately not cached as absent, so a shredded key still costs one query per read rather
+than reporting stale data as readable.
+
 **Raw mode does not decrypt**, deliberately: a wildcard stream, an export or an import sees the sealed
 envelope as stored, which is what lets `EventStoreImporter` copy events with no keys and no domain
 classes.
@@ -920,8 +973,9 @@ via `EventStoreImporter.transform` or to read the old shape through a `@LegacyEv
 
 `ShreddableEventDataTest` in the TCK pins all of this per backend, against *that backend's* key store:
 the two-subject erasure, the collection case, the validating record that used to become a poison event,
-category independence, idempotent erasure and a fresh key afterwards, the `dek:` tags, and — load-bearing
-— that an unreachable key store throws instead of reporting the data as erased.
+category independence, idempotent erasure and a fresh key afterwards, the `dek:` tags, the audit view
+(including, reflectively, that `KeyRecord` cannot carry key material), and — load-bearing — that an
+unreachable key store throws instead of reporting the data as erased.
 
 ## Testing
 

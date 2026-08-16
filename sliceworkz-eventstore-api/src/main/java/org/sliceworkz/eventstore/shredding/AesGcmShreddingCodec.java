@@ -211,6 +211,11 @@ public class AesGcmShreddingCodec implements ShreddingCodec {
 		return new ErasureReport(subject, reason, shredded == null ? List.of() : shredded, Instant.now());
 	}
 
+	@Override
+	public Optional<ShreddingAudit> audit ( ) {
+		return keyStore.audit();
+	}
+
 	/**
 	 * Binds the envelope's plaintext metadata to its ciphertext.
 	 * <p>

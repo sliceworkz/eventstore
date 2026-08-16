@@ -31,7 +31,9 @@ import javax.crypto.SecretKey;
 
 import org.sliceworkz.eventstore.shredding.DataSubject;
 import org.sliceworkz.eventstore.shredding.ErasureReason;
+import org.sliceworkz.eventstore.shredding.KeyAuditQuery;
 import org.sliceworkz.eventstore.shredding.KeyId;
+import org.sliceworkz.eventstore.shredding.ShreddingAudit;
 import org.sliceworkz.eventstore.shredding.ShreddingException;
 import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
 
@@ -143,6 +145,81 @@ public class InMemoryShreddingKeyStore implements ShreddingKeyStore {
 			keysShredded(shredded, subject, reason, shreddedAt);
 		}
 		return List.copyOf(shredded);
+	}
+
+	@Override
+	public synchronized Optional<ShreddingAudit> audit ( ) {
+		return Optional.of(new InMemoryAudit());
+	}
+
+	/**
+	 * Reports on this store's keys without handing out any of them.
+	 * <p>
+	 * Reads under the store's own monitor, so a report never catches a half-applied erasure.
+	 */
+	private final class InMemoryAudit implements ShreddingAudit {
+
+		@Override
+		public List<KeyRecord> keys ( KeyAuditQuery query ) {
+			if ( query == null ) {
+				throw new IllegalArgumentException("query cannot be null");
+			}
+			synchronized ( InMemoryShreddingKeyStore.this ) {
+				List<KeyRecord> matching = new ArrayList<>();
+				for ( StoredKey stored : keysNewestFirst() ) {
+					if ( matches(stored, query) ) {
+						matching.add(recordOf(stored));
+						if ( matching.size() >= query.limit() ) {
+							break;
+						}
+					}
+				}
+				return List.copyOf(matching);
+			}
+		}
+
+		@Override
+		public ShreddingTotals totals ( ) {
+			synchronized ( InMemoryShreddingKeyStore.this ) {
+				long live = 0;
+				long shredded = 0;
+				java.util.Set<DataSubject> subjects = new java.util.HashSet<>();
+				for ( StoredKey stored : keys.values() ) {
+					if ( stored.isShredded() ) {
+						shredded++;
+					} else {
+						live++;
+						subjects.add(stored.subject());
+					}
+				}
+				return new ShreddingTotals(subjects.size(), live, shredded);
+			}
+		}
+
+		private boolean matches ( StoredKey stored, KeyAuditQuery query ) {
+			if ( query.shreddedOnly() && !stored.isShredded() ) {
+				return false;
+			}
+			DataSubject subject = stored.subject();
+			return ( query.subjectType() == null || query.subjectType().equals(subject.type()) )
+					&& ( query.subjectId() == null || query.subjectId().equals(subject.id()) )
+					&& ( query.category() == null || query.category().equals(subject.category()) );
+		}
+
+		private KeyRecord recordOf ( StoredKey stored ) {
+			return new KeyRecord(stored.id(), stored.subject(), stored.createdAt(),
+					Optional.ofNullable(stored.shreddedAt()), Optional.ofNullable(stored.reason()));
+		}
+
+	}
+
+	/**
+	 * The keys in reverse insertion order, which is newest first because the backing map preserves it.
+	 */
+	private synchronized List<StoredKey> keysNewestFirst ( ) {
+		List<StoredKey> all = new ArrayList<>(keys.values());
+		java.util.Collections.reverse(all);
+		return all;
 	}
 
 	/**

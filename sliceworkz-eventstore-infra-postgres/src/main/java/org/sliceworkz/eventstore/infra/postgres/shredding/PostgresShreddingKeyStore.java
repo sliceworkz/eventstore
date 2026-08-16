@@ -22,6 +22,9 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -36,7 +39,9 @@ import javax.sql.DataSource;
 
 import org.sliceworkz.eventstore.shredding.DataSubject;
 import org.sliceworkz.eventstore.shredding.ErasureReason;
+import org.sliceworkz.eventstore.shredding.KeyAuditQuery;
 import org.sliceworkz.eventstore.shredding.KeyId;
+import org.sliceworkz.eventstore.shredding.ShreddingAudit;
 import org.sliceworkz.eventstore.shredding.ShreddingException;
 import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
 
@@ -68,12 +73,13 @@ import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
  * erasure reported success.
  *
  * <h2>Caching, and what it costs</h2>
- * Resolved keys are cached in memory, unbounded but keyed on key id, so replaying a stream does not
- * issue a query per protected value. The cache is <b>invalidated on erasure within this instance</b>,
- * so a shred is immediate here. Across a cluster it is not: another instance that has already cached
- * the key keeps decrypting with it until it is restarted or its cache entry is evicted. That is the
- * usual crypto-shredding trade — instant in storage, eventually consistent in memory — and it is worth
- * knowing before promising an exact erasure time.
+ * Resolved keys are cached in memory, keyed on key id, so replaying a stream does not issue a query per
+ * protected value. The cache is <b>invalidated on erasure within this instance</b>, so a shred is
+ * immediate here. Across a cluster it is not: another instance that has already cached the key keeps
+ * decrypting with it until its entry lapses. That is the usual crypto-shredding trade — instant in
+ * storage, eventually consistent in memory — and it is why entries expire rather than living forever:
+ * {@link #DEFAULT_CACHE_TTL} is the outer bound on how long an erasure performed elsewhere can go
+ * unnoticed here, and it is a number worth stating in a data protection notice rather than discovering.
  * <p>
  * A key that was never seen is not cached as absent, so a shredded key still costs one query per read.
  * That is deliberate: caching absence would make an erasure that happened elsewhere invisible for the
@@ -93,6 +99,21 @@ import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
  */
 public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 
+	/**
+	 * How long a resolved key stays usable before this store looks it up again — one hour.
+	 * <p>
+	 * The cache is what keeps replaying a stream from issuing a query per protected value, and an
+	 * erasure performed <em>by this instance</em> drops the entry immediately, so the ttl is not what
+	 * bounds that. What it bounds is an erasure performed somewhere else: another instance that has
+	 * already cached the key keeps decrypting with it until its entry lapses. An hour is the outer edge
+	 * of "erased" for a deployment of several instances, and worth stating in a data protection notice
+	 * rather than discovering.
+	 * <p>
+	 * {@link Duration#ZERO} disables the cache and resolves every value from the database, which makes
+	 * an erasure effective everywhere at once at the cost of a query per protected value.
+	 */
+	public static final Duration DEFAULT_CACHE_TTL = Duration.ofHours(1);
+
 	private static final String KEY_ALGORITHM = "AES";
 	private static final int KEY_BITS = 256;
 
@@ -103,7 +124,20 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 	 * Resolved key material, by key id. Bounded in practice by the number of distinct subjects a process
 	 * actually reads for, not by the number of keys that exist.
 	 */
-	private final Map<KeyId, SecretKey> cache = new ConcurrentHashMap<>();
+	private final Map<KeyId, CachedKey> cache = new ConcurrentHashMap<>();
+	private final Duration cacheTtl;
+
+	/**
+	 * A resolved key and the moment it stops being trusted.
+	 * <p>
+	 * The expiry is what bounds an erasure performed by <em>another</em> instance: this one keeps
+	 * decrypting with a key it cached until the entry lapses and the next read finds the row shredded.
+	 */
+	private record CachedKey ( SecretKey key, Instant expiresAt ) {
+		private boolean isLive ( Instant now ) {
+			return now.isBefore(expiresAt);
+		}
+	}
 
 	/**
 	 * @param dataSource the storage's data source; never closed by this key store
@@ -112,14 +146,29 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 	 * @throws IllegalArgumentException if either argument is null
 	 */
 	public PostgresShreddingKeyStore ( DataSource dataSource, String prefix ) {
+		this(dataSource, prefix, DEFAULT_CACHE_TTL);
+	}
+
+	/**
+	 * @param dataSource the storage's data source; never closed by this key store
+	 * @param prefix     the table prefix the storage was built with
+	 * @param cacheTtl   how long a resolved key stays usable before it is looked up again; see
+	 *                   {@link #DEFAULT_CACHE_TTL} for what this bounds
+	 * @throws IllegalArgumentException if any argument is null, or the ttl is negative
+	 */
+	public PostgresShreddingKeyStore ( DataSource dataSource, String prefix, Duration cacheTtl ) {
 		if ( dataSource == null ) {
 			throw new IllegalArgumentException("dataSource cannot be null");
 		}
 		if ( prefix == null ) {
 			throw new IllegalArgumentException("prefix cannot be null; use an empty string for no prefix");
 		}
+		if ( cacheTtl == null || cacheTtl.isNegative() ) {
+			throw new IllegalArgumentException("cacheTtl cannot be null or negative; use Duration.ZERO to resolve every key from the database");
+		}
 		this.dataSource = dataSource;
 		this.tableName = prefix + "shredding_keys";
+		this.cacheTtl = cacheTtl;
 	}
 
 	/**
@@ -153,7 +202,7 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 
 			Optional<ActiveKey> existing = selectActiveKey(connection, subject);
 			if ( existing.isPresent() ) {
-				cache.put(existing.get().id(), existing.get().key());
+				cacheKey(existing.get().id(), existing.get().key());
 				return existing.get();
 			}
 
@@ -182,11 +231,11 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 			if ( inserted == 0 ) {
 				ActiveKey winner = selectActiveKey(connection, subject).orElseThrow(() -> new ShreddingException(
 						"could not obtain a key for subject %s: the insert conflicted but no active key is present".formatted(subject)));
-				cache.put(winner.id(), winner.key());
+				cacheKey(winner.id(), winner.key());
 				return winner;
 			}
 
-			cache.put(keyId, material);
+			cacheKey(keyId, material);
 			return new ActiveKey(keyId, material);
 
 		} catch (SQLException e) {
@@ -200,9 +249,14 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 			throw new IllegalArgumentException("key cannot be null");
 		}
 
-		SecretKey cached = cache.get(key);
+		CachedKey cached = cache.get(key);
 		if ( cached != null ) {
-			return Optional.of(cached);
+			if ( cached.isLive(Instant.now()) ) {
+				return Optional.of(cached.key());
+			}
+			// lapsed rather than wrong: drop it and ask the database, which is where an erasure by
+			// another instance will have been recorded
+			cache.remove(key, cached);
 		}
 
 		String sql = "SELECT key_material FROM %s WHERE key_id = ?".formatted(tableName);
@@ -225,7 +279,7 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 					return Optional.empty();
 				}
 				SecretKey secretKey = new SecretKeySpec(material, KEY_ALGORITHM);
-				cache.put(key, secretKey);
+				cacheKey(key, secretKey);
 				return Optional.of(secretKey);
 			}
 
@@ -282,6 +336,129 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 		shredded.forEach(cache::remove);
 
 		return List.copyOf(shredded);
+	}
+
+	@Override
+	public Optional<ShreddingAudit> audit ( ) {
+		return Optional.of(new PostgresAudit());
+	}
+
+	/**
+	 * Reports on the key table without ever selecting the key material.
+	 * <p>
+	 * The {@code key_material} column is absent from every statement here, not merely unread: a report
+	 * that never puts key bytes on the wire cannot leak them through a log, a heap dump or a stray
+	 * {@code toString}. It reads through the same {@code DataSource}, so a credential granted only
+	 * {@code SELECT} on the table serves the whole of this interface.
+	 */
+	private final class PostgresAudit implements ShreddingAudit {
+
+		@Override
+		public List<KeyRecord> keys ( KeyAuditQuery query ) {
+			if ( query == null ) {
+				throw new IllegalArgumentException("query cannot be null");
+			}
+
+			StringBuilder sql = new StringBuilder("""
+					SELECT key_id, subject_type, subject_id, subject_category, created_at, shredded_at, shredded_reason
+					  FROM %s
+					 WHERE 1 = 1
+					""".formatted(tableName));
+
+			List<String> parameters = new ArrayList<>();
+			if ( query.shreddedOnly() ) {
+				sql.append(" AND key_material IS NULL");
+			}
+			if ( query.subjectType() != null ) {
+				sql.append(" AND subject_type = ?");
+				parameters.add(query.subjectType());
+			}
+			if ( query.subjectId() != null ) {
+				sql.append(" AND subject_id = ?");
+				parameters.add(query.subjectId());
+			}
+			if ( query.category() != null ) {
+				sql.append(" AND subject_category = ?");
+				parameters.add(query.category());
+			}
+			// key_id breaks the tie so that paging is stable when several keys share a creation instant,
+			// which two subjects minted inside one append genuinely do.
+			sql.append(" ORDER BY created_at DESC, key_id DESC LIMIT ?");
+
+			try ( Connection connection = dataSource.getConnection();
+					PreparedStatement statement = connection.prepareStatement(sql.toString()) ) {
+
+				int index = 1;
+				for ( String parameter : parameters ) {
+					statement.setString(index++, parameter);
+				}
+				statement.setInt(index, query.limit());
+
+				List<KeyRecord> records = new ArrayList<>();
+				try ( ResultSet resultSet = statement.executeQuery() ) {
+					while ( resultSet.next() ) {
+						records.add(recordOf(resultSet));
+					}
+				}
+				return List.copyOf(records);
+
+			} catch (SQLException e) {
+				throw new ShreddingException("failed to read shredding keys from %s".formatted(tableName), e);
+			}
+		}
+
+		@Override
+		public ShreddingTotals totals ( ) {
+			// One pass over the table rather than three: the counts are always reported together, and the
+			// live-subject count has to see the same snapshot as the key counts or the summary contradicts
+			// itself while an erasure is running.
+			String sql = """
+					SELECT count(*) FILTER (WHERE key_material IS NOT NULL) AS live_keys,
+					       count(*) FILTER (WHERE key_material IS NULL) AS shredded_keys,
+					       count(DISTINCT (subject_type, subject_id, subject_category))
+					           FILTER (WHERE key_material IS NOT NULL) AS live_subjects
+					  FROM %s
+					""".formatted(tableName);
+
+			try ( Connection connection = dataSource.getConnection();
+					PreparedStatement statement = connection.prepareStatement(sql);
+					ResultSet resultSet = statement.executeQuery() ) {
+
+				if ( !resultSet.next() ) {
+					return new ShreddingTotals(0, 0, 0);
+				}
+				return new ShreddingTotals(
+						resultSet.getLong("live_subjects"),
+						resultSet.getLong("live_keys"),
+						resultSet.getLong("shredded_keys"));
+
+			} catch (SQLException e) {
+				throw new ShreddingException("failed to summarise the shredding keys in %s".formatted(tableName), e);
+			}
+		}
+
+		private KeyRecord recordOf ( ResultSet resultSet ) throws SQLException {
+			DataSubject subject = DataSubject.of(resultSet.getString("subject_type"), resultSet.getString("subject_id"))
+					.withCategory(resultSet.getString("subject_category"));
+
+			Timestamp shreddedAt = resultSet.getTimestamp("shredded_at");
+			String reason = resultSet.getString("shredded_reason");
+
+			return new KeyRecord(
+					KeyId.of(resultSet.getString("key_id")),
+					subject,
+					resultSet.getTimestamp("created_at").toInstant(),
+					Optional.ofNullable(shreddedAt).map(Timestamp::toInstant),
+					Optional.ofNullable(reason).map(ErasureReason::of));
+		}
+
+	}
+
+	private void cacheKey ( KeyId keyId, SecretKey material ) {
+		if ( cacheTtl.isZero() ) {
+			return;
+		}
+		cache.put(keyId, new CachedKey(material, Instant.now().plus(cacheTtl)));
 	}
 
 	private Optional<ActiveKey> selectActiveKey ( Connection connection, DataSubject subject ) throws SQLException {

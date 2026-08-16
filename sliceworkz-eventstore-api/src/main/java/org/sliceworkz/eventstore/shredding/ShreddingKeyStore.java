@@ -65,7 +65,20 @@ import javax.crypto.SecretKey;
  * leaves an event whose key was never persisted — a value that can never be read, which is
  * indistinguishable from an erasure nobody asked for.
  *
+ * <h2>Rotation only ever applies forward</h2>
+ * There is deliberately no way to rotate a live key and re-seal what it protects. Re-sealing means
+ * rewriting stored events, which is the one thing this design exists to avoid: the events stay
+ * byte-identical so that destroying a key reaches every copy of them — write-ahead logs, replicas,
+ * backups — with nothing to chase. So a subject whose keys are shredded gets a fresh key for data
+ * appended afterwards, and everything sealed under the old one stays sealed under it for as long as
+ * that ciphertext exists.
+ * <p>
+ * What <em>can</em> change without rewriting anything is the algorithm, which is recorded per sealed
+ * value: new appends can use a new one while old events keep decrypting under the one they were written
+ * with. That agility, rather than rotation, is what a long-lived log actually needs.
+ *
  * @see ShreddingCodec
+ * @see ShreddingAudit
  * @see DataSubject
  */
 public interface ShreddingKeyStore extends AutoCloseable {
@@ -102,6 +115,19 @@ public interface ShreddingKeyStore extends AutoCloseable {
 	 * @throws ShreddingException if the key store cannot be reached
 	 */
 	List<KeyId> shred ( DataSubject subject, ErasureReason reason );
+
+	/**
+	 * Reading what this store holds, without the means to decrypt any of it.
+	 * <p>
+	 * Empty when the store cannot enumerate — one fronting a KMS that does not list, for instance. The
+	 * shipped key stores all implement it.
+	 *
+	 * @return the audit view, or empty if this store cannot provide one
+	 * @see ShreddingAudit
+	 */
+	default Optional<ShreddingAudit> audit ( ) {
+		return Optional.empty();
+	}
 
 	/**
 	 * Releases whatever this key store holds — connections, caches, a background refresher.

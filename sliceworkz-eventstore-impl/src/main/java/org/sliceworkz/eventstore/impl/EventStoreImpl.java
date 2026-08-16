@@ -52,6 +52,7 @@ import org.sliceworkz.eventstore.shredding.DataSubject;
 import org.sliceworkz.eventstore.shredding.ErasureReason;
 import org.sliceworkz.eventstore.shredding.ErasureReport;
 import org.sliceworkz.eventstore.shredding.KeyId;
+import org.sliceworkz.eventstore.shredding.ShreddingAudit;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.impl.serde.EventPayloadSerializerDeserializer;
 import org.sliceworkz.eventstore.impl.serde.EventPayloadSerializerDeserializer.TypeAndPayload;
@@ -413,6 +414,14 @@ public class EventStoreImpl implements EventStore {
 				subject, eventStorage.name(), report.keysShredded(), reason);
 
 		return report;
+	}
+
+	@Override
+	public Optional<ShreddingAudit> shreddingAudit ( ) {
+		// Like erase, deliberately available on a closed store: reporting on what has been erased touches
+		// the key store rather than the events, and a compliance question does not stop being answerable
+		// because a store handle was closed.
+		return shreddingCodec == null ? Optional.empty() : shreddingCodec.audit();
 	}
 
 	@Override

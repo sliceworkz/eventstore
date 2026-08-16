@@ -23,6 +23,9 @@ import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.MeterOptions;
 import org.sliceworkz.eventstore.query.Limit;
+import org.sliceworkz.eventstore.shredding.AesGcmShreddingCodec;
+import org.sliceworkz.eventstore.shredding.ShreddingCodec;
+import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
 import org.sliceworkz.eventstore.spi.EventStorage;
 
 import io.micrometer.core.instrument.MeterRegistry;
@@ -86,6 +89,7 @@ public interface InMemoryFsEventStorage {
 		private Limit limit = Limit.none();
 		private MeterRegistry meterRegistry = Metrics.globalRegistry;
 		private MeterOptions meterOptions = MeterOptions.defaults();
+		private ShreddingCodec shreddingCodec;
 		private String name = "inmem-fs-%s".formatted(System.identityHashCode(this));
 
 		private Builder ( ) {
@@ -165,6 +169,44 @@ public interface InMemoryFsEventStorage {
 		 * @return this Builder instance for method chaining
 		 * @see MeterOptions
 		 */
+		/**
+		 * Protects the {@link org.sliceworkz.eventstore.shredding.Shreddable} values in this store's
+		 * events with the shipped AES-256-GCM codec, holding keys in the given key store.
+		 * <p>
+		 * Pair a file-backed store with a file-backed key store, or the events outlive the keys and every
+		 * protected value reads as erased after a restart:
+		 * <pre>{@code
+		 * Path directory = Path.of("eventstore-data");
+		 * EventStore store = InMemoryFsEventStorage.newBuilder()
+		 *         .directory(directory)
+		 *         .shredding(new InMemoryFsShreddingKeyStore(directory))
+		 *         .buildStore();
+		 * }</pre>
+		 * Note what that colocation costs: the keys sit beside the ciphertext they protect, so anyone with
+		 * the directory has both. That is acceptable for development and tests, which is what this storage
+		 * is for; it is not a deployment posture.
+		 * <p>
+		 * The key store is the caller's to close.
+		 *
+		 * @param shreddingKeyStore where keys are minted, resolved and destroyed
+		 * @return this builder for method chaining
+		 */
+		public Builder shredding ( ShreddingKeyStore shreddingKeyStore ) {
+			this.shreddingCodec = AesGcmShreddingCodec.over(shreddingKeyStore);
+			return this;
+		}
+
+		/**
+		 * Protects personal data with a codec of your own, taking over encryption as well as key storage.
+		 *
+		 * @param shreddingCodec seals and unseals protected values
+		 * @return this builder for method chaining
+		 */
+		public Builder shredding ( ShreddingCodec shreddingCodec ) {
+			this.shreddingCodec = shreddingCodec;
+			return this;
+		}
+
 		public Builder meterOptions ( MeterOptions meterOptions ) {
 			this.meterOptions = meterOptions;
 			return this;
@@ -192,7 +234,7 @@ public interface InMemoryFsEventStorage {
 			// the storage is created here and never handed to the caller, so the returned store owns it:
 			// closing that store is the only way this storage will ever be closed
 			EventStorage eventStorage = build();
-			return EventStore.owning(EventStoreFactory.get().eventStore(eventStorage, meterRegistry, meterOptions), eventStorage);
+			return EventStore.owning(EventStoreFactory.get().eventStore(eventStorage, meterRegistry, meterOptions, shreddingCodec), eventStorage);
 		}
 	}
 

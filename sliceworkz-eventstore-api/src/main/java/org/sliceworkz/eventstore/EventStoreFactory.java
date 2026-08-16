@@ -20,6 +20,7 @@ package org.sliceworkz.eventstore;
 import java.util.NoSuchElementException;
 import java.util.ServiceLoader;
 
+import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageException;
 
@@ -85,6 +86,32 @@ public interface EventStoreFactory {
 	 */
 	default EventStore eventStore ( EventStorage eventStorage, MeterRegistry meterRegistry, MeterOptions meterOptions ) {
 		return eventStore ( eventStorage, meterRegistry );
+	}
+
+	/**
+	 * Creates an EventStore that can protect and erase personal data.
+	 * <p>
+	 * The codec seals {@link org.sliceworkz.eventstore.shredding.Shreddable} values on append and unseals
+	 * them on read, and {@link EventStore#erase(org.sliceworkz.eventstore.shredding.DataSubject,
+	 * org.sliceworkz.eventstore.shredding.ErasureReason)} destroys the keys behind them. Without one, an
+	 * event type declaring a {@code Shreddable} component cannot be registered at all, rather than being
+	 * stored in the clear.
+	 * <pre>{@code
+	 * ShreddingCodec codec = AesGcmShreddingCodec.over(new InMemoryShreddingKeyStore());
+	 * EventStore store = EventStoreFactory.get().eventStore(storage, registry, MeterOptions.defaults(), codec);
+	 * }</pre>
+	 * The default implementation ignores the codec and delegates, so that a factory written before this
+	 * method existed still compiles and runs. The factory shipped with this library overrides it.
+	 *
+	 * @param eventStorage the storage backend implementation
+	 * @param meterRegistry the Micrometer meter registry for collecting metrics and observability data
+	 * @param meterOptions how much detail the store's meters may carry
+	 * @param shreddingCodec protects personal data in event payloads, or null for a store without shredding
+	 * @return a new EventStore instance using the provided storage
+	 * @see org.sliceworkz.eventstore.shredding.Shreddable
+	 */
+	default EventStore eventStore ( EventStorage eventStorage, MeterRegistry meterRegistry, MeterOptions meterOptions, ShreddingCodec shreddingCodec ) {
+		return eventStore ( eventStorage, meterRegistry, meterOptions );
 	}
 
 	/**

@@ -726,9 +726,14 @@ ImportReport report = EventStoreImporter.from(sourceStorage).to(targetStorage)
 
 **Why it lives at the SPI level.** `EventToImport`/`StoredEvent` carry opaque JSON plus a type name, so an
 import needs no domain classes on the classpath, does no serde round-trip, does not upcast, and does not
-re-split `@Erasable` fields against annotations that may have changed. Going through `EventStream` instead
-would rewrite legacy events into current ones and lose the idempotency key, which the public `Event` record
-does not carry.
+decrypt. Going through `EventStream` instead would rewrite legacy events into current ones and lose the
+idempotency key, which the public `Event` record does not carry.
+
+**Sealed values move as ciphertext, and the keys do not move with them.** A `Shreddable`'s envelope is
+opaque JSON like any other payload, so an import copies it verbatim without keys, domain classes, or the
+right to read the personal data. The consequence is the obvious one: a store imported into a deployment
+whose key store does not hold those keys reads every protected value as erased. Migrate the keys
+alongside the events, or accept the erasure.
 
 **Import modes** (`EventStorage.ImportMode`):
 - `FAIL_ON_EXISTING_ID` (default) — an already-present event id aborts the batch with `EventImportConflictException`
@@ -823,6 +828,154 @@ identify the offending stored event (it is fetched again in raw mode), an upcast
 an upcaster rather than as a parse failure, and the exception is wrapped exactly once — the typed serde used
 to catch its own exception and re-wrap it, so the message naming the missing type only ever reached a user as
 the cause of a second, vaguer one.
+
+### Erasing personal data: `Shreddable` values and crypto-shredding
+
+**Personal data is wrapped, not annotated, and erasure destroys a key rather than rewriting an event.**
+A record component declared `Shreddable<T>` is bound to a `DataSubject`, encrypted on append under the
+key held for that subject, and stored as a sealed envelope inside the ordinary payload.
+`EventStore.erase(subject, reason)` destroys the keys; nothing in the events table is written.
+
+```java
+record TransferMade(
+        String transferId, Money amount,
+        String fromCustomerId,                  // pseudonymous — survives erasure
+        Shreddable<PartyDetails> from,          // Alice's data, Alice's key
+        Shreddable<PartyDetails> to             // Bob's data, Bob's key
+) implements PaymentEvent { }
+
+DataSubject alice = DataSubject.of("customer", "alice-42");
+payments.append(AppendCriteria.none(), Event.of(new TransferMade(..., Shreddable.of(details, alice), ...), tags));
+
+eventStore.erase(alice, ErasureReason.of("GDPR art.17 request #4711"));
+
+transfer.from();   // Shredded[customer/alice-42/default, k-7f2a91c4]
+transfer.to();     // Present[PartyDetails[Bob Jansen, ...]]   -- unaffected
+transfer.from().map(PartyDetails::name).orElse("[erased]");
+```
+
+- **The stored event never changes.** Its bytes stay identical forever, so an erasure needs no UPDATE,
+  produces no new tuple to VACUUM, does not decorrelate the BRIN index on `event_position`, and reaches
+  the ciphertext already sitting in WAL, on replicas and in every backup — all of which the previous
+  `UPDATE ... SET event_erasable_data = null` did not. The log stays genuinely append-only.
+- **A shredded value is never null**, which is what keeps erasure from creating poison events: a record
+  whose compact constructor rejects nulls still builds after its data is gone. Nor can "erased" be
+  confused with "never held any", and a `Shreddable<Integer>` reads as shredded rather than as `0`.
+- **A `Shreddable` anywhere works** — nested records, `List` elements, `Map` values — because it is one
+  Jackson serializer on one document. The old `@Erasable`/`@PartlyErasable` split reconciled two
+  documents with a deep merge that replaced JSON arrays wholesale, so a collection of partly-personal
+  elements silently lost its non-personal fields on every ordinary read, erasure or not.
+- **Two subjects in one event each get their own key**, which no per-field annotation or per-event key
+  can express. Keys are scoped to `(type, id, category)`, so "erase marketing, retain financial" is a
+  category away.
+- **The subject id must not itself be personal data.** It is stored in the clear in the envelope and
+  survives erasure by construction — use a customer number, never an email address.
+- **`KeyId` values are random and land on the event as `dek:` tags**, so "every event holding data under
+  this key" is an ordinary tag query on the existing index. The tags stay after the key is destroyed, as
+  a tombstone that says an erasure touched the event without saying what it took.
+- **Erasure notifies nothing.** Read models, caches, search indexes and downstream systems keep their
+  copies, and projections hold bookmarks so they never re-read. Re-projecting is the application's job.
+  This is the one part of the old design's problems that shredding does not fix.
+- **Without a codec configured, registering an event type that declares a `Shreddable` fails** at
+  `getEventStream` — before anything is read or written — rather than storing personal data in the clear.
+
+**Two seams, and a shipped default.** `AesGcmShreddingCodec` (AES-256-GCM, random 96-bit IV per value,
+envelope metadata bound as AAD) over a `ShreddingKeyStore`:
+
+```java
+InMemoryEventStorage.newBuilder().shredding(new InMemoryShreddingKeyStore()).buildStore();
+InMemoryFsEventStorage.newBuilder().directory(dir).shredding(new InMemoryFsShreddingKeyStore(dir)).buildStore();
+PostgresEventStorage.newBuilder().shredding().buildStore();          // keys in <prefix>shredding_keys
+PostgresEventStorage.newBuilder().shredding(myKmsCodec).buildStore(); // take over encryption entirely
+```
+
+- **`ShreddingKeyStore`** is the narrow seam: keep the shipped encryption, hold keys in Vault/KMS/an HSM.
+- **`ShreddingCodec`** is the outer seam: take over encryption too, so key material never enters the JVM.
+- **`unseal`/`resolve` returning empty means *erased*; anything else must throw `ShreddingException`.**
+  This is the contract that matters most. Reported as empty, a key-store outage renders every protected
+  value as erased — and projections, being at-least-once and bookmarked, write those gaps into read
+  models permanently and never revisit them. `TypedEventPayloadSerializerDeserializer` rethrows a
+  `ShreddingException` unwrapped (and unwraps one Jackson wrapped) precisely so that "retry later" does
+  not arrive as `EventDeserializationException`, which means "never retry".
+- **Nothing here needs post-quantum work.** The design uses no asymmetric cryptography, so Shor has no
+  target; Grover leaves AES-256 at ~128 bits of effective security. Shredding is in fact a stronger
+  position than encryption at rest generally is — the threat model is ciphertext recovered from a backup
+  with the key destroyed, and no computation recovers a key that does not exist. Post-quantum only
+  becomes a question inside an implementor's own codec that wraps data keys under a KEK with RSA-OAEP or
+  ECIES, which is exactly the decision the seam leaves to them.
+- **`alg` is recorded per sealed value**, so a store can hold several algorithms at once and change
+  algorithm without rewriting history. That agility, not the choice of cipher, is the real defence
+  against harvest-now-decrypt-later.
+
+**Rotation only ever applies forward, and that is the design rather than an omission.** There is no way
+to rotate a live key and re-seal what it protects, because re-sealing means rewriting stored events —
+the one thing this design exists to avoid. Events staying byte-identical is what makes destroying a key
+reach every copy of them (WAL, replicas, backups) with nothing to chase; a re-seal would have to reach
+all of those too, and would not. So:
+
+- **A subject whose keys are shredded gets a fresh key** for anything appended afterwards, and
+  everything sealed under the old key stays sealed under it for as long as that ciphertext exists.
+  Erasing twice therefore destroys two keys, not one — which is why `shred` matches on *every* key a
+  subject has ever held, not just the active one.
+- **What can change without rewriting anything is the algorithm**, recorded per sealed value. New
+  appends can use a new one while old events keep decrypting under the one they were written with. For
+  a long-lived log that agility is what rotation is usually reached for anyway.
+- **A key-encrypting key can be rotated freely**, since that lives inside an implementor's own codec or
+  key store and never touches the events. That is where a KMS's rotation story belongs.
+
+**A key store can report on itself, without being able to decrypt anything.** `ShreddingAudit` —
+`EventStore.shreddingAudit()`, or `ShreddingKeyStore.audit()` — answers which subjects hold protected
+data and which erasures have happened, and is the *only* way to read that: the events record nothing
+about an erasure, since they are never rewritten, so the key store is the whole account of it.
+
+```java
+ShreddingAudit audit = eventStore.shreddingAudit().orElseThrow();
+
+audit.totals();                                          // subjects with live keys, live keys, shredded keys
+audit.keys(KeyAuditQuery.forSubject("customer", "alice-42"));   // one person, every category
+audit.keys(KeyAuditQuery.all().onlyShredded());                 // the erasure log: what, when, on whose authority
+```
+
+- **`KeyRecord` carries no key material, and no method here returns any.** That separation is the whole
+  reason this is a second interface rather than another method on the key store: a dashboard credential
+  granted it can see *that* data is protected and *when* it was erased, and never *what* it was. The
+  Postgres implementation does not merely refrain from reading `key_material` — the column is absent
+  from every statement it issues, so key bytes cannot reach a log or a heap dump through this path.
+- **Bounded, with no cursor.** `KeyAuditQuery` always carries a limit (default 500). A store running for
+  years holds one row per subject per category and never prunes the shredded ones, and unlike an event
+  query there is nothing to resume from — so an accidental full enumeration is not offered.
+- **Which *events* hold data under a key is not answered here** — the key store has never seen an event.
+  That is an ordinary tag query, since each event carries its keys as `dek:` tags:
+  `EventQuery.forEvents(EventTypesFilter.any(), Tags.of(KeyId.TAG_KEY, record.id().value()))`.
+- **Optional, like leases.** A key store fronting a KMS that does not enumerate returns empty and
+  callers do without; all three shipped key stores implement it.
+
+**The Postgres key store caches resolved keys with a TTL, default one hour**
+(`PostgresShreddingKeyStore.DEFAULT_CACHE_TTL`). Without a cache, replaying a stream costs a query per
+protected value; with an unbounded one, an erasure performed by *another* instance would never be
+noticed. An erasure performed by *this* instance drops its entries immediately, so the ttl bounds only
+the cross-instance case — which makes it the outer edge of "erased" for a multi-instance deployment, and
+a number worth stating in a data protection notice rather than discovering. `Duration.ZERO` disables the
+cache and makes an erasure effective everywhere at once, at a query per protected value. A key that was
+never seen is deliberately not cached as absent, so a shredded key still costs one query per read rather
+than reporting stale data as readable.
+
+**Raw mode does not decrypt**, deliberately: a wildcard stream, an export or an import sees the sealed
+envelope as stored, which is what lets `EventStoreImporter` copy events with no keys and no domain
+classes.
+
+**Legacy `@Erasable` events are still readable.** The annotations, the two Jackson mappers, the view
+introspector and the erasable *write* path are gone; `event_erasable_data` is still read, and a stored
+event carrying one is still deep-merged exactly as before. Nothing writes a second document any more.
+A component that used to be `@Erasable` and is now `Shreddable` cannot be read off old events — the
+stored value is bare, so nothing can say whose data it is — and fails with a message saying to migrate
+via `EventStoreImporter.transform` or to read the old shape through a `@LegacyEvent` upcaster.
+
+`ShreddableEventDataTest` in the TCK pins all of this per backend, against *that backend's* key store:
+the two-subject erasure, the collection case, the validating record that used to become a poison event,
+category independence, idempotent erasure and a fresh key afterwards, the `dek:` tags, the audit view
+(including, reflectively, that `KeyRecord` cannot carry key material), and — load-bearing — that an
+unreachable key store throws instead of reporting the data as erased.
 
 ## Testing
 

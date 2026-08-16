@@ -50,7 +50,7 @@ import org.sliceworkz.eventstore.testing.tck.mock.MockDomainEventWithNonSealedIn
 import org.sliceworkz.eventstore.testing.tck.mock.MockEventuallyConsistentAppendListener;
 import org.sliceworkz.eventstore.testing.tck.mockdomain.MockDomainDuplicatedEvent;
 import org.sliceworkz.eventstore.testing.tck.mockdomain.MockDomainEvent.FirstDomainEvent;
-import org.sliceworkz.eventstore.testing.tck.mockdomain.MockDomainEvent.FourthDomainEventWithErasableParts;
+import org.sliceworkz.eventstore.testing.tck.mockdomain.MockDomainEvent.FourthDomainEvent;
 import org.sliceworkz.eventstore.testing.tck.mockdomain.MockDomainEvent.SecondDomainEvent;
 import org.sliceworkz.eventstore.testing.tck.mockdomain.MockDomainEvent;
 import org.sliceworkz.eventstore.testing.tck.mockdomain.OtherMockDomainEvent.AnotherDomainEvent;
@@ -354,13 +354,13 @@ public class EventStreamTest extends AbstractEventStoreTest {
 	}
 
 	@ForEachBackend
-	void testAppendWithConcreteEventClassWithErasableParts ( ) {
+	void testAppendWithConcreteEventClassWithMultipleComponents ( ) {
 
 		// this stream only contains this concrete event type (we use <Object> generic for test purposes only)
-		EventStream<Object> specialEs = eventStore().getEventStream(stream, FourthDomainEventWithErasableParts.class);
+		EventStream<Object> specialEs = eventStore().getEventStream(stream, FourthDomainEvent.class);
 
 		// should be ok
-		specialEs.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FourthDomainEventWithErasableParts("1", "someName"), Tags.none())));
+		specialEs.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FourthDomainEvent("1", "someName"), Tags.none())));
 
 	}
 

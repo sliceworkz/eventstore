@@ -32,22 +32,23 @@
  *   <li>Support for sealed interfaces and record-based event hierarchies</li>
  *   <li>Automatic event type registration and discovery</li>
  *   <li>Legacy event upcasting via {@link org.sliceworkz.eventstore.events.LegacyEvent} annotation</li>
- *   <li>GDPR compliance through {@link org.sliceworkz.eventstore.events.Erasable} field separation</li>
+ *   <li>GDPR compliance through {@link org.sliceworkz.eventstore.shredding.Shreddable} values, encrypted per data subject</li>
  *   <li>Separation of immutable and erasable data in storage</li>
  * </ul>
  *
- * <h2>Erasable Data Handling:</h2>
+ * <h2>Personal Data Handling:</h2>
  * <p>
- * Fields marked with {@code @Erasable} are stored separately from immutable data, enabling
- * selective deletion for GDPR "right to be forgotten" compliance. The serializer uses
- * Jackson's {@code @JsonView} mechanism to separate:
- * <ul>
- *   <li><strong>Immutable data:</strong> Event structure that must be preserved</li>
- *   <li><strong>Erasable data:</strong> Personal information that can be deleted</li>
- * </ul>
+ * A payload is serialized to a single JSON document. Any
+ * {@link org.sliceworkz.eventstore.shredding.Shreddable} value in it is encrypted in place, under the
+ * key held for its data subject, and written as a sealed envelope. Erasure destroys the key rather than
+ * touching the event, so the stored bytes never change and every copy of them — replicas, write-ahead
+ * logs, backups — becomes unreadable at the same instant.
+ * <p>
+ * Events written before this, when payloads were split across an immutable and an erasable document,
+ * are still read by merging the two.
  *
- * @see org.sliceworkz.eventstore.events.Erasable
- * @see org.sliceworkz.eventstore.events.PartlyErasable
+ * @see org.sliceworkz.eventstore.shredding.Shreddable
+ * @see ShreddableModule
  * @see org.sliceworkz.eventstore.events.LegacyEvent
  * @see org.sliceworkz.eventstore.events.Upcast
  */

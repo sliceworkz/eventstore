@@ -25,6 +25,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import javax.sql.DataSource;
 
 import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
+import org.sliceworkz.eventstore.infra.postgres.shredding.PostgresShreddingKeyStore;
+import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.testing.EventStoreBackend;
 import org.sliceworkz.eventstore.testing.StorageOptions;
@@ -98,6 +100,22 @@ public abstract class AbstractPostgresBackend implements EventStoreBackend {
 		EventStorage storage = builder.build();
 		liveStorages.add(storage);
 		return storage;
+	}
+
+	/**
+	 * A key store in the same database as the events, so the TCK exercises the SQL table, the schema
+	 * that creates it and the validation that checks it.
+	 * <p>
+	 * The prefix is deliberately left unset here rather than derived: this backend hands every test an
+	 * unprefixed store unless the scenario asks otherwise, and the key store must sit beside the events
+	 * of the store it protects.
+	 *
+	 * @param storage the storage the keys will protect events in
+	 * @return a key store on the same database
+	 */
+	@Override
+	public ShreddingKeyStore shreddingKeyStore ( EventStorage storage ) {
+		return PostgresShreddingKeyStore.on(PostgresContainer.dataSource(image), prefix(StorageOptions.defaults()));
 	}
 
 	/**

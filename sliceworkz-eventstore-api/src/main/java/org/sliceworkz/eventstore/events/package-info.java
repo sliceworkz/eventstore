@@ -43,8 +43,7 @@
  * <ul>
  *   <li>{@link org.sliceworkz.eventstore.events.LegacyEvent} - Marks historical events requiring upcasting</li>
  *   <li>{@link org.sliceworkz.eventstore.events.Upcast} - Interface for transforming legacy events to current types</li>
- *   <li>{@link org.sliceworkz.eventstore.events.Erasable} - Marks fields that can be deleted for GDPR compliance</li>
- *   <li>{@link org.sliceworkz.eventstore.events.PartlyErasable} - Marks nested objects with mixed erasability</li>
+ *   <li>{@link org.sliceworkz.eventstore.shredding.Shreddable} - Wraps personal data so it can be erased for GDPR compliance</li>
  * </ul>
  *
  * <h2>Event Processing:</h2>
@@ -60,8 +59,8 @@
  *     record CustomerRegistered(String customerId, String name) implements CustomerEvent { }
  *     record CustomerNameChanged(String customerId, String newName) implements CustomerEvent { }
  *
- *     @Erasable  // For GDPR compliance
- *     record CustomerChurned(String customerId, @Erasable String reason) implements CustomerEvent { }
+ *     // personal data is wrapped, bound to a data subject, and erased by destroying that subject's key
+ *     record CustomerChurned(String customerId, Shreddable<String> reason) implements CustomerEvent { }
  * }
  *
  * // Create and append events with tags

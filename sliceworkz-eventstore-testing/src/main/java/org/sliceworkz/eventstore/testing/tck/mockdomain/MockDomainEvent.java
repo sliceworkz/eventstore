@@ -17,7 +17,6 @@
  */
 package org.sliceworkz.eventstore.testing.tck.mockdomain;
 
-import org.sliceworkz.eventstore.events.Erasable;
 
 public sealed interface MockDomainEvent {
 
@@ -27,6 +26,6 @@ public sealed interface MockDomainEvent {
 
 	public record ThirdDomainEvent ( String value ) implements MockDomainEvent { } 
 
-	public record FourthDomainEventWithErasableParts ( String value, @Erasable String name ) implements MockDomainEvent { } 
+	public record FourthDomainEvent ( String value, String name ) implements MockDomainEvent { } 
 
 }

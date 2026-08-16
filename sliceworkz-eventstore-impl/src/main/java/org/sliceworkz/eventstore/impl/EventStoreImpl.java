@@ -46,7 +46,14 @@ import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventDeserializationException;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
+import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.shredding.DataSubject;
+import org.sliceworkz.eventstore.shredding.ErasureReason;
+import org.sliceworkz.eventstore.shredding.ErasureReport;
+import org.sliceworkz.eventstore.shredding.KeyId;
+import org.sliceworkz.eventstore.shredding.ShreddingAudit;
+import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.impl.serde.EventPayloadSerializerDeserializer;
 import org.sliceworkz.eventstore.impl.serde.EventPayloadSerializerDeserializer.TypeAndPayload;
 import org.sliceworkz.eventstore.impl.serde.EventPayloadSerializerDeserializer.TypeAndSerializedPayload;
@@ -101,7 +108,7 @@ import io.micrometer.core.instrument.Timer;
  * <ul>
  *   <li><b>Typed Mode:</b> Events are serialized to/from Java objects using Jackson. Requires event root classes
  *       to be registered with the stream. Supports sealed interfaces, upcasting via {@link org.sliceworkz.eventstore.events.LegacyEvent},
- *       and GDPR compliance through {@link org.sliceworkz.eventstore.events.Erasable} annotations.</li>
+ *       and GDPR compliance through {@link org.sliceworkz.eventstore.shredding.Shreddable} values.</li>
  *   <li><b>Raw Mode:</b> Events are stored and retrieved as JSON strings without type mapping. Useful for
  *       schema-less event processing or when event types are not statically known.</li>
  * </ul>
@@ -153,6 +160,18 @@ public class EventStoreImpl implements EventStore {
 	 * tag values it will report before pooling the rest. See {@link #purposeTagValueFor}.
 	 */
 	private final MeterOptions meterOptions;
+
+	/**
+	 * Seals and unseals the {@link org.sliceworkz.eventstore.shredding.Shreddable} values in this store's
+	 * payloads, and destroys the keys behind them when a subject is erased. Null on a store configured
+	 * without shredding, in which case registering an event type that declares a protected component
+	 * fails rather than storing personal data in the clear.
+	 * <p>
+	 * Not closed by {@link #close()}: a codec is handed in by the caller and may back several stores,
+	 * the same rule the library applies to a {@code DataSource}. The storage builders close the codecs
+	 * they create themselves.
+	 */
+	private final ShreddingCodec shreddingCodec;
 
 	/**
 	 * The {@code purpose} values this store has admitted as their own tag value, and how many there
@@ -299,6 +318,19 @@ public class EventStoreImpl implements EventStore {
 	 * @throws IllegalArgumentException if eventStorage, meterRegistry or meterOptions is null
 	 */
 	protected EventStoreImpl ( EventStorage eventStorage, MeterRegistry meterRegistry, MeterOptions meterOptions ) {
+		this(eventStorage, meterRegistry, meterOptions, null);
+	}
+
+	/**
+	 * Constructs a new EventStoreImpl that can protect and erase personal data.
+	 *
+	 * @param eventStorage the storage backend implementation (in-memory, PostgreSQL, etc.)
+	 * @param meterRegistry the Micrometer meter registry for collecting metrics; use {@link io.micrometer.core.instrument.Metrics#globalRegistry} if unsure
+	 * @param meterOptions how much detail this store's meters may carry
+	 * @param shreddingCodec seals and unseals protected values, or null for a store without shredding
+	 * @throws IllegalArgumentException if eventStorage, meterRegistry or meterOptions is null
+	 */
+	protected EventStoreImpl ( EventStorage eventStorage, MeterRegistry meterRegistry, MeterOptions meterOptions, ShreddingCodec shreddingCodec ) {
 		if ( eventStorage == null ) {
 			throw new IllegalArgumentException("eventStorage cannot be null");
 		}
@@ -311,6 +343,7 @@ public class EventStoreImpl implements EventStore {
 		this.eventStorage = eventStorage;
 		this.meterRegistry = meterRegistry;
 		this.meterOptions = meterOptions;
+		this.shreddingCodec = shreddingCodec;
 
 		ThreadFactory threadFactory = Thread.ofVirtual().name("eventually-consistent-listener-notifier/" + eventStorage.name(), 0).factory();
 		this.executorServiceForEventAppends = Executors.newThreadPerTaskExecutor(threadFactory);
@@ -358,6 +391,40 @@ public class EventStoreImpl implements EventStore {
 	}
 
 	@Override
+	public ErasureReport erase ( DataSubject subject, ErasureReason reason ) {
+		if ( subject == null ) {
+			throw new IllegalArgumentException("subject cannot be null");
+		}
+		if ( reason == null ) {
+			throw new IllegalArgumentException("reason cannot be null");
+		}
+		if ( shreddingCodec == null ) {
+			throw new UnsupportedOperationException(
+					"event store on storage '%s' has no ShreddingCodec configured, so it holds no keys to destroy; configure shredding on the storage builder or via EventStoreFactory.eventStore(storage, registry, meterOptions, codec)"
+							.formatted(eventStorage.name()));
+		}
+		// Deliberately allowed on a closed store: erasure touches the key store, not the events, and
+		// refusing to honour an erasure request because a store handle was closed would be a poor reason
+		// to leave personal data readable.
+		ErasureReport report = shreddingCodec.shred(subject, reason);
+
+		// Logged at INFO because this is the one operation here that is irreversible, and because the
+		// events record nothing about it -- the key store row and this line are the whole trail.
+		STORE_LOGGER.info("erased data subject {} on storage '{}': {} key(s) shredded ({})",
+				subject, eventStorage.name(), report.keysShredded(), reason);
+
+		return report;
+	}
+
+	@Override
+	public Optional<ShreddingAudit> shreddingAudit ( ) {
+		// Like erase, deliberately available on a closed store: reporting on what has been erased touches
+		// the key store rather than the events, and a compliance question does not stop being answerable
+		// because a store handle was closed.
+		return shreddingCodec == null ? Optional.empty() : shreddingCodec.audit();
+	}
+
+	@Override
 	public <EVENT_TYPE> EventStream<EVENT_TYPE> getEventStream(EventStreamId eventStreamId, Set<Class<?>> eventRootClasses, Set<Class<?>> historicalEventRootClasses ) {
 
 		if ( closed.get() ) {
@@ -382,7 +449,7 @@ public class EventStoreImpl implements EventStore {
 		}
 		// use typed event payloads, mapped to Java objects
 		return serdes.computeIfAbsent(new SerdeKey(eventRootClasses, historicalEventRootClasses), key -> {
-			EventPayloadSerializerDeserializer serde = EventPayloadSerializerDeserializer.typed();
+			EventPayloadSerializerDeserializer serde = EventPayloadSerializerDeserializer.typed(shreddingCodec);
 			key.eventRootClasses().forEach(serde::registerEventTypes);
 			key.historicalEventRootClasses().forEach(serde::registerLegacyEventTypes);
 			return serde;
@@ -681,9 +748,29 @@ public class EventStoreImpl implements EventStore {
 
 		private EventToStore reduce ( EphemeralEvent<? extends EVENT_TYPE> event, EventStreamId streamToAppendTo ) {
 			meterRegistry.counter("sliceworkz.eventstore.append.event", baseTags.and("eventtype", event.type().name())).increment();
-			Tags tags = event.tags(); 
 			TypeAndSerializedPayload data = serde.serialize(event.data());
+			Tags tags = withShreddingKeyTags(event.tags(), data.shreddingKeys());
 			return new EventToStore(streamToAppendTo, data.type(), data.immutablePayload(), data.erasablePayload(), tags, event.idempotencyKey());
+		}
+
+		/**
+		 * Adds a {@code dek:} tag for every key the payload was sealed under.
+		 * <p>
+		 * This is what makes "every event holding data protected by this key" an ordinary tag query,
+		 * served by the index the store already maintains, with no extra column. Adding tags is safe for
+		 * every existing query: tag matching is containment, so an extra tag can never stop an event
+		 * matching a filter that matched before.
+		 * <p>
+		 * The key ids are pseudonymous and random — see {@link KeyId} — so this leaves nothing
+		 * re-identifiable behind once the key is destroyed.
+		 */
+		private Tags withShreddingKeyTags ( Tags tags, java.util.Set<KeyId> shreddingKeys ) {
+			if ( shreddingKeys.isEmpty() ) {
+				return tags;
+			}
+			return tags.merge(Tags.of(shreddingKeys.stream()
+					.map(keyId -> Tag.of(KeyId.TAG_KEY, keyId.value()))
+					.toArray(Tag[]::new)));
 		}
 
 		private List<EventToStore> reduce ( List<? extends EphemeralEvent<? extends EVENT_TYPE>> events, EventStreamId streamToAppendTo ) {

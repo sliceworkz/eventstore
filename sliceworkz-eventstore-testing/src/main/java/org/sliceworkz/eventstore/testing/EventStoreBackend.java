@@ -21,6 +21,8 @@ import java.util.Optional;
 
 import javax.sql.DataSource;
 
+import org.sliceworkz.eventstore.infra.inmem.shredding.InMemoryShreddingKeyStore;
+import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
 import org.sliceworkz.eventstore.spi.EventStorage;
 
 /**
@@ -123,6 +125,21 @@ public interface EventStoreBackend {
 	 * <p>
 	 * A backend may legitimately not implement these; scenarios that need them are skipped.
 	 */
+	/**
+	 * A key store for the shredding scenarios, appropriate to this backend.
+	 * <p>
+	 * The default is in-memory, which every backend can use; a backend with somewhere durable to keep
+	 * keys overrides this so the TCK exercises <em>its</em> key store — the SQL table and its schema
+	 * validation, or the file-backed one — rather than testing the same in-memory implementation five
+	 * times over.
+	 *
+	 * @param storage the storage the keys will protect events in
+	 * @return a key store, valid for the duration of one test
+	 */
+	default ShreddingKeyStore shreddingKeyStore ( EventStorage storage ) {
+		return new InMemoryShreddingKeyStore();
+	}
+
 	enum Capability {
 
 		/**

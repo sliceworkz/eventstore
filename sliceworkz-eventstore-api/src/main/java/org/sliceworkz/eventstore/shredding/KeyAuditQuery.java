@@ -70,7 +70,7 @@ public record KeyAuditQuery ( String subjectType, String subjectId, String categ
 
 	/**
 	 * @param subjectType which kind of subject
-	 * @param subjectId   which subject
+	 * @param subjectId   which subject, or null for every subject of that type
 	 * @return every key held for one data subject, in every category
 	 */
 	public static KeyAuditQuery forSubject ( String subjectType, String subjectId ) {

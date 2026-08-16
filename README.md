@@ -7,7 +7,11 @@
 
 A DCB (Dynamic Consistency Boundary) compliant EventStore implementation in Java
 
-Persistence options: Postgres and In-Memory (for dev and demo purposes)
+Persistence options: Postgres (production), a single-process append-only binary log for embedded and
+single-tenant deployments, and In-Memory (for dev and demo purposes)
+
+On whether a relational database belongs under an event store at all, and what each backend gets by
+construction rather than by effort, see [docs/postgres-as-an-event-store.md](docs/postgres-as-an-event-store.md).
 
 Supports all features described described by the [DCB Specification](https://dcb.events/specification/):
 - Tagging of Events for dynamic retrieval

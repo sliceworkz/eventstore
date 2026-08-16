@@ -10,6 +10,8 @@ This is a Java-based EventStore library implementing the Dynamic Consistency Bou
 - `sliceworkz-eventstore-api`: Core API interfaces and contracts
 - `sliceworkz-eventstore-impl`: Implementation of the EventStore
 - `sliceworkz-eventstore-infra-inmem`: In-memory storage backend (for development/testing)
+- `sliceworkz-eventstore-infra-inmem-fs`: In-memory backend with filesystem persistence (development)
+- `sliceworkz-eventstore-infra-file`: Single-process append-only binary log (embedded/edge/single-tenant)
 - `sliceworkz-eventstore-infra-postgres`: PostgreSQL storage backend (production-ready)
 - `sliceworkz-eventstore-tests`: Shared test scenarios
 - `sliceworkz-eventstore-examples`: Example usage code
@@ -1013,8 +1015,8 @@ into every scenario class.
 
 Backends are discovered with the `ServiceLoader`. In this repository the set is declared in
 `sliceworkz-eventstore-tests/src/test/resources/META-INF/services/org.sliceworkz.eventstore.testing.EventStoreBackend`
-and covers **all four in-tree storages**: `inmem`, `inmem-fs`, `postgres:17` and `postgres:18`. Adding
-a storage to the compliance run is one line in that file.
+and covers **all six in-tree storages**: `inmem`, `inmem-fs`, `file`, `postgres:16`, `postgres:17` and
+`postgres:18`. Adding a storage to the compliance run is one line in that file.
 
 - Narrow a local run with `-Deventstore.testing.backends=inmem` to skip the containers entirely.
 - Scenarios needing an optional part of the contract declare it —

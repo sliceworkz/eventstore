@@ -349,9 +349,16 @@ public final class EventLog implements AutoCloseable {
 	private void replay ( RecordVisitor visitor ) {
 		for ( int i = 0; i < segments.size(); i++ ) {
 			Segment segment = segments.get(i);
-			int cleanEnd = replaySegment(segment, visitor);
-			if ( cleanEnd >= 0 ) {
-				discardFrom(i, segment, cleanEnd);
+			int validEnd = replaySegment(segment, visitor);
+
+			// Anything past the last committed batch goes, however little of it there is. Leaving even a
+			// few stray bytes would be worse than it looks: the segment would keep appending after them,
+			// and the next scan would read the garbage as the start of that batch, fail to match it
+			// against the trailer, and discard a batch that had committed perfectly well. The damage
+			// would surface one restart later than the crash that caused it, which is the worst place
+			// for it to surface.
+			if ( validEnd < segment.fileSize() ) {
+				discardFrom(i, segment, validEnd);
 				return;
 			}
 		}
@@ -360,7 +367,7 @@ public final class EventLog implements AutoCloseable {
 	/**
 	 * Replays one segment.
 	 *
-	 * @return {@code -1} if the segment ended cleanly, or the offset the log must be cut back to
+	 * @return the offset at which the last committed batch ends, which is where appending must resume
 	 */
 	private int replaySegment ( Segment segment, RecordVisitor visitor ) {
 		int size = segment.fileSize();
@@ -374,9 +381,9 @@ public final class EventLog implements AutoCloseable {
 
 		while ( true ) {
 			if ( offset + BinaryFormat.FRAME_HEADER_BYTES > size ) {
-				// not enough room left for even a frame header: either a clean end (nothing pending) or a
-				// batch that was cut off mid-write
-				return pending.isEmpty() && offset == batchStart ? -1 : batchStart;
+				// not enough room left for even a frame header: the end of the log, whether that is because
+				// it was written tidily or because a write was cut off part way
+				return batchStart;
 			}
 
 			ByteBuffer header = segment.read(offset, BinaryFormat.FRAME_HEADER_BYTES);
@@ -385,7 +392,7 @@ public final class EventLog implements AutoCloseable {
 			int storedCrc = header.getInt();
 
 			if ( magic == BinaryFormat.MAGIC_NONE ) {
-				return pending.isEmpty() ? -1 : batchStart;                     // unwritten space
+				return batchStart;                                              // unwritten space
 			}
 			if ( ( magic != BinaryFormat.MAGIC_EVENT && magic != BinaryFormat.MAGIC_COMMIT )
 					|| bodyLength <= 0 || bodyLength > BinaryFormat.MAX_FRAME_BODY_BYTES

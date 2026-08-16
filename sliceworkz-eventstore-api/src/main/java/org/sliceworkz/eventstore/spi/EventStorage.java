@@ -896,7 +896,9 @@ public interface EventStorage extends AutoCloseable {
 	 * Event data is separated into two categories:
 	 * <ul>
 	 *   <li><b>Immutable data:</b> Core event information that must never be deleted (GDPR-compliant)</li>
-	 *   <li><b>Erasable data:</b> Sensitive information that may need to be erased (e.g., personal data)</li>
+	 *   <li><b>Erasable data:</b> the second document of the superseded immutable/erasable split; written only
+ *       by versions before personal data moved into the payload as encrypted
+ *       {@link org.sliceworkz.eventstore.shredding.Shreddable} values, and read for those events still</li>
 	 * </ul>
 	 *
 	 * @param stream the event stream this event belongs to

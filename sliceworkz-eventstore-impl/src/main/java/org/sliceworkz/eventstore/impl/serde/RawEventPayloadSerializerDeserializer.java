@@ -35,6 +35,14 @@ import tools.jackson.databind.node.ObjectNode;
  * <p>
  * Use this mode when event types are not statically known or when you need flexible JSON handling.
  *
+ * <h2>Protected values are not decrypted here</h2>
+ * A raw stream has no {@link org.sliceworkz.eventstore.shredding.ShreddingCodec} and no keys, so a
+ * {@link org.sliceworkz.eventstore.shredding.Shreddable} value comes back as the sealed envelope it is
+ * stored as — an object carrying {@code alg}, {@code dek}, {@code sub}, {@code iv} and {@code ct}. That
+ * is deliberate rather than a gap: raw mode is what the import and export paths use, and copying an
+ * event between stores must move the ciphertext verbatim without needing the keys, the domain classes,
+ * or the right to read the personal data at all.
+ *
  * @see EventPayloadSerializerDeserializer#raw()
  */
 public class RawEventPayloadSerializerDeserializer extends AbstractEventPayloadSerializerDeserializer {
@@ -45,13 +53,12 @@ public class RawEventPayloadSerializerDeserializer extends AbstractEventPayloadS
 		try {
 
 			if ( serialized.erasablePayload() == null ) {
-				object = immutableDataMapper.readTree(serialized.immutablePayload());
+				object = objectMapper.readTree(serialized.immutablePayload());
 			} else {
-				// reconstruct the full object by merging
-				ObjectNode nodeImmutableData = (ObjectNode) immutableDataMapper.readTree(serialized.immutablePayload());
-				ObjectNode nodeErasableData = (ObjectNode) erasableDataMapper.readTree(serialized.erasablePayload());
+				// A legacy event, written when payloads were split across two documents.
+				ObjectNode nodeImmutableData = (ObjectNode) objectMapper.readTree(serialized.immutablePayload());
+				ObjectNode nodeErasableData = (ObjectNode) objectMapper.readTree(serialized.erasablePayload());
 
-				// Merge erasable data into immutable data
 				deepMerge(nodeImmutableData, nodeErasableData);
 
 				object = nodeImmutableData; // with erasable merged in

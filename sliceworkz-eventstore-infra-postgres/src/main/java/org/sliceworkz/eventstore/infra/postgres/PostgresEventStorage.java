@@ -30,6 +30,10 @@ import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.MeterOptions;
 import org.sliceworkz.eventstore.query.Limit;
+import org.sliceworkz.eventstore.infra.postgres.shredding.PostgresShreddingKeyStore;
+import org.sliceworkz.eventstore.shredding.AesGcmShreddingCodec;
+import org.sliceworkz.eventstore.shredding.ShreddingCodec;
+import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageException;
 
@@ -215,6 +219,8 @@ public interface PostgresEventStorage {
 		private Limit limit = Limit.none();
 		private MeterRegistry meterRegistry = Metrics.globalRegistry;
 		private MeterOptions meterOptions = MeterOptions.defaults();
+		private ShreddingCodec shreddingCodec;
+		private boolean shreddingOnOwnDataSource;
 
 		private Builder ( ) {
 
@@ -535,6 +541,69 @@ public interface PostgresEventStorage {
 		 * @see #buildStore()
 		 * @see EventStoreFactory#eventStore(EventStorage)
 		 */
+		/**
+		 * Protects the {@link org.sliceworkz.eventstore.shredding.Shreddable} values in this store's
+		 * events, keeping the keys in this store's own database.
+		 * <p>
+		 * The recommended setup for PostgreSQL. Keys go into {@code <prefix>shredding_keys} on the same
+		 * {@code DataSource} as the events, so the schema machinery creates and validates the table along
+		 * with the others, and a minted key and the append that seals under it commit together.
+		 * <pre>{@code
+		 * try ( EventStore store = PostgresEventStorage.newBuilder()
+		 *         .prefix("acme_")
+		 *         .shredding()
+		 *         .buildStore() ) {
+		 *     …
+		 *     store.erase(DataSubject.of("customer", "alice-42"), ErasureReason.of("art.17 request #4711"));
+		 * }
+		 * }</pre>
+		 * Without shredding configured, registering an event type that declares a {@code Shreddable}
+		 * component fails at stream creation rather than storing personal data in the clear.
+		 * <p>
+		 * Note what colocation means for your threat model: an attacker with the database has both the
+		 * ciphertext and the keys. What crypto-shredding still buys, and buys unconditionally, is that a
+		 * <em>completed erasure</em> holds everywhere the ciphertext has already spread — old backups,
+		 * write-ahead logs, replicas — which nulling a column never did. Where the keys must also be out
+		 * of reach of whoever holds the database, pass a key store backed by a KMS or an HSM instead.
+		 *
+		 * @return this builder for method chaining
+		 * @see org.sliceworkz.eventstore.infra.postgres.shredding.PostgresShreddingKeyStore
+		 */
+		public Builder shredding ( ) {
+			this.shreddingOnOwnDataSource = true;
+			return this;
+		}
+
+		/**
+		 * Protects personal data with the shipped AES-256-GCM codec, holding keys in the given key store.
+		 * <p>
+		 * Use this to keep the encryption but put the keys somewhere else — Vault, a cloud KMS, an HSM,
+		 * another database. The key store is the caller's to close, following the same rule this builder
+		 * applies to a {@code DataSource}: what you pass in, you own.
+		 *
+		 * @param shreddingKeyStore where keys are minted, resolved and destroyed
+		 * @return this builder for method chaining
+		 */
+		public Builder shredding ( ShreddingKeyStore shreddingKeyStore ) {
+			this.shreddingCodec = AesGcmShreddingCodec.over(shreddingKeyStore);
+			this.shreddingOnOwnDataSource = false;
+			return this;
+		}
+
+		/**
+		 * Protects personal data with a codec of your own, taking over encryption as well as key storage.
+		 * <p>
+		 * The seam for a codec that keeps key material inside an HSM and never lets it reach this JVM.
+		 *
+		 * @param shreddingCodec seals and unseals protected values
+		 * @return this builder for method chaining
+		 */
+		public Builder shredding ( ShreddingCodec shreddingCodec ) {
+			this.shreddingCodec = shreddingCodec;
+			this.shreddingOnOwnDataSource = false;
+			return this;
+		}
+
 		public EventStorage build ( ) {
 			// a DataSource we create here belongs to the storage, and is closed by EventStorage.close();
 			// one the caller passed in stays the caller's, and is never touched
@@ -634,7 +703,12 @@ public interface PostgresEventStorage {
 			// the storage is created here and never handed to the caller, so the returned store owns it:
 			// closing that store is the only way this storage will ever be closed
 			EventStorage eventStorage = build();
-			return EventStore.owning(EventStoreFactory.get().eventStore(eventStorage, meterRegistry, meterOptions), eventStorage);
+			// build() resolves the DataSource, so a key store on "this store's own database" can only be
+			// created afterwards. It shares that DataSource and never closes it -- the storage does.
+			ShreddingCodec codec = shreddingOnOwnDataSource
+					? AesGcmShreddingCodec.over(PostgresShreddingKeyStore.on(dataSource, prefix))
+					: shreddingCodec;
+			return EventStore.owning(EventStoreFactory.get().eventStore(eventStorage, meterRegistry, meterOptions, codec), eventStorage);
 		}
 
 		/**

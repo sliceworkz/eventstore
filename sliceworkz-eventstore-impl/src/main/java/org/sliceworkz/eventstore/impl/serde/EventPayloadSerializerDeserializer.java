@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Set;
 
 import org.sliceworkz.eventstore.events.EventType;
+import org.sliceworkz.eventstore.shredding.KeyId;
 
 /**
  * Interface for serializing and deserializing event payloads to/from JSON.
@@ -36,9 +37,9 @@ import org.sliceworkz.eventstore.events.EventType;
  * <p>
  * The serializer/deserializer supports advanced features including:
  * <ul>
- *   <li><b>Data Erasure:</b> Fields annotated with {@link org.sliceworkz.eventstore.events.Erasable}
- *       or {@link org.sliceworkz.eventstore.events.PartlyErasable} are stored separately to support GDPR
- *       "right to be forgotten" requirements</li>
+ *   <li><b>Data Erasure:</b> {@link org.sliceworkz.eventstore.shredding.Shreddable} values are encrypted
+ *       per data subject, so destroying a key satisfies a GDPR "right to be forgotten" request without
+ *       rewriting a single event</li>
  *   <li><b>Event Upcasting:</b> Historical events annotated with {@link org.sliceworkz.eventstore.events.LegacyEvent}
  *       are automatically transformed to current event types using registered upcast functions</li>
  *   <li><b>Sealed Interfaces:</b> Java sealed interfaces are introspected to discover all permitted event types</li>
@@ -63,17 +64,15 @@ public interface EventPayloadSerializerDeserializer {
 	/**
 	 * Serializes a domain event object to its JSON representation.
 	 * <p>
-	 * The payload is split into two parts:
-	 * <ul>
-	 *   <li><b>Immutable data:</b> Fields that should be retained permanently</li>
-	 *   <li><b>Erasable data:</b> Fields marked with {@code @Erasable} or {@code @PartlyErasable}
-	 *       that may be deleted for GDPR compliance</li>
-	 * </ul>
+	 * The payload becomes a single JSON document. Any
+	 * {@link org.sliceworkz.eventstore.shredding.Shreddable} value in it is encrypted in place, under
+	 * the key held for its data subject, and written as a sealed envelope.
 	 *
 	 * @param payload the domain event object to serialize
-	 * @return the serialized event including type and separated immutable/erasable payloads
-	 * @see org.sliceworkz.eventstore.events.Erasable
-	 * @see org.sliceworkz.eventstore.events.PartlyErasable
+	 * @return the serialized event; its erasable payload is always null, and exists only for events
+	 *         written before payloads became a single document. Its {@code shreddingKeys} name every
+	 *         key the payload was sealed under, so the append path can tag the event with them
+	 * @see org.sliceworkz.eventstore.shredding.Shreddable
 	 */
 	TypeAndSerializedPayload serialize(Object payload);
 
@@ -178,6 +177,21 @@ public interface EventPayloadSerializerDeserializer {
 	}
 
 	/**
+	 * Creates a typed serializer/deserializer that also seals and unseals
+	 * {@link org.sliceworkz.eventstore.shredding.Shreddable} values.
+	 * <p>
+	 * Without a codec, registering an event type that declares a {@code Shreddable} component fails at
+	 * stream creation rather than storing personal data in the clear.
+	 *
+	 * @param shreddingCodec protects personal data in the payload, or null for no shredding
+	 * @return a new typed serializer/deserializer instance
+	 * @see org.sliceworkz.eventstore.shredding.ShreddingCodec
+	 */
+	public static EventPayloadSerializerDeserializer typed ( org.sliceworkz.eventstore.shredding.ShreddingCodec shreddingCodec ) {
+		return new TypedEventPayloadSerializerDeserializer(shreddingCodec);
+	}
+
+	/**
 	 * Creates a raw serializer/deserializer that works with JSON strings directly.
 	 * <p>
 	 * This mode is useful for schema-less event processing where event types are not
@@ -208,6 +222,26 @@ public interface EventPayloadSerializerDeserializer {
 	 * @param immutablePayload the JSON string for immutable event data
 	 * @param erasablePayload the JSON string for erasable event data (may be null)
 	 */
-	public record TypeAndSerializedPayload ( EventType type, String immutablePayload, String erasablePayload ) { }
+	public record TypeAndSerializedPayload ( EventType type, String immutablePayload, String erasablePayload, Set<KeyId> shreddingKeys ) {
+
+		/**
+		 * Defensively copies the key set, and treats a null one as empty.
+		 */
+		public TypeAndSerializedPayload {
+			shreddingKeys = shreddingKeys == null ? Set.of() : Set.copyOf(shreddingKeys);
+		}
+
+		/**
+		 * A payload that sealed nothing, or one being read back rather than written.
+		 *
+		 * @param type the event type
+		 * @param immutablePayload the serialized payload
+		 * @param erasablePayload the legacy second document, or null
+		 */
+		public TypeAndSerializedPayload ( EventType type, String immutablePayload, String erasablePayload ) {
+			this(type, immutablePayload, erasablePayload, Set.of());
+		}
+
+	}
 
 }

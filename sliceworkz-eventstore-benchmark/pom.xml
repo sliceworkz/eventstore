@@ -40,7 +40,7 @@
 		<maven.deploy.skip>true</maven.deploy.skip>
 		
 		<javalin.version>7.2.3</javalin.version>
-		<logback.version>1.6.1</logback.version>
+		<logback.version>1.6.3</logback.version>
 
 	</properties>
 	

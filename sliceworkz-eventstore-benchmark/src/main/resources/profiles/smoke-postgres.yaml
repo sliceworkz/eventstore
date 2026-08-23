@@ -1,0 +1,32 @@
+name: smoke-postgres
+description: >
+  The smoke profile against a containerised PostgreSQL 18, so the Postgres path is exercised before a
+  long run commits to it. Needs a Docker daemon. Still measures nothing worth quoting -- one fork and
+  one-second iterations -- but it is what catches a schema, prefix or LISTEN/NOTIFY problem in a
+  minute rather than an hour in.
+
+corpus:
+  volume: 1000
+  streamDesign: TAGGED
+  composition: CLEAN
+  payload: REALISTIC
+  entityCount: 50
+  seed: 20260823
+
+targets:
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: OFF
+    schemaMode: ENSURE
+
+jmh:
+  workloads:
+    - append-none
+    - append-type-and-tag
+    - query-by-tag-needle
+  threads: [ 1 ]
+  forks: 1
+  warmupIterations: 1
+  measurementIterations: 1
+  iterationSeconds: 1

@@ -17,6 +17,20 @@
  */
 package org.sliceworkz.eventstore.benchmark;
 
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.sliceworkz.eventstore.benchmark.config.BenchmarkProfile;
+import org.sliceworkz.eventstore.benchmark.config.Profiles;
+import org.sliceworkz.eventstore.benchmark.corpus.CorpusFingerprint;
+import org.sliceworkz.eventstore.benchmark.env.BenchmarkTarget;
+import org.sliceworkz.eventstore.benchmark.env.EnvironmentReport;
+import org.sliceworkz.eventstore.benchmark.env.TargetFactory;
+import org.sliceworkz.eventstore.benchmark.env.TargetSpec;
+
 /**
  * Entry point of the benchmark suite.
  *
@@ -24,51 +38,223 @@ package org.sliceworkz.eventstore.benchmark;
  * "how does this store behave at N events, with M concurrent writers, under these query shapes, in a
  * store that also holds other domains" with numbers that can be published and reproduced.
  *
- * <p>Work is split over four subcommands because their costs differ by orders of magnitude:
+ * <p>Work is split over subcommands because their costs differ by orders of magnitude:
  *
  * <dl>
  *   <dt>{@code provision}</dt>
- *   <dd>builds the corpora a profile needs, or reports that they are already there.  A ten-million
- *       event corpus is minutes of bulk import; it is content-addressed and reused across runs, so
+ *   <dd>builds the corpora a profile needs, or reports that they are already there. Ten million
+ *       events is minutes of bulk import; a corpus is content-addressed and reused across runs, so
  *       this is paid once rather than per measurement.</dd>
  *   <dt>{@code jmh}</dt>
  *   <dd>operation-level measurement against a provisioned corpus.</dd>
  *   <dt>{@code load}</dt>
- *   <dd>sustained load against a <em>growing</em> store, which is the part JMH cannot host: offered
- *       rate, latency percentiles, conflict rates and the two live-latency scenarios.</dd>
+ *   <dd>sustained load against a <em>growing</em> store, which JMH cannot host: offered rate, latency
+ *       percentiles, conflict rates, and the two live-latency scenarios.</dd>
  *   <dt>{@code report}</dt>
  *   <dd>renders a run, and diffs it against a committed baseline.</dd>
+ *   <dt>{@code list} / {@code doctor}</dt>
+ *   <dd>what profiles exist, and whether this machine can actually run one.</dd>
  * </dl>
  */
 public final class Main {
 
 	private Main ( ) { }
 
-	public static void main ( String[] args ) throws Exception {
+	public static void main ( String[] args ) {
 		if ( args.length == 0 ) {
 			usage();
 			System.exit(2);
+			return;
 		}
 
-		switch ( args[0] ) {
-			case "help", "--help", "-h" -> usage();
-			default -> {
-				System.err.println("unknown subcommand '%s'".formatted(args[0]));
+		Map<String, String> options = parseOptions(args);
+		int exitCode;
+		try {
+			exitCode = dispatch(args[0], options);
+		} catch ( RuntimeException e ) {
+			// A mistyped profile name or a malformed profile is the most likely way to invoke this
+			// wrongly, and those already carry messages that say exactly what is wrong.  A stack trace
+			// buries that message under forty frames of Jackson, so print the message and keep the trace
+			// behind --verbose.
+			System.err.println(e.getMessage());
+			if ( options.containsKey("verbose") ) {
+				e.printStackTrace();
+			} else {
+				System.err.println("(pass --verbose for the stack trace)");
+			}
+			exitCode = 1;
+		}
+		System.exit(exitCode);
+	}
+
+	private static int dispatch ( String command, Map<String, String> options ) {
+		return switch ( command ) {
+			case "list" -> list();
+			case "doctor" -> doctor(options.get("profile"));
+			case "help", "--help", "-h" -> {
 				usage();
-				System.exit(2);
+				yield 0;
+			}
+			case "provision", "jmh", "load", "report" -> {
+				System.err.println("'%s' is not implemented yet".formatted(command));
+				yield 3;
+			}
+			default -> {
+				System.err.println("unknown subcommand '%s'".formatted(command));
+				usage();
+				yield 2;
+			}
+		};
+	}
+
+	/** Parses {@code --key=value} and {@code --flag} arguments; the subcommand itself is args[0]. */
+	private static Map<String, String> parseOptions ( String[] args ) {
+		Map<String, String> options = new LinkedHashMap<>();
+		for ( int i = 1; i < args.length; i++ ) {
+			String argument = args[i];
+			if ( !argument.startsWith("--") ) {
+				continue;
+			}
+			int equals = argument.indexOf('=');
+			if ( equals < 0 ) {
+				options.put(argument.substring(2), "true");
+			} else {
+				options.put(argument.substring(2, equals), argument.substring(equals + 1));
 			}
 		}
+		return options;
+	}
+
+	private static int list ( ) {
+		List<BenchmarkProfile> profiles;
+		try {
+			profiles = Profiles.loadAll();
+		} catch ( RuntimeException e ) {
+			// loadAll parses every profile, so a typo in any one of them surfaces here rather than
+			// three hours into the run that happens to use it
+			System.err.println("a profile failed to load: " + e.getMessage());
+			return 1;
+		}
+
+		if ( profiles.isEmpty() ) {
+			System.out.println("no profiles found on the classpath");
+			return 0;
+		}
+
+		System.out.println("%-22s %-10s %-9s %-8s %s".formatted("PROFILE", "EVENTS", "ESTIMATE", "DOCKER", "CORPUS"));
+		for ( BenchmarkProfile profile : profiles ) {
+			System.out.println("%-22s %-10s %-9s %-8s %s".formatted(
+					profile.name(),
+					compactCount(profile.corpus().totalEventsInOwnStore()),
+					humanDuration(profile.estimatedDuration()),
+					profile.requiresDocker() ? "yes" : "no",
+					CorpusFingerprint.prefixFor(profile.corpus())));
+			if ( !profile.description().isBlank() ) {
+				System.out.println("    " + profile.description().strip().replace("\n", "\n    "));
+			}
+		}
+		return 0;
+	}
+
+	/**
+	 * Reports whether this machine can run a profile, by actually opening each of its targets rather
+	 * than by inspecting configuration.
+	 *
+	 * <p>Opening a store is the step that fails for environmental reasons -- no Docker daemon, no
+	 * {@code db.properties}, a database missing {@code btree_gin}, a monitoring datasource behind a
+	 * pooler so LISTEN/NOTIFY never registers -- and every one of those failures is far cheaper to see
+	 * here than after a corpus has been built.
+	 */
+	private static int doctor ( String profileName ) {
+		System.out.println("java     : %s (%s)".formatted(
+				System.getProperty("java.version"), System.getProperty("java.vm.name")));
+		System.out.println("cpus     : %d".formatted(Runtime.getRuntime().availableProcessors()));
+		System.out.println("max heap : %d MB".formatted(Runtime.getRuntime().maxMemory() / ( 1024 * 1024 )));
+		System.out.println();
+
+		List<TargetSpec> targets = new ArrayList<>();
+		String label;
+		if ( profileName == null ) {
+			label = "the in-memory baseline (pass --profile=<name> to check a profile's own targets)";
+			targets.add(TargetSpec.inmem());
+		} else {
+			BenchmarkProfile profile = Profiles.resolve(profileName);
+			label = "profile '%s'".formatted(profile.name());
+			targets.addAll(profile.targets());
+		}
+		System.out.println("checking " + label);
+
+		int failures = 0;
+		for ( TargetSpec spec : targets ) {
+			// a throwaway prefix: doctor must not touch a real corpus, and ENSURE on an unused prefix
+			// creates an empty schema that costs nothing and proves the privileges are there
+			String prefix = CorpusFingerprint.PREFIX_NAMESPACE + "doctor_";
+			long startedAt = System.nanoTime();
+			try ( BenchmarkTarget target = TargetFactory.open(spec, prefix) ) {
+				Duration took = Duration.ofNanos(System.nanoTime() - startedAt);
+				System.out.println("  OK   %-40s opened in %s".formatted(spec.describe(), humanDuration(took)));
+
+				EnvironmentReport report = EnvironmentReport.capture(target);
+				report.postgres().forEach(( key, value ) -> {
+					if ( !"version".equals(key) ) {
+						System.out.println("         %-32s %s".formatted(key, value));
+					}
+				});
+			} catch ( RuntimeException e ) {
+				failures++;
+				System.out.println("  FAIL %-40s %s".formatted(spec.describe(), rootCauseOf(e)));
+			}
+		}
+
+		System.out.println();
+		System.out.println(failures == 0
+				? "all %d target(s) opened".formatted(targets.size())
+				: "%d of %d target(s) could not be opened".formatted(failures, targets.size()));
+		return failures == 0 ? 0 : 1;
+	}
+
+	private static String rootCauseOf ( Throwable throwable ) {
+		Throwable cause = throwable;
+		while ( cause.getCause() != null && cause.getCause() != cause ) {
+			cause = cause.getCause();
+		}
+		return "%s: %s".formatted(cause.getClass().getSimpleName(), cause.getMessage());
+	}
+
+	private static String compactCount ( long count ) {
+		if ( count >= 1_000_000 ) {
+			return "%.1fM".formatted(count / 1_000_000.0);
+		}
+		if ( count >= 1_000 ) {
+			return "%.0fk".formatted(count / 1_000.0);
+		}
+		return String.valueOf(count);
+	}
+
+	private static String humanDuration ( Duration duration ) {
+		long seconds = duration.toSeconds();
+		if ( seconds < 60 ) {
+			return duration.toMillis() < 1000 ? duration.toMillis() + "ms" : seconds + "s";
+		}
+		if ( seconds < 3600 ) {
+			return "%dm%02ds".formatted(seconds / 60, seconds % 60);
+		}
+		return "%dh%02dm".formatted(seconds / 3600, ( seconds % 3600 ) / 60);
 	}
 
 	private static void usage ( ) {
 		System.out.println("""
 			sliceworkz eventstore benchmark suite
 
+			  list                           the available profiles, their size and rough runtime
+			  doctor    [--profile=<name>]   open each target and report whether this machine can run it
 			  provision --profile=<name>     build (or reuse) the corpora a profile needs
 			  jmh       --profile=<name>     run the profile's JMH benchmarks
 			  load      --profile=<name>     run the profile's load scenarios
 			  report    [--baseline=<path>]  render a run, optionally diffing a baseline
-			  list                           list the available profiles
+
+			A profile is a YAML file: pass its name to use one that ships on the classpath, or a path
+			to use one of your own.
 			""");
 	}
 }

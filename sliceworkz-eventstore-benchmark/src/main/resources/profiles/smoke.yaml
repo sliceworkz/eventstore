@@ -1,0 +1,28 @@
+name: smoke
+description: >
+  Proves the harness works, and measures nothing worth quoting. A thousand events in memory, one
+  fork, one-second iterations. This is the tier CI can afford and the one to run after touching the
+  suite: if smoke does not come out green, no number from a longer run is worth reading.
+
+corpus:
+  volume: 1000
+  streamDesign: TAGGED
+  composition: CLEAN
+  payload: REALISTIC
+  entityCount: 50
+  seed: 20260823
+
+targets:
+  - backend: INMEM
+    metrics: OFF
+
+jmh:
+  workloads:
+    - append-none
+    - append-type-and-tag
+    - query-by-tag-needle
+  threads: [ 1 ]
+  forks: 1
+  warmupIterations: 1
+  measurementIterations: 1
+  iterationSeconds: 1

@@ -85,16 +85,35 @@ public record CorpusSpec (
 		BOTH
 	}
 
-	/** How heavy an event is. */
+	/**
+	 * How heavy an event is.
+	 *
+	 * <p>Two independent things vary here, and it is worth being precise about which, because the
+	 * names suggest one axis and there are really two: <b>tag count</b>, which is what the GIN index
+	 * works through and what the {@code text[]} column costs, and <b>body size</b>, which is what the
+	 * serializer and TOAST cost. {@code SLIM} and {@code WIDE_TAGS} vary only the first and have
+	 * identical bodies; {@code FAT} varies the second.
+	 *
+	 * <p>Every provisioned corpus records its <em>measured</em> mean payload size, so a report states
+	 * what a profile actually produced rather than repeating the adjective in its name.
+	 */
 	public enum PayloadProfile {
-		/** Two fields and one tag. The floor: what an append costs when the payload is not the cost. */
+		/** One tag -- the entity's own. The floor for tag cost; the body is the ordinary domain event. */
 		SLIM,
-		/** About ten fields including a nested record and a list, and four tags. The realistic case. */
+		/** Four tags: the entity, plus channel, country and warehouse. The realistic case. */
 		REALISTIC,
-		/** A realistic body padded to roughly 4 KB of JSON, which is where TOAST starts to matter. */
-		FAT,
-		/** A realistic body with twelve tags, since tag count is what the GIN index works through. */
+		/**
+		 * Twelve tags on an otherwise realistic body. Tag count is what the GIN index works through, so
+		 * this isolates that cost from body size.
+		 */
 		WIDE_TAGS,
+		/**
+		 * Large bodies: forty-line orders, with the sales event mix biased so most events are such
+		 * orders. Measures about 2.9 KB mean against 127 bytes for {@link #REALISTIC}. Inventory events
+		 * stay small under this profile, because a stock movement genuinely is small -- so this measures
+		 * "a store whose sales context holds big documents", not "every event is large".
+		 */
+		FAT,
 		/** A realistic body with two {@code Shreddable} components bound to different subjects. */
 		SHREDDED,
 		/** Written as legacy types, so every read pays for an upcast. */

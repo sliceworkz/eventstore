@@ -25,7 +25,9 @@ import java.util.Map;
 
 import org.sliceworkz.eventstore.benchmark.config.BenchmarkProfile;
 import org.sliceworkz.eventstore.benchmark.config.Profiles;
+import org.sliceworkz.eventstore.benchmark.corpus.CorpusFacts;
 import org.sliceworkz.eventstore.benchmark.corpus.CorpusFingerprint;
+import org.sliceworkz.eventstore.benchmark.corpus.CorpusProvisioner;
 import org.sliceworkz.eventstore.benchmark.env.BenchmarkTarget;
 import org.sliceworkz.eventstore.benchmark.env.EnvironmentReport;
 import org.sliceworkz.eventstore.benchmark.env.TargetFactory;
@@ -95,7 +97,8 @@ public final class Main {
 				usage();
 				yield 0;
 			}
-			case "provision", "jmh", "load", "report" -> {
+			case "provision" -> provision(options);
+			case "jmh", "load", "report" -> {
 				System.err.println("'%s' is not implemented yet".formatted(command));
 				yield 3;
 			}
@@ -154,6 +157,103 @@ public final class Main {
 			}
 		}
 		return 0;
+	}
+
+	/**
+	 * Builds the corpora a profile needs, or reports that they are already there.
+	 *
+	 * <p>Separate from the measurement subcommands because the costs are nothing alike: provisioning
+	 * the large tier is minutes of bulk import, and the whole point of addressing a corpus by its
+	 * content is that the next twenty runs skip it.
+	 */
+	private static int provision ( Map<String, String> options ) {
+		String profileName = options.get("profile");
+		if ( profileName == null ) {
+			System.err.println("provision needs --profile=<name>");
+			return 2;
+		}
+		BenchmarkProfile profile = Profiles.resolve(profileName);
+		boolean force = options.containsKey("force");
+
+		CorpusProvisioner provisioner = new CorpusProvisioner(profile.corpus());
+		System.out.println("profile   : %s".formatted(profile.name()));
+		System.out.println("corpus    : %s".formatted(provisioner.prefix()));
+		System.out.println("events    : ~%d".formatted(profile.corpus().totalEventsInOwnStore()));
+		if ( force ) {
+			System.out.println("force     : rebuilding even if a usable corpus exists");
+		}
+
+		int failures = 0;
+		// Every target of a profile shares one corpus, and provisioning is about the *data* rather than
+		// about how a store is configured over it -- so a Postgres corpus is built once no matter how
+		// many targets read it.  In-memory targets are a different matter: nothing persists, so there
+		// is nothing to provision ahead of time and the JMH layer generates as part of its setup.
+		for ( TargetSpec target : distinctDataHomes(profile) ) {
+			try {
+				CorpusProvisioner.Outcome outcome = provisioner.ensure(target, force, new ProgressPrinter());
+				System.out.println();
+				System.out.println("  %-40s %s".formatted(target.describe(),
+						outcome.rebuilt() ? "built" : "reused"));
+				System.out.println("      events  %d".formatted(outcome.eventCount()));
+				System.out.println("      took    %s".formatted(humanDuration(outcome.took())));
+				System.out.println("      reason  %s".formatted(outcome.reason()));
+				printFacts(outcome.facts());
+			} catch ( RuntimeException e ) {
+				failures++;
+				System.out.println("  FAIL %-40s %s".formatted(target.describe(), rootCauseOf(e)));
+			}
+		}
+		return failures == 0 ? 0 : 1;
+	}
+
+	/**
+	 * The distinct places a profile's corpus has to physically exist. Targets differing only in how the
+	 * store is configured -- metrics, result limit -- share one set of tables, so provisioning them
+	 * separately would rebuild the same data several times.
+	 */
+	private static List<TargetSpec> distinctDataHomes ( BenchmarkProfile profile ) {
+		LinkedHashMap<String, TargetSpec> homes = new LinkedHashMap<>();
+		for ( TargetSpec target : profile.targets() ) {
+			String key = "%s|%s|%s".formatted(target.backend(), target.server(), target.image());
+			homes.putIfAbsent(key, target);
+		}
+		return List.copyOf(homes.values());
+	}
+
+	private static void printFacts ( CorpusFacts facts ) {
+		System.out.println("      facts");
+		System.out.println("        hot entity    %-16s %d events".formatted(
+				facts.hotEntity(), facts.count(CorpusFacts.COUNT_HOT_ENTITY)));
+		System.out.println("        cold entity   %-16s %d events".formatted(
+				facts.coldEntity(), facts.count(CorpusFacts.COUNT_COLD_ENTITY)));
+		System.out.println("        needle tag    %-16s %d events".formatted(
+				facts.needleTagValue(), facts.count(CorpusFacts.COUNT_NEEDLE)));
+		System.out.println("        swathe tag    %-16s %d events".formatted(
+				facts.swatheTagValue(), facts.count(CorpusFacts.COUNT_SWATHE)));
+		System.out.println("        mid cursor    %s".formatted(facts.midCursorPosition()));
+		if ( facts.meanPayloadBytes() != null ) {
+			System.out.println("        payload       %.0f bytes mean (sales)".formatted(facts.meanPayloadBytes()));
+		}
+		if ( !facts.streamPurposes().isEmpty() ) {
+			System.out.println("        purposes      %d recorded".formatted(facts.streamPurposes().size()));
+		}
+	}
+
+	/** Prints a running count during a long provisioning run, on one rewritten line. */
+	private static final class ProgressPrinter implements java.util.function.LongConsumer {
+
+		private long lastPrintedAt;
+
+		@Override
+		public void accept ( long events ) {
+			long now = System.nanoTime();
+			if ( now - lastPrintedAt < 1_000_000_000L ) {
+				return;
+			}
+			lastPrintedAt = now;
+			System.out.print("\r      generated %,d events".formatted(events));
+			System.out.flush();
+		}
 	}
 
 	/**
@@ -249,6 +349,7 @@ public final class Main {
 			  list                           the available profiles, their size and rough runtime
 			  doctor    [--profile=<name>]   open each target and report whether this machine can run it
 			  provision --profile=<name>     build (or reuse) the corpora a profile needs
+			            [--force]            rebuild even when a usable corpus is already there
 			  jmh       --profile=<name>     run the profile's JMH benchmarks
 			  load      --profile=<name>     run the profile's load scenarios
 			  report    [--baseline=<path>]  render a run, optionally diffing a baseline

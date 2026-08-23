@@ -12,7 +12,9 @@ This is a Java-based EventStore library implementing the Dynamic Consistency Bou
 - `sliceworkz-eventstore-infra-inmem`: In-memory storage backend (for development/testing)
 - `sliceworkz-eventstore-infra-postgres`: PostgreSQL storage backend (production-ready)
 - `sliceworkz-eventstore-tests`: Shared test scenarios
+- `sliceworkz-eventstore-testing`: Backend harness, the shared TCK, and the application-author fixture
 - `sliceworkz-eventstore-examples`: Example usage code
+- `sliceworkz-eventstore-benchmark`: Capacity-characterisation suite (nothing runs during a build)
 
 ## Build Commands
 
@@ -1013,17 +1015,20 @@ into every scenario class.
 
 Backends are discovered with the `ServiceLoader`. In this repository the set is declared in
 `sliceworkz-eventstore-tests/src/test/resources/META-INF/services/org.sliceworkz.eventstore.testing.EventStoreBackend`
-and covers **all four in-tree storages**: `inmem`, `inmem-fs`, `postgres:17` and `postgres:18`. Adding
-a storage to the compliance run is one line in that file.
+and covers **all five in-tree storages**: `inmem`, `inmem-fs`, `postgres:16`, `postgres:17` and
+`postgres:18`. Adding a storage to the compliance run is one line in that file.
 
 - Narrow a local run with `-Deventstore.testing.backends=inmem` to skip the containers entirely.
 - Scenarios needing an optional part of the contract declare it —
   `@ForEachBackend(requires = Capability.IMPORT)` — and are *skipped*, not failed, on backends that do
   not support it. Capabilities: `IMPORT`, `TABLE_PREFIX`, `RESULT_LIMIT`, `RAW_STORAGE_ACCESS`.
 - `@ForEachBackend(excludingBackends = "inmem-fs")` opts a backend out **for cost, not capability** —
-  `EventStorePerformanceTest` uses it because 10.000 appends against a file-backed store dominates CI
-  time. Also reported as skipped, so the gap stays visible. Not allowed inside the TCK: a compliance
-  scenario that skips a backend proves nothing about it, so use `requires` there instead.
+  reported as skipped, so the gap stays visible. Not allowed inside the TCK: a compliance scenario
+  that skips a backend proves nothing about it, so use `requires` there instead. **Nothing in the
+  repository uses it**: its only user was `EventStorePerformanceTest`, which excluded `inmem-fs`
+  because 10.000 appends against a file-backed store dominated CI time, and that test is gone — a
+  benchmark pretending to be a test, printing an unread number on every build and asserting only what
+  the TCK already asserts. Measurement lives in `sliceworkz-eventstore-benchmark` now.
 - `TckBackendCoverageTest` fails the build if a TCK scenario is annotated `@Test` (so it would run
   against one backend only), if one opts a backend out with `excludingBackends`, or if a backend goes
   missing from the service file. All three are silent failures otherwise — that is exactly how three
@@ -1044,8 +1049,8 @@ dedicated class (the image tag becomes the backend name, so the version still sh
 **Test Structure:**
 `sliceworkz-eventstore-tests` runs the TCK against every in-tree backend — via surefire's
 `dependenciesToScan`, which is the same one line a third-party `EventStorage` adds — plus the few
-tests that are repo-internal rather than part of the storage contract (`EventStorePerformanceTest`,
-`EventImportRoundTripTest`, `TckBackendCoverageTest`). Postgres containers are managed by
+tests that are repo-internal rather than part of the storage contract (`EventImportRoundTripTest`,
+`TckBackendCoverageTest`). Postgres containers are managed by
 `PostgresContainer`, started once per JVM per image; per-test isolation comes from
 `initializeDatabase()` dropping and recreating the schema, not from a fresh container.
 
@@ -1061,6 +1066,45 @@ not bind `event_timestamp` on append at all and lets the DDL default (`CURRENT_T
 clock) apply. There is no `Clock` seam anywhere. Assert on timestamps only with a tolerance window, as
 `EventTimestampUtcTest` does. The one path that writes a chosen timestamp is `importEvents`, which
 bypasses `append()`.
+
+## Benchmarking
+
+Measurement lives in **`sliceworkz-eventstore-benchmark`** and never runs during a build: the module
+is `src/main` only, so `mvn package` compiles and shades it and runs nothing. It is a
+*capacity-characterisation* harness — JMH for operation-level numbers, a separate runner for
+sustained load and live latency, both driving one shared `Workload` catalogue over corpora that are
+provisioned once and reused. See that module's README for the full picture; what matters from here:
+
+- **Every number is published with a manifest**, and the comparators refuse rather than guess. A
+  percentage between two runs on different machines is not a statement about the store, and nothing
+  about the two numbers says so. `report --baseline` diffs the same configuration over time and
+  refuses when the corpus, targets or environment differ; `compare --a --b` diffs two configurations
+  measured here and refuses when the *environment* differs.
+- **Curated runs are committed** to `sliceworkz-eventstore-benchmark/results/<version>/<profile>/`,
+  so a figure quoted here or in a README has something behind it that a pull request can review.
+  Publishing refuses a Testcontainers run, a run whose store drifted over 2%, and — under any flag —
+  a run that failed a correctness check.
+- **The profiles are mostly pairs.** `stream-design-tagged` against `stream-design-per-entity`,
+  `read-shapes` against `crowded-store` and `crowded-database`, the three `write-contention-*`
+  collision modes. Each pair differs in one property, which is what makes the difference between them
+  attributable.
+
+**The figures quoted in this document are not yet reproduced by that suite.** They were measured ad
+hoc while the behaviour they describe was being fixed, and the code that produced them is gone — which
+is the reason the suite exists. Treat each as a recorded observation rather than a current
+measurement, and where one matters, run the profile that would replace it:
+
+| figure in this document | profile that would re-derive it |
+|---|---|
+| `~5%` for the append advisory lock | `write-contention-spread` against `write-contention-one-stream` |
+| `~175µs / 139KB` vs `~36µs / 69KB` for a fresh vs shared serde | not covered — the suite always shares, since that is what the store does now |
+| `15 meters / ~5.5 KB` per distinct purpose | `metrics-cost` (throughput only; the heap figure has no workload) |
+| `1230ms → 460ms` for the statement-level append trigger | `ingest-saturation`, and only as a total — the trigger is not timed separately |
+
+Two of those four have no profile behind them, deliberately: a per-meter heap figure and a per-trigger
+time are properties of a snapshot rather than of a throughput, and inventing a workload to produce a
+number that shape would produce a worse one. They stay as recorded observations, and are marked as
+such rather than quietly dropped.
 
 ## Naming Conventions
 

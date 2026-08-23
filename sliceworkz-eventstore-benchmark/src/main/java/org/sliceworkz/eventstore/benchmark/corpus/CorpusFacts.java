@@ -40,8 +40,14 @@ import java.util.Map;
  *        planner starts preferring a sequential scan and where one number for "a tag query" would be
  *        a lie
  * @param matchCounts how many events each of the above actually matches, keyed by a label
- * @param midCursorPosition the {@code event_position} at roughly the halfway point, for cursor-walk
- *        workloads that must start somewhere reproducible rather than at the beginning
+ * @param midCursorRef a real {@link org.sliceworkz.eventstore.events.EventReference}, rendered as a
+ *        string, at roughly the halfway point of the context under test -- where a cursor-walk starts
+ *        so it is not measuring pages every other benchmark has already pulled into cache
+ * @param replayUntilRef a real reference ten pages into the context under test, used to bound a
+ *        projector run. It has to be an <em>actual</em> reference: a synthetic one carrying
+ *        {@code tx = Long.MAX_VALUE} bounds nothing at all, since the comparison is on the whole
+ *        {@code (tx, position)} tuple -- which is how the replay workload came to process the entire
+ *        corpus while claiming ten batches
  * @param knownEventId an event id known to exist, for the by-id workload
  * @param streamPurposes the distinct purposes that exist under a {@code PER_ENTITY} design, empty
  *        under {@code TAGGED}
@@ -55,7 +61,8 @@ public record CorpusFacts (
 		String needleTagValue,
 		String swatheTagValue,
 		Map<String, Long> matchCounts,
-		Long midCursorPosition,
+		String midCursorRef,
+		String replayUntilRef,
 		String knownEventId,
 		List<String> streamPurposes,
 		Double meanPayloadBytes ) {
@@ -76,6 +83,22 @@ public record CorpusFacts (
 	public CorpusFacts {
 		matchCounts = matchCounts == null ? Map.of() : Map.copyOf(matchCounts);
 		streamPurposes = streamPurposes == null ? List.of() : List.copyOf(streamPurposes);
+	}
+
+	/** The cursor-walk starting point, parsed back into a reference. */
+	public java.util.Optional<org.sliceworkz.eventstore.events.EventReference> midCursor ( ) {
+		return parse(midCursorRef);
+	}
+
+	/** The bound for a projector run, parsed back into a reference. */
+	public java.util.Optional<org.sliceworkz.eventstore.events.EventReference> replayUntil ( ) {
+		return parse(replayUntilRef);
+	}
+
+	private static java.util.Optional<org.sliceworkz.eventstore.events.EventReference> parse ( String value ) {
+		return value == null || value.isBlank()
+				? java.util.Optional.empty()
+				: java.util.Optional.of(org.sliceworkz.eventstore.events.EventReference.fromString(value));
 	}
 
 	/** The recorded match count for a label, or zero if it was never recorded. */

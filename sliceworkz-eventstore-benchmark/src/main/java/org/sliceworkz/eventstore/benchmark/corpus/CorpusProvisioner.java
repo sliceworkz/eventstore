@@ -38,6 +38,7 @@ import org.sliceworkz.eventstore.benchmark.env.BenchmarkTarget;
 import org.sliceworkz.eventstore.benchmark.env.TargetFactory;
 import org.sliceworkz.eventstore.benchmark.env.TargetSpec;
 import org.sliceworkz.eventstore.events.Event;
+import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -99,41 +100,84 @@ public final class CorpusProvisioner {
 	public record Outcome ( CorpusFacts facts, boolean rebuilt, long eventCount, Duration took, String reason ) { }
 
 	/**
-	 * Makes sure the corpus exists in the store the given spec points at, and returns its facts.
+	 * An open store with its corpus in place, and what it took to get there.
+	 *
+	 * <p>The target is handed back <b>open</b>, and that is the whole point of this type. An in-memory
+	 * store holds its corpus only for as long as it is open, so provisioning into one and then closing
+	 * it generates several thousand events and throws them away -- and the next thing to open a store
+	 * gets an empty one. That is not a hypothetical: it is what the workload dry run did on its first
+	 * run, reporting "a query matching nothing" for every read.
+	 *
+	 * <p>For a SQL-backed target the data outlives the handle either way, so keeping it open costs
+	 * nothing and the two cases stay one code path.
+	 */
+	public record Prepared ( BenchmarkTarget target, Outcome outcome ) implements AutoCloseable {
+
+		@Override
+		public void close ( ) {
+			target.close();
+		}
+	}
+
+	/**
+	 * Opens a store, makes sure the corpus is in it, and hands both back.
+	 *
+	 * <p>The caller owns the returned target and must close it.
 	 *
 	 * @param targetSpec how to open the store; provisioning forces {@code ENSURE} regardless, since
 	 *        creating the schema is exactly what it is for
 	 * @param force rebuild even if a usable corpus is already there
 	 */
-	public Outcome ensure ( TargetSpec targetSpec, boolean force, LongConsumer progress ) {
+	public Prepared open ( TargetSpec targetSpec, boolean force, LongConsumer progress ) {
 		long started = System.nanoTime();
 
 		TargetSpec provisioning = new TargetSpec(targetSpec.backend(), targetSpec.server(), targetSpec.image(),
 				targetSpec.metrics(), spec.requiresShredding() || targetSpec.shredding(), targetSpec.resultLimit(),
 				TargetSpec.SchemaMode.ENSURE, targetSpec.notificationStartupTimeout());
 
-		try ( BenchmarkTarget target = TargetFactory.open(provisioning, prefix) ) {
-			Optional<DataSource> dataSource = target.dataSource();
+		BenchmarkTarget target = TargetFactory.open(provisioning, prefix);
+		try {
+			return new Prepared(target, provisionInto(target, force, started, progress));
+		} catch ( RuntimeException e ) {
+			target.close();
+			throw e;
+		}
+	}
 
-			if ( dataSource.isEmpty() ) {
-				return generateInMemory(target, started, progress);
+	private Outcome provisionInto ( BenchmarkTarget target, boolean force, long started, LongConsumer progress ) {
+		Optional<DataSource> dataSource = target.dataSource();
+
+		if ( dataSource.isEmpty() ) {
+			return generateInMemory(target, started, progress);
+		}
+
+		ManifestStore manifests = new ManifestStore(dataSource.get());
+		manifests.ensureTable();
+
+		if ( !force ) {
+			Optional<Outcome> reused = tryReuse(manifests, started);
+			if ( reused.isPresent() ) {
+				return reused.get();
 			}
+		}
 
-			ManifestStore manifests = new ManifestStore(dataSource.get());
-			manifests.ensureTable();
+		// forget first, then drop, then build: a manifest sitting beside a half-built store is the
+		// one state that could let a later run reuse an incomplete corpus
+		manifests.forget(fingerprint);
+		dropCorpusTables(dataSource.get());
+		return generateAndRecord(target, manifests, started, progress);
+	}
 
-			if ( !force ) {
-				Optional<Outcome> reused = tryReuse(manifests, started);
-				if ( reused.isPresent() ) {
-					return reused.get();
-				}
-			}
-
-			// forget first, then drop, then build: a manifest sitting beside a half-built store is the
-			// one state that could let a later run reuse an incomplete corpus
-			manifests.forget(fingerprint);
-			dropCorpusTables(dataSource.get());
-			return generateAndRecord(target, manifests, started, progress);
+	/**
+	 * Provisions and closes, for callers that only want the corpus to exist afterwards.
+	 *
+	 * <p>Meaningful only for a SQL-backed target. Against an in-memory one this generates a corpus and
+	 * immediately discards it, which {@link Outcome#reason()} says out loud rather than reporting a
+	 * build that left nothing behind.
+	 */
+	public Outcome ensure ( TargetSpec targetSpec, boolean force, LongConsumer progress ) {
+		try ( Prepared prepared = open(targetSpec, force, progress) ) {
+			return prepared.outcome();
 		}
 	}
 
@@ -167,7 +211,8 @@ public final class CorpusProvisioner {
 		completed.requireUsable();
 		verifySample(target);
 		return new Outcome(completed, true, completed.count(CorpusFacts.COUNT_TOTAL),
-				Duration.ofNanos(System.nanoTime() - started), "in-memory store, always generated");
+				Duration.ofNanos(System.nanoTime() - started),
+				"generated in memory; it lives only as long as this store is open");
 	}
 
 	private Outcome generateAndRecord ( BenchmarkTarget target, ManifestStore manifests, long started,
@@ -193,21 +238,47 @@ public final class CorpusProvisioner {
 	 * than by the generator: the position at the halfway point, which cursor-walk workloads start
 	 * from.
 	 */
-	private CorpusFacts withRuntimeFacts ( BenchmarkTarget target, CorpusFacts facts ) {
-		EventStream<Object> raw = target.store().getEventStream(EventStreamId.anyContext().anyPurpose());
-		long total = facts.count(CorpusFacts.COUNT_TOTAL);
+	/** Ten pages, matching what the bounded replay workload claims to cover. */
+	private static final int REPLAY_BOUND_EVENTS = 5_000;
 
-		Long midPosition = raw.query(EventQuery.matchAll().limit(Math.max(total / 2, 1)))
-				.map(Event::reference)
-				.reduce(( first, second ) -> second)
-				.map(reference -> reference.position())
-				.orElse(null);
+	/**
+	 * Fills in the facts the generator cannot know, because they are assigned by the storage rather
+	 * than by the generator.
+	 *
+	 * <p>Both cursors are read off the <b>inventory</b> context rather than the whole store, because
+	 * that is the context the read workloads query. A midpoint taken across every context lands
+	 * wherever the noise happens to put it -- measured, a cursor walk from the store-wide midpoint
+	 * covered 1121 events instead of the 2500 it was asking for, because it started near the end of
+	 * inventory and ran out.
+	 *
+	 * <p>They are real references, not positions with a synthetic transaction id. Boundaries compare
+	 * the whole {@code (tx, position)} tuple, so a fabricated {@code tx} of zero matches everything
+	 * ahead of it and one of {@code Long.MAX_VALUE} bounds nothing -- which is exactly how the
+	 * "ten batches" replay came to process the entire corpus.
+	 */
+	private CorpusFacts withRuntimeFacts ( BenchmarkTarget target, CorpusFacts facts ) {
+		EventStream<InventoryEvent> inventory = target.store()
+				.getEventStream(EventStreamId.forContext("inventory").anyPurpose(), InventoryEvent.class);
+
+		long inventoryCount = inventory.query(EventQuery.matchAll()).count();
+
+		String midCursor = referenceAt(inventory, Math.max(inventoryCount / 2, 1));
+		String replayUntil = referenceAt(inventory, Math.min(REPLAY_BOUND_EVENTS, Math.max(inventoryCount, 1)));
 
 		Double meanBytes = meanPayloadBytes(target, "sales", VERIFY_SAMPLE_SIZE).stream().boxed().findFirst()
 				.orElse(null);
 
 		return new CorpusFacts(facts.hotEntity(), facts.coldEntity(), facts.needleTagValue(), facts.swatheTagValue(),
-				facts.matchCounts(), midPosition, facts.knownEventId(), facts.streamPurposes(), meanBytes);
+				facts.matchCounts(), midCursor, replayUntil, facts.knownEventId(), facts.streamPurposes(), meanBytes);
+	}
+
+	/** The reference of the n-th event of a stream, rendered for storage in the manifest. */
+	private static String referenceAt ( EventStream<InventoryEvent> stream, long ordinal ) {
+		return stream.query(EventQuery.matchAll().limit(ordinal))
+				.map(Event::reference)
+				.reduce(( first, second ) -> second)
+				.map(EventReference::toString)
+				.orElse(null);
 	}
 
 	/**

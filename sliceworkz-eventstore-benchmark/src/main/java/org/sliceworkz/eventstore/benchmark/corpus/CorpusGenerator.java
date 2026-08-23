@@ -444,7 +444,7 @@ public final class CorpusGenerator {
 		// midCursorPosition and meanPayloadBytes are both left null: positions are assigned by the
 		// storage, and the payload size worth reporting is the one measured off what was actually
 		// stored.  The provisioner fills both in after the write.
-		return new CorpusFacts(hot, cold, NEEDLE_VALUE, SWATHE_VALUE, counts, null,
+		return new CorpusFacts(hot, cold, NEEDLE_VALUE, SWATHE_VALUE, counts, null, null,
 				counters.firstIdUnderTest == null ? null : counters.firstIdUnderTest.value(),
 				List.copyOf(counters.purposes), null);
 	}

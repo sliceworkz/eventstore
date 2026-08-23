@@ -32,6 +32,9 @@ import org.sliceworkz.eventstore.benchmark.env.BenchmarkTarget;
 import org.sliceworkz.eventstore.benchmark.env.EnvironmentReport;
 import org.sliceworkz.eventstore.benchmark.env.TargetFactory;
 import org.sliceworkz.eventstore.benchmark.env.TargetSpec;
+import org.sliceworkz.eventstore.benchmark.workload.Workload;
+import org.sliceworkz.eventstore.benchmark.workload.WorkloadDryRun;
+import org.sliceworkz.eventstore.benchmark.workload.Workloads;
 
 /**
  * Entry point of the benchmark suite.
@@ -98,6 +101,8 @@ public final class Main {
 				yield 0;
 			}
 			case "provision" -> provision(options);
+			case "workloads" -> workloads();
+			case "dry-run" -> dryRun(options);
 			case "jmh", "load", "report" -> {
 				System.err.println("'%s' is not implemented yet".formatted(command));
 				yield 3;
@@ -159,6 +164,71 @@ public final class Main {
 		return 0;
 	}
 
+	/** Lists the workload catalogue, which is the vocabulary a profile's {@code workloads:} draws on. */
+	private static int workloads ( ) {
+		System.out.println("%-30s %-6s %s".formatted("WORKLOAD", "WRITES", "MEASURES"));
+		for ( Workload workload : Workloads.all() ) {
+			System.out.println("%-30s %-6s %s".formatted(
+					workload.name(),
+					workload.requirement().mutatesStore() ? "yes" : "no",
+					workload.description()));
+		}
+		return 0;
+	}
+
+	/**
+	 * Invokes every workload of a profile once, and checks each did something.
+	 *
+	 * <p>Worth its own subcommand because of what it catches: a query matching nothing is fast, so a
+	 * workload aimed at a tag the corpus does not hold reports an excellent number and no error. This
+	 * is the only place that distinction gets made.
+	 */
+	private static int dryRun ( Map<String, String> options ) {
+		String profileName = options.get("profile");
+		if ( profileName == null ) {
+			System.err.println("dry-run needs --profile=<name>");
+			return 2;
+		}
+		BenchmarkProfile profile = Profiles.resolve(profileName);
+		List<Workload> selected = Workloads.resolve(
+				profile.jmh() == null ? List.of() : profile.jmh().workloads(), profile.corpus());
+
+		System.out.println("profile   : %s".formatted(profile.name()));
+		System.out.println("workloads : %d".formatted(selected.size()));
+
+		CorpusProvisioner provisioner = new CorpusProvisioner(profile.corpus());
+		int failures = 0;
+
+		for ( TargetSpec targetSpec : distinctDataHomes(profile) ) {
+			System.out.println();
+			System.out.println("  %s".formatted(targetSpec.describe()));
+
+			// One open target for both provisioning and the run.  Opening a second one would work
+			// against Postgres and silently fail against the in-memory backend, whose corpus lives only
+			// as long as the store that holds it -- which is exactly how this first went wrong.
+			try ( CorpusProvisioner.Prepared prepared = provisioner.open(targetSpec, false, null) ) {
+				List<WorkloadDryRun.Result> results = WorkloadDryRun.run(prepared.target(), profile.corpus(),
+						prepared.outcome().facts(), selected);
+				for ( WorkloadDryRun.Result result : results ) {
+					System.out.println("    %-4s %-30s %-9s %s".formatted(
+							result.ok() ? "OK" : "FAIL",
+							result.workload(),
+							humanDuration(result.took()),
+							result.detail()));
+					if ( !result.ok() ) {
+						failures++;
+					}
+				}
+			}
+		}
+
+		System.out.println();
+		System.out.println(failures == 0
+				? "every workload produced a non-degenerate result"
+				: "%d workload invocation(s) produced nothing measurable".formatted(failures));
+		return failures == 0 ? 0 : 1;
+	}
+
 	/**
 	 * Builds the corpora a profile needs, or reports that they are already there.
 	 *
@@ -197,6 +267,10 @@ public final class Main {
 				System.out.println("      events  %d".formatted(outcome.eventCount()));
 				System.out.println("      took    %s".formatted(humanDuration(outcome.took())));
 				System.out.println("      reason  %s".formatted(outcome.reason()));
+				if ( !target.requiresDocker() && target.backend() == TargetSpec.Backend.INMEM ) {
+					System.out.println("      note    nothing persists: an in-memory corpus is rebuilt by whatever "
+							+ "measures it, so provisioning one ahead of time achieves nothing");
+				}
 				printFacts(outcome.facts());
 			} catch ( RuntimeException e ) {
 				failures++;
@@ -230,7 +304,8 @@ public final class Main {
 				facts.needleTagValue(), facts.count(CorpusFacts.COUNT_NEEDLE)));
 		System.out.println("        swathe tag    %-16s %d events".formatted(
 				facts.swatheTagValue(), facts.count(CorpusFacts.COUNT_SWATHE)));
-		System.out.println("        mid cursor    %s".formatted(facts.midCursorPosition()));
+		System.out.println("        mid cursor    %s".formatted(facts.midCursorRef()));
+		System.out.println("        replay until  %s".formatted(facts.replayUntilRef()));
 		if ( facts.meanPayloadBytes() != null ) {
 			System.out.println("        payload       %.0f bytes mean (sales)".formatted(facts.meanPayloadBytes()));
 		}
@@ -353,6 +428,8 @@ public final class Main {
 			  jmh       --profile=<name>     run the profile's JMH benchmarks
 			  load      --profile=<name>     run the profile's load scenarios
 			  report    [--baseline=<path>]  render a run, optionally diffing a baseline
+			  workloads                      the workload catalogue a profile's 'workloads:' draws on
+			  dry-run   --profile=<name>     invoke each workload once and check it measures something
 
 			A profile is a YAML file: pass its name to use one that ships on the classpath, or a path
 			to use one of your own.

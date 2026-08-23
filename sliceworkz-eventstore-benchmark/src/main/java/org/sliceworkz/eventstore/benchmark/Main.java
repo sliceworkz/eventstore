@@ -36,6 +36,8 @@ import org.sliceworkz.eventstore.benchmark.env.EnvironmentReport;
 import org.sliceworkz.eventstore.benchmark.env.TargetFactory;
 import org.sliceworkz.eventstore.benchmark.env.TargetSpec;
 import org.sliceworkz.eventstore.benchmark.jmh.JmhRunner;
+import org.sliceworkz.eventstore.benchmark.load.LoadResult;
+import org.sliceworkz.eventstore.benchmark.load.LoadRunner;
 import org.sliceworkz.eventstore.benchmark.workload.Workload;
 import org.sliceworkz.eventstore.benchmark.workload.WorkloadDryRun;
 import org.sliceworkz.eventstore.benchmark.workload.Workloads;
@@ -108,7 +110,8 @@ public final class Main {
 			case "workloads" -> workloads();
 			case "dry-run" -> dryRun(options);
 			case "jmh" -> jmh(options);
-			case "load", "report" -> {
+			case "load" -> load(options);
+			case "report" -> {
 				System.err.println("'%s' is not implemented yet".formatted(command));
 				yield 3;
 			}
@@ -202,6 +205,76 @@ public final class Main {
 			System.err.println("the benchmark run failed: " + rootCauseOf(e));
 			return 1;
 		}
+	}
+
+	/**
+	 * Runs a profile's load scenario.
+	 *
+	 * <p>Unlike {@code jmh} this measures a store that is <em>growing</em> throughout, which is the
+	 * point: the benchmark layer restores the corpus between iterations, correctly, and in doing so
+	 * hides everything an ingest actually experiences.
+	 */
+	private static int load ( Map<String, String> options ) {
+		String profileName = options.get("profile");
+		if ( profileName == null ) {
+			System.err.println("load needs --profile=<name>");
+			return 2;
+		}
+		BenchmarkProfile profile = Profiles.resolve(profileName);
+		if ( profile.load() == null ) {
+			System.err.println("profile '%s' has no 'load' section".formatted(profile.name()));
+			return 2;
+		}
+
+		System.out.println("profile   : %s".formatted(profile.name()));
+		System.out.println("scenario  : %s".formatted(profile.load().scenario()));
+		System.out.println("writers   : %d, readers: %d, collision: %s".formatted(
+				profile.load().writers(), profile.load().readers(), profile.load().collision()));
+		System.out.println("rate      : %s".formatted(profile.load().isFixedRate()
+				? profile.load().targetRatePerSecond() + "/s offered"
+				: "saturate"));
+
+		int unsound = 0;
+		for ( TargetSpec target : profile.targets() ) {
+			System.out.println();
+			System.out.println("  %s".formatted(target.describe()));
+
+			LoadResult result = LoadRunner.run(profile, target);
+			printLoadResult(result);
+			if ( !result.isSound() ) {
+				unsound++;
+			}
+		}
+
+		System.out.println();
+		if ( unsound > 0 ) {
+			System.out.println("%d run(s) failed a correctness check: their numbers describe work that did not happen"
+					.formatted(unsound));
+		}
+		return unsound == 0 ? 0 : 1;
+	}
+
+	private static void printLoadResult ( LoadResult result ) {
+		System.out.println("      duration      %s".formatted(humanDuration(result.duration())));
+		System.out.println("      operations    %,d (%.0f/s attempted, %.0f/s useful)".formatted(
+				result.operations(), result.operationsPerSecond(), result.usefulOperationsPerSecond()));
+		if ( result.conflicts() > 0 ) {
+			System.out.println("      conflicts     %,d (%.1f%% of attempts did no work)".formatted(
+					result.conflicts(), result.conflictRate() * 100));
+		}
+		if ( result.deduplicated() > 0 ) {
+			System.out.println("      deduplicated  %,d".formatted(result.deduplicated()));
+		}
+		if ( result.failures() > 0 ) {
+			System.out.println("      failures      %,d".formatted(result.failures()));
+		}
+		if ( result.storeGrewBy() >= 0 ) {
+			System.out.println("      store grew by %,d events".formatted(result.storeGrewBy()));
+		}
+		System.out.println("      latency");
+		result.latencies().forEach(summary -> System.out.println("        " + summary.toLine()));
+		System.out.println("      correctness");
+		result.correctness().forEach(check -> System.out.println("        " + check.toLine()));
 	}
 
 	/** Lists the workload catalogue, which is the vocabulary a profile's {@code workloads:} draws on. */
@@ -468,7 +541,7 @@ public final class Main {
 			  jmh       --profile=<name>     run the profile's JMH benchmarks
 			            [--out=<dir>]        where to write results (default target/benchmark)
 			            [--yes]              required for a run estimated at over an hour
-			  load      --profile=<name>     run the profile's load scenarios
+			  load      --profile=<name>     run the profile's load scenario against a growing store
 			  report    [--baseline=<path>]  render a run, optionally diffing a baseline
 			  workloads                      the workload catalogue a profile's 'workloads:' draws on
 			  dry-run   --profile=<name>     invoke each workload once and check it measures something

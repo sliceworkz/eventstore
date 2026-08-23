@@ -226,7 +226,11 @@ public final class Main {
 			return 2;
 		}
 		BenchmarkProfile profile = Profiles.resolve(profileName);
-		Path output = Path.of(options.getOrDefault("out", "target/benchmark"));
+
+		// Scoped by profile, like the load runner's. A shared default would have two profiles run back to
+		// back overwrite each other's report -- which is precisely the `compare` workflow, and would lose
+		// the first run silently rather than refusing.
+		Path output = Path.of(options.getOrDefault("out", Reports.scratchDirectoryFor(profile).toString()));
 
 		System.out.println("profile   : %s".formatted(profile.name()));
 		System.out.println("targets   : %d".formatted(profile.targets().size()));
@@ -780,7 +784,7 @@ public final class Main {
 			  provision --profile=<name>     build (or reuse) the corpora a profile needs
 			            [--force]            rebuild even when a usable corpus is already there
 			  jmh       --profile=<name>     run the profile's JMH benchmarks
-			            [--out=<dir>]        where to write results (default target/benchmark)
+			            [--out=<dir>]        where to write results (default target/benchmark/<profile>)
 			            [--yes]              required for a run estimated at over an hour
 			  load      --profile=<name>     run the profile's load scenario against a growing store
 			  report    [--run=<dir>]        render a run; diffs the latest committed baseline

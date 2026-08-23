@@ -162,10 +162,10 @@ public final class CorpusProvisioner {
 			}
 		}
 
-		// forget first, then drop, then build: a manifest sitting beside a half-built store is the
+		// forget first, then empty, then build: a manifest sitting beside a half-built store is the
 		// one state that could let a later run reuse an incomplete corpus
 		manifests.forget(fingerprint);
-		dropCorpusTables(dataSource.get());
+		emptyCorpusTables(dataSource.get());
 		return generateAndRecord(target, manifests, started, progress);
 	}
 
@@ -391,17 +391,52 @@ public final class CorpusProvisioner {
 				.average();
 	}
 
-	/** Drops just this corpus's tables, leaving every other corpus in the database alone. */
-	private void dropCorpusTables ( DataSource dataSource ) {
-		List<String> tables = List.of("bookmarks", "lease_contenders", "leases", "shredding_keys", "events");
+	/**
+	 * Empties just this corpus's tables, leaving every other corpus in the database alone.
+	 *
+	 * <p><b>Truncates rather than drops, and the difference is load-bearing.</b> The store handed to
+	 * this method is already open, and its schema work ran when it opened -- so dropping the tables
+	 * left a live store pointing at tables that no longer existed, and the very next {@code
+	 * importEvents} failed with {@code relation "<prefix>events" does not exist}. Nothing recreates a
+	 * schema mid-life: {@code ENSURE} runs once, at build.
+	 *
+	 * <p>Truncating loses nothing the provisioner needs. Every case it serves -- a forced rebuild, a
+	 * half-finished previous run, a bumped generator version -- is a change of <em>data</em> under an
+	 * unchanged schema. A change to the library's own schema is not repaired by dropping either, since
+	 * {@code ENSURE} only ever creates: that is a documented manual migration, and the manifest's
+	 * generator version is not what tracks it.
+	 *
+	 * <p>{@code RESTART IDENTITY} matters as much as the emptying. {@code event_position} is a
+	 * {@code bigserial}, and a corpus generated on top of a sequence carrying on from a previous run
+	 * would hold the same events at different positions -- which is exactly the reproducibility the
+	 * fingerprint claims. Dropping used to reset it as a side effect; here it is asked for.
+	 */
+	private void emptyCorpusTables ( DataSource dataSource ) {
+		List<String> candidates = List.of("events", "bookmarks", "lease_contenders", "leases", "shredding_keys");
 		try ( Connection connection = dataSource.getConnection();
 				Statement statement = connection.createStatement() ) {
-			for ( String table : tables ) {
-				statement.execute("DROP TABLE IF EXISTS %s%s CASCADE".formatted(prefix, table));
+
+			// Which of them exist depends on how the store was configured -- shredding_keys only when a
+			// codec is -- and TRUNCATE has no IF EXISTS, so the set is resolved rather than assumed.
+			List<String> present = new java.util.ArrayList<>();
+			for ( String table : candidates ) {
+				try ( ResultSet found = statement.executeQuery(
+						"SELECT to_regclass('%s%s') IS NOT NULL".formatted(prefix, table)) ) {
+					if ( found.next() && found.getBoolean(1) ) {
+						present.add(prefix + table);
+					}
+				}
 			}
-			LOGGER.info("dropped the tables of corpus {}", fingerprint);
+			if ( present.isEmpty() ) {
+				// nothing to empty: a first run against a database where the store has just created the
+				// schema and written nothing
+				return;
+			}
+
+			statement.execute("TRUNCATE TABLE %s RESTART IDENTITY CASCADE".formatted(String.join(", ", present)));
+			LOGGER.info("emptied the tables of corpus {}", fingerprint);
 		} catch ( SQLException e ) {
-			throw new IllegalStateException("could not drop the tables of corpus " + fingerprint, e);
+			throw new IllegalStateException("could not empty the tables of corpus " + fingerprint, e);
 		}
 	}
 

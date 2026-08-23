@@ -70,6 +70,12 @@ public final class CorpusRestore {
 	/** Growth beyond this fraction of the corpus makes a trial's numbers not about that corpus. */
 	private static final double DEFAULT_MAX_DRIFT = 0.02d;
 
+	/**
+	 * Growth within a single iteration worth mentioning. Far looser than {@link #DEFAULT_MAX_DRIFT},
+	 * because this one is a remark rather than a verdict -- see {@code warnIfIterationGrowthIsLarge}.
+	 */
+	private static final double ITERATION_GROWTH_WARN = 0.25d;
+
 	/** When to put the corpus back. */
 	public enum Policy {
 		/** Before every iteration. Correct, and affordable below a million events. */
@@ -87,6 +93,9 @@ public final class CorpusRestore {
 	private final double maxDrift;
 
 	private long baselineCount = -1;
+
+	/** What {@link #endTrial()} last computed, kept so a trial that failed on it can still report it. */
+	private double lastMeasuredDrift;
 
 	public CorpusRestore ( BenchmarkTarget target, CorpusSpec spec, String prefix, boolean mutating ) {
 		this.target = target;
@@ -140,6 +149,19 @@ public final class CorpusRestore {
 		long now = currentCount().orElse(baselineCount);
 		double drift = ( now - baselineCount ) / (double) baselineCount;
 
+		if ( policy == Policy.PER_ITERATION ) {
+			// The corpus is put back before every iteration, so the store each measurement describes is
+			// the corpus and the run's drift is zero by construction. What this figure measures is one
+			// iteration's worth of appends, which is a different thing and must not be compared against
+			// the threshold: an append benchmark at the small tier routinely multiplies a thousand-event
+			// store several times over inside a single iteration, and failing the trial for it would fail
+			// every append benchmark this suite has.
+			warnIfIterationGrowthIsLarge(drift, now);
+			lastMeasuredDrift = 0;
+			return 0;
+		}
+
+		lastMeasuredDrift = drift;
 		if ( drift > maxDrift ) {
 			throw new IllegalStateException(
 					"the store grew by %.1f%% during this trial (%d events to %d), past the %.0f%% allowed: these numbers describe a store that changed while they were being taken"
@@ -168,6 +190,28 @@ public final class CorpusRestore {
 			return;
 		}
 		restoreSql(dataSource.get());
+	}
+
+	/**
+	 * Says so when a single iteration moves the store materially.
+	 *
+	 * <p>Restoring between iterations fixes drift <em>across</em> them and can do nothing about growth
+	 * <em>within</em> one. An append workload that adds a quarter of the corpus during a measured
+	 * iteration is timing an ever-larger store, so its last operations are not measuring what its first
+	 * ones did, and the reported average is over a moving target however clean each iteration started.
+	 *
+	 * <p>Not a failure. It is inherent to timing appends against a small corpus, it is exactly what the
+	 * smoke tier does, and the remedies -- a shorter iteration or a larger corpus -- are the profile
+	 * author's to choose. Worth one line in the log rather than a silently softer number.
+	 */
+	private void warnIfIterationGrowthIsLarge ( double growth, long now ) {
+		if ( growth <= ITERATION_GROWTH_WARN ) {
+			return;
+		}
+		LOGGER.warn("one iteration grew {}events by {}% ({} to {}): the corpus is restored between "
+				+ "iterations, but within one the store is a moving target. Shorten the iteration or "
+				+ "measure against a larger corpus if this number is meant to be quoted.",
+				prefix, "%.0f".formatted(growth * 100), baselineCount, now);
 	}
 
 	private void createTemplate ( DataSource dataSource ) {
@@ -225,6 +269,11 @@ public final class CorpusRestore {
 				LOGGER.warn("could not drop the restore template {}events_template", prefix, e);
 			}
 		});
+	}
+
+	/** The drift {@link #endTrial()} last computed, available even when it threw over it. */
+	public double lastMeasuredDrift ( ) {
+		return lastMeasuredDrift;
 	}
 
 	/** A sentence describing the policy, for the run's manifest. */

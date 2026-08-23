@@ -69,8 +69,17 @@ public final class JmhRunner {
 
 	private JmhRunner ( ) { }
 
-	/** What a run produced, so the caller can report where the output went. */
-	public record RunOutcome ( List<JmhResults.ResultFile> resultFiles, int benchmarksRun ) { }
+	/** The file forks append their drift to, inside a run's output directory. */
+	private static final String DRIFT_FILE_NAME = "drift.txt";
+
+	/**
+	 * What a run produced, so the caller can report where the output went.
+	 *
+	 * @param worstDrift the largest drift any trial reported, or empty when no trial measured it --
+	 *        which is the ordinary case, since only a read-write run at the large tier does
+	 */
+	public record RunOutcome ( List<JmhResults.ResultFile> resultFiles, int benchmarksRun,
+			java.util.OptionalDouble worstDrift ) { }
 
 	/**
 	 * Runs a profile's JMH benchmarks.
@@ -118,9 +127,18 @@ public final class JmhRunner {
 		int benchmarks = 0;
 		List<JmhResults.ResultFile> resultFiles = new ArrayList<>();
 
+		// Started clean, so a run does not inherit the drift of the one before it in the same directory.
+		Path driftFile = outputDirectory.resolve(DRIFT_FILE_NAME);
+		try {
+			Files.deleteIfExists(driftFile);
+		} catch ( java.io.IOException e ) {
+			LOGGER.warn("could not clear {}; drift from an earlier run may be reported as this one's",
+					driftFile, e);
+		}
+
 		for ( int targetIndex = 0; targetIndex < profile.targets().size(); targetIndex++ ) {
 			TargetSpec target = profile.targets().get(targetIndex);
-			List<String> forkArgs = forkArgumentsFor(target, resolvedRef, profile, targetIndex);
+			List<String> forkArgs = forkArgumentsFor(target, resolvedRef, profile, targetIndex, driftFile);
 
 			for ( int threads : profile.jmh().threads() ) {
 				// One file per (target, threads) combination.  JMH's result() truncates rather than
@@ -139,7 +157,7 @@ public final class JmhRunner {
 			}
 		}
 
-		return new RunOutcome(List.copyOf(resultFiles), benchmarks);
+		return new RunOutcome(List.copyOf(resultFiles), benchmarks, BenchmarkConfig.worstDriftIn(driftFile));
 	}
 
 	private static Options optionsFor ( BenchmarkProfile profile, List<Workload> workloads,
@@ -169,9 +187,9 @@ public final class JmhRunner {
 	 * The system properties a fork needs, including the JDBC URL of a container the launcher started.
 	 */
 	private static List<String> forkArgumentsFor ( TargetSpec target, String profileRef, BenchmarkProfile profile,
-			int targetIndex ) {
+			int targetIndex, Path driftFile ) {
 		List<String> arguments = new ArrayList<>(List.of(
-				BenchmarkConfig.jvmArgsFor(profileRef, targetIndex, collisionOf(profile))));
+				BenchmarkConfig.jvmArgsFor(profileRef, targetIndex, collisionOf(profile), driftFile)));
 
 		if ( target.requiresDocker() ) {
 			// started once, here; see the class comment on why a fork must not start its own

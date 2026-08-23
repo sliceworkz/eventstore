@@ -122,6 +122,9 @@ public class CorpusState {
 		try {
 			restore.endTrial();
 		} finally {
+			// Read off the restore rather than from endTrial's return, because a trial that drifted past
+			// the threshold throws -- and that is exactly the trial whose figure the report needs.
+			BenchmarkConfig.recordDrift(restore.lastMeasuredDrift());
 			restore.cleanUp();
 			prepared.close();
 		}

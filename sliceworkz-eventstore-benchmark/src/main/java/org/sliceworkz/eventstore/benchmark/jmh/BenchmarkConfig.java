@@ -39,6 +39,16 @@ public record BenchmarkConfig ( BenchmarkProfile profile, int targetIndex, Colli
 	public static final String COLLISION_PROPERTY = "benchmark.collision";
 
 	/**
+	 * Where a fork records how far its store drifted, for the launcher to pick up.
+	 *
+	 * <p>Drift is measured inside a fork and reported by the launcher, and a fork is a separate process
+	 * that hands back nothing but its JMH results file -- which has no room for this. So it goes through
+	 * a file in the run's output directory. Before this existed the report simply recorded zero, which
+	 * made the publish guard against a drifted store unable to fire at all.
+	 */
+	public static final String DRIFT_FILE_PROPERTY = "benchmark.drift.file";
+
+	/**
 	 * Reconstructs the configuration inside a fork.
 	 *
 	 * @throws IllegalStateException if the profile property is absent, which means the benchmark was
@@ -68,11 +78,56 @@ public record BenchmarkConfig ( BenchmarkProfile profile, int targetIndex, Colli
 	}
 
 	/** The JVM arguments a launcher must pass into a fork for it to reconstruct this. */
-	public static String[] jvmArgsFor ( String profileName, int targetIndex, Collision collision ) {
+	public static String[] jvmArgsFor ( String profileName, int targetIndex, Collision collision,
+			java.nio.file.Path driftFile ) {
 		return new String[] {
 				"-D%s=%s".formatted(PROFILE_PROPERTY, profileName),
 				"-D%s=%d".formatted(TARGET_INDEX_PROPERTY, targetIndex),
-				"-D%s=%s".formatted(COLLISION_PROPERTY, collision.name())
+				"-D%s=%s".formatted(COLLISION_PROPERTY, collision.name()),
+				"-D%s=%s".formatted(DRIFT_FILE_PROPERTY, driftFile.toAbsolutePath())
 		};
+	}
+
+	/**
+	 * Records a trial's drift, appending one value per line.
+	 *
+	 * <p>Never throws. A drift figure is worth having and is not worth failing a completed trial over,
+	 * and the reader treats an absent file as "not measured" rather than as zero.
+	 */
+	public static void recordDrift ( double drift ) {
+		String path = System.getProperty(DRIFT_FILE_PROPERTY);
+		if ( path == null || path.isBlank() ) {
+			return;
+		}
+		try {
+			java.nio.file.Files.writeString(java.nio.file.Path.of(path), drift + System.lineSeparator(),
+					java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+		} catch ( java.io.IOException e ) {
+			org.slf4j.LoggerFactory.getLogger(BenchmarkConfig.class)
+					.warn("could not record this trial's drift to {}; the report will say it was not measured",
+							path, e);
+		}
+	}
+
+	/**
+	 * The worst drift any trial of a run reported, or empty when none did.
+	 *
+	 * <p>The worst rather than the mean: the question the figure answers is whether any measurement in
+	 * this run was taken against a store that had moved, and averaging that away is how a run with one
+	 * badly drifted trial comes to look clean.
+	 */
+	public static java.util.OptionalDouble worstDriftIn ( java.nio.file.Path driftFile ) {
+		if ( !java.nio.file.Files.isReadable(driftFile) ) {
+			return java.util.OptionalDouble.empty();
+		}
+		try {
+			return java.nio.file.Files.readAllLines(driftFile).stream()
+					.map(String::strip)
+					.filter(line -> !line.isEmpty())
+					.mapToDouble(Double::parseDouble)
+					.max();
+		} catch ( java.io.IOException | NumberFormatException e ) {
+			return java.util.OptionalDouble.empty();
+		}
 	}
 }

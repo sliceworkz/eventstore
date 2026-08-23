@@ -23,6 +23,7 @@ import java.util.List;
 import org.sliceworkz.eventstore.benchmark.corpus.CorpusFacts;
 import org.sliceworkz.eventstore.benchmark.corpus.CorpusGenerator;
 import org.sliceworkz.eventstore.benchmark.corpus.CorpusSpec.PayloadProfile;
+import org.sliceworkz.eventstore.benchmark.domain.CrmEvent;
 import org.sliceworkz.eventstore.benchmark.domain.InventoryEvent;
 import org.sliceworkz.eventstore.benchmark.domain.LegacySalesEvent;
 import org.sliceworkz.eventstore.benchmark.domain.SalesEvent;
@@ -78,7 +79,94 @@ public final class ReadWorkloads {
 				byId(),
 				wildcard(),
 				replay(),
-				upcastingReplay());
+				upcastingReplay(),
+				shreddedPage(),
+				sealedPageRaw());
+	}
+
+	/**
+	 * A page of crm events read through a typed stream, so every sealed value is unsealed.
+	 *
+	 * <p>Paired with {@link #sealedPageRaw()}, which reads the very same events without decrypting
+	 * them. That pairing is what makes the shredding cost measurable at all: the two differ in the
+	 * unseal and in binding the result to a record, over identical bytes on an identical store, which
+	 * is a far tighter comparison than any two corpora could give.
+	 */
+	private static Workload shreddedPage ( ) {
+		return new Workload() {
+
+			@Override
+			public String name ( ) {
+				return "query-crm-shredded";
+			}
+
+			@Override
+			public String description ( ) {
+				return "a page of crm events read typed, unsealing every protected value";
+			}
+
+			@Override
+			public WorkloadRequirement requirement ( ) {
+				return WorkloadRequirement.readOnlyOn(PayloadProfile.SHREDDED);
+			}
+
+			@Override
+			public Object invoke ( WorkloadContext context ) {
+				List<Event<CrmEvent>> page = context.crm()
+						.query(EventQuery.matchAll().limit(PAGE_SIZE))
+						.toList();
+
+				// Touching the value is not ceremony. A Shreddable holds its plaintext once unsealed, and
+				// the unseal happens during deserialization -- but reading it here is what stops a future
+				// lazy implementation from turning this benchmark into a measurement of nothing.
+				int seen = 0;
+				for ( Event<CrmEvent> event : page ) {
+					seen += switch ( event.data() ) {
+						case CrmEvent.CustomerRegistered registered ->
+							registered.details().toOptional().map(details -> details.fullName().length()).orElse(0);
+						case CrmEvent.CustomerAddressChanged changed ->
+							changed.address().toOptional().map(address -> address.city().length()).orElse(0);
+						default -> 0;
+					};
+				}
+				return seen;
+			}
+		};
+	}
+
+	/**
+	 * The same page read raw, which by design does not decrypt.
+	 *
+	 * <p>The control for {@link #shreddedPage()}. Raw mode hands back the sealed envelope as stored, so
+	 * the gap between the two is the unseal plus the record binding -- an upper bound on the unseal
+	 * alone, and the honest way to state it.
+	 */
+	private static Workload sealedPageRaw ( ) {
+		return new Workload() {
+
+			@Override
+			public String name ( ) {
+				return "query-crm-raw";
+			}
+
+			@Override
+			public String description ( ) {
+				return "the same crm page read raw, which does not decrypt -- the control for the unseal cost";
+			}
+
+			@Override
+			public WorkloadRequirement requirement ( ) {
+				return WorkloadRequirement.readOnlyOn(PayloadProfile.SHREDDED);
+			}
+
+			@Override
+			public Object invoke ( WorkloadContext context ) {
+				return context.target().store()
+						.getEventStream(EventStreamId.forContext(WebshopContext.CRM.streamContext()).anyPurpose())
+						.query(EventQuery.matchAll().limit(PAGE_SIZE))
+						.toList();
+			}
+		};
 	}
 
 	/** A plain page of the inventory stream: the cheapest possible read, and the baseline. */

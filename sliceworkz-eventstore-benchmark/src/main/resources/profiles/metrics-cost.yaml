@@ -1,0 +1,45 @@
+name: metrics-cost
+description: >
+  What the library's own instrumentation costs, measured rather than assumed. One corpus, three
+  stores over it: no meters, the default cap of a thousand distinct purposes, and no cap at all.
+  All three in one run, so the comparison needs no second report and no environment to match.
+
+  The corpus is deliberately PER_ENTITY with two thousand entities, which is the configuration where
+  the cap does something: an uncapped store registers a meter set per purpose and keeps every one of
+  them for the life of the process, while the capped store pools everything past the first thousand
+  into `_other`. Under a TAGGED design all three targets would look identical, which would be a true
+  measurement of the wrong thing.
+
+corpus:
+  volume: 100000
+  streamDesign: PER_ENTITY
+  composition: CLEAN
+  payload: REALISTIC
+  entityCount: 2000
+  seed: 20260823
+
+targets:
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: OFF
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: CAPPED
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: UNLIMITED
+
+jmh:
+  workloads:
+    - append-none
+    - append-type-and-tag
+    - query-by-entity-hot
+    - query-last-event
+  threads: [ 1 ]
+  forks: 2
+  warmupIterations: 2
+  measurementIterations: 3
+  iterationSeconds: 5

@@ -1,0 +1,36 @@
+name: replay-throughput
+description: >
+  What a read-model rebuild costs. The projector reads in batches of 500 carrying a cursor, so this
+  measures the per-batch cost -- the query, the deserialization of 500 payloads, and the handler
+  call -- rather than one heroic unbounded read.
+
+  Beside it, the two paging primitives a rebuild is made of: a cursor-carried walk and a plain page.
+  If replay-batches is much worse than five times query-cursor-walk, the cost is in the projector
+  rather than in the store, and that is worth knowing before tuning the wrong thing.
+
+corpus:
+  volume: 100000
+  streamDesign: TAGGED
+  composition: MULTI_DOMAIN
+  payload: REALISTIC
+  entityCount: 2000
+  seed: 20260823
+
+targets:
+  - backend: INMEM
+    metrics: OFF
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: OFF
+
+jmh:
+  workloads:
+    - replay-batches
+    - query-cursor-walk
+    - query-stream-page
+  threads: [ 1 ]
+  forks: 2
+  warmupIterations: 2
+  measurementIterations: 3
+  iterationSeconds: 10

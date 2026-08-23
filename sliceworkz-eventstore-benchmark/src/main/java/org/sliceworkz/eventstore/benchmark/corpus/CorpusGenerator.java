@@ -30,7 +30,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.sliceworkz.eventstore.benchmark.corpus.CorpusSpec.PayloadProfile;
 import org.sliceworkz.eventstore.benchmark.corpus.CorpusSpec.StreamDesign;
+import org.sliceworkz.eventstore.benchmark.domain.Address;
 import org.sliceworkz.eventstore.benchmark.domain.CatalogEvent;
+import org.sliceworkz.eventstore.benchmark.domain.ContactDetails;
 import org.sliceworkz.eventstore.benchmark.domain.CrmEvent;
 import org.sliceworkz.eventstore.benchmark.domain.InventoryEvent;
 import org.sliceworkz.eventstore.benchmark.domain.LegacySalesEvent;
@@ -41,12 +43,19 @@ import org.sliceworkz.eventstore.benchmark.domain.SalesEvent;
 import org.sliceworkz.eventstore.benchmark.domain.ShippingEvent;
 import org.sliceworkz.eventstore.benchmark.domain.TagKeys;
 import org.sliceworkz.eventstore.benchmark.domain.WebshopContext;
+import org.sliceworkz.eventstore.EventStore;
+import org.sliceworkz.eventstore.events.EphemeralEvent;
+import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.shredding.DataSubject;
+import org.sliceworkz.eventstore.shredding.Shreddable;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventToImport;
+import org.sliceworkz.eventstore.stream.AppendCriteria;
+import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
 import tools.jackson.databind.DeserializationFeature;
@@ -69,9 +78,13 @@ import tools.jackson.databind.json.JsonMapper;
  * </ol>
  *
  * <p>The one exception is {@link PayloadProfile#SHREDDED}, whose sealed envelopes only the store's
- * own serializer can produce -- hand-writing the ciphertext is not on. That profile is generated
- * through {@code append} instead, which is far slower and therefore only sensible at the small and
- * medium tiers.
+ * own serializer can produce -- hand-writing the ciphertext is not on. That profile goes through
+ * {@code append} instead, and pays for it twice: appends are far slower than a bulk import, and the
+ * store assigns the ids and timestamps, so a shredded corpus is <b>reproducible in content but not
+ * byte-identical</b> across provisionings. Its events are the same events in the same order carrying
+ * the same tags; their ids and timestamps are not the same. That is enough for every workload here --
+ * none of them depends on a particular id, and the one that needs a known id reads it back -- but it
+ * is a real difference from the imported profiles and the reason the large tier is not for this one.
  *
  * <p><b>The payload JSON is produced by an identically configured mapper</b> to the one the store
  * reads with: a plain {@code JsonMapper} with {@code FAIL_ON_UNKNOWN_PROPERTIES} enabled. That is a
@@ -92,12 +105,34 @@ public final class CorpusGenerator {
 	 */
 	private static final double SHARE_INVENTORY = 0.55d;
 
+	/**
+	 * How a {@link PayloadProfile#SHREDDED} corpus splits its volume. The crm context joins the two
+	 * under test, because it is the only one holding personal data and a shredded corpus with no
+	 * shredded values in the contexts anything reads would measure nothing.
+	 */
+	private static final double SHREDDED_SHARE_INVENTORY = 0.45d;
+	private static final double SHREDDED_SHARE_CRM = 0.20d;
+
 	/** How the noise volume is split across the contexts nothing measures. */
 	private static final Map<WebshopContext, Double> NOISE_SHARES = Map.of(
 			WebshopContext.CATALOG, 0.55d,
 			WebshopContext.PAYMENTS, 0.25d,
 			WebshopContext.SHIPPING, 0.15d,
 			WebshopContext.CRM, 0.05d);
+
+	/**
+	 * The same shares with crm's given to catalog, for a shredded corpus.
+	 *
+	 * <p>Under {@code SHREDDED} the crm context is under test, and letting it also be noise would give
+	 * it two populations with different payloads and make its recorded facts describe neither.
+	 */
+	private static final Map<WebshopContext, Double> SHREDDED_NOISE_SHARES = Map.of(
+			WebshopContext.CATALOG, 0.60d,
+			WebshopContext.PAYMENTS, 0.25d,
+			WebshopContext.SHIPPING, 0.15d);
+
+	/** Events per {@code append} call on the shredded path. Well below any wire-parameter ceiling. */
+	private static final int APPEND_BATCH_SIZE = 500;
 
 	/** Marker tag key carrying the needle and swathe values, kept apart from the domain's own tags. */
 	public static final String MARKER_TAG_KEY = TagKeys.CAMPAIGN;
@@ -138,7 +173,7 @@ public final class CorpusGenerator {
 	public CorpusFacts generateInto ( EventStorage storage, LongConsumer progress ) {
 		if ( spec.payload() == PayloadProfile.SHREDDED ) {
 			throw new UnsupportedOperationException(
-					"a SHREDDED corpus cannot be bulk-imported: its sealed envelopes can only be produced by the store's own serializer. Generate it through appends instead.");
+					"a SHREDDED corpus cannot be bulk-imported: its sealed envelopes can only be produced by the store's own serializer. Use the EventStore overload of generateInto, which appends.");
 		}
 
 		long started = System.nanoTime();
@@ -180,11 +215,170 @@ public final class CorpusGenerator {
 	}
 
 	/**
+	 * Writes the corpus through {@code append}, which is the only way to produce sealed values.
+	 *
+	 * <p>Reached only for {@link PayloadProfile#SHREDDED}; every other profile takes the bulk import
+	 * path, which is an order of magnitude faster and fully deterministic. See the class comment for
+	 * what that costs here.
+	 *
+	 * @param store the store to append through -- an {@code EventStorage} is not enough, since sealing
+	 *        happens in the serde the store owns and needs the codec configured on it
+	 */
+	public CorpusFacts generateByAppending ( EventStore store, LongConsumer progress ) {
+		long started = System.nanoTime();
+		Counters counters = new Counters();
+
+		long underTest = spec.volume();
+		long inventoryEvents = Math.round(underTest * SHREDDED_SHARE_INVENTORY);
+		long crmEvents = Math.round(underTest * SHREDDED_SHARE_CRM);
+		long salesEvents = underTest - inventoryEvents - crmEvents;
+		MarkerPlacement markers = MarkerPlacement.over(underTest);
+
+		Map<WebshopContext, ContextWriter<?>> writers = new LinkedHashMap<>();
+		long sequence = 0;
+		sequence = appendContext(store, writers, WebshopContext.INVENTORY, inventoryEvents, sequence,
+				counters, markers, progress);
+		sequence = appendContext(store, writers, WebshopContext.SALES, salesEvents, sequence,
+				counters, markers, progress);
+		sequence = appendContext(store, writers, WebshopContext.CRM, crmEvents, sequence,
+				counters, markers, progress);
+
+		if ( spec.hasNoiseContexts() ) {
+			long noise = underTest * CorpusSpec.NOISE_MULTIPLIER;
+			for ( WebshopContext context : List.of(WebshopContext.CATALOG, WebshopContext.PAYMENTS,
+					WebshopContext.SHIPPING) ) {
+				long count = Math.round(noise * SHREDDED_NOISE_SHARES.get(context));
+				sequence = appendContext(store, writers, context, count, sequence, counters,
+						MarkerPlacement.none(), progress);
+			}
+		}
+
+		writers.values().forEach(writer -> drain(writer, counters, progress));
+
+		Duration took = Duration.ofNanos(System.nanoTime() - started);
+		LOGGER.info("appended {} events in {}ms", counters.total, took.toMillis());
+		return buildFacts(counters);
+	}
+
+	private long appendContext ( EventStore store, Map<WebshopContext, ContextWriter<?>> writers,
+			WebshopContext context, long count, long startSequence, Counters counters,
+			MarkerPlacement markers, LongConsumer progress ) {
+		ContextWriter<?> writer = writers.computeIfAbsent(context, ctx -> ContextWriter.open(store, ctx));
+		long sequence = startSequence;
+
+		for ( long i = 0; i < count; i++ ) {
+			SplittableRandom random = new SplittableRandom(ids.streamSeedFor(sequence));
+			String entityId = entityIdFor(context, entities.next(random));
+
+			long markableIndex = counters.markable;
+			boolean needle = markers.isNeedle(markableIndex);
+			boolean swathe = markers.isSwathe(markableIndex);
+
+			writer.add(streamIdFor(context, entityId), payloadFor(context, entityId, random),
+					tagsFor(context, entityId, random, needle, swathe));
+
+			counters.record(context, entityId, needle, swathe, sequence, isUnderTest(context));
+			sequence++;
+
+			if ( writer.pendingCount() >= APPEND_BATCH_SIZE ) {
+				drain(writer, counters, progress);
+			}
+		}
+		return sequence;
+	}
+
+	/**
+	 * Flushes a writer's pending events and takes the facts only the store can supply.
+	 *
+	 * <p>The known event id is one of them. On the import path the generator chooses ids, so it knows
+	 * one; here the store assigns them, and a fact naming an id nothing stored would send the
+	 * {@code query-by-id} workload looking for an event that does not exist -- fast, successful and
+	 * measuring nothing.
+	 */
+	private void drain ( ContextWriter<?> writer, Counters counters, LongConsumer progress ) {
+		for ( Event<?> written : writer.flush() ) {
+			if ( counters.firstIdUnderTest == null && writer.context == WebshopContext.INVENTORY ) {
+				counters.firstIdUnderTest = written.reference().id();
+			}
+		}
+		if ( progress != null ) {
+			progress.accept(counters.total);
+		}
+	}
+
+	/**
+	 * One context's typed stream, with the events waiting to go into it.
+	 *
+	 * <p>Bound to an {@code anyPurpose} stream and appending with an explicit target, so one writer
+	 * serves both stream designs: under {@code TAGGED} every event goes to the context's default
+	 * purpose, under {@code PER_ENTITY} each goes to its entity's own.
+	 *
+	 * <p>Events are grouped by target stream because an append call writes to one stream. Under
+	 * {@code PER_ENTITY} that makes the batches small -- one per entity -- which is a cost of the
+	 * design rather than of this code.
+	 */
+	private static final class ContextWriter<T> {
+
+		private final WebshopContext context;
+		private final Class<T> root;
+		private final EventStream<T> stream;
+		private final Map<EventStreamId, List<EphemeralEvent<? extends T>>> pending = new LinkedHashMap<>();
+		private int pendingCount;
+
+		private ContextWriter ( WebshopContext context, Class<T> root, EventStream<T> stream ) {
+			this.context = context;
+			this.root = root;
+			this.stream = stream;
+		}
+
+		static ContextWriter<?> open ( EventStore store, WebshopContext context ) {
+			return switch ( context ) {
+				case INVENTORY -> of(store, context, InventoryEvent.class);
+				case SALES -> of(store, context, SalesEvent.class);
+				case PAYMENTS -> of(store, context, PaymentEvent.class);
+				case SHIPPING -> of(store, context, ShippingEvent.class);
+				case CATALOG -> of(store, context, CatalogEvent.class);
+				case CRM -> of(store, context, CrmEvent.class);
+			};
+		}
+
+		private static <T> ContextWriter<T> of ( EventStore store, WebshopContext context, Class<T> root ) {
+			return new ContextWriter<>(context, root,
+					store.getEventStream(EventStreamId.forContext(context.streamContext()).anyPurpose(), root));
+		}
+
+		void add ( EventStreamId target, Object payload, Tags tags ) {
+			pending.computeIfAbsent(target, key -> new ArrayList<>()).add(Event.of(root.cast(payload), tags));
+			pendingCount++;
+		}
+
+		int pendingCount ( ) {
+			return pendingCount;
+		}
+
+		List<Event<T>> flush ( ) {
+			if ( pending.isEmpty() ) {
+				return List.of();
+			}
+			List<Event<T>> written = new ArrayList<>(pendingCount);
+			pending.forEach(( target, events ) ->
+					written.addAll(stream.append(AppendCriteria.none(), events, target)));
+			pending.clear();
+			pendingCount = 0;
+			return written;
+		}
+	}
+
+	/**
 	 * Whether a context is one the measured workloads read. Only these carry marker tags, and only
 	 * these contribute to the hot/cold entity facts.
+	 *
+	 * <p>Under {@code SHREDDED} the crm context joins them, because that is where the sealed values
+	 * are and a workload has to read them for the profile to measure anything.
 	 */
-	private static boolean isUnderTest ( WebshopContext context ) {
-		return context == WebshopContext.INVENTORY || context == WebshopContext.SALES;
+	private boolean isUnderTest ( WebshopContext context ) {
+		return context == WebshopContext.INVENTORY || context == WebshopContext.SALES
+				|| ( spec.payload() == PayloadProfile.SHREDDED && context == WebshopContext.CRM );
 	}
 
 	/** Noise contexts in a fixed order, so generation order -- and thus physical order -- is stable. */
@@ -308,12 +502,41 @@ public final class CorpusGenerator {
 			case PAYMENTS -> paymentPayload(entityId, random);
 			case SHIPPING -> shippingPayload(entityId, random);
 			case CATALOG -> catalogPayload(entityId, random);
-			// only the two types that carry no personal data: the others hold a Shreddable, whose
-			// sealed form this generator cannot produce without the store's own serializer
-			case CRM -> random.nextBoolean()
-					? new CrmEvent.NewsletterSubscribed(entityId, "offers")
-					: new CrmEvent.NewsletterUnsubscribed(entityId, "offers", "too frequent");
+			case CRM -> crmPayload(entityId, random);
 		};
+	}
+
+	/**
+	 * Customer events, with personal data only where the store can seal it.
+	 *
+	 * <p>On the import path the two {@code Shreddable}-carrying types are unreachable: their sealed
+	 * envelopes come out of the store's own serializer and this generator writes JSON directly. So an
+	 * imported corpus's crm context holds newsletter events, which carry none, and a
+	 * {@code SHREDDED} corpus -- which goes through appends -- holds the two that do.
+	 */
+	private Object crmPayload ( String customerId, SplittableRandom random ) {
+		if ( spec.payload() != PayloadProfile.SHREDDED ) {
+			return random.nextBoolean()
+					? new CrmEvent.NewsletterSubscribed(customerId, "offers")
+					: new CrmEvent.NewsletterUnsubscribed(customerId, "offers", "too frequent");
+		}
+
+		DataSubject subject = DataSubject.of("customer", customerId);
+		Address address = new Address("Meir", String.valueOf(random.nextInt(1, 400)),
+				"%04d".formatted(random.nextInt(1000, 9999)), "Antwerpen", pick(COUNTRIES, random));
+
+		// Two thirds registrations, so most reads unseal the larger of the two values. Both types are
+		// present because a store holding one shape of sealed value would not exercise the case the
+		// design exists for -- a subject's data spread over several events.
+		return random.nextInt(3) == 0
+				? new CrmEvent.CustomerAddressChanged(customerId, Shreddable.of(address, subject))
+				: new CrmEvent.CustomerRegistered(customerId,
+						Shreddable.of(new ContactDetails("Customer " + customerId,
+								customerId.toLowerCase() + "@example.invalid",
+								"+32 3 %03d %02d %02d".formatted(random.nextInt(1000), random.nextInt(100),
+										random.nextInt(100)),
+								address), subject),
+						"seg-%d".formatted(random.nextInt(8)));
 	}
 
 	private Object inventoryPayload ( String sku, SplittableRandom random ) {

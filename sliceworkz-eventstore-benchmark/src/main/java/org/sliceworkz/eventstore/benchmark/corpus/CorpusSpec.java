@@ -178,6 +178,42 @@ public record CorpusSpec (
 	}
 
 	/**
+	 * Which properties differ from another spec, named one per line.
+	 *
+	 * <p>What makes a comparison between two corpora readable. Two fingerprints differ or they do not,
+	 * and neither says which knob was turned -- so a "stream design shootout" result would otherwise
+	 * come with no statement of what it varied, which is precisely the sort of number this suite exists
+	 * not to produce.
+	 */
+	public List<String> differencesFrom ( CorpusSpec other ) {
+		List<String> differences = new java.util.ArrayList<>();
+		if ( volume != other.volume ) {
+			differences.add("volume: %,d vs %,d".formatted(volume, other.volume));
+		}
+		if ( streamDesign != other.streamDesign ) {
+			differences.add("stream design: %s vs %s".formatted(streamDesign, other.streamDesign));
+		}
+		if ( composition != other.composition ) {
+			differences.add("composition: %s vs %s".formatted(composition, other.composition));
+		}
+		if ( payload != other.payload ) {
+			differences.add("payload: %s vs %s".formatted(payload, other.payload));
+		}
+		if ( entityCount != other.entityCount ) {
+			differences.add("entities: %,d vs %,d".formatted(entityCount, other.entityCount));
+		}
+		if ( !neighbourVolumes.equals(other.neighbourVolumes) ) {
+			differences.add("neighbour stores: %s vs %s".formatted(neighbourVolumes, other.neighbourVolumes));
+		}
+		if ( seed != other.seed ) {
+			// not an experimental variable but a confound: two seeds produce different data, so a
+			// difference between them is partly the data rather than the property under test
+			differences.add("seed: %d vs %d (different data, not a property under test)".formatted(seed, other.seed));
+		}
+		return differences;
+	}
+
+	/**
 	 * The canonical string the fingerprint is taken over. Written out by hand rather than derived from
 	 * {@code toString()} so that a change to a record's rendering cannot silently invalidate every
 	 * provisioned corpus -- or, worse, silently fail to.

@@ -46,17 +46,26 @@ public final class JmhResults {
 
 	private JmhResults ( ) { }
 
+	/**
+	 * One JMH result file and the target it measured.
+	 *
+	 * <p>The pairing exists because JMH's output cannot carry it. A target is a property of the
+	 * launcher's loop, not of a benchmark, so the file is the only place the association survives -- and
+	 * losing it makes two targets' rows indistinguishable, which is worse than not measuring the second.
+	 */
+	public record ResultFile ( Path path, String target ) { }
+
 	/** Reads every result file of a run, in the order given. */
-	public static List<BenchmarkRow> readAll ( List<Path> files ) {
+	public static List<BenchmarkRow> readAll ( List<ResultFile> files ) {
 		List<BenchmarkRow> rows = new ArrayList<>();
-		for ( Path file : files ) {
-			rows.addAll(read(file));
+		for ( ResultFile file : files ) {
+			rows.addAll(read(file.path(), file.target()));
 		}
 		return rows;
 	}
 
-	/** Reads one JMH result file. */
-	public static List<BenchmarkRow> read ( Path file ) {
+	/** Reads one JMH result file, attributing every row in it to the given target. */
+	public static List<BenchmarkRow> read ( Path file, String target ) {
 		if ( !Files.isReadable(file) ) {
 			throw new IllegalArgumentException("no readable JMH result file at " + file);
 		}
@@ -64,7 +73,7 @@ public final class JmhResults {
 			JsonNode root = JSON.readTree(Files.readString(file));
 			List<BenchmarkRow> rows = new ArrayList<>();
 			for ( JsonNode benchmark : root ) {
-				rows.add(toRow(benchmark));
+				rows.add(toRow(benchmark, target));
 			}
 			return rows;
 		} catch ( IOException e ) {
@@ -76,7 +85,7 @@ public final class JmhResults {
 		}
 	}
 
-	private static BenchmarkRow toRow ( JsonNode benchmark ) {
+	private static BenchmarkRow toRow ( JsonNode benchmark, String target ) {
 		JsonNode primary = benchmark.path("primaryMetric");
 
 		Map<String, Double> secondary = new LinkedHashMap<>();
@@ -86,6 +95,7 @@ public final class JmhResults {
 		}
 
 		return new BenchmarkRow(
+				target,
 				benchmark.path("params").path("workload").asString("(unparameterised)"),
 				benchmark.path("threads").asInt(1),
 				benchmark.path("mode").asString("?"),

@@ -28,6 +28,11 @@ import java.util.Map;
  * counters beside it, so this is that projection and nothing more. The original JSON is kept
  * alongside, because it is the record and this is only a view of it.
  *
+ * @param target which store this was measured against, e.g. {@code postgres:18/metrics=off}. Not in
+ *        JMH's output at all -- it comes from the launcher, which knows which result file belongs to
+ *        which target. It has to be here: a profile measuring one corpus through two stores produces
+ *        two rows per workload, and without this they are indistinguishable, so every derived table
+ *        would silently report whichever came first and a baseline diff would line the wrong pair up
  * @param workload the operation, e.g. {@code append-type-and-tag}
  * @param threads how many threads were running
  * @param mode JMH's mode, {@code thrpt} or {@code sample}
@@ -37,6 +42,7 @@ import java.util.Map;
  * @param secondary the aux counters -- successes, conflicts, deduplicated
  */
 public record BenchmarkRow (
+		String target,
 		String workload,
 		int threads,
 		String mode,
@@ -46,6 +52,7 @@ public record BenchmarkRow (
 		Map<String, Double> secondary ) {
 
 	public BenchmarkRow {
+		target = target == null || target.isBlank() ? "(unknown target)" : target;
 		secondary = secondary == null ? Map.of() : Map.copyOf(secondary);
 	}
 
@@ -87,13 +94,14 @@ public record BenchmarkRow (
 
 	/** A key identifying this measurement across runs, for a baseline diff. */
 	public String key ( ) {
-		return "%s|%s|%dt".formatted(workload, mode, threads);
+		return "%s|%s|%s|%dt".formatted(target, workload, mode, threads);
 	}
 
-	/** Sorts rows the way a reader wants them: by workload, then by thread count. */
+	/** Sorts rows the way a reader wants them: by target, then workload, then thread count. */
 	public static List<BenchmarkRow> sorted ( List<BenchmarkRow> rows ) {
 		return rows.stream()
-				.sorted(java.util.Comparator.comparing(BenchmarkRow::workload)
+				.sorted(java.util.Comparator.comparing(BenchmarkRow::target)
+						.thenComparing(BenchmarkRow::workload)
 						.thenComparing(BenchmarkRow::threads)
 						.thenComparing(BenchmarkRow::mode))
 				.toList();

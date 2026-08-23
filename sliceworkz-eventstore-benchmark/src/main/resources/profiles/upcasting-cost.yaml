@@ -1,0 +1,43 @@
+name: upcasting-cost
+description: >
+  What reading history through upcasters costs. The sales context here is stored as OrderPlacedV1 and
+  BasketCheckedOut, half each, so a read exercises both the 1:1 upcaster and the 1:many one.
+
+  Compare against read-shapes, whose corpus differs in payload profile alone -- same volume, same
+  entities, same seed, same targets -- and the difference on the shared workloads is what a legacy
+  event costs to read.
+
+  One thing not to misread: query-upcasting returns more events than its limit asked for, because
+  limit counts *stored* events and a BasketCheckedOut upcasts into two. That is the documented
+  behaviour of the store, not a miscount here, and it means the throughput figure is per stored event
+  rather than per returned one.
+
+corpus:
+  volume: 100000
+  streamDesign: TAGGED
+  composition: CLEAN
+  payload: LEGACY
+  entityCount: 2000
+  seed: 20260823
+
+targets:
+  - backend: INMEM
+    metrics: OFF
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: OFF
+
+jmh:
+  workloads:
+    - query-upcasting
+    - query-stream-page
+    - query-by-tag-needle
+    - query-by-entity-hot
+    - append-none
+    - append-type-and-tag
+  threads: [ 1 ]
+  forks: 2
+  warmupIterations: 2
+  measurementIterations: 3
+  iterationSeconds: 5

@@ -21,6 +21,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
+import org.sliceworkz.eventstore.benchmark.corpus.CorpusSpec.PayloadProfile;
+import org.sliceworkz.eventstore.benchmark.domain.Address;
+import org.sliceworkz.eventstore.benchmark.domain.CrmEvent;
 import org.sliceworkz.eventstore.benchmark.domain.InventoryEvent;
 import org.sliceworkz.eventstore.benchmark.domain.TagKeys;
 import org.sliceworkz.eventstore.benchmark.domain.WebshopContext;
@@ -32,6 +35,8 @@ import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventFilterItem;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
+import org.sliceworkz.eventstore.shredding.DataSubject;
+import org.sliceworkz.eventstore.shredding.Shreddable;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 
@@ -69,7 +74,62 @@ public final class AppendWorkloads {
 				emptyBoundary(),
 				idempotentFresh(),
 				idempotentDuplicate(),
-				decideThenAppend());
+				decideThenAppend(),
+				shreddedAppend(false),
+				shreddedAppend(true));
+	}
+
+	/**
+	 * An unconditional append of one crm event carrying a sealed value.
+	 *
+	 * <p>Two variants, and the pair is the measurement. The <em>known subject</em> one appends for a
+	 * customer the corpus already holds, so the key store has that key and probably has it cached; the
+	 * <em>new subject</em> one appends for a customer nobody has seen, so a key has to be created and
+	 * stored first. The gap between them is what a first-ever event for a data subject costs, which is
+	 * the part of shredding that scales with customers rather than with events.
+	 *
+	 * <p>Against {@code append-none} in the same run, either one is the absolute cost of sealing a
+	 * value on the write path. That comparison crosses two contexts and two payload shapes, so it is a
+	 * figure rather than a ratio -- the tight ratio lives on the read side, where {@code query-crm-raw}
+	 * reads the very same bytes without decrypting them.
+	 */
+	private static Workload shreddedAppend ( boolean newSubject ) {
+		return new Workload() {
+
+			@Override
+			public String name ( ) {
+				return newSubject ? "append-crm-new-subject" : "append-crm-shredded";
+			}
+
+			@Override
+			public String description ( ) {
+				return newSubject
+						? "a sealed append for a customer nobody has seen -- includes minting and storing a key"
+						: "a sealed append for a customer the corpus already holds -- the steady-state cost";
+			}
+
+			@Override
+			public WorkloadRequirement requirement ( ) {
+				return new WorkloadRequirement(true, java.util.Set.of(PayloadProfile.SHREDDED), false);
+			}
+
+			@Override
+			public Object invoke ( WorkloadContext context ) {
+				String customerId = newSubject
+						? "CUST-N%05d-%d".formatted(context.random().nextInt(100_000), context.threadIndex())
+						: "CUST-%06d".formatted(context.random().nextInt(context.spec().entityCount()));
+				DataSubject subject = DataSubject.of("customer", customerId);
+
+				Address address = new Address("Meir", String.valueOf(context.random().nextInt(1, 400)),
+						"2000", "Antwerpen", "BE");
+				CrmEvent event = new CrmEvent.CustomerAddressChanged(customerId,
+						Shreddable.of(address, subject));
+
+				return context.crm().append(AppendCriteria.none(),
+						List.of(Event.of(event, Tags.of(TagKeys.CUSTOMER, customerId))),
+						context.streamIdFor(WebshopContext.CRM, customerId));
+			}
+		};
 	}
 
 	/**

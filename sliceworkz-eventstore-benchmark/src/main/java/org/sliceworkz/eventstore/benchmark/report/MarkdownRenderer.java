@@ -136,10 +136,15 @@ final class MarkdownRenderer {
 
 	private void derived ( StringBuilder out ) {
 		StringBuilder body = new StringBuilder();
-		dcbCost(body);
-		orGroupScaling(body);
-		threadScaling(body);
-		batchCost(body);
+		// Every derived table is computed per target and says which one it is about. Averaging an
+		// in-memory store and a PostgreSQL one would produce a number describing neither, and comparing
+		// the two is a job for `compare`, not for a table that quietly picked whichever came first.
+		for ( String target : distinctTargets() ) {
+			dcbCost(body, target);
+			orGroupScaling(body, target);
+			threadScaling(body, target);
+			batchCost(body, target);
+		}
 
 		if ( body.isEmpty() ) {
 			return;
@@ -147,16 +152,28 @@ final class MarkdownRenderer {
 		out.append("## What this run says\n\n").append(body);
 	}
 
+	/** The targets this run measured, in the order their rows appear. */
+	private List<String> distinctTargets ( ) {
+		return report.benchmarks().stream().map(BenchmarkRow::target).distinct().toList();
+	}
+
+	/** A section heading, carrying the target when this run measured more than one. */
+	private String heading ( String title, String target ) {
+		return distinctTargets().size() > 1
+				? "### %s — %s\n\n".formatted(title, target)
+				: "### %s\n\n".formatted(title);
+	}
+
 	/** What a consistency check costs over an append that does not make one. */
-	private void dcbCost ( StringBuilder out ) {
-		Optional<BenchmarkRow> baseline = throughputRow("append-none", 1);
-		Optional<BenchmarkRow> checked = throughputRow("append-type-and-tag", 1);
+	private void dcbCost ( StringBuilder out, String target ) {
+		Optional<BenchmarkRow> baseline = throughputRow(target, "append-none", 1);
+		Optional<BenchmarkRow> checked = throughputRow(target, "append-type-and-tag", 1);
 		if ( baseline.isEmpty() || checked.isEmpty() ) {
 			return;
 		}
 
 		double ratio = baseline.get().score() / checked.get().score();
-		out.append("### What the DCB check costs\n\n");
+		out.append(heading("What the DCB check costs", target));
 		out.append("| append | throughput | relative |\n|---|---|---|\n");
 		out.append("| no criteria | %s %s | 1.00x |\n".formatted(
 				baseline.get().scoreWithError(), baseline.get().unit()));
@@ -171,18 +188,29 @@ final class MarkdownRenderer {
 		out.append("On PostgreSQL the unconditional append is also the only one that takes no advisory "
 				+ "lock, so this gap is the whole DCB mechanism rather than just the extra predicate.\n\n");
 
-		if ( ratio < 1.05 ) {
-			out.append("> The check appears to cost nothing here. Against the in-memory backend that is "
-					+ "expected -- both appends take the same monitor and there is no lock to contend for. "
-					+ "Against PostgreSQL it would mean the measurement is wrong, most likely too few "
-					+ "iterations to separate the two.\n\n");
+		// Three readings, and they need different sentences.  A conditional append coming out *faster*
+		// is not "the check is free": nothing in the store makes an extra predicate cheaper than no
+		// predicate, so it is the measurement talking, whatever the backend.
+		if ( ratio < 0.95 ) {
+			out.append("> The conditional append came out **faster** than the unconditional one, which "
+					+ "nothing in the store can explain -- it does strictly more work. This is the "
+					+ "measurement, not a result: too few iterations, too short an iteration, or a busy "
+					+ "machine. Do not quote this table.\n\n");
+		} else if ( ratio < 1.05 ) {
+			out.append(target.startsWith("inmem")
+					? "> The check costs nothing here, which is what the in-memory backend should say: both "
+							+ "appends take the same monitor and there is no lock to contend for. Read the "
+							+ "PostgreSQL figure for the cost of the mechanism.\n\n"
+					: "> The check appears to cost nothing, which against PostgreSQL means the measurement is "
+							+ "wrong -- most likely too few iterations to separate the two, since a conditional "
+							+ "append additionally takes an advisory lock and runs a NOT EXISTS predicate.\n\n");
 		}
 	}
 
 	/** How the check grows with the number of facts a decision rests on. */
-	private void orGroupScaling ( StringBuilder out ) {
+	private void orGroupScaling ( StringBuilder out, String target ) {
 		List<BenchmarkRow> rows = List.of(2, 5, 10).stream()
-				.map(groups -> throughputRow("append-or-groups-" + groups, 1))
+				.map(groups -> throughputRow(target, "append-or-groups-" + groups, 1))
 				.filter(Optional::isPresent)
 				.map(Optional::get)
 				.toList();
@@ -190,8 +218,8 @@ final class MarkdownRenderer {
 			return;
 		}
 
-		Optional<BenchmarkRow> single = throughputRow("append-type-and-tag", 1);
-		out.append("### How a multi-fact decision scales\n\n");
+		Optional<BenchmarkRow> single = throughputRow(target, "append-type-and-tag", 1);
+		out.append(heading("How a multi-fact decision scales", target));
 		out.append("| OR-ed filter items | throughput | relative to one |\n|---|---|---|\n");
 		single.ifPresent(row -> out.append("| 1 | %s %s | 1.00x |\n".formatted(row.scoreWithError(), row.unit())));
 		for ( BenchmarkRow row : rows ) {
@@ -209,10 +237,10 @@ final class MarkdownRenderer {
 	 * What happens as writers are added -- with the conflict rate beside it, because throughput alone
 	 * can rise while the useful work falls.
 	 */
-	private void threadScaling ( StringBuilder out ) {
+	private void threadScaling ( StringBuilder out, String target ) {
 		Map<String, List<BenchmarkRow>> byWorkload = new TreeMap<>();
 		for ( BenchmarkRow row : report.benchmarks() ) {
-			if ( "thrpt".equals(row.mode()) ) {
+			if ( "thrpt".equals(row.mode()) && row.target().equals(target) ) {
 				byWorkload.computeIfAbsent(row.workload(), key -> new java.util.ArrayList<>()).add(row);
 			}
 		}
@@ -221,7 +249,7 @@ final class MarkdownRenderer {
 			return;
 		}
 
-		out.append("### What happens as threads are added\n\n");
+		out.append(heading("What happens as threads are added", target));
 		out.append("| workload | threads | throughput | useful/s | conflicts |\n|---|---|---|---|---|\n");
 		byWorkload.forEach(( workload, rows ) -> rows.stream()
 				.sorted(Comparator.comparingInt(BenchmarkRow::threads))
@@ -233,15 +261,15 @@ final class MarkdownRenderer {
 	}
 
 	/** Per-call overhead against per-event cost. */
-	private void batchCost ( StringBuilder out ) {
-		Optional<BenchmarkRow> one = throughputRow("append-none", 1);
-		Optional<BenchmarkRow> ten = throughputRow("append-batch-10", 1);
-		Optional<BenchmarkRow> hundred = throughputRow("append-batch-100", 1);
+	private void batchCost ( StringBuilder out, String target ) {
+		Optional<BenchmarkRow> one = throughputRow(target, "append-none", 1);
+		Optional<BenchmarkRow> ten = throughputRow(target, "append-batch-10", 1);
+		Optional<BenchmarkRow> hundred = throughputRow(target, "append-batch-100", 1);
 		if ( one.isEmpty() || ( ten.isEmpty() && hundred.isEmpty() ) ) {
 			return;
 		}
 
-		out.append("### What a round trip costs\n\n");
+		out.append(heading("What a round trip costs", target));
 		out.append("| events per call | calls/s | events/s |\n|---|---|---|\n");
 		out.append("| 1 | %.3f | %.0f |\n".formatted(one.get().score(), one.get().score()));
 		ten.ifPresent(row -> out.append("| 10 | %.3f | %.0f |\n".formatted(row.score(), row.score() * 10)));
@@ -310,25 +338,25 @@ final class MarkdownRenderer {
 			return;
 		}
 		out.append("## Every measurement\n\n");
-		out.append("| workload | mode | threads | score | unit | error | useful/s | conflicts/s |\n");
-		out.append("|---|---|---|---|---|---|---|---|\n");
+		out.append("| target | workload | mode | threads | score | unit | error | useful/s | conflicts/s |\n");
+		out.append("|---|---|---|---|---|---|---|---|---|\n");
 
 		for ( BenchmarkRow row : BenchmarkRow.sorted(report.benchmarks()) ) {
 			String relativeError = Double.isNaN(row.relativeError())
 					? "--"
 					: "%.1f%%".formatted(row.relativeError() * 100);
-			out.append("| %s | %s | %d | %.3f | %s | %s | %.0f | %.0f |\n".formatted(
-					row.workload(), row.mode(), row.threads(), row.score(), row.unit(),
+			out.append("| %s | %s | %s | %d | %.3f | %s | %s | %.0f | %.0f |\n".formatted(
+					row.target(), row.workload(), row.mode(), row.threads(), row.score(), row.unit(),
 					relativeError, row.successes(), row.conflicts()));
 		}
 		out.append("\nA relative error above about 10% means the measurement is too noisy to compare "
 				+ "against anything; raise the iteration count or quieten the machine.\n");
 	}
 
-	private Optional<BenchmarkRow> throughputRow ( String workload, int threads ) {
+	private Optional<BenchmarkRow> throughputRow ( String target, String workload, int threads ) {
 		return report.benchmarks().stream()
-				.filter(row -> row.workload().equals(workload) && row.threads() == threads
-						&& "thrpt".equals(row.mode()))
+				.filter(row -> row.target().equals(target) && row.workload().equals(workload)
+						&& row.threads() == threads && "thrpt".equals(row.mode()))
 				.findFirst();
 	}
 }

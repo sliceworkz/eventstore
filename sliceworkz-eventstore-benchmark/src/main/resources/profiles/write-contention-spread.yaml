@@ -1,0 +1,34 @@
+name: write-contention-spread
+description: >
+  How append throughput scales with writers when they do not collide -- each thread on its own SKU,
+  so no two conditional appends take the same advisory lock and no boundary is shared. The control
+  for the other two contention profiles: whatever this curve does is the store scaling, and the gap
+  between it and one-stream or one-boundary is what contention costs.
+
+corpus:
+  volume: 100000
+  streamDesign: TAGGED
+  composition: CLEAN
+  payload: REALISTIC
+  entityCount: 2000
+  seed: 20260823
+
+targets:
+  - backend: INMEM
+    metrics: OFF
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: OFF
+
+jmh:
+  workloads:
+    - append-none
+    - append-type-and-tag
+    - decide-then-append
+  threads: [ 1, 4, 8, 16 ]
+  collision: spread
+  forks: 2
+  warmupIterations: 2
+  measurementIterations: 3
+  iterationSeconds: 5

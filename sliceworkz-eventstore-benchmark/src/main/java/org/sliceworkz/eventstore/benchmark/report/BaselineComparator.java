@@ -55,7 +55,7 @@ public final class BaselineComparator {
 		}
 
 		public String toLine ( ) {
-			return "%-40s %10.3f -> %10.3f %-10s %+7.1f%%  %s".formatted(
+			return "%-58s %10.3f -> %10.3f %-10s %+7.1f%%  %s".formatted(
 					key, baselineScore, currentScore, unit, relativeChange() * 100,
 					significant ? note : "within noise");
 		}
@@ -88,12 +88,51 @@ public final class BaselineComparator {
 		}
 	}
 
-	/** Compares a run against a baseline. */
+	/** Compares a run against a baseline: the same configuration, measured again. */
 	public static Result compare ( RunReport baseline, RunReport current ) {
 		if ( !current.manifest().comparableTo(baseline.manifest()) ) {
 			return new Result.Refused(current.manifest().differencesFrom(baseline.manifest()));
 		}
+		return diff(baseline, current);
+	}
 
+	/**
+	 * Compares two <em>configurations</em> measured in the same environment.
+	 *
+	 * <p>A different question from {@link #compare}, and the rules invert. A baseline diff wants
+	 * everything the same except time, and refuses when the corpus differs. This wants the corpus or
+	 * the target to differ -- that is the experiment -- and refuses when the <em>environment</em> does,
+	 * because a difference measured across two machines says nothing about either configuration.
+	 *
+	 * <p>Without this the suite could not answer its own first question. "Which stream design should I
+	 * pick" is a comparison between two corpora that differ in exactly one property, and the baseline
+	 * comparator is required to decline it.
+	 */
+	public static Result compareConfigurations ( RunReport a, RunReport b ) {
+		if ( !a.manifest().environment().comparableTo(b.manifest().environment()) ) {
+			List<String> differences = new ArrayList<>(
+					List.of("these two runs were measured in different environments, so the difference "
+							+ "between them is not a property of the configurations:"));
+			differences.addAll(a.manifest().environment().differencesFrom(b.manifest().environment()));
+			return new Result.Refused(differences);
+		}
+		// Corpus and targets are the visible half of a configuration; the profile carries the rest --
+		// which collision mode the writers use, which thread counts were swept. Two write-contention
+		// profiles differ in nothing but that, and refusing them would leave the suite unable to answer
+		// its own contention question. So the refusal is for two runs of *one* profile over one corpus,
+		// which is a baseline comparison wearing the wrong hat.
+		if ( a.manifest().corpusFingerprint().equals(b.manifest().corpusFingerprint())
+				&& a.manifest().targets().equals(b.manifest().targets())
+				&& a.manifest().profileName().equals(b.manifest().profileName()) ) {
+			return new Result.Refused(List.of(
+					"these two runs are the same profile over the same corpus and the same targets, so there "
+							+ "is no configuration difference to attribute anything to. Use the baseline "
+							+ "comparison instead, which is the right tool for the same setup measured twice."));
+		}
+		return diff(a, b);
+	}
+
+	private static Result diff ( RunReport baseline, RunReport current ) {
 		List<Change> changes = new ArrayList<>();
 		int inBoth = 0;
 		int onlyInBaseline = 0;

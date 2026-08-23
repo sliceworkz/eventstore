@@ -1,0 +1,34 @@
+name: write-contention-one-boundary
+description: >
+  Every writer appending at the same DCB boundary, so most of them lose: an OptimisticLockingException
+  is the expected outcome here, not an error. Throughput alone is misleading in this profile and the
+  report says so -- a store can raise its operations per second while lowering the work done, and only
+  the conflict rate beside it says which happened. Read the "useful/s" column, not the score.
+
+corpus:
+  volume: 100000
+  streamDesign: TAGGED
+  composition: CLEAN
+  payload: REALISTIC
+  entityCount: 2000
+  seed: 20260823
+
+targets:
+  - backend: INMEM
+    metrics: OFF
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: OFF
+
+jmh:
+  workloads:
+    - append-none
+    - append-type-and-tag
+    - decide-then-append
+  threads: [ 1, 4, 8, 16 ]
+  collision: one-boundary
+  forks: 2
+  warmupIterations: 2
+  measurementIterations: 3
+  iterationSeconds: 5

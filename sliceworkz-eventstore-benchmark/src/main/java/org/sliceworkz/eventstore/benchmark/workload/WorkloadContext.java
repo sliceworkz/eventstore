@@ -25,6 +25,7 @@ import java.util.SplittableRandom;
 import org.sliceworkz.eventstore.benchmark.corpus.CorpusFacts;
 import org.sliceworkz.eventstore.benchmark.corpus.CorpusSpec;
 import org.sliceworkz.eventstore.benchmark.corpus.CorpusSpec.StreamDesign;
+import org.sliceworkz.eventstore.benchmark.domain.CrmEvent;
 import org.sliceworkz.eventstore.benchmark.domain.InventoryEvent;
 import org.sliceworkz.eventstore.benchmark.domain.SalesEvent;
 import org.sliceworkz.eventstore.benchmark.domain.WebshopContext;
@@ -96,6 +97,9 @@ public final class WorkloadContext {
 	private final EventStream<InventoryEvent> inventory;
 	private final EventStream<SalesEvent> sales;
 
+	/** Opened on first use; see {@link #crm()} for why this one cannot be eager. */
+	private EventStream<CrmEvent> crm;
+
 	/**
 	 * The last reference this thread knows for a given consistency boundary.
 	 *
@@ -156,6 +160,21 @@ public final class WorkloadContext {
 
 	public EventStream<SalesEvent> sales ( ) {
 		return sales;
+	}
+
+	/**
+	 * A stream over the crm context, opened on first use.
+	 *
+	 * <p>Lazy where the other two are eager, and not for tidiness: {@code CrmEvent} declares a
+	 * {@code Shreddable}, so registering it against a store with no codec configured throws at
+	 * {@code getEventStream}. Opening it in the constructor would therefore make every workload fail
+	 * on every store without shredding, including the twenty-odd that have nothing to do with it.
+	 */
+	public EventStream<CrmEvent> crm ( ) {
+		if ( crm == null ) {
+			crm = target.store().getEventStream(streamIdFor(WebshopContext.CRM, null), CrmEvent.class);
+		}
+		return crm;
 	}
 
 	/**

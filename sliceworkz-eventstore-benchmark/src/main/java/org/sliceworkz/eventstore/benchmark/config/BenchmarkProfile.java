@@ -41,7 +41,11 @@ import org.sliceworkz.eventstore.benchmark.env.TargetSpec;
  * @param corpus what the store under test must contain
  * @param targets the stores to open over that corpus; each is measured separately
  * @param jmh how to run the operation-level benchmarks, or {@code null} if this profile has none
- * @param load how to run the sustained-load scenarios, or {@code null} if this profile has none
+ * @param load the sustained-load scenarios to run, in order; empty if this profile has none. A list
+ *        rather than one, because the pair worth having is a pair: notification latency and
+ *        end-to-end latency are only interesting against each other, and putting them in one profile
+ *        puts them in one report where the attribution is a subtraction rather than a hunt across
+ *        two files
  */
 public record BenchmarkProfile (
 		String name,
@@ -49,7 +53,7 @@ public record BenchmarkProfile (
 		CorpusSpec corpus,
 		List<TargetSpec> targets,
 		JmhSettings jmh,
-		LoadSettings load ) {
+		List<LoadSettings> load ) {
 
 	/**
 	 * How the JMH half of a profile runs.
@@ -60,6 +64,10 @@ public record BenchmarkProfile (
 	 * @param warmupIterations warmup iterations per fork
 	 * @param measurementIterations measured iterations per fork
 	 * @param iterationSeconds how long one iteration runs
+	 * @param collision where concurrent writers collide -- {@code spread}, {@code one-stream} or
+	 *        {@code one-boundary}. Only meaningful above one thread, and the whole measurement when
+	 *        sweeping thread counts: the same append at eight threads is three different experiments
+	 *        depending on whether those threads share a stream, share a DCB boundary, or neither
 	 */
 	public record JmhSettings (
 			List<String> workloads,
@@ -67,7 +75,8 @@ public record BenchmarkProfile (
 			int forks,
 			int warmupIterations,
 			int measurementIterations,
-			int iterationSeconds ) {
+			int iterationSeconds,
+			String collision ) {
 
 		public JmhSettings {
 			workloads = workloads == null ? List.of() : List.copyOf(workloads);
@@ -79,6 +88,7 @@ public record BenchmarkProfile (
 			warmupIterations = warmupIterations <= 0 ? 5 : warmupIterations;
 			measurementIterations = measurementIterations <= 0 ? 10 : measurementIterations;
 			iterationSeconds = iterationSeconds <= 0 ? 5 : iterationSeconds;
+			collision = collision == null || collision.isBlank() ? null : collision;
 		}
 
 		/**
@@ -147,8 +157,9 @@ public record BenchmarkProfile (
 		}
 		targets = targets == null || targets.isEmpty() ? List.of(TargetSpec.inmem()) : List.copyOf(targets);
 		description = description == null ? "" : description;
+		load = load == null ? List.of() : List.copyOf(load);
 
-		if ( jmh == null && load == null ) {
+		if ( jmh == null && load.isEmpty() ) {
 			throw new IllegalArgumentException(
 					"profile '%s' measures nothing: it needs a 'jmh' section, a 'load' section, or both"
 							.formatted(name));
@@ -179,8 +190,8 @@ public record BenchmarkProfile (
 			long benchmarks = (long) Math.max(jmh.workloads().size(), 1) * jmh.threads().size() * targets.size();
 			total = total.plus(jmh.estimatedDurationPerBenchmark().multipliedBy(benchmarks));
 		}
-		if ( load != null ) {
-			total = total.plus(load.estimatedDuration().multipliedBy(targets.size()));
+		for ( LoadSettings scenario : load ) {
+			total = total.plus(scenario.estimatedDuration().multipliedBy(targets.size()));
 		}
 		return total;
 	}

@@ -1,0 +1,44 @@
+name: crowded-store
+description: >
+  read-shapes over a store that also holds five other bounded contexts, in the same table, at five
+  times the volume. This is the composition that actually slows a query down: more rows behind every
+  index, lower selectivity for a tag that appears in several contexts, a bigger heap to correlate.
+
+  Compare against read-shapes -- same workloads, same targets, same volume under test -- and the
+  difference is the cost of sharing a table with other domains.
+
+corpus:
+  volume: 100000
+  streamDesign: TAGGED
+  composition: MULTI_DOMAIN
+  payload: REALISTIC
+  entityCount: 2000
+  seed: 20260823
+
+targets:
+  - backend: INMEM
+    metrics: OFF
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: OFF
+
+jmh:
+  workloads:
+    - query-stream-page
+    - query-by-type
+    - query-by-tag-needle
+    - query-by-tag-swathe
+    - query-by-entity-hot
+    - query-by-entity-cold
+    - query-by-multi-tag
+    - query-by-or-groups
+    - query-last-event
+    - query-cursor-walk
+    - query-by-id
+    - query-wildcard
+  threads: [ 1 ]
+  forks: 2
+  warmupIterations: 2
+  measurementIterations: 3
+  iterationSeconds: 5

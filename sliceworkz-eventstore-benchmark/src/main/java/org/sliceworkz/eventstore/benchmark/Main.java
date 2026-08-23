@@ -119,6 +119,7 @@ public final class Main {
 			case "jmh" -> jmh(options);
 			case "load" -> load(options);
 			case "report" -> report(options);
+			case "compare" -> compare(options);
 			default -> {
 				System.err.println("unknown subcommand '%s'".formatted(command));
 				usage();
@@ -203,7 +204,8 @@ public final class Main {
 			JmhRunner.RunOutcome outcome = JmhRunner.run(profileName, profile, output, options.containsKey("yes"));
 			System.out.println();
 			System.out.println("ran %d benchmark(s)".formatted(outcome.benchmarksRun()));
-			outcome.resultFiles().forEach(file -> System.out.println("  results  %s".formatted(file)));
+			outcome.resultFiles().forEach(file -> System.out.println("  results  %-24s %s".formatted(
+					file.target(), file.path())));
 
 			// A run without its manifest is a number nobody can attribute, which is how this project's
 			// existing documented figures came to be unreproducible.  Writing it is not optional.
@@ -232,32 +234,32 @@ public final class Main {
 			return 2;
 		}
 		BenchmarkProfile profile = Profiles.resolve(profileName);
-		if ( profile.load() == null ) {
+		if ( profile.load().isEmpty() ) {
 			System.err.println("profile '%s' has no 'load' section".formatted(profile.name()));
 			return 2;
 		}
 
 		System.out.println("profile   : %s".formatted(profile.name()));
-		System.out.println("scenario  : %s".formatted(profile.load().scenario()));
-		System.out.println("writers   : %d, readers: %d, collision: %s".formatted(
-				profile.load().writers(), profile.load().readers(), profile.load().collision()));
-		System.out.println("rate      : %s".formatted(profile.load().isFixedRate()
-				? profile.load().targetRatePerSecond() + "/s offered"
-				: "saturate"));
+		System.out.println("scenarios : %d".formatted(profile.load().size()));
 
 		Path output = Path.of(options.getOrDefault("out", Reports.scratchDirectoryFor(profile).toString()));
 		int unsound = 0;
 		List<LoadResult> results = new ArrayList<>();
 
 		for ( TargetSpec target : profile.targets() ) {
-			System.out.println();
-			System.out.println("  %s".formatted(target.describe()));
+			for ( BenchmarkProfile.LoadSettings scenario : profile.load() ) {
+				System.out.println();
+				System.out.println("  %s -- %s (%d writer(s), %d reader(s), %s, %s)".formatted(
+						target.describe(), scenario.scenario(), scenario.writers(), scenario.readers(),
+						scenario.collision(),
+						scenario.isFixedRate() ? scenario.targetRatePerSecond() + "/s offered" : "saturate"));
 
-			LoadResult result = LoadRunner.run(profile, target);
-			results.add(result);
-			printLoadResult(result);
-			if ( !result.isSound() ) {
-				unsound++;
+				LoadResult result = LoadRunner.run(profile, scenario, target);
+				results.add(result);
+				printLoadResult(result);
+				if ( !result.isSound() ) {
+					unsound++;
+				}
 			}
 		}
 
@@ -380,6 +382,74 @@ public final class Main {
 		System.out.println("baseline  : %s".formatted(baselinePath));
 		System.out.println();
 		return printComparison(BaselineComparator.compare(RunReport.read(baselinePath), current));
+	}
+
+	/**
+	 * Diffs two <em>configurations</em> measured here, which is a different question from a baseline diff
+	 * and the suite's most useful one.
+	 *
+	 * <p>"Which stream design should I pick" and "what does a crowded database cost my queries" are both
+	 * two runs that differ in exactly one corpus property. {@code report --baseline} is required to
+	 * decline that comparison -- it refuses when the corpus differs, which here is the entire experiment
+	 * -- so this inverts the rule and refuses on the environment instead.
+	 */
+	private static int compare ( Map<String, String> options ) {
+		String a = options.get("a");
+		String b = options.get("b");
+		if ( a == null || b == null ) {
+			System.err.println("compare needs --a=<run dir> and --b=<run dir>");
+			return 2;
+		}
+
+		RunReport first = RunReport.read(Path.of(a));
+		RunReport second = RunReport.read(Path.of(b));
+
+		System.out.println("a         : %s (%s, corpus %s)".formatted(
+				first.manifest().profileName(), String.join(", ", first.manifest().targets()),
+				first.manifest().corpusFingerprint()));
+		System.out.println("b         : %s (%s, corpus %s)".formatted(
+				second.manifest().profileName(), String.join(", ", second.manifest().targets()),
+				second.manifest().corpusFingerprint()));
+		System.out.println();
+		System.out.println(describeExperiment(first, second));
+		System.out.println();
+		return printComparison(BaselineComparator.compareConfigurations(first, second));
+	}
+
+	/**
+	 * Names what actually differs between two configurations, so the reader knows what the percentages
+	 * are being attributed to.
+	 *
+	 * <p>A diff of two runs differing in one property is an experiment; a diff of two runs differing in
+	 * five is a shrug with numbers attached. Printing the list is not a check -- several differences are
+	 * legitimate -- but it puts the confound in front of whoever reads the result.
+	 */
+	private static String describeExperiment ( RunReport a, RunReport b ) {
+		List<String> differences = new ArrayList<>();
+		if ( !a.manifest().corpusFingerprint().equals(b.manifest().corpusFingerprint()) ) {
+			differences.addAll(a.manifest().corpus().differencesFrom(b.manifest().corpus()));
+		}
+		if ( !a.manifest().targets().equals(b.manifest().targets()) ) {
+			differences.add("targets: %s vs %s".formatted(a.manifest().targets(), b.manifest().targets()));
+		}
+		// Two profiles necessarily have two names whenever anything differs, so a name difference is not
+		// itself a variable and is not counted as one. It matters only as a reminder that a profile also
+		// carries how the run was driven -- the collision mode, the thread sweep -- which the manifest
+		// does not summarise and this cannot enumerate.
+		String profileNote = a.manifest().profileName().equals(b.manifest().profileName())
+				? ""
+				: "\n(profiles '%s' and '%s'; the corpus and targets are listed above, how each was driven is in its own report)"
+						.formatted(a.manifest().profileName(), b.manifest().profileName());
+
+		if ( differences.isEmpty() ) {
+			return "the corpus and the targets are identical." + profileNote;
+		}
+		StringBuilder out = new StringBuilder(differences.size() == 1
+				? "the one difference between them:\n"
+				: "%d differences between them, so a change cannot be attributed to any single one:\n"
+						.formatted(differences.size()));
+		differences.forEach(difference -> out.append("  - ").append(difference).append('\n'));
+		return out.toString().stripTrailing() + profileNote;
 	}
 
 	private static int printComparison ( BaselineComparator.Result result ) {
@@ -677,6 +747,8 @@ public final class Main {
 			            [--baseline=<path>]  diff a particular baseline instead
 			            [--publish]          copy the run into the committed results
 			            [--force]            publish despite the run not meeting the conditions
+			  compare   --a=<dir> --b=<dir>  diff two configurations measured here (stream design,
+			                                 composition, volume); refuses across environments
 			  workloads                      the workload catalogue a profile's 'workloads:' draws on
 			  dry-run   --profile=<name>     invoke each workload once and check it measures something
 

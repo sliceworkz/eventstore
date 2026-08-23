@@ -1,0 +1,38 @@
+name: write-contention-one-stream
+description: >
+  Every writer conditionally appending to one stream, so on PostgreSQL they serialise on that
+  stream's pg_advisory_xact_lock while writing to distinct SKUs -- lock contention with no logical
+  conflict. Diff it against write-contention-spread and the difference is the lock; against
+  write-contention-one-boundary and the difference is conflict-and-retry on top of the lock.
+
+  Note that append-none is in the workload list deliberately even though it takes no lock: it is the
+  line that should stay flat while the other two bend, and a run where it bends too is measuring
+  something else.
+
+corpus:
+  volume: 100000
+  streamDesign: TAGGED
+  composition: CLEAN
+  payload: REALISTIC
+  entityCount: 2000
+  seed: 20260823
+
+targets:
+  - backend: INMEM
+    metrics: OFF
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: OFF
+
+jmh:
+  workloads:
+    - append-none
+    - append-type-and-tag
+    - decide-then-append
+  threads: [ 1, 4, 8, 16 ]
+  collision: one-stream
+  forks: 2
+  warmupIterations: 2
+  measurementIterations: 3
+  iterationSeconds: 5

@@ -31,6 +31,7 @@ import javax.sql.DataSource;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.sliceworkz.eventstore.benchmark.domain.CrmEvent;
 import org.sliceworkz.eventstore.benchmark.domain.InventoryEvent;
 import org.sliceworkz.eventstore.benchmark.domain.LegacySalesEvent;
 import org.sliceworkz.eventstore.benchmark.domain.SalesEvent;
@@ -181,6 +182,19 @@ public final class CorpusProvisioner {
 		}
 	}
 
+	/**
+	 * Writes the corpus, by whichever path its payload profile allows.
+	 *
+	 * <p>Bulk import for everything except {@code SHREDDED}, whose sealed envelopes only the store's
+	 * own serializer can produce -- so that one appends, at a fraction of the speed.
+	 */
+	private CorpusFacts generate ( BenchmarkTarget target, LongConsumer progress ) {
+		CorpusGenerator generator = new CorpusGenerator(spec);
+		return spec.payload() == CorpusSpec.PayloadProfile.SHREDDED
+				? generator.generateByAppending(target.store(), progress)
+				: generator.generateInto(target.storage(), progress);
+	}
+
 	private Optional<Outcome> tryReuse ( ManifestStore manifests, long started ) {
 		Optional<CorpusManifest> manifest = manifests.find(fingerprint);
 		if ( manifest.isEmpty() ) {
@@ -206,7 +220,7 @@ public final class CorpusProvisioner {
 			LOGGER.warn("generating {} events into an in-memory store: nothing persists, so this is paid again "
 					+ "on every run. The large tier belongs on PostgreSQL.", spec.volume());
 		}
-		CorpusFacts facts = new CorpusGenerator(spec).generateInto(target.storage(), progress);
+		CorpusFacts facts = generate(target, progress);
 		CorpusFacts completed = withRuntimeFacts(target, facts);
 		completed.requireUsable();
 		verifySample(target);
@@ -217,7 +231,7 @@ public final class CorpusProvisioner {
 
 	private Outcome generateAndRecord ( BenchmarkTarget target, ManifestStore manifests, long started,
 			LongConsumer progress ) {
-		CorpusFacts facts = new CorpusGenerator(spec).generateInto(target.storage(), progress);
+		CorpusFacts facts = generate(target, progress);
 		CorpusFacts completed = withRuntimeFacts(target, facts);
 		completed.requireUsable();
 		verifySample(target);
@@ -299,6 +313,48 @@ public final class CorpusProvisioner {
 			readSample(target, "sales", SalesEvent.class, LegacySalesEvent.class);
 		} else {
 			readSample(target, "sales", SalesEvent.class, null);
+		}
+
+		// A shredded corpus's whole point is the crm context, and a sample read there is worth more than
+		// the others: an unreachable key store reports every protected value as *erased* rather than
+		// throwing, so a corpus can be written, read back without error, and hold nothing anybody can
+		// use.  Checking the values are actually present is the only thing that catches that.
+		if ( spec.payload() == CorpusSpec.PayloadProfile.SHREDDED ) {
+			requireProtectedValuesReadable(target);
+		}
+	}
+
+	/**
+	 * Reads crm events back and insists their sealed values are present.
+	 *
+	 * <p>Not a shape check like the others. {@code Shreddable.isPresent()} being false means the key is
+	 * gone, and a freshly written corpus whose keys are already gone is a broken key store rather than
+	 * an erasure -- a distinction worth making here, where it is one line, instead of in a benchmark
+	 * that would report excellent numbers for reading values that no longer exist.
+	 */
+	private void requireProtectedValuesReadable ( BenchmarkTarget target ) {
+		EventStream<CrmEvent> crm = target.store()
+				.getEventStream(EventStreamId.forContext("crm").anyPurpose(), CrmEvent.class);
+		List<Event<CrmEvent>> sample = crm.query(EventQuery.matchAll().limit(VERIFY_SAMPLE_SIZE)).toList();
+
+		if ( sample.isEmpty() ) {
+			throw new IllegalStateException(
+					"a SHREDDED corpus was written but its 'crm' context is empty: nothing holds a sealed value, "
+							+ "so the profile would measure ordinary events under a misleading name");
+		}
+
+		long shredded = sample.stream().filter(event -> switch ( event.data() ) {
+			case CrmEvent.CustomerRegistered registered -> registered.details().isShredded();
+			case CrmEvent.CustomerAddressChanged changed -> changed.address().isShredded();
+			default -> false;
+		}).count();
+
+		if ( shredded > 0 ) {
+			throw new IllegalStateException(
+					"%d of %d freshly written crm events read back as erased. Nothing erased them, so the key "
+							+ "store is not returning the keys it was given -- fix that before measuring, or every "
+							+ "read here times an unseal that is not happening."
+							.formatted(shredded, sample.size()));
 		}
 	}
 

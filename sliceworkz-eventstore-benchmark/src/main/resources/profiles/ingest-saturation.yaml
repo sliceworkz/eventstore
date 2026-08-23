@@ -1,0 +1,43 @@
+name: ingest-saturation
+description: >
+  Sustained conditional appends against a store that grows throughout, which is the one thing the
+  JMH profiles cannot show: they restore the corpus between iterations, correctly, and in doing so
+  hide everything an ingest actually experiences -- the index growing, autovacuum waking up, the heap
+  losing correlation.
+
+  Saturating rather than rate-limited, so the number is a ceiling. Read the conflict rate beside the
+  throughput: eight writers spread over two thousand SKUs should conflict rarely, and a rate that
+  climbs as the run goes on means they are converging on the same boundaries, not that the store
+  slowed down.
+
+  The correctness checks are the part worth watching. A run whose events in and out do not balance
+  reports throughput for work that did not happen, and the runner fails it rather than printing a
+  banner nobody reads.
+
+corpus:
+  volume: 100000
+  streamDesign: TAGGED
+  composition: CLEAN
+  payload: REALISTIC
+  entityCount: 2000
+  seed: 20260823
+
+targets:
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: OFF
+
+load:
+  - scenario: write-saturation
+    writers: 8
+    readers: 0
+    collision: spread
+    rampUpSeconds: 15
+    durationSeconds: 300
+  - scenario: mixed
+    writers: 4
+    readers: 4
+    collision: spread
+    rampUpSeconds: 15
+    durationSeconds: 300

@@ -69,15 +69,9 @@ public final class LoadRunner {
 
 	private LoadRunner ( ) { }
 
-	/** Runs a profile's load scenario against one target. */
-	public static LoadResult run ( BenchmarkProfile profile, TargetSpec targetSpec ) {
-		BenchmarkProfile.LoadSettings settings = profile.load();
-		if ( settings == null ) {
-			throw new IllegalArgumentException(
-					"profile '%s' has no 'load' section, so there is nothing for this subcommand to run"
-							.formatted(profile.name()));
-		}
-
+	/** Runs one of a profile's load scenarios against one target. */
+	public static LoadResult run ( BenchmarkProfile profile, BenchmarkProfile.LoadSettings settings,
+			TargetSpec targetSpec ) {
 		LoadScenario scenario = LoadScenario.parse(settings.scenario());
 		Collision collision = Collision.parse(settings.collision());
 		CorpusProvisioner provisioner = new CorpusProvisioner(profile.corpus());

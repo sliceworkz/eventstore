@@ -37,6 +37,7 @@ import org.slf4j.LoggerFactory;
 import org.sliceworkz.eventstore.benchmark.config.BenchmarkProfile;
 import org.sliceworkz.eventstore.benchmark.env.TargetFactory;
 import org.sliceworkz.eventstore.benchmark.env.TargetSpec;
+import org.sliceworkz.eventstore.benchmark.report.JmhResults;
 import org.sliceworkz.eventstore.benchmark.workload.Workload;
 import org.sliceworkz.eventstore.benchmark.workload.WorkloadContext.Collision;
 import org.sliceworkz.eventstore.benchmark.workload.Workloads;
@@ -69,7 +70,7 @@ public final class JmhRunner {
 	private JmhRunner ( ) { }
 
 	/** What a run produced, so the caller can report where the output went. */
-	public record RunOutcome ( List<Path> resultFiles, int benchmarksRun ) { }
+	public record RunOutcome ( List<JmhResults.ResultFile> resultFiles, int benchmarksRun ) { }
 
 	/**
 	 * Runs a profile's JMH benchmarks.
@@ -115,7 +116,7 @@ public final class JmhRunner {
 		}
 
 		int benchmarks = 0;
-		List<Path> resultFiles = new ArrayList<>();
+		List<JmhResults.ResultFile> resultFiles = new ArrayList<>();
 
 		for ( int targetIndex = 0; targetIndex < profile.targets().size(); targetIndex++ ) {
 			TargetSpec target = profile.targets().get(targetIndex);
@@ -133,7 +134,7 @@ public final class JmhRunner {
 						workloads.size(), target.describe(), threads);
 				new Runner(options).run();
 
-				resultFiles.add(resultsFile);
+				resultFiles.add(new JmhResults.ResultFile(resultsFile, target.describe()));
 				benchmarks += workloads.size();
 			}
 		}
@@ -186,7 +187,16 @@ public final class JmhRunner {
 	}
 
 	private static Collision collisionOf ( BenchmarkProfile profile ) {
-		return profile.load() == null ? Collision.SPREAD : Collision.parse(profile.load().collision());
+		if ( profile.jmh().collision() != null ) {
+			return Collision.parse(profile.jmh().collision());
+		}
+		// Unset, so fall back to the first load scenario's, which keeps a profile measuring contention
+		// consistent across both halves without having to say so twice.  A profile with neither spreads
+		// its writers, which is the only honest default: it is the one mode where a thread count means
+		// what it appears to.
+		return profile.load().isEmpty()
+				? Collision.SPREAD
+				: Collision.parse(profile.load().getFirst().collision());
 	}
 
 	private static String jdbcUrlOf ( DataSource dataSource ) {

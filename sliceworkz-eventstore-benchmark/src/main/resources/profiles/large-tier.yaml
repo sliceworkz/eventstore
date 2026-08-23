@@ -1,0 +1,51 @@
+name: large-tier
+description: >
+  Ten million events, against an external server. The tier the whole corpus-reuse machinery exists
+  for: provisioning costs minutes and is then measured against for days, so run `provision` first and
+  let the measurement runs find it already there.
+
+  What to look for is not the absolute numbers but their ratio to read-shapes at a hundred thousand.
+  A needle tag query should cost about the same at both volumes -- the index does the work, and the
+  store is a hundred times larger. If it scales with volume the query is not using the index, and the
+  report's captured plan is where to look.
+
+  Deliberately external rather than containerised. A Testcontainers PostgreSQL runs stock defaults --
+  128 MB of shared_buffers, untuned WAL -- and at this size those defaults are most of what would be
+  measured. The publish step refuses a containerised run as a baseline for exactly that reason.
+
+  Set the schema mode to NONE if a DBA owns the schema on that server; ENSURE is right when the suite
+  is allowed to create its own corpus tables, which is the usual arrangement for a benchmark host.
+  The btree_gin extension has to exist -- creating it needs CREATE on the database, not on the schema.
+
+corpus:
+  volume: 10000000
+  streamDesign: TAGGED
+  composition: CLEAN
+  payload: REALISTIC
+  entityCount: 100000
+  seed: 20260823
+
+targets:
+  - backend: POSTGRES
+    server: EXTERNAL
+    metrics: OFF
+    schemaMode: ENSURE
+
+jmh:
+  workloads:
+    - query-by-tag-needle
+    - query-by-tag-swathe
+    - query-by-entity-hot
+    - query-by-entity-cold
+    - query-last-event
+    - query-cursor-walk
+    - query-by-id
+    - query-stream-page
+    - append-none
+    - append-type-and-tag
+    - decide-then-append
+  threads: [ 1, 8 ]
+  forks: 3
+  warmupIterations: 3
+  measurementIterations: 5
+  iterationSeconds: 10

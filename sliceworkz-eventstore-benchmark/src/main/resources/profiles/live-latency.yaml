@@ -1,0 +1,45 @@
+name: live-latency
+description: >
+  How long after an append a subscriber sees it, and how much of that wait is which part. Two
+  scenarios in one profile on purpose: notify-latency times append to subscriber callback with no
+  projection work behind it, end-to-end-latency times append to a committed read-model row, and the
+  subtraction between them is what the projection costs. Split across two runs the same two numbers
+  would sit in different reports, measured minutes apart, and the subtraction would be a guess.
+
+  Both are offered at a fixed rate rather than saturating, and latency is recorded against the
+  intended start time. Under saturation a store that falls behind reports the queueing delay as
+  someone else's problem and its own service times look excellent -- which is exactly the number a
+  latency benchmark must not produce.
+
+  This is a load profile with no jmh section: these paths need a store that is growing and a live
+  subscription, neither of which survives JMH's restore-between-iterations discipline.
+
+corpus:
+  volume: 100000
+  streamDesign: TAGGED
+  composition: CLEAN
+  payload: REALISTIC
+  entityCount: 2000
+  seed: 20260823
+
+targets:
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: OFF
+
+load:
+  - scenario: notify-latency
+    writers: 1
+    readers: 0
+    collision: spread
+    targetRatePerSecond: 200
+    rampUpSeconds: 10
+    durationSeconds: 120
+  - scenario: end-to-end-latency
+    writers: 1
+    readers: 0
+    collision: spread
+    targetRatePerSecond: 200
+    rampUpSeconds: 10
+    durationSeconds: 120

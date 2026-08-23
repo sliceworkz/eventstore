@@ -17,11 +17,14 @@
  */
 package org.sliceworkz.eventstore.benchmark;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+
+import org.openjdk.jmh.runner.RunnerException;
 
 import org.sliceworkz.eventstore.benchmark.config.BenchmarkProfile;
 import org.sliceworkz.eventstore.benchmark.config.Profiles;
@@ -32,6 +35,7 @@ import org.sliceworkz.eventstore.benchmark.env.BenchmarkTarget;
 import org.sliceworkz.eventstore.benchmark.env.EnvironmentReport;
 import org.sliceworkz.eventstore.benchmark.env.TargetFactory;
 import org.sliceworkz.eventstore.benchmark.env.TargetSpec;
+import org.sliceworkz.eventstore.benchmark.jmh.JmhRunner;
 import org.sliceworkz.eventstore.benchmark.workload.Workload;
 import org.sliceworkz.eventstore.benchmark.workload.WorkloadDryRun;
 import org.sliceworkz.eventstore.benchmark.workload.Workloads;
@@ -103,7 +107,8 @@ public final class Main {
 			case "provision" -> provision(options);
 			case "workloads" -> workloads();
 			case "dry-run" -> dryRun(options);
-			case "jmh", "load", "report" -> {
+			case "jmh" -> jmh(options);
+			case "load", "report" -> {
 				System.err.println("'%s' is not implemented yet".formatted(command));
 				yield 3;
 			}
@@ -162,6 +167,41 @@ public final class Main {
 			}
 		}
 		return 0;
+	}
+
+	/**
+	 * Runs a profile's JMH benchmarks.
+	 *
+	 * <p>Deliberately does <em>not</em> provision first. Building a ten-million event corpus inside a
+	 * measurement command would hide minutes of setup inside something whose whole job is timing, and
+	 * the corpus is reused across runs anyway -- {@code provision} is its own step for that reason. If
+	 * the corpus is missing, the trial setup builds it and says so.
+	 */
+	private static int jmh ( Map<String, String> options ) {
+		String profileName = options.get("profile");
+		if ( profileName == null ) {
+			System.err.println("jmh needs --profile=<name>");
+			return 2;
+		}
+		BenchmarkProfile profile = Profiles.resolve(profileName);
+		Path output = Path.of(options.getOrDefault("out", "target/benchmark"));
+
+		System.out.println("profile   : %s".formatted(profile.name()));
+		System.out.println("targets   : %d".formatted(profile.targets().size()));
+		System.out.println("estimate  : %s".formatted(humanDuration(profile.estimatedDuration())));
+		System.out.println("output    : %s".formatted(output.toAbsolutePath()));
+		System.out.println();
+
+		try {
+			JmhRunner.RunOutcome outcome = JmhRunner.run(profileName, profile, output, options.containsKey("yes"));
+			System.out.println();
+			System.out.println("ran %d benchmark(s)".formatted(outcome.benchmarksRun()));
+			outcome.resultFiles().forEach(file -> System.out.println("  results  %s".formatted(file)));
+			return 0;
+		} catch ( RunnerException e ) {
+			System.err.println("the benchmark run failed: " + rootCauseOf(e));
+			return 1;
+		}
 	}
 
 	/** Lists the workload catalogue, which is the vocabulary a profile's {@code workloads:} draws on. */
@@ -426,6 +466,8 @@ public final class Main {
 			  provision --profile=<name>     build (or reuse) the corpora a profile needs
 			            [--force]            rebuild even when a usable corpus is already there
 			  jmh       --profile=<name>     run the profile's JMH benchmarks
+			            [--out=<dir>]        where to write results (default target/benchmark)
+			            [--yes]              required for a run estimated at over an hour
 			  load      --profile=<name>     run the profile's load scenarios
 			  report    [--baseline=<path>]  render a run, optionally diffing a baseline
 			  workloads                      the workload catalogue a profile's 'workloads:' draws on

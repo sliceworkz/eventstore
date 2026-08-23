@@ -51,7 +51,29 @@ import org.sliceworkz.eventstore.testing.backend.PostgresContainer;
  */
 public final class TargetFactory {
 
+	/**
+	 * Set by the launcher on a JMH fork so the fork attaches to the container the launcher already
+	 * started, instead of starting one of its own.
+	 *
+	 * @see #open(TargetSpec, String)
+	 */
+	public static final String INHERITED_JDBC_URL_PROPERTY = "benchmark.jdbc.url";
+
+	/** Credentials of the harness's containers, which the URL alone does not carry. */
+	public static final String INHERITED_USER_PROPERTY = "benchmark.jdbc.user";
+	public static final String INHERITED_PASSWORD_PROPERTY = "benchmark.jdbc.password";
+
 	private TargetFactory ( ) { }
+
+	/** A pool over a URL handed down from the launcher. Small: one fork does not need many. */
+	private static DataSource poolFor ( String jdbcUrl ) {
+		com.zaxxer.hikari.HikariConfig config = new com.zaxxer.hikari.HikariConfig();
+		config.setJdbcUrl(jdbcUrl);
+		config.setUsername(System.getProperty(INHERITED_USER_PROPERTY, "sa"));
+		config.setPassword(System.getProperty(INHERITED_PASSWORD_PROPERTY, "pwd"));
+		config.setMinimumIdle(1);
+		return new com.zaxxer.hikari.HikariDataSource(config);
+	}
 
 	/**
 	 * Opens a target against the objects under {@code prefix}.
@@ -93,11 +115,22 @@ public final class TargetFactory {
 
 		switch ( spec.server() ) {
 			case TESTCONTAINERS -> {
-				// one container per JVM per image, and the pool belongs to the container harness --
-				// closing it here would break every other target sharing the same image
-				dataSource = PostgresContainer.dataSource(spec.image());
-				monitoringDataSource = dataSource;
-				ownsDataSource = false;
+				String inherited = System.getProperty(INHERITED_JDBC_URL_PROPERTY);
+				if ( inherited != null ) {
+					// A JMH fork is a fresh JVM.  Left to itself it would call PostgresContainer and
+					// start a *second* container -- one per fork, each with an empty schema and none of
+					// them holding the corpus.  The launcher therefore starts the container once and
+					// passes its URL down; see JmhRunner.
+					dataSource = poolFor(inherited);
+					monitoringDataSource = dataSource;
+					ownsDataSource = true;
+				} else {
+					// one container per JVM per image, and the pool belongs to the container harness --
+					// closing it here would break every other target sharing the same image
+					dataSource = PostgresContainer.dataSource(spec.image());
+					monitoringDataSource = dataSource;
+					ownsDataSource = false;
+				}
 			}
 			case EXTERNAL -> {
 				// two datasources on purpose: LISTEN/NOTIFY does not survive a transaction pooler, so

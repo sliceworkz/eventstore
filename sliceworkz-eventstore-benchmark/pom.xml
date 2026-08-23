@@ -39,7 +39,6 @@
 	<properties>
 		<maven.deploy.skip>true</maven.deploy.skip>
 		
-		<javalin.version>7.2.3</javalin.version>
 		<logback.version>1.6.3</logback.version>
 
 	</properties>
@@ -58,7 +57,7 @@
 			<artifactId>sliceworkz-eventstore-infra-postgres</artifactId>
 		</dependency>
 		<dependency>
-			<!-- needed for PostgresLegacyEventStorageImpl when benchmarking against PostgreSQL 13-17; not needed on PostgreSQL 18+ -->
+			<!-- needed for PostgresLegacyEventStorageImpl when benchmarking against PostgreSQL 16/17; not needed on PostgreSQL 18+ -->
 			<groupId>com.github.f4b6a3</groupId>
 			<artifactId>uuid-creator</artifactId>
 		</dependency>
@@ -67,7 +66,23 @@
 			<artifactId>sliceworkz-eventstore-impl</artifactId>
 			<scope>runtime</scope>
 		</dependency>
-		
+
+		<!--
+			The testing module brings PostgresContainer, so the 'testcontainers' target starts the
+			same container images the TCK runs against.  Compile scope on purpose: the benchmark
+			suite is an application, not a test, and it needs the container harness at runtime.
+		-->
+		<dependency>
+			<groupId>org.sliceworkz</groupId>
+			<artifactId>sliceworkz-eventstore-testing</artifactId>
+		</dependency>
+		<dependency>
+			<!-- managed as 'test' scope for the rest of the build; here it is a runtime dependency -->
+			<groupId>org.testcontainers</groupId>
+			<artifactId>testcontainers-postgresql</artifactId>
+			<scope>compile</scope>
+		</dependency>
+
 		<dependency>
 			<groupId>ch.qos.logback</groupId>
 			<artifactId>logback-classic</artifactId>
@@ -75,35 +90,60 @@
 		</dependency>
 
 		<dependency>
-		    <groupId>org.postgresql</groupId>
-		    <artifactId>postgresql</artifactId>
-		    <scope>compile</scope>
+			<groupId>org.postgresql</groupId>
+			<artifactId>postgresql</artifactId>
+			<scope>compile</scope>
 		</dependency>
-		
-		
-		<!-- REST API via Javalin -->
+
+		<!-- profile files are YAML; the model records are plain Jackson -->
 		<dependency>
-		    <groupId>io.javalin</groupId>
-		    <artifactId>javalin</artifactId>
-		    <version>${javalin.version}</version>
+			<groupId>tools.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
 		</dependency>
-		
-	    <dependency>
-	        <groupId>io.micrometer</groupId>
-	        <artifactId>micrometer-core</artifactId>
-	    </dependency>
-	    
-	    <!-- Micrometer Prometheus registry -->
-	    <dependency>
-	        <groupId>io.micrometer</groupId>
-	        <artifactId>micrometer-registry-prometheus</artifactId>
-	        <version>${micrometer.version}</version>
-	    </dependency>
-    
+		<dependency>
+			<groupId>tools.jackson.dataformat</groupId>
+			<artifactId>jackson-dataformat-yaml</artifactId>
+		</dependency>
+
+		<!-- JMH: operation-level measurement -->
+		<dependency>
+			<groupId>org.openjdk.jmh</groupId>
+			<artifactId>jmh-core</artifactId>
+		</dependency>
+
+		<!-- HdrHistogram: latency recording in the load runner -->
+		<dependency>
+			<groupId>org.hdrhistogram</groupId>
+			<artifactId>HdrHistogram</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-core</artifactId>
+		</dependency>
+
 	</dependencies>
 	
 	<build>
 		<plugins>
+			<!--
+				jmh-generator-annprocess is declared as an annotationProcessorPath rather than as an
+				ordinary dependency: processor discovery off the compile classpath is fragile, and
+				this keeps the generator off the shaded jar's classpath entirely.
+			-->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<configuration>
+					<annotationProcessorPaths>
+						<path>
+							<groupId>org.openjdk.jmh</groupId>
+							<artifactId>jmh-generator-annprocess</artifactId>
+							<version>${jmh.version}</version>
+						</path>
+					</annotationProcessorPaths>
+				</configuration>
+			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-shade-plugin</artifactId>
@@ -132,10 +172,22 @@
 							</filters>							
 							<transformers>
 								<transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+								<!--
+									JMH keeps its benchmark index in META-INF/BenchmarkList and its
+									inlining hints in META-INF/CompilerHints.  Both are plain text and
+									must be concatenated, not overwritten. Without these two the
+									shaded jar reports "No matching benchmarks".
+								-->
+								<transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+									<resource>META-INF/BenchmarkList</resource>
+								</transformer>
+								<transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+									<resource>META-INF/CompilerHints</resource>
+								</transformer>
 								<transformer implementation="org.apache.maven.plugins.shade.resource.ApacheLicenseResourceTransformer"/>
 								<transformer implementation="org.apache.maven.plugins.shade.resource.ApacheNoticeResourceTransformer"/>
 								<transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-									<mainClass>org.sliceworkz.eventstore.benchmark.BenchmarkApplication</mainClass>
+									<mainClass>org.sliceworkz.eventstore.benchmark.Main</mainClass>
 								</transformer>
 							</transformers>
 						</configuration>

@@ -38,6 +38,13 @@ import org.sliceworkz.eventstore.benchmark.env.TargetSpec;
 import org.sliceworkz.eventstore.benchmark.jmh.JmhRunner;
 import org.sliceworkz.eventstore.benchmark.load.LoadResult;
 import org.sliceworkz.eventstore.benchmark.load.LoadRunner;
+import org.sliceworkz.eventstore.benchmark.report.BaselineComparator;
+import org.sliceworkz.eventstore.benchmark.report.BenchmarkRow;
+import org.sliceworkz.eventstore.benchmark.report.JmhResults;
+import org.sliceworkz.eventstore.benchmark.report.QueryPlans;
+import org.sliceworkz.eventstore.benchmark.report.Reports;
+import org.sliceworkz.eventstore.benchmark.report.RunManifest;
+import org.sliceworkz.eventstore.benchmark.report.RunReport;
 import org.sliceworkz.eventstore.benchmark.workload.Workload;
 import org.sliceworkz.eventstore.benchmark.workload.WorkloadDryRun;
 import org.sliceworkz.eventstore.benchmark.workload.Workloads;
@@ -111,10 +118,7 @@ public final class Main {
 			case "dry-run" -> dryRun(options);
 			case "jmh" -> jmh(options);
 			case "load" -> load(options);
-			case "report" -> {
-				System.err.println("'%s' is not implemented yet".formatted(command));
-				yield 3;
-			}
+			case "report" -> report(options);
 			default -> {
 				System.err.println("unknown subcommand '%s'".formatted(command));
 				usage();
@@ -200,6 +204,13 @@ public final class Main {
 			System.out.println();
 			System.out.println("ran %d benchmark(s)".formatted(outcome.benchmarksRun()));
 			outcome.resultFiles().forEach(file -> System.out.println("  results  %s".formatted(file)));
+
+			// A run without its manifest is a number nobody can attribute, which is how this project's
+			// existing documented figures came to be unreproducible.  Writing it is not optional.
+			RunReport written = writeReport(profile, output, JmhResults.readAll(outcome.resultFiles()), List.of());
+			System.out.println("  report   %s".formatted(output.resolve("report.md")));
+			written.manifest().reasonsNotPublishable().forEach(
+					reason -> System.out.println("  note     not publishable: %s".formatted(reason)));
 			return 0;
 		} catch ( RunnerException e ) {
 			System.err.println("the benchmark run failed: " + rootCauseOf(e));
@@ -234,19 +245,25 @@ public final class Main {
 				? profile.load().targetRatePerSecond() + "/s offered"
 				: "saturate"));
 
+		Path output = Path.of(options.getOrDefault("out", Reports.scratchDirectoryFor(profile).toString()));
 		int unsound = 0;
+		List<LoadResult> results = new ArrayList<>();
+
 		for ( TargetSpec target : profile.targets() ) {
 			System.out.println();
 			System.out.println("  %s".formatted(target.describe()));
 
 			LoadResult result = LoadRunner.run(profile, target);
+			results.add(result);
 			printLoadResult(result);
 			if ( !result.isSound() ) {
 				unsound++;
 			}
 		}
 
+		writeReport(profile, output, List.of(), results);
 		System.out.println();
+		System.out.println("report    %s".formatted(output.resolve("report.md")));
 		if ( unsound > 0 ) {
 			System.out.println("%d run(s) failed a correctness check: their numbers describe work that did not happen"
 					.formatted(unsound));
@@ -275,6 +292,120 @@ public final class Main {
 		result.latencies().forEach(summary -> System.out.println("        " + summary.toLine()));
 		System.out.println("      correctness");
 		result.correctness().forEach(check -> System.out.println("        " + check.toLine()));
+	}
+
+	/**
+	 * Assembles and writes a run's report.
+	 *
+	 * <p>Opens the target once more to read the environment and capture query plans. That costs a
+	 * second and buys the difference between a number and an attributable one -- and doing it after the
+	 * measurement rather than during means {@code EXPLAIN ANALYZE}, which executes the query, cannot
+	 * perturb what it is describing.
+	 */
+	private static RunReport writeReport ( BenchmarkProfile profile, Path output, List<BenchmarkRow> benchmarks,
+			List<LoadResult> loadResults ) {
+		CorpusProvisioner provisioner = new CorpusProvisioner(profile.corpus());
+		TargetSpec first = profile.targets().getFirst();
+
+		try ( CorpusProvisioner.Prepared prepared = provisioner.open(first, false, null) ) {
+			RunManifest manifest = RunManifest.starting(
+					profile.name(), profile.description(), Profiles.toJson(profile),
+					profile.corpus(), prepared.outcome().facts(),
+					profile.targets().stream().map(TargetSpec::describe).toList(),
+					EnvironmentReport.capture(prepared.target()),
+					describeRestorePolicy(profile));
+
+			List<QueryPlans.Plan> plans = QueryPlans.capture(
+					prepared.target(), provisioner.prefix(), prepared.outcome().facts());
+
+			RunReport report = new RunReport(manifest.finished(0), benchmarks, loadResults, plans);
+			report.writeTo(output);
+			return report;
+		}
+	}
+
+	private static String describeRestorePolicy ( BenchmarkProfile profile ) {
+		if ( profile.jmh() == null ) {
+			return "not applicable: this run applied load rather than benchmarking operations";
+		}
+		List<Workload> selected = Workloads.resolve(profile.jmh().workloads(), profile.corpus());
+		if ( !Workloads.anyMutates(selected) ) {
+			return "no restore needed: every workload in this run is read-only";
+		}
+		return profile.corpus().volume() >= 1_000_000
+				? "restored once per trial; intra-trial drift measured"
+				: "restored before every iteration";
+	}
+
+	/**
+	 * Renders a run, and optionally diffs it against a committed baseline or publishes it.
+	 *
+	 * <p>The diff refuses when the two runs are not comparable, which is the whole reason it exists: a
+	 * percentage between runs measured on different machines is not a statement about the store, and
+	 * nothing about the two numbers says so.
+	 */
+	private static int report ( Map<String, String> options ) {
+		Path runDirectory = Path.of(options.getOrDefault("run",
+				options.containsKey("profile")
+						? Reports.scratchDirectoryFor(Profiles.resolve(options.get("profile"))).toString()
+						: Reports.SCRATCH_ROOT.toString()));
+
+		RunReport current = RunReport.read(runDirectory);
+		System.out.println("run       : %s".formatted(runDirectory));
+		System.out.println("profile   : %s".formatted(current.manifest().profileName()));
+		System.out.println("version   : %s".formatted(current.manifest().suiteVersion()));
+		System.out.println("corpus    : %s".formatted(current.manifest().corpusFingerprint()));
+		System.out.println("markdown  : %s".formatted(runDirectory.resolve("report.md")));
+
+		if ( options.containsKey("publish") ) {
+			Path published = Reports.publish(runDirectory, options.containsKey("force"));
+			System.out.println("published : %s".formatted(published));
+			return 0;
+		}
+
+		String baselineOption = options.get("baseline");
+		Path baselinePath;
+		if ( baselineOption != null ) {
+			baselinePath = Path.of(baselineOption);
+		} else {
+			java.util.Optional<Path> latest = Reports.latestBaselineFor(current.manifest().profileName());
+			if ( latest.isEmpty() ) {
+				System.out.println();
+				System.out.println("no committed baseline for this profile; nothing to compare against");
+				return 0;
+			}
+			baselinePath = latest.get();
+		}
+
+		System.out.println("baseline  : %s".formatted(baselinePath));
+		System.out.println();
+		return printComparison(BaselineComparator.compare(RunReport.read(baselinePath), current));
+	}
+
+	private static int printComparison ( BaselineComparator.Result result ) {
+		if ( result instanceof BaselineComparator.Result.Refused refused ) {
+			System.out.println(refused.explain());
+			return 1;
+		}
+
+		BaselineComparator.Result.Compared compared = (BaselineComparator.Result.Compared) result;
+		System.out.println("%d measurement(s) in both runs".formatted(compared.measurementsInBoth()));
+		if ( compared.onlyInBaseline() > 0 ) {
+			System.out.println("%d only in the baseline".formatted(compared.onlyInBaseline()));
+		}
+		if ( compared.onlyInCurrent() > 0 ) {
+			System.out.println("%d only in this run".formatted(compared.onlyInCurrent()));
+		}
+		System.out.println();
+
+		List<BaselineComparator.Change> significant = compared.significant();
+		if ( significant.isEmpty() ) {
+			System.out.println("nothing moved beyond the measurements' own error bars");
+			return 0;
+		}
+		System.out.println("changes outside the error bars:");
+		significant.forEach(change -> System.out.println("  " + change.toLine()));
+		return 0;
 	}
 
 	/** Lists the workload catalogue, which is the vocabulary a profile's {@code workloads:} draws on. */
@@ -542,7 +673,10 @@ public final class Main {
 			            [--out=<dir>]        where to write results (default target/benchmark)
 			            [--yes]              required for a run estimated at over an hour
 			  load      --profile=<name>     run the profile's load scenario against a growing store
-			  report    [--baseline=<path>]  render a run, optionally diffing a baseline
+			  report    [--run=<dir>]        render a run; diffs the latest committed baseline
+			            [--baseline=<path>]  diff a particular baseline instead
+			            [--publish]          copy the run into the committed results
+			            [--force]            publish despite the run not meeting the conditions
 			  workloads                      the workload catalogue a profile's 'workloads:' draws on
 			  dry-run   --profile=<name>     invoke each workload once and check it measures something
 

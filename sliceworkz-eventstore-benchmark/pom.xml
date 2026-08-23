@@ -188,6 +188,15 @@
 								<transformer implementation="org.apache.maven.plugins.shade.resource.ApacheNoticeResourceTransformer"/>
 								<transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
 									<mainClass>org.sliceworkz.eventstore.benchmark.Main</mainClass>
+									<manifestEntries>
+										<!--
+											Read back by RunManifest to stamp every report with the release it
+											came from.  Without it a committed baseline cannot be attributed to
+											a version, and comparing across releases stops meaning anything.
+										-->
+										<Implementation-Title>${project.artifactId}</Implementation-Title>
+										<Implementation-Version>${project.version}</Implementation-Version>
+									</manifestEntries>
 								</transformer>
 							</transformers>
 						</configuration>

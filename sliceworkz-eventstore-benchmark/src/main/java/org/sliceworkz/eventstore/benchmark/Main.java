@@ -163,6 +163,8 @@ public final class Main {
 		}
 
 		System.out.println("%-22s %-10s %-9s %-8s %s".formatted("PROFILE", "EVENTS", "ESTIMATE", "DOCKER", "CORPUS"));
+		List<String> broken = new ArrayList<>();
+
 		for ( BenchmarkProfile profile : profiles ) {
 			System.out.println("%-22s %-10s %-9s %-8s %s".formatted(
 					profile.name(),
@@ -173,8 +175,40 @@ public final class Main {
 			if ( !profile.description().isBlank() ) {
 				System.out.println("    " + profile.description().strip().replace("\n", "\n    "));
 			}
+			workloadProblemIn(profile).ifPresent(problem -> {
+				System.out.println("    !!  " + problem);
+				broken.add(profile.name());
+			});
+		}
+
+		if ( !broken.isEmpty() ) {
+			System.err.println();
+			System.err.println("%d profile(s) name a workload their corpus cannot support: %s"
+					.formatted(broken.size(), String.join(", ", broken)));
+			return 1;
 		}
 		return 0;
+	}
+
+	/**
+	 * Whether a profile's workload names resolve against its own corpus.
+	 *
+	 * <p>Checked here because {@code list} is the cheapest command there is, and the alternative is
+	 * finding out three hours into a run -- or, worse, not finding out: a workload that needs a legacy
+	 * corpus and gets a current one reads current events and reports an upcasting cost of zero, which
+	 * looks like good news. The resolver rejects that pairing; this is what makes the rejection cheap
+	 * to discover.
+	 */
+	private static java.util.Optional<String> workloadProblemIn ( BenchmarkProfile profile ) {
+		if ( profile.jmh() == null ) {
+			return java.util.Optional.empty();
+		}
+		try {
+			Workloads.resolve(profile.jmh().workloads(), profile.corpus());
+			return java.util.Optional.empty();
+		} catch ( IllegalArgumentException e ) {
+			return java.util.Optional.of(e.getMessage());
+		}
 	}
 
 	/**

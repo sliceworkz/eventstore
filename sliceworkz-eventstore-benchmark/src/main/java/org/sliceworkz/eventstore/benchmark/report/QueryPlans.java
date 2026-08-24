@@ -194,7 +194,15 @@ public final class QueryPlans {
 				"DCB check: four types scoped to one SKU (append-type-and-tag)",
 				stockTypesWithTags("ARRAY['" + sku + "']")));
 
-		for ( int groups : new int[] { 2, 5 } ) {
+		plans.add(appendPredicate(dataSource, prefix, purpose, head,
+				"DCB check: one item carrying three AND-ed tags (append-multi-tag)",
+				stockTypesWithTags("ARRAY['" + sku + "','" + TagKeys.CHANNEL + ":web','"
+						+ TagKeys.WAREHOUSE + ":WH-1']")));
+
+		// Ten as well as two and five, even though five and ten measured the same: a plan that is
+		// identical at both ends of the flat stretch is what turns "it stopped growing" into "it flipped
+		// once and then stopped caring", and a plan that differs there means something else is going on.
+		for ( int groups : new int[] { 2, 5, 10 } ) {
 			StringBuilder predicate = new StringBuilder();
 			predicate.append(stockTypesWithTags("ARRAY['" + sku + "']"));
 			for ( int i = 1; i < groups; i++ ) {
@@ -219,10 +227,16 @@ public final class QueryPlans {
 	private record Head ( String tx, long position ) { }
 
 	private static Head readHead ( DataSource dataSource, String prefix ) {
+		// One literal, deliberately: `.formatted` binds tighter than `+`, so with the statement split
+		// across two concatenated strings only the second one was formatted and `%sevents` reached the
+		// server verbatim -- a syntax error at position 44 that cost the whole append-predicate section.
+		String sql = """
+				SELECT event_tx::text, event_position
+				FROM %sevents
+				ORDER BY event_tx DESC, event_position DESC
+				LIMIT 1""".formatted(prefix);
 		try ( Connection connection = dataSource.getConnection();
-				PreparedStatement statement = connection.prepareStatement(
-						"SELECT event_tx::text, event_position FROM %sevents"
-								+ " ORDER BY event_tx DESC, event_position DESC LIMIT 1".formatted(prefix));
+				PreparedStatement statement = connection.prepareStatement(sql);
 				ResultSet rows = statement.executeQuery() ) {
 			return rows.next() ? new Head(rows.getString(1), rows.getLong(2)) : null;
 		} catch ( SQLException e ) {
@@ -245,7 +259,7 @@ public final class QueryPlans {
 				"inventory", purpose, head.tx(), head.tx(), String.valueOf(head.position()));
 	}
 
-/**
+	/**
 	 * Binds the context, the purpose where the design has a fixed one, then the rest.
 	 *
 	 * <p>A PER_ENTITY corpus has no single purpose to scope a store-wide read to, so the predicate is

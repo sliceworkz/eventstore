@@ -350,10 +350,9 @@ public final class CorpusProvisioner {
 		}).count();
 
 		if ( shredded > 0 ) {
-			throw new IllegalStateException(
-					"%d of %d freshly written crm events read back as erased. Nothing erased them, so the key "
-							+ "store is not returning the keys it was given -- fix that before measuring, or every "
-							+ "read here times an unseal that is not happening."
+			throw new IllegalStateException(( "%d of %d freshly written crm events read back as erased. Nothing "
+					+ "erased them, so the key store is not returning the keys it was given -- fix that before "
+					+ "measuring, or every read here times an unseal that is not happening." )
 							.formatted(shredded, sample.size()));
 		}
 	}

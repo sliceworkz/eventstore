@@ -259,6 +259,26 @@ public final class CorpusRestore {
 		}
 	}
 
+	/**
+	 * Puts the corpus back one last time, at the end of a trial.
+	 *
+	 * <p>Not about this trial's numbers -- those are already taken. It is about the <em>next</em> run:
+	 * a mutating trial leaves its appends in the store, so the store no longer matches the count its
+	 * manifest records, and the reuse check correctly refuses to reuse it. The corpus is then rebuilt
+	 * from scratch by the next fork, and the one after that, for as long as append workloads keep
+	 * running -- three seconds a time at the medium tier, and minutes at the large one.
+	 *
+	 * <p>Restoring here is far cheaper than regenerating there, and it also removes a source of
+	 * variance the numbers can do without: a rebuilt corpus is a different physical layout with a cold
+	 * cache, which is part of why this profile's error bars are as wide as they are.
+	 */
+	public void restoreToBaseline ( ) {
+		if ( policy == Policy.NONE ) {
+			return;
+		}
+		restore();
+	}
+
 	/** Removes the template, so a corpus is not left with a stale copy of itself beside it. */
 	public void cleanUp ( ) {
 		target.dataSource().ifPresent(dataSource -> {

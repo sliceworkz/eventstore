@@ -28,7 +28,7 @@ jmh:
     - decide-then-append
   threads: [ 1, 4, 8, 16 ]
   collision: spread
-  forks: 2
-  warmupIterations: 2
-  measurementIterations: 3
-  iterationSeconds: 5
+  forks: 4
+  warmupIterations: 3
+  measurementIterations: 5
+  iterationSeconds: 2

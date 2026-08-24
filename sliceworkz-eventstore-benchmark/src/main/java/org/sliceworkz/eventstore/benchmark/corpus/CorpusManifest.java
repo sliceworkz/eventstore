@@ -66,8 +66,15 @@ public record CorpusManifest (
 			return "written by generator version %d, this is version %d"
 					.formatted(generatorVersion, CorpusFingerprint.GENERATOR_VERSION);
 		}
+		if ( actualEventCount > eventCount ) {
+			// Two different faults produce a mismatch, and saying "provisioning did not finish" for both
+			// sent a reader looking at the generator when the cause was a benchmark that appended and
+			// did not put the corpus back.
+			return "manifest says %d events but the store holds %d: something appended to this corpus and left it that way"
+					.formatted(eventCount, actualEventCount);
+		}
 		if ( eventCount != actualEventCount ) {
-			return "manifest says %d events but the store holds %d, so provisioning did not finish"
+			return "manifest says %d events but the store holds only %d, so provisioning did not finish"
 					.formatted(eventCount, actualEventCount);
 		}
 		return "usable";

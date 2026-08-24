@@ -246,6 +246,39 @@ Deleting only the appended rows would be cheaper and leaves dead tuples for auto
 
 A profile whose workloads are all read-only skips restoring entirely, and the report says so.
 
+## How a conditional append avoids conflicting with itself
+
+An append that succeeds moves the boundary it was checked against, so a workload holding one reference
+and reusing it would succeed once and raise `OptimisticLockingException` on every invocation after —
+measuring the failure path while appearing to measure the success path. Each conditional workload
+therefore threads the reference forward from its own append's return value, which is what a real decider
+does anyway. Two details make that actually work, and both were wrong first:
+
+- **The cache is keyed on the filter, not on the entity.** Keying on `workload|sku` assumes a boundary
+  belongs to one entity. That is true for `append-type-and-tag` and false for `append-types`, whose
+  filter carries no tag at all and whose boundary therefore moves on *every* stock append anywhere in
+  the store. The signature of getting this wrong is unmistakable once you know it: the first rotation
+  through the entity slice succeeds and caches, the second conflicts on every single invocation, the
+  third re-reads and succeeds — alternating rotations, with successful appends pinned at exactly one
+  entity-slice per iteration and a conflict counter to match. What was published as the cost of a
+  types-only DCB check was mostly the cost of failing one.
+- **`append-or-groups-N` scopes its extra items to reserved companion entities.** They used to be
+  ordinary entities in the writable rotation, so appending to one moved the boundary for every other
+  entity's cached reference. The companions sit an eighth of the way into the Zipf distribution — warm
+  enough to match real events at every tier, not the hot entity the contention modes aim at — and
+  nothing ever appends to them. The disjuncts are still real over tag values that really match, so the
+  selectivity the planner sees is unchanged; what changed is that only the entity being appended to can
+  move the boundary.
+
+`append-empty-boundary` has a related requirement: its entity has to be genuinely unused, or the
+boundary it declares empty is not, and the append correctly raises. Drawing at random from a
+hundred-thousand space is not fresh in any sense that survives the birthday paradox — a few thousand
+draws collide with near-certainty. It counts instead.
+
+**Under `one-boundary` all of this is deliberately not enough**, because there the other threads move the
+boundary too and the conflicts are the measurement. Read a conflict count under `spread` as a harness
+fault; read one under `one-boundary` as the result.
+
 ## Layout
 
 ```

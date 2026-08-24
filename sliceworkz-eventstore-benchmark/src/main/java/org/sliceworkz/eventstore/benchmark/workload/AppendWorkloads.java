@@ -115,8 +115,12 @@ public final class AppendWorkloads {
 
 			@Override
 			public Object invoke ( WorkloadContext context ) {
+				// A counter, not a random draw: a "new subject" that collides with one already in the
+				// store is silently a known subject, so the workload would go on reporting the
+				// key-minting cost while no longer paying it -- and the pair this profile exists for
+				// would converge for a reason invisible in the numbers.
 				String customerId = newSubject
-						? "CUST-N%05d-%d".formatted(context.random().nextInt(100_000), context.threadIndex())
+						? context.freshCustomer()
 						: "CUST-%06d".formatted(context.random().nextInt(context.spec().entityCount()));
 				DataSubject subject = DataSubject.of("customer", customerId);
 
@@ -220,6 +224,13 @@ public final class AppendWorkloads {
 	 * <p>Measured at two, five and ten because the shape of the growth is the interesting part. The
 	 * generated SQL gains a disjunct per item, so this asks whether a multi-fact decision costs a
 	 * multiple of a single-fact one or barely more than it.
+	 *
+	 * <p><b>The extra items scope to reserved companion entities, which nothing ever appends to.</b>
+	 * They used to scope to {@code SKU-000001..N-1}, which are ordinary entities in the writable
+	 * rotation -- so an append to one of them moved the boundary for every other entity's cached
+	 * reference and the workload conflicted with itself in bulk. The disjuncts are still real, over tag
+	 * values that really match corpus events, so the selectivity the planner sees is unchanged; what
+	 * changed is that only the entity being appended to can move the boundary.
 	 */
 	private static Workload orGroups ( int groups ) {
 		return new AbstractConditionalAppend("append-or-groups-" + groups,
@@ -232,7 +243,7 @@ public final class AppendWorkloads {
 				items.add(new EventFilterItem(stockTypes(), Tags.of(TagKeys.SKU, sku)));
 				for ( int i = 1; i < groups; i++ ) {
 					items.add(new EventFilterItem(stockTypes(),
-							Tags.of(TagKeys.SKU, "SKU-%06d".formatted(i % context.spec().entityCount()))));
+							Tags.of(TagKeys.SKU, context.companionEntity(i))));
 				}
 				return new EventFilter(items, null);
 			}
@@ -255,8 +266,16 @@ public final class AppendWorkloads {
 				String fresh = context.freshEntity();
 				AppendCriteria criteria = AppendCriteria.of(
 						EventFilter.forEvents(stockTypes(), Tags.of(TagKeys.SKU, fresh)), null);
-				return context.inventory().append(criteria, reservation(context, fresh),
-						context.streamIdFor(WebshopContext.INVENTORY, fresh));
+				try {
+					return context.inventory().append(criteria, reservation(context, fresh),
+							context.streamIdFor(WebshopContext.INVENTORY, fresh)).size();
+				} catch ( OptimisticLockingException e ) {
+					// Should not happen now that freshEntity() counts rather than draws at random, and
+					// that is exactly why it is caught: a conflict here means the entity was not fresh,
+					// which is a harness fault worth seeing in the conflict count rather than a dead
+					// fork. The JMH layer counts it; it does not treat it as an error.
+					return -1;
+				}
 			}
 		};
 	}
@@ -471,8 +490,9 @@ public final class AppendWorkloads {
 		@Override
 		public final Object invoke ( WorkloadContext context ) {
 			String sku = context.nextEntity();
-			String cacheKey = name + "|" + sku;
 			EventFilter filter = filterFor(context, sku);
+			// keyed on the filter, because that is what defines the boundary -- see WorkloadContext
+			WorkloadContext.BoundaryKey cacheKey = new WorkloadContext.BoundaryKey(name, filter);
 
 			EventReference expected = context.cachedBoundary(cacheKey)
 					.orElseGet(() -> readBoundary(context, filter));

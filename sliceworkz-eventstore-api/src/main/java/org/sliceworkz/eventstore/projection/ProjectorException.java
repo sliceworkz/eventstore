@@ -40,8 +40,10 @@ import org.sliceworkz.eventstore.events.EventReference;
  */
 public class ProjectorException extends RuntimeException {
 
-	private EventReference eventReference;
-	
+	private static final long serialVersionUID = 1L;
+
+	private final EventReference eventReference;
+
 	/**
 	 * Creates a new ProjectorException wrapping the given throwable.
 	 * <p>

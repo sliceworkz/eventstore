@@ -831,6 +831,32 @@ an upcaster rather than as a parse failure, and the exception is wrapped exactly
 to catch its own exception and re-wrap it, so the message naming the missing type only ever reached a user as
 the cause of a second, vaguer one.
 
+### Every exception here survives a process boundary, and names the event it failed on
+
+A `Throwable` is `Serializable`, so a field on one that is not makes the whole exception unserializable —
+and the symptom is uniquely unhelpful, because whatever was carrying it across a process boundary reports
+a `NotSerializableException` **instead of** the failure. The real error is not logged, not wrapped, not
+chained: it is replaced. That is how this survived unnoticed in `OptimisticLockingException`, the single
+most commonly thrown type in the library, which held an `Optional` and an `EventFilter` and could not be
+serialized at all. A forked JMH benchmark hitting a genuine DCB conflict died with a serialization
+complaint and exit code 1, naming nothing about the conflict.
+
+- **`EventReference`, `EventId` and `EventType` are `Serializable`**, so the exceptions that exist to name
+  a failing event — `ProjectorException`, `EventDeserializationException` — arrive with that name intact.
+  These are records, which deserialize **through their canonical constructor** rather than by field
+  injection, so the validation is re-applied on the way in and no stream can conjure a reference with a
+  null id or a non-positive position. That is what makes committing them to a serialized form cheap; a
+  classic class with the same invariants would not be.
+- **`EventFilter` is deliberately not**, and stays `transient` on `OptimisticLockingException`. It is a
+  query shape over six further types, wanted by nobody across a boundary, and the exception's message
+  already names it in text. So `getFilter()` reads null on a deserialized instance — the one documented
+  exception to its "never null".
+- **`getExpectedLastEventReference()` keeps its "never null" contract on the far side**, because the field
+  is held as a nullable `EventReference` and wrapped in the getter. A serialized `Optional` field would
+  have arrived as null and turned a conflict report into an NPE at the point of reading it.
+- `ExceptionSerializationTest` in the api module pins all four down. It is a cheap test for a failure mode
+  otherwise only ever discovered inside a harness nobody suspects.
+
 ### Erasing personal data: `Shreddable` values and crypto-shredding
 
 **Personal data is wrapped, not annotated, and erasure destroys a key rather than rewriting an event.**

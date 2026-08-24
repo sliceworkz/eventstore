@@ -79,8 +79,12 @@ public class EventDeserializationException extends RuntimeException {
 
 	private static final long serialVersionUID = 1L;
 
-	private final transient EventType eventType;
-	private final transient EventReference reference;
+	// Both are serializable records, so this exception survives a process boundary intact -- which
+	// matters more here than for most: the type and the reference are the entire diagnostic value of
+	// this exception, and an instance that arrives without them says only that something could not be
+	// read.
+	private final EventType eventType;
+	private final EventReference reference;
 
 	/**
 	 * Constructs a new EventDeserializationException for the given stored event type, with no reference.

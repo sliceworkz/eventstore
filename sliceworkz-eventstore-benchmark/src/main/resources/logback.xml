@@ -26,12 +26,20 @@
         </encoder>
     </appender>
 
-	<appender name="FILE" class="ch.qos.logback.core.FileAppender">
-		<file>readmodel.log</file>
-		<encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
-	    	<pattern>%d{HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n</pattern>
-		</encoder>
-	</appender>  
+    <!--
+        There is deliberately no unreferenced appender here. A FileAppender writing readmodel.log
+        survived the deletion of BenchmarkApplication, and an appender nothing refers to makes logback
+        log a WARN about it -- which in turn makes logback dump its whole configuration status to
+        stderr, roughly twenty-five lines. A JMH profile starts one JVM per fork per workload per
+        target, so a nine-workload two-target run paid that toll seventy-two times and buried the
+        measurements in about two thousand lines of configuration chatter.
+    -->
+
+    <!--
+        The banner is twelve lines of ASCII art per JVM, which is charming once and unreadable
+        seventy-two times. Silenced here only, in the benchmark harness; nothing else sets this.
+    -->
+    <logger name="org.sliceworkz.Banner" level="WARN"/>
 
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>

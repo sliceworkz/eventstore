@@ -29,6 +29,7 @@ import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.sliceworkz.eventstore.benchmark.corpus.CorpusFacts;
+import org.sliceworkz.eventstore.benchmark.corpus.CorpusSpec;
 import org.sliceworkz.eventstore.benchmark.corpus.CorpusGenerator;
 import org.sliceworkz.eventstore.benchmark.domain.TagKeys;
 import org.sliceworkz.eventstore.benchmark.env.BenchmarkTarget;
@@ -65,44 +66,56 @@ public final class QueryPlans {
 	 * <p>Runs after measurement, never during: {@code EXPLAIN ANALYZE} executes the query, and doing
 	 * that alongside a benchmark would be measuring the benchmark's observer.
 	 */
-	public static List<Plan> capture ( BenchmarkTarget target, String prefix, CorpusFacts facts ) {
+	public static List<Plan> capture ( BenchmarkTarget target, String prefix, CorpusSpec spec, CorpusFacts facts ) {
 		if ( target.dataSource().isEmpty() ) {
 			return List.of();
 		}
 		DataSource dataSource = target.dataSource().get();
 		List<Plan> plans = new ArrayList<>();
 
+		// Which purpose these statements scope to is a property of the corpus, not a constant. A
+		// PER_ENTITY corpus puts the entity id in the purpose, so a hard-coded 'default' matched nothing
+		// -- and an EXPLAIN over an empty result is worse than no plan at all: it reports a sub-millisecond
+		// index scan and looks like an answer.
+		boolean perEntity = spec.streamDesign() == CorpusSpec.StreamDesign.PER_ENTITY;
+		String purposeClause = perEntity ? "" : " AND stream_purpose = ?";
+
 		plans.add(capture(dataSource, "stream page (unfiltered, limit 500)",
 				"""
 				SELECT event_position, event_tx::text, event_id, event_type, event_data, event_tags
 				FROM %sevents
 				WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
-				  AND stream_context = ? AND stream_purpose = ?
+				  AND stream_context = ?%s
 				ORDER BY event_tx::xid8, event_position
-				LIMIT 500""".formatted(prefix),
-				"inventory", "default"));
+				LIMIT 500""".formatted(prefix, purposeClause),
+				scoped(perEntity, "inventory", null)));
 
 		plans.add(capture(dataSource, "tag needle (~10 matches)",
 				"""
 				SELECT event_position, event_tx::text, event_id, event_type, event_data, event_tags
 				FROM %sevents
 				WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
-				  AND stream_context = ? AND stream_purpose = ?
+				  AND stream_context = ?%s
 				  AND ((event_tags @> ARRAY[?]::text[]))
-				ORDER BY event_tx::xid8, event_position""".formatted(prefix),
-				"inventory", "default", CorpusGenerator.MARKER_TAG_KEY + ":" + facts.needleTagValue()));
+				ORDER BY event_tx::xid8, event_position""".formatted(prefix, purposeClause),
+				scoped(perEntity, "inventory", null,
+						CorpusGenerator.MARKER_TAG_KEY + ":" + facts.needleTagValue())));
 
 		plans.add(capture(dataSource, "tag swathe (~1% of the store)",
 				"""
 				SELECT event_position, event_tx::text, event_id, event_type, event_data, event_tags
 				FROM %sevents
 				WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
-				  AND stream_context = ? AND stream_purpose = ?
+				  AND stream_context = ?%s
 				  AND ((event_tags @> ARRAY[?]::text[]))
 				ORDER BY event_tx::xid8, event_position
-				LIMIT 500""".formatted(prefix),
-				"inventory", "default", CorpusGenerator.MARKER_TAG_KEY + ":" + facts.swatheTagValue()));
+				LIMIT 500""".formatted(prefix, purposeClause),
+				scoped(perEntity, "inventory", null,
+						CorpusGenerator.MARKER_TAG_KEY + ":" + facts.swatheTagValue())));
 
+		// Entity-scoped: under PER_ENTITY the entity IS the purpose, which is the whole point of that
+		// design -- so this statement is a different shape on the two corpora, and that difference is
+		// exactly what the stream-design comparison is about.
 		plans.add(capture(dataSource, "one entity's whole history (hot)",
 				"""
 				SELECT event_position, event_tx::text, event_id, event_type, event_data, event_tags
@@ -111,7 +124,8 @@ public final class QueryPlans {
 				  AND stream_context = ? AND stream_purpose = ?
 				  AND ((event_tags @> ARRAY[?]::text[]))
 				ORDER BY event_tx::xid8, event_position""".formatted(prefix),
-				"inventory", "default", TagKeys.SKU + ":" + facts.hotEntity()));
+				"inventory", perEntity ? facts.hotEntity() : "default",
+				TagKeys.SKU + ":" + facts.hotEntity()));
 
 		plans.add(capture(dataSource, "most recent event, backwards limit 1",
 				"""
@@ -122,9 +136,26 @@ public final class QueryPlans {
 				  AND ((event_tags @> ARRAY[?]::text[]))
 				ORDER BY event_tx::xid8 DESC, event_position DESC
 				LIMIT 1""".formatted(prefix),
-				"inventory", "default", TagKeys.SKU + ":" + facts.hotEntity()));
+				"inventory", perEntity ? facts.hotEntity() : "default",
+				TagKeys.SKU + ":" + facts.hotEntity()));
 
 		return plans.stream().filter(java.util.Objects::nonNull).toList();
+	}
+
+/**
+	 * Binds the context, the purpose where the design has a fixed one, then the rest.
+	 *
+	 * <p>A PER_ENTITY corpus has no single purpose to scope a store-wide read to, so the predicate is
+	 * absent from the SQL and its parameter must be absent too.
+	 */
+	private static String[] scoped ( boolean perEntity, String context, String purpose, String... rest ) {
+		List<String> parameters = new ArrayList<>();
+		parameters.add(context);
+		if ( !perEntity ) {
+			parameters.add(purpose == null ? "default" : purpose);
+		}
+		parameters.addAll(List.of(rest));
+		return parameters.toArray(new String[0]);
 	}
 
 	private static Plan capture ( DataSource dataSource, String shape, String sql, String... parameters ) {

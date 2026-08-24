@@ -362,7 +362,7 @@ public final class Main {
 					describeRestorePolicy(profile));
 
 			List<QueryPlans.Plan> plans = QueryPlans.capture(
-					prepared.target(), provisioner.prefix(), prepared.outcome().facts());
+					prepared.target(), provisioner.prefix(), profile.corpus(), prepared.outcome().facts());
 
 			RunReport report = new RunReport(manifest.finished(drift), benchmarks, loadResults, plans);
 			report.writeTo(output);

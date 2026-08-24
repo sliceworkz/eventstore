@@ -238,7 +238,15 @@ public final class CorpusRestore {
 					"SELECT setval(pg_get_serial_sequence('%sevents', 'event_position'), COALESCE((SELECT max(event_position) FROM %sevents), 1))"
 							.formatted(prefix, prefix));
 			statement.execute("DELETE FROM %sbookmarks".formatted(prefix));
-			statement.execute("ANALYZE %sevents".formatted(prefix));
+
+			// VACUUM, not just ANALYZE, and the difference is not cosmetic. The tags column carries a GIN
+			// index, GIN defaults to fastupdate, and a hundred thousand row inserts leave a large pending
+			// list behind. ANALYZE refreshes statistics and does not flush that list, so every tag-filtered
+			// read afterwards scans it linearly -- which makes a restored corpus measurably slower than a
+			// freshly generated one at exactly the queries this suite exists to time, while leaving
+			// tag-free operations untouched. Two runs of one profile then differ by how the table was
+			// filled rather than by anything about the store.
+			statement.execute("VACUUM ANALYZE %sevents".formatted(prefix));
 		} catch ( SQLException e ) {
 			throw new IllegalStateException("could not restore %sevents from its template".formatted(prefix), e);
 		}

@@ -443,7 +443,10 @@ public final class CorpusProvisioner {
 	private void analyze ( DataSource dataSource ) {
 		try ( Connection connection = dataSource.getConnection();
 				Statement statement = connection.createStatement() ) {
-			statement.execute("ANALYZE %sevents".formatted(prefix));
+			// VACUUM as well as ANALYZE: bulk-importing a corpus fills the tags GIN index's pending list,
+			// and leaving it there makes a freshly built corpus behave differently from a restored one on
+			// every tag-filtered read. See CorpusRestore.restoreSql for the same reasoning.
+			statement.execute("VACUUM ANALYZE %sevents".formatted(prefix));
 		} catch ( SQLException e ) {
 			// not fatal, but worth being loud about: without statistics the first numbers are nonsense
 			LOGGER.warn("could not ANALYZE {}events; the planner has no statistics and early measurements "

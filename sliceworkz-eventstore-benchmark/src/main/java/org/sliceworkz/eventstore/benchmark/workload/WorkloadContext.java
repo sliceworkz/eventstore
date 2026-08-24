@@ -257,6 +257,17 @@ public final class WorkloadContext {
 		return Math.min(MAX_COMPANION_ENTITIES, spec.entityCount() / 4);
 	}
 
+	/** Whether an entity is one of the reserved companions, so nothing writes to it by accident. */
+	public boolean isCompanion ( String entity ) {
+		int count = companionCount();
+		for ( int i = 0; i < count; i++ ) {
+			if ( companionEntity(i).equals(entity) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	/**
 	 * Where the reserved band starts: an eighth of the way into the distribution, not at either end.
 	 *
@@ -279,12 +290,20 @@ public final class WorkloadContext {
 	 * selectivity is honest -- while staying fixed for the whole run.
 	 */
 	public String companionEntity ( int i ) {
-		int count = companionCount();
+		return companionEntity(i, spec.entityCount());
+	}
+
+	/**
+	 * The same computation without a context, so the report can build the very filters the append
+	 * workloads build when it captures their query plans.
+	 */
+	public static String companionEntity ( int i, int entityCount ) {
+		int count = Math.min(MAX_COMPANION_ENTITIES, entityCount / 4);
 		if ( count <= 0 ) {
 			// nothing to reserve: fall back to an ordinary entity and accept the self-conflict
-			return "SKU-%06d".formatted(Math.floorMod(i, spec.entityCount()));
+			return "SKU-%06d".formatted(Math.floorMod(i, Math.max(entityCount, 1)));
 		}
-		return "SKU-%06d".formatted(companionStart() + Math.floorMod(i, count));
+		return "SKU-%06d".formatted(Math.max(1, entityCount / 8) + Math.floorMod(i, count));
 	}
 
 	/**

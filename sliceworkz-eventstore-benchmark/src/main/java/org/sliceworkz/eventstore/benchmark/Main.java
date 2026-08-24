@@ -347,13 +347,22 @@ public final class Main {
 	 * second and buys the difference between a number and an attributable one -- and doing it after the
 	 * measurement rather than during means {@code EXPLAIN ANALYZE}, which executes the query, cannot
 	 * perturb what it is describing.
+	 *
+	 * <p><b>Which target it opens is load-bearing, and it used to be the first one.</b> Neither the
+	 * environment nor a query plan exists for an in-memory store: {@code EnvironmentReport} finds no
+	 * server to read settings from and {@code QueryPlans} returns an empty list on a target with no
+	 * {@code DataSource}. Nearly every profile lists {@code inmem} first, as the zero-IO control, so
+	 * nearly every report came out with no plans at all and an environment section reading "this run
+	 * measured an in-memory store" -- for a run that had just spent seventeen minutes on PostgreSQL.
+	 * Both omissions are quiet: an absent plan looks like a plan that could not be captured, and the
+	 * publish guard's "the PostgreSQL settings could not be read" reads as an unreachable server rather
+	 * than as the report having asked the wrong store.
 	 */
 	private static RunReport writeReport ( BenchmarkProfile profile, Path output, List<BenchmarkRow> benchmarks,
 			List<LoadResult> loadResults, double drift ) {
 		CorpusProvisioner provisioner = new CorpusProvisioner(profile.corpus());
-		TargetSpec first = profile.targets().getFirst();
 
-		try ( CorpusProvisioner.Prepared prepared = provisioner.open(first, false, null) ) {
+		try ( CorpusProvisioner.Prepared prepared = provisioner.open(targetToDescribe(profile), false, null) ) {
 			RunManifest manifest = RunManifest.starting(
 					profile.name(), profile.description(), Profiles.toJson(profile),
 					profile.corpus(), prepared.outcome().facts(),
@@ -368,6 +377,22 @@ public final class Main {
 			report.writeTo(output);
 			return report;
 		}
+	}
+
+	/**
+	 * The target the report's environment and query plans should describe: the first SQL-backed one.
+	 *
+	 * <p>An in-memory target has no settings to record and no plans to capture, so opening one produces
+	 * a report that is silent about both. Where a profile measures several targets the manifest holds
+	 * one environment, and the one worth recording is the database's -- the JVM and host halves are
+	 * shared by every target anyway. A profile with no SQL target at all falls back to its first, which
+	 * is then correctly reported as an in-memory run.
+	 */
+	private static TargetSpec targetToDescribe ( BenchmarkProfile profile ) {
+		return profile.targets().stream()
+				.filter(target -> target.backend() == TargetSpec.Backend.POSTGRES)
+				.findFirst()
+				.orElseGet(() -> profile.targets().getFirst());
 	}
 
 	private static String describeRestorePolicy ( BenchmarkProfile profile ) {

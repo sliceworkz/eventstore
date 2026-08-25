@@ -207,12 +207,22 @@ final class MarkdownRenderer {
 		}
 	}
 
-	/** How the check grows with the number of facts a decision rests on. */
+	/**
+	 * How the check grows with the number of facts a decision rests on.
+	 *
+	 * <p>Every {@code append-or-groups-N} the run measured, in numeric order, rather than a fixed set
+	 * of steps. The profile decides which widths are worth measuring, and the interesting ones are
+	 * whichever bracket a step in the curve -- this table used to be hard-coded to 2, 5 and 10, so
+	 * adding 3 and 4 to bisect an eleven-fold cliff between two and five left the cliff invisible in
+	 * the very section written to describe it.
+	 */
 	private void orGroupScaling ( StringBuilder out, String target ) {
-		List<BenchmarkRow> rows = List.of(2, 5, 10).stream()
-				.map(groups -> throughputRow(target, "append-or-groups-" + groups, 1))
-				.filter(Optional::isPresent)
-				.map(Optional::get)
+		List<BenchmarkRow> rows = report.benchmarks().stream()
+				.filter(row -> row.target().equals(target))
+				.filter(row -> row.threads() == 1)
+				.filter(row -> row.workload().startsWith("append-or-groups-"))
+				.filter(row -> orGroupsOf(row) > 0)
+				.sorted(Comparator.comparingInt(MarkdownRenderer::orGroupsOf))
 				.toList();
 		if ( rows.size() < 2 ) {
 			return;
@@ -231,6 +241,15 @@ final class MarkdownRenderer {
 		}
 		out.append("\nThe generated SQL gains a disjunct per item, so this is whether a decision resting "
 				+ "on ten facts costs ten times one or barely more than it.\n\n");
+	}
+
+	/** The N in {@code append-or-groups-N}, or 0 for a name that does not end in one. */
+	private static int orGroupsOf ( BenchmarkRow row ) {
+		try {
+			return Integer.parseInt(row.workload().substring("append-or-groups-".length()));
+		} catch ( NumberFormatException e ) {
+			return 0;
+		}
 	}
 
 	/**
@@ -394,27 +413,31 @@ final class MarkdownRenderer {
 			> Where these and the reconstructed plans above disagree, these are the ones that describe what\s
 			> was measured.
 			>
-			> **Generic against custom.** The backend re-uses its prepared statements, so PostgreSQL holds\s
-			> two plans for each: a *generic* one planned once against default selectivity, and a *custom*\s
-			> one re-planned from the actual parameter values. It starts on custom and switches to generic\s
-			> around the tenth execution, so a benchmark loop runs on the generic plan and an application\s
-			> issuing a given consistency boundary a handful of times may not. The generic plan is the one\s
-			> to read against the throughput above. A custom plan appears below it only where it is a\s
-			> genuinely different plan, and the pair is then worth reading together: the same boundary\s
-			> costing very different amounts depending on how often it is issued is a property of the\s
-			> store worth knowing about.
+			> **Generic against custom, and both are shown.** The backend re-uses its prepared statements,\s
+			> so PostgreSQL holds two plans for each: a *generic* one planned once against default\s
+			> selectivity, and a *custom* one re-planned from the actual parameter values. From the tenth\s
+			> execution it compares their **estimated** costs and adopts the generic plan if it looks no\s
+			> worse. So neither one is automatically what the throughput above was measured on: match the\s
+			> plans by their `cost=` estimates -- the cheaper-looking of the two is the one the server\s
+			> chose, and its actual time should be near the measured ms/op in the heading. Where the two\s
+			> are the same plan only one is shown.
+			>
+			> That comparison is on estimates, and a DCB check is exactly the shape that defeats it: the\s
+			> expected result is *no rows*, while the planner prices a `NOT EXISTS` by how soon it expects\s
+			> to find one. A wider filter makes it expect a match sooner, so the generic plan's estimate\s
+			> **falls** as facts are added while the custom plan's rises -- and once it drops below, the\s
+			> server switches to a plan that scans the whole table for a row that is not there.
 
 			""";
 
 	private static final String APPEND_PLAN_CAVEAT = """
-			> **The plans below do not describe the store's own execution, and currently contradict the\s
-			> measurements above.** `append-types` plans as a sub-millisecond index-only scan and measures\s
-			> the slowest of the tagged shapes; `append-type-and-tag` plans as an eight-millisecond\s
-			> sequential scan and measures nearly the fastest. The difference is parameterisation -- the\s
-			> store binds its tag arrays and cursor as JDBC parameters and re-uses the statement, so\s
-			> PostgreSQL plans it generically against default selectivity, while these statements inline\s
-			> the arrays as literals and are planned from real statistics. Read them as the shape of the\s
-			> predicate, not as the plan the store gets.
+			> **The plans below do not describe the store's own execution.** They inline the tag arrays\s
+			> and the cursor as literals, which is what PostgreSQL sees when it builds a *custom* plan;\s
+			> the store binds them as JDBC parameters and re-uses the statement, so what it actually runs\s
+			> is whichever of the custom and generic plans the server settled on -- and for several of\s
+			> these shapes that is the generic one, which is a different plan entirely. Read these as the\s
+			> shape of the predicate. The captured plans further down are the ones to read against the\s
+			> measurements.
 
 			""";
 

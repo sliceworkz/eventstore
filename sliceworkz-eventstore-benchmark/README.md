@@ -220,17 +220,24 @@ Each run writes `report.json` (the record) and `report.md` (a rendering of it) b
   JDBC parameters and re-uses the statement, so PostgreSQL settles on a plan built against default
   selectivity, while inlining the same values as literals earns one built from real statistics. That
   difference alone decides index-versus-scan, which is the only question the plans are for.
-- **Each captured plan says whether it is the generic or the custom one, and that matters.**
+- **Each captured plan says whether it is the generic or the custom one, and both are shown.**
   PostgreSQL holds both for a re-used prepared statement: the *custom* plan is re-planned from the
-  actual parameter values, the *generic* one is planned once against default selectivity, and it
-  switches to generic around the tenth execution. A benchmark loop therefore runs on the generic
-  plan — so that is the one to read against the throughput, and the report prints the measured
-  ms/op beside it to make a mismatch visible. Where the custom plan differs it is shown underneath,
-  because "this boundary is cheap the first few times and expensive forever after" is a real
-  property of the store and not an artefact of the capture. Both are pinned with `plan_cache_mode`
-  rather than reached by counting executions, which is how the capture got this wrong once already:
-  eight warm-up invocations plus one left it one execution short of the switch, and it reported the
-  last custom plan — 1.0ms — for an operation measuring 15.9ms.
+  actual parameter values, the *generic* one is planned once against default selectivity. From the
+  tenth execution it compares their **estimated** costs and adopts the generic plan if it looks no
+  worse — so neither is automatically the one a benchmark loop runs on, and the report prints each
+  plan's measured ms/op beside it so the pair can be matched up by `cost=`. Both are pinned with
+  `plan_cache_mode` rather than reached by counting executions, which is how the capture got this
+  wrong once already: eight warm-up invocations plus one left it one execution short of the switch,
+  and it reported the last custom plan — 1.0ms — for an operation measuring 15.9ms.
+
+  **What that comparison does to a DCB check is a finding in its own right**, and the reason both
+  plans are kept. The expected result of the check is *no rows*, while PostgreSQL prices a
+  `NOT EXISTS` by how soon it expects to find one. Adding OR-ed facts makes the generic plan expect
+  a match sooner, so its estimate *falls* while the custom plan's — built from real tag
+  statistics — rises. Measured on the 100k `dcb-cost-curve` corpus they cross between two and three
+  facts: at two the server keeps a `BitmapOr` over the tag index (1.5ms/op), and at three it adopts
+  a generic plan that sequentially scans all 100.000 rows for a row that is not there (17ms/op),
+  and stays there at four, five and ten. An eleven-fold cliff, from one more fact in the decision.
 - **Load results carry correctness checks**, and a run that fails one is reported as unsound. Events
   in must equal events out; nothing may be projected twice.
 

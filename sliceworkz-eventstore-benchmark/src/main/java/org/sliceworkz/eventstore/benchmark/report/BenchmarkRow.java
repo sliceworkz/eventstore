@@ -79,6 +79,39 @@ public record BenchmarkRow (
 		return total <= 0 ? 0 : conflicts() / total;
 	}
 
+	/**
+	 * The score as operations per second, or NaN where the score is not a throughput.
+	 *
+	 * <p>JMH reports whatever unit the run asked for -- {@code ops/ms} here -- and a report that prints
+	 * a per-second figure has to do the conversion rather than assume it. A {@code sample} row's score
+	 * is a duration, which has no reading as a rate at all, so it comes back NaN and callers leave the
+	 * cell empty instead of publishing a number that means nothing.
+	 */
+	public double operationsPerSecond ( ) {
+		return switch ( unit == null ? "" : unit ) {
+			case "ops/ns" -> score * 1_000_000_000d;
+			case "ops/us" -> score * 1_000_000d;
+			case "ops/ms" -> score * 1_000d;
+			case "ops/s" -> score;
+			case "ops/min" -> score / 60d;
+			default -> Double.NaN;
+		};
+	}
+
+	/**
+	 * Operations per second that did work, conflicts excluded.
+	 *
+	 * <p>The column that keeps a throughput honest under contention, and it has to be a <em>rate</em>
+	 * to do that. It was previously rendered from {@link #successes()}, which is JMH's {@code ok}
+	 * counter summed over every iteration of the trial -- a count of operations, printed under a header
+	 * saying per second. At one thread and no conflicts the two disagree by whatever the trial length
+	 * happened to be: 3,921 events over 40 measured seconds read as "3921/s" beside a score of 0.098
+	 * ops/ms, which is 98/s. Forty times out, and in the direction that flatters the store.
+	 */
+	public double usefulOperationsPerSecond ( ) {
+		return operationsPerSecond() * ( 1 - conflictRate() );
+	}
+
 	/** The score with its error, or just the score when a single fork produced no interval. */
 	public String scoreWithError ( ) {
 		if ( Double.isNaN(error) ) {

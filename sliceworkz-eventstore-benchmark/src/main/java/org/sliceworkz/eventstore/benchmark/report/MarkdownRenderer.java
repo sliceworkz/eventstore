@@ -250,12 +250,12 @@ final class MarkdownRenderer {
 		}
 
 		out.append(heading("What happens as threads are added", target));
-		out.append("| workload | threads | throughput | useful/s | conflicts |\n|---|---|---|---|---|\n");
+		out.append("| workload | threads | throughput | useful ops/s | conflicts |\n|---|---|---|---|---|\n");
 		byWorkload.forEach(( workload, rows ) -> rows.stream()
 				.sorted(Comparator.comparingInt(BenchmarkRow::threads))
-				.forEach(row -> out.append("| %s | %d | %s %s | %.0f | %.1f%% |\n".formatted(
+				.forEach(row -> out.append("| %s | %d | %s %s | %s | %.1f%% |\n".formatted(
 						workload, row.threads(), row.scoreWithError(), row.unit(),
-						row.successes(), row.conflictRate() * 100))));
+						rate(row.usefulOperationsPerSecond()), row.conflictRate() * 100))));
 		out.append("\nA rising throughput with a rising conflict rate is a store spending more of its "
 				+ "capacity losing races, not doing more work. The useful column is the one to read.\n\n");
 	}
@@ -382,21 +382,34 @@ final class MarkdownRenderer {
 
 			""";
 
+	/**
+	 * A per-second figure, or an empty cell where the score is not a throughput.
+	 *
+	 * <p>A {@code sample} row's score is a duration; there is no rate to print, and printing one anyway
+	 * is how the column got into trouble in the first place.
+	 */
+	private static String rate ( double perSecond ) {
+		return Double.isNaN(perSecond) ? "--" : "%,.0f".formatted(perSecond);
+	}
+
 	private void allResults ( StringBuilder out ) {
 		if ( report.benchmarks().isEmpty() ) {
 			return;
 		}
 		out.append("## Every measurement\n\n");
-		out.append("| target | workload | mode | threads | score | unit | error | useful/s | conflicts/s |\n");
-		out.append("|---|---|---|---|---|---|---|---|---|\n");
+		// "ok" and "conflicts" are totals over the whole trial, which is what JMH's aux counters are --
+		// they used to be headed "useful/s" and "conflicts/s", turning a count of operations into a rate
+		// nobody had computed. The rate is next to them now, derived from the score.
+		out.append("| target | workload | mode | threads | score | unit | error | useful ops/s | ok | conflicts |\n");
+		out.append("|---|---|---|---|---|---|---|---|---|---|\n");
 
 		for ( BenchmarkRow row : BenchmarkRow.sorted(report.benchmarks()) ) {
 			String relativeError = Double.isNaN(row.relativeError())
 					? "--"
 					: "%.1f%%".formatted(row.relativeError() * 100);
-			out.append("| %s | %s | %s | %d | %.3f | %s | %s | %.0f | %.0f |\n".formatted(
+			out.append("| %s | %s | %s | %d | %.3f | %s | %s | %s | %,.0f | %,.0f |\n".formatted(
 					row.target(), row.workload(), row.mode(), row.threads(), row.score(), row.unit(),
-					relativeError, row.successes(), row.conflicts()));
+					relativeError, rate(row.usefulOperationsPerSecond()), row.successes(), row.conflicts()));
 		}
 		out.append("\nA relative error above about 10% means the measurement is too noisy to compare "
 				+ "against anything; raise the iteration count or quieten the machine.\n");

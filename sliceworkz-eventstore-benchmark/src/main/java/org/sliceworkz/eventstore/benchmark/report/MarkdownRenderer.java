@@ -326,12 +326,42 @@ final class MarkdownRenderer {
 				+ "answer whether the planner used an index or scanned the table, and no substitute for "
 				+ "the real thing if the query builder changes.\n\n");
 
+		boolean warned = false;
 		for ( QueryPlans.Plan plan : report.plans() ) {
+			if ( !warned && plan.shape().startsWith(QueryPlans.APPEND_SHAPE_PREFIX) ) {
+				out.append(APPEND_PLAN_CAVEAT);
+				warned = true;
+			}
 			out.append("### %s%s\n\n".formatted(plan.shape(),
 					QueryPlans.isSequentialScan(plan) ? " — **sequential scan**" : ""));
 			out.append("```\n").append(plan.explain()).append("\n```\n\n");
 		}
 	}
+
+	/**
+	 * The append-predicate plans are known not to describe the store's own execution, and the report
+	 * says so rather than letting a reader take them for an explanation of the curve above.
+	 *
+	 * <p>They currently invert it: {@code append-types} plans as a sub-millisecond index-only scan and
+	 * measures the slowest of the tagged shapes, while {@code append-type-and-tag} plans as an
+	 * eight-millisecond sequential scan and measures nearly the fastest. A capture that contradicts
+	 * the measurement is describing a different query, and the difference is the parameterisation: the
+	 * store binds its tag arrays and its cursor as JDBC parameters and re-uses the statement, so
+	 * PostgreSQL plans it generically with default selectivity, while these statements inline the tag
+	 * arrays as literals and get a custom plan from real statistics. That is enough to flip
+	 * index-versus-scan, which is precisely the question the section exists to answer.
+	 */
+	private static final String APPEND_PLAN_CAVEAT = """
+			> **The plans below do not describe the store's own execution, and currently contradict the\s
+			> measurements above.** `append-types` plans as a sub-millisecond index-only scan and measures\s
+			> the slowest of the tagged shapes; `append-type-and-tag` plans as an eight-millisecond\s
+			> sequential scan and measures nearly the fastest. The difference is parameterisation -- the\s
+			> store binds its tag arrays and cursor as JDBC parameters and re-uses the statement, so\s
+			> PostgreSQL plans it generically against default selectivity, while these statements inline\s
+			> the arrays as literals and are planned from real statistics. Read them as the shape of the\s
+			> predicate, not as the plan the store gets.
+
+			""";
 
 	private void allResults ( StringBuilder out ) {
 		if ( report.benchmarks().isEmpty() ) {

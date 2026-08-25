@@ -60,6 +60,13 @@ public final class QueryPlans {
 	/** One captured plan. */
 	public record Plan ( String shape, String sql, String explain ) { }
 
+	/**
+	 * Marks the plans for the DCB consistency check, which the report qualifies rather than presents.
+	 * A constant because the renderer matches on it -- a shape renamed in one place and not the other
+	 * would silently drop the qualification and leave the plans reading as an answer.
+	 */
+	public static final String APPEND_SHAPE_PREFIX = "DCB check: ";
+
 	private QueryPlans ( ) { }
 
 	/**
@@ -195,15 +202,15 @@ public final class QueryPlans {
 		String anchor = " -- boundary %,d events back".formatted(distance);
 
 		plans.add(appendPredicate(dataSource, prefix, purpose, boundary,
-				"DCB check: event types only, no tag (append-types)" + anchor,
+				APPEND_SHAPE_PREFIX + "event types only, no tag (append-types)" + anchor,
 				"event_type IN ('StockReserved','StockPicked')"));
 
 		plans.add(appendPredicate(dataSource, prefix, purpose, boundary,
-				"DCB check: four types scoped to one SKU (append-type-and-tag)" + anchor,
+				APPEND_SHAPE_PREFIX + "four types scoped to one SKU (append-type-and-tag)" + anchor,
 				stockTypesWithTags("ARRAY['" + sku + "']")));
 
 		plans.add(appendPredicate(dataSource, prefix, purpose, boundary,
-				"DCB check: one item carrying three AND-ed tags (append-multi-tag)" + anchor,
+				APPEND_SHAPE_PREFIX + "one item carrying three AND-ed tags (append-multi-tag)" + anchor,
 				stockTypesWithTags("ARRAY['" + sku + "','" + TagKeys.CHANNEL + ":web','"
 						+ TagKeys.WAREHOUSE + ":WH-1']")));
 
@@ -219,7 +226,7 @@ public final class QueryPlans {
 								+ WorkloadContext.companionEntity(i, spec.entityCount()) + "']"));
 			}
 			plans.add(appendPredicate(dataSource, prefix, purpose, boundary,
-					"DCB check: %d OR-ed filter items (append-or-groups-%d)%s".formatted(groups, groups, anchor),
+					APPEND_SHAPE_PREFIX + "%d OR-ed filter items (append-or-groups-%d)%s".formatted(groups, groups, anchor),
 					predicate.toString()));
 		}
 

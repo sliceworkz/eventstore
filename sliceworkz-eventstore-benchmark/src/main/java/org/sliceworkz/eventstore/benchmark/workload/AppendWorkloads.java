@@ -69,6 +69,12 @@ public final class AppendWorkloads {
 				typeAndTag(),
 				multiTag(),
 				orGroups(2),
+				// three and four bisect the cliff. Two OR-ed items keep the check on the tag index and
+				// cost 1.4ms; five make PostgreSQL scan the table instead and cost 15ms, and ten cost the
+				// same fifteen because by then the scan is the whole cost. The step is somewhere in here,
+				// and where exactly is the difference between a rule of thumb and a number.
+				orGroups(3),
+				orGroups(4),
 				orGroups(5),
 				orGroups(10),
 				emptyBoundary(),

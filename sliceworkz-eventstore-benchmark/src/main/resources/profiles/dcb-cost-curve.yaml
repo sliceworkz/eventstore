@@ -29,6 +29,8 @@ jmh:
     - append-type-and-tag
     - append-multi-tag
     - append-or-groups-2
+    - append-or-groups-3
+    - append-or-groups-4
     - append-or-groups-5
     - append-or-groups-10
     - append-empty-boundary

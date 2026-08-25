@@ -69,6 +69,25 @@ public final class AppendPlanCapture {
 
 	private static final int LOG_ATTEMPTS = 8;
 
+	/**
+	 * How many times to run a workload before the one whose plan is kept.
+	 *
+	 * <p><b>Why a warm-up is needed for a plan.</b> pgjdbc sends the first {@code prepareThreshold}
+	 * executions of a statement one at a time with the parameter values attached, and PostgreSQL plans
+	 * each from the real values; from the sixth it switches to a server-side prepared statement, and
+	 * PostgreSQL may settle on a <em>generic</em> plan built against default selectivity instead. The
+	 * two can differ, and this suite has watched them differ in the direction nobody expects: capturing
+	 * a single execution of {@code append-type-and-tag} produced a 19ms sequential scan for an operation
+	 * that measures 0.9ms, because the measured run had long since moved to a generic plan using the tag
+	 * index while the one-shot custom plan had not. Six is pgjdbc's default threshold, and going a
+	 * couple past it costs three more appends and removes the whole question.
+	 *
+	 * <p>The consequence for reading the report: these are steady-state plans, which is what the
+	 * throughput numbers were measured on. An application issuing a given consistency boundary only a
+	 * handful of times gets the custom plan instead, and may get a different one.
+	 */
+	private static final int WARMUP_INVOCATIONS = 8;
+
 	private AppendPlanCapture ( ) { }
 
 	/**
@@ -122,13 +141,13 @@ public final class AppendPlanCapture {
 
 	private static Optional<QueryPlans.Plan> captureOne ( Workload workload, WorkloadContext context,
 			String image, String prefix ) {
-		int mark = PostgresContainer.logs(image).length();
-		try {
-			workload.invoke(context);
-		} catch ( RuntimeException e ) {
-			// an optimistic-locking failure is a legitimate outcome and still produced the plan
-			LOGGER.debug("workload {} did not complete during plan capture: {}", workload.name(), e.toString());
+		// Warm past the driver's threshold before marking the log, so what is captured is the plan the
+		// measured run had rather than the one a first execution gets.
+		for ( int i = 0; i < WARMUP_INVOCATIONS; i++ ) {
+			invokeQuietly(workload, context);
 		}
+		int mark = PostgresContainer.logs(image).length();
+		invokeQuietly(workload, context);
 
 		String wanted = "INSERT INTO %sevents".formatted(prefix);
 		for ( int attempt = 0; attempt < LOG_ATTEMPTS; attempt++ ) {
@@ -143,6 +162,15 @@ public final class AppendPlanCapture {
 		LOGGER.info("no plan was logged for {}; auto_explain may not be loaded on the store's connections",
 				workload.name());
 		return Optional.empty();
+	}
+
+	/** An optimistic-locking failure is a legitimate outcome here, and still produced a plan. */
+	private static void invokeQuietly ( Workload workload, WorkloadContext context ) {
+		try {
+			workload.invoke(context);
+		} catch ( RuntimeException e ) {
+			LOGGER.debug("workload {} did not complete during plan capture: {}", workload.name(), e.toString());
+		}
 	}
 
 	private static void sleep ( ) {

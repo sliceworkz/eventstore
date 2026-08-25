@@ -174,28 +174,36 @@ public final class QueryPlans {
 			CorpusFacts facts, boolean perEntity ) {
 		List<Plan> plans = new ArrayList<>();
 
-		// The boundary a steady-state append presents is the reference its own previous append
-		// returned, which is the head of the log. Anchoring anywhere else measures a different query:
-		// at the head the "after the reference" range is empty, which is exactly the case the store
-		// has to answer quickly and the case the curve spends all its time in.
-		Head head = readHead(dataSource, prefix);
-		if ( head == null ) {
+		String purpose = perEntity ? facts.hotEntity() : "default";
+
+		// How far back the boundary sits is the whole measurement, and getting it wrong makes every
+		// plan identical and trivial. The first version of this anchored at the head of the log,
+		// reasoning that a steady-state append presents the reference its own previous append
+		// returned. That is true per entity and false per log: under the SPREAD rotation the workload
+		// visits every other entity before coming back, so the reference it presents is a full
+		// rotation old and the check has to search everything appended since. Anchored at the head
+		// the range is empty, the tag and type predicates are applied to zero rows, and all five
+		// shapes came back at 12-37us in plans identical to each other -- three orders of magnitude
+		// away from the 0.9-16ms the same shapes actually take, and looking for all the world like an
+		// answer.
+		int distance = boundaryDistance(spec, perEntity);
+		Boundary boundary = readBoundary(dataSource, prefix, purpose, distance);
+		if ( boundary == null ) {
 			return plans;
 		}
-
-		String purpose = perEntity ? facts.hotEntity() : "default";
 		String sku = TagKeys.SKU + ":" + facts.hotEntity();
+		String anchor = " -- boundary %,d events back".formatted(distance);
 
-		plans.add(appendPredicate(dataSource, prefix, purpose, head,
-				"DCB check: event types only, no tag (append-types)",
+		plans.add(appendPredicate(dataSource, prefix, purpose, boundary,
+				"DCB check: event types only, no tag (append-types)" + anchor,
 				"event_type IN ('StockReserved','StockPicked')"));
 
-		plans.add(appendPredicate(dataSource, prefix, purpose, head,
-				"DCB check: four types scoped to one SKU (append-type-and-tag)",
+		plans.add(appendPredicate(dataSource, prefix, purpose, boundary,
+				"DCB check: four types scoped to one SKU (append-type-and-tag)" + anchor,
 				stockTypesWithTags("ARRAY['" + sku + "']")));
 
-		plans.add(appendPredicate(dataSource, prefix, purpose, head,
-				"DCB check: one item carrying three AND-ed tags (append-multi-tag)",
+		plans.add(appendPredicate(dataSource, prefix, purpose, boundary,
+				"DCB check: one item carrying three AND-ed tags (append-multi-tag)" + anchor,
 				stockTypesWithTags("ARRAY['" + sku + "','" + TagKeys.CHANNEL + ":web','"
 						+ TagKeys.WAREHOUSE + ":WH-1']")));
 
@@ -210,8 +218,8 @@ public final class QueryPlans {
 						"ARRAY['" + TagKeys.SKU + ":"
 								+ WorkloadContext.companionEntity(i, spec.entityCount()) + "']"));
 			}
-			plans.add(appendPredicate(dataSource, prefix, purpose, head,
-					"DCB check: %d OR-ed filter items (append-or-groups-%d)".formatted(groups, groups),
+			plans.add(appendPredicate(dataSource, prefix, purpose, boundary,
+					"DCB check: %d OR-ed filter items (append-or-groups-%d)%s".formatted(groups, groups, anchor),
 					predicate.toString()));
 		}
 
@@ -223,29 +231,61 @@ public final class QueryPlans {
 				+ " AND event_tags @> " + tagArray + "::text[] )";
 	}
 
-	/** The highest (event_tx, event_position) in the log -- where a steady-state boundary sits. */
-	private record Head ( String tx, long position ) { }
+	/** An (event_tx, event_position) to present as the boundary a conditional append decided on. */
+	private record Boundary ( String tx, long position ) { }
 
-	private static Head readHead ( DataSource dataSource, String prefix ) {
+	/**
+	 * How many events pass between one entity's append and its next, measured in the scope the
+	 * predicate is confined to -- which is what the check has to search.
+	 *
+	 * <p>Under {@code TAGGED} one stream holds every entity, so a full rotation of the writable
+	 * entities lands in it before the workload returns to any one of them. Under {@code PER_ENTITY}
+	 * the predicate is scoped to that entity's own stream, which receives exactly one append per
+	 * rotation, so the same reasoning gives one.
+	 */
+	private static int boundaryDistance ( CorpusSpec spec, boolean perEntity ) {
+		return perEntity ? 1 : Math.max(1, spec.entityCount());
+	}
+
+	private static Boundary readBoundary ( DataSource dataSource, String prefix, String purpose, int distance ) {
 		// One literal, deliberately: `.formatted` binds tighter than `+`, so with the statement split
 		// across two concatenated strings only the second one was formatted and `%sevents` reached the
 		// server verbatim -- a syntax error at position 44 that cost the whole append-predicate section.
+		//
+		// Scoped exactly as the predicate is, so "one rotation back" is counted over the same events
+		// the check will have to search rather than over the whole table.
 		String sql = """
 				SELECT event_tx::text, event_position
 				FROM %sevents
-				ORDER BY event_tx DESC, event_position DESC
-				LIMIT 1""".formatted(prefix);
-		try ( Connection connection = dataSource.getConnection();
-				PreparedStatement statement = connection.prepareStatement(sql);
-				ResultSet rows = statement.executeQuery() ) {
-			return rows.next() ? new Head(rows.getString(1), rows.getLong(2)) : null;
+				WHERE stream_context = ? AND stream_purpose = ?
+				ORDER BY event_tx %s, event_position %s
+				OFFSET ? LIMIT 1""";
+		try ( Connection connection = dataSource.getConnection() ) {
+			Boundary boundary = readOne(connection, sql.formatted(prefix, "DESC", "DESC"), purpose, distance);
+			// A stream holding fewer events than one rotation has no row that far back. Fall back to
+			// its oldest -- the furthest back this corpus can express, so an overstated range rather
+			// than the head's empty one, which is the failure this method exists to avoid.
+			return boundary != null ? boundary
+					: readOne(connection, sql.formatted(prefix, "ASC", "ASC"), purpose, 0);
 		} catch ( SQLException e ) {
-			LOGGER.warn("could not read the head of the log; skipping the append-predicate plans", e);
+			LOGGER.warn("could not read a boundary reference; skipping the append-predicate plans", e);
 			return null;
 		}
 	}
 
-	private static Plan appendPredicate ( DataSource dataSource, String prefix, String purpose, Head head,
+	private static Boundary readOne ( Connection connection, String sql, String purpose, int offset )
+			throws SQLException {
+		try ( PreparedStatement statement = connection.prepareStatement(sql) ) {
+			statement.setString(1, "inventory");
+			statement.setString(2, purpose);
+			statement.setInt(3, offset);
+			try ( ResultSet rows = statement.executeQuery() ) {
+				return rows.next() ? new Boundary(rows.getString(1), rows.getLong(2)) : null;
+			}
+		}
+	}
+
+	private static Plan appendPredicate ( DataSource dataSource, String prefix, String purpose, Boundary head,
 			String shape, String filter ) {
 		return capture(dataSource, shape,
 				"""

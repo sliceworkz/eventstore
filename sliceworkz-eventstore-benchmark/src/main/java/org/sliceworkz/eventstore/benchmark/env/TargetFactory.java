@@ -32,6 +32,7 @@ import org.sliceworkz.eventstore.infra.inmem.shredding.InMemoryShreddingKeyStore
 import org.sliceworkz.eventstore.infra.postgres.DataSourceFactory;
 import org.sliceworkz.eventstore.infra.postgres.DatabaseInitMode;
 import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
+import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorageImpl;
 import org.sliceworkz.eventstore.infra.postgres.shredding.PostgresShreddingKeyStore;
 import org.sliceworkz.eventstore.shredding.AesGcmShreddingCodec;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec;
@@ -149,7 +150,11 @@ public final class TargetFactory {
 					.dataSource(dataSource)
 					.monitoringDataSource(monitoringDataSource)
 					.databaseInitMode(initModeFor(spec.schemaMode()))
-					.notificationStartupTimeout(spec.notificationStartupTimeout());
+					.notificationStartupTimeout(spec.notificationStartupTimeout())
+					.conditionalAppendPlanning(switch ( spec.appendPlanning() ) {
+						case PER_APPEND -> PostgresEventStorageImpl.ConditionalAppendPlanning.PER_APPEND;
+						case SERVER_DEFAULT -> PostgresEventStorageImpl.ConditionalAppendPlanning.SERVER_DEFAULT;
+					});
 			if ( spec.resultLimit() != null ) {
 				builder.resultLimit(spec.resultLimit());
 			}

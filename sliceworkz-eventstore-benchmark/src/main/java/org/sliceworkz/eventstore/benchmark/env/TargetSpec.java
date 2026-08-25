@@ -35,6 +35,7 @@ import java.time.Duration;
  * @param resultLimit the storage-wide absolute result limit, or {@code null} for none
  * @param schemaMode what the store is allowed to do to the schema when it opens
  * @param notificationStartupTimeout how long {@code build()} waits for LISTEN/NOTIFY to register
+ * @param appendPlanning how PostgreSQL may plan the DCB check; ignored for {@link Backend#INMEM}
  */
 public record TargetSpec (
 		Backend backend,
@@ -44,7 +45,8 @@ public record TargetSpec (
 		boolean shredding,
 		Integer resultLimit,
 		SchemaMode schemaMode,
-		Duration notificationStartupTimeout ) {
+		Duration notificationStartupTimeout,
+		AppendPlanning appendPlanning ) {
 
 	/** Which storage implementation is under measurement. */
 	public enum Backend {
@@ -117,6 +119,27 @@ public record TargetSpec (
 		NONE
 	}
 
+	/**
+	 * How PostgreSQL is allowed to plan the DCB consistency check — a dimension rather than a setting,
+	 * for the same reason {@link MetricsMode} is one: the suite exists to say what it costs, and that
+	 * question needs the same workload run both ways.
+	 *
+	 * <p>The check is a re-used prepared statement, so the server holds a custom plan built from the
+	 * actual values and a generic one built against default selectivity, and adopts the generic plan
+	 * once its estimate looks no worse. That comparison is the thing under measurement: a DCB check
+	 * expects <em>no rows</em> while a {@code NOT EXISTS} is priced by how soon a row turns up, so each
+	 * added fact makes the generic plan look cheaper and the custom one dearer, and past the crossing
+	 * every append scans the whole table for a row that is not there.
+	 */
+	public enum AppendPlanning {
+
+		/** What the library does unless told otherwise: PostgreSQL chooses. */
+		SERVER_DEFAULT,
+
+		/** Every conditional append planned from its own values, at the cost of planning per append. */
+		PER_APPEND
+	}
+
 	/** The default LISTEN/NOTIFY startup deadline: generous, because a cold pool is not a failure. */
 	public static final Duration DEFAULT_NOTIFICATION_STARTUP_TIMEOUT = Duration.ofSeconds(30);
 
@@ -133,6 +156,9 @@ public record TargetSpec (
 		if ( notificationStartupTimeout == null ) {
 			notificationStartupTimeout = DEFAULT_NOTIFICATION_STARTUP_TIMEOUT;
 		}
+		if ( appendPlanning == null ) {
+			appendPlanning = AppendPlanning.SERVER_DEFAULT;
+		}
 		if ( backend == Backend.POSTGRES ) {
 			if ( server == null ) {
 				server = PostgresServer.TESTCONTAINERS;
@@ -148,13 +174,14 @@ public record TargetSpec (
 
 	/** The in-memory baseline, with no instrumentation and no shredding. */
 	public static TargetSpec inmem ( ) {
-		return new TargetSpec(Backend.INMEM, null, null, MetricsMode.OFF, false, null, SchemaMode.ENSURE, null);
+		return new TargetSpec(Backend.INMEM, null, null, MetricsMode.OFF, false, null, SchemaMode.ENSURE,
+				null, null);
 	}
 
 	/** A containerised PostgreSQL of the given image, with no instrumentation and no shredding. */
 	public static TargetSpec postgres ( String image ) {
 		return new TargetSpec(Backend.POSTGRES, PostgresServer.TESTCONTAINERS, image,
-				MetricsMode.OFF, false, null, SchemaMode.ENSURE, null);
+				MetricsMode.OFF, false, null, SchemaMode.ENSURE, null, null);
 	}
 
 	/** Whether measuring this target needs a Docker daemon. */
@@ -175,6 +202,12 @@ public record TargetSpec (
 		}
 		if ( resultLimit != null ) {
 			description.append("/limit=").append(resultLimit);
+		}
+		// Only when it is not the default, so every existing profile's target keeps the name its
+		// committed baselines were recorded under -- and so a profile measuring the pair gets two
+		// distinguishable targets rather than two rows the report would silently collapse into one.
+		if ( appendPlanning == AppendPlanning.PER_APPEND ) {
+			description.append("/plan=per-append");
 		}
 		return description.toString();
 	}

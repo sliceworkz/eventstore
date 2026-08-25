@@ -1412,6 +1412,33 @@ can pass all of it and still violate the boundary in production.
     serialization failures and a third of the throughput, with disjoint boundaries falsely conflicting
     because the planner's choice (seq scan → relation-level `SIRead` lock) decides the granularity.
   - No DDL change, so no migration: the lock is entirely in the write path.
+- **The DCB check is a re-used prepared statement, and PostgreSQL's choice of plan for it can fall off a
+  cliff.** The server holds two plans for such a statement — a *custom* one re-planned from the actual
+  parameter values, and a *generic* one planned once against default selectivity — and from the tenth
+  execution it adopts the generic plan if its **estimated** cost looks no worse. A DCB check is the shape
+  that misleads that comparison: its expected result is *no rows*, while a `NOT EXISTS` is priced by how
+  soon a row is expected to turn up. Every OR-ed fact a decision rests on makes the generic plan expect a
+  match sooner, so its estimate *falls* while the custom plan's — built from real tag statistics — rises.
+  - **Observed on a 100.000-event `TAGGED` corpus** (`auto_explain` capture, PG18): the estimates cross
+    between two and three OR-ed facts. At two the server keeps a `BitmapOr` over `idx_events_stream_tags`
+    and the append costs ~1.5ms; at three it adopts a generic plan that sequential-scans the whole events
+    table — `Rows Removed by Filter: 100044`, for a row that is not there — and the append costs ~17ms,
+    with four, five and ten costing the same. Nothing is logged and no meter moves.
+  - **Three shapes go the other way and keep their custom plan**, for the same reason: `append-type-and-tag`
+    (the canonical check), `append-multi-tag` and `decide-then-append` all measure around 1ms/op against
+    generic plans that take 20–28ms. The canonical check is therefore one bad estimate away from the
+    same fate, and nothing in the store would say if it flipped.
+  - **`conditionalAppendPlanning(PER_APPEND)` takes the choice away**, planning every conditional append
+    from its own values. Implemented as `setPrepareThreshold(0)` on that one statement through pgjdbc —
+    no extra round trip, no effect on any other statement sharing the connection, and unlike
+    `SET plan_cache_mode` it cannot leak. It is best effort against a `DataSource` that will not unwrap
+    to pgjdbc, which is a single WARN rather than a failed append.
+  - **The default is unchanged (`SERVER_DEFAULT`)** until the pair has been measured rather than reasoned
+    about: `sliceworkz-eventstore-benchmark`'s `dcb-plan-cache` profile runs both modes over one corpus in
+    one run, with `append-none` as the control that must not move.
+    `PostgresConditionalAppendPlanningTest` pins the mechanism per backend — that the statement does reach
+    the plan cache by default and does not under `PER_APPEND` — and that neither mode changes what a
+    consistency boundary means.
 - **Oldest supported PostgreSQL is 16** (`Builder.OLDEST_SUPPORTED_MAJOR_VERSION`). The schema itself only
   needs 13 — `xid8`, `pg_current_xact_id()` — but 16 is both the oldest version with a support life worth
   committing to (13 went end-of-life in November 2025, 14 follows in November 2026, 15 in November 2027)

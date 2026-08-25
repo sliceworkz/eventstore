@@ -134,7 +134,8 @@ public final class CorpusProvisioner {
 
 		TargetSpec provisioning = new TargetSpec(targetSpec.backend(), targetSpec.server(), targetSpec.image(),
 				targetSpec.metrics(), spec.requiresShredding() || targetSpec.shredding(), targetSpec.resultLimit(),
-				TargetSpec.SchemaMode.ENSURE, targetSpec.notificationStartupTimeout());
+				TargetSpec.SchemaMode.ENSURE, targetSpec.notificationStartupTimeout(),
+				targetSpec.appendPlanning());
 
 		BenchmarkTarget target = TargetFactory.open(provisioning, prefix);
 		try {

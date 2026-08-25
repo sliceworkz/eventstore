@@ -184,6 +184,17 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	private final MeterRegistry meterRegistry;
 
+	/** See {@link ConditionalAppendPlanning}; set by the builder before the storage is started. */
+	private volatile ConditionalAppendPlanning conditionalAppendPlanning =
+			ConditionalAppendPlanning.SERVER_DEFAULT;
+
+	/**
+	 * Whether the warning about being unable to apply {@link #conditionalAppendPlanning} has been
+	 * logged. Once, not per append: it is a property of the driver under this storage, so it cannot
+	 * start working, and a per-append WARN on the write path would be its own outage.
+	 */
+	private final AtomicBoolean planningWarningLogged = new AtomicBoolean();
+
 	private static final JsonMapper JSONMAPPER = JsonMapper.builder().build();
 
 	/**
@@ -1311,6 +1322,82 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private static final String ACQUIRE_APPEND_LOCK = "SELECT pg_advisory_xact_lock(?)";
 
 	/**
+	 * How PostgreSQL is allowed to plan the conditional append's {@code NOT EXISTS}.
+	 *
+	 * <p><b>Why this is a setting at all.</b> The consistency check is a re-used prepared statement, so
+	 * PostgreSQL holds two plans for it: a <em>custom</em> one re-planned from the actual parameter
+	 * values, and a <em>generic</em> one planned once against default selectivity. From the tenth
+	 * execution it compares their estimated costs and adopts the generic plan if it looks no worse.
+	 *
+	 * <p><b>A DCB check is the shape that defeats that comparison.</b> Its expected result is <em>no
+	 * rows</em>, while the planner prices a {@code NOT EXISTS} by how soon it expects to find one. Every
+	 * OR-ed fact a decision rests on makes the generic plan expect a match sooner, so its estimate
+	 * <em>falls</em> while the custom plan's — built from real tag statistics — rises. Once the estimates
+	 * cross, the server adopts a plan that scans the whole events table looking for a row that is not
+	 * there, and it never reconsiders.
+	 */
+	public enum ConditionalAppendPlanning {
+
+		/**
+		 * Plan every conditional append from its own parameter values.
+		 *
+		 * <p>Costs planning per append and removes the cliff. Equivalent to
+		 * {@code SET plan_cache_mode = 'force_custom_plan'} for this statement, done through the driver
+		 * so it needs no extra round trip and touches no other statement.
+		 */
+		PER_APPEND,
+
+		/**
+		 * Let PostgreSQL choose between its custom and generic plans, as it does for any other
+		 * statement. The historical behaviour, and the default.
+		 */
+		SERVER_DEFAULT
+	}
+
+	/** How this storage lets PostgreSQL plan its conditional appends. */
+	public ConditionalAppendPlanning getConditionalAppendPlanning ( ) {
+		return conditionalAppendPlanning;
+	}
+
+	/**
+	 * Sets how PostgreSQL may plan the conditional append; see {@link ConditionalAppendPlanning}.
+	 *
+	 * @param planning the mode; {@code null} restores {@link ConditionalAppendPlanning#SERVER_DEFAULT}
+	 */
+	public void setConditionalAppendPlanning ( ConditionalAppendPlanning planning ) {
+		this.conditionalAppendPlanning = planning == null ? ConditionalAppendPlanning.SERVER_DEFAULT : planning;
+	}
+
+	/**
+	 * Keeps the conditional append off the server's prepared-statement plan cache, where asked to.
+	 *
+	 * <p>Done through the driver rather than with {@code SET LOCAL plan_cache_mode}: pgjdbc only makes a
+	 * statement server-prepared after {@code prepareThreshold} executions, and a threshold of zero keeps
+	 * it unnamed forever, so PostgreSQL plans every execution from the values bound to it. That costs no
+	 * extra round trip on the write path and — unlike the GUC — cannot leak onto any other statement
+	 * sharing the connection.
+	 *
+	 * <p><b>Best effort, and loud once if it fails.</b> A {@code DataSource} that is not pgjdbc, or a
+	 * proxy that will not unwrap to it, leaves the store running exactly as it did before with a
+	 * configured setting silently not applied — which is worth one WARN naming what was asked for, and
+	 * not worth failing an append over.
+	 */
+	private void applyConditionalAppendPlanning ( PreparedStatement statement ) {
+		if ( conditionalAppendPlanning != ConditionalAppendPlanning.PER_APPEND ) {
+			return;
+		}
+		try {
+			statement.unwrap(org.postgresql.PGStatement.class).setPrepareThreshold(0);
+		} catch ( SQLException | RuntimeException e ) {
+			if ( planningWarningLogged.compareAndSet(false, true) ) {
+				LOGGER.warn("conditional appends were configured to be planned per append, but this"
+						+ " DataSource does not expose a PostgreSQL statement to say so; PostgreSQL will"
+						+ " keep choosing between its custom and generic plans", e);
+			}
+		}
+	}
+
+	/**
 	 * Statement that serializes schema scripts; see {@link #executeSqlScripts} and {@link #schemaLockKey}.
 	 * Textually identical to {@link #ACQUIRE_APPEND_LOCK} but kept separate: the two serialize different
 	 * things and share only the fact that PostgreSQL spells the lock the same way.
@@ -1555,6 +1642,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 				try ( PreparedStatement stmt = writeConnection.prepareStatement(sqlBuilder.toString()) ) {
 
 					if ( ! appendCriteria.isNone() ) {
+						applyConditionalAppendPlanning(stmt);
+
 						// Serialize this stream's conditional appends: the NOT EXISTS below is a phantom
 						// check, which READ COMMITTED does not protect. Held until this transaction ends,
 						// and taken as its own statement so the INSERT's snapshot is taken after the

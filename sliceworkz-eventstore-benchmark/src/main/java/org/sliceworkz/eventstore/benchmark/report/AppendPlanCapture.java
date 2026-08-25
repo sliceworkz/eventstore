@@ -23,7 +23,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import javax.sql.DataSource;
@@ -48,11 +50,16 @@ import org.sliceworkz.eventstore.testing.backend.PostgresContainer;
  * workload is the one that was measured, the statement is the one the backend built, and the plan is
  * the one PostgreSQL chose, so there is nothing left to be faithful about.
  *
+ * <p><b>Each workload is explained twice.</b> PostgreSQL holds two plans for a re-used prepared
+ * statement and the report needs to know which one the throughput was measured on, so the capture pins
+ * each in turn -- see {@link AutoExplain.PlanCacheMode}. The generic plan is always reported; the
+ * custom one only when it is a different plan rather than the same one with different numbers.
+ *
  * <p><b>The capture appends, and puts the events back.</b> A conditional append cannot be explained
- * without running it, so one event per workload is written and then deleted by position afterwards. A
- * handful of dead tuples in a corpus that is restored or rebuilt before anything is measured again is
- * cheap; leaving the events would be worse than that, because the corpus manifest verifies its event
- * count and would rebuild the whole corpus on the next run.
+ * without running it, so a handful of events per workload per round are written and then deleted by
+ * position afterwards. A few dead tuples in a corpus that is restored or rebuilt before anything is
+ * measured again is cheap; leaving the events would be worse than that, because the corpus manifest
+ * verifies its event count and would rebuild the whole corpus on the next run.
  *
  * <p><b>Never while measuring.</b> Explaining every statement costs the server real work, so this runs
  * after the last measurement, from the launcher, against a store opened for the purpose.
@@ -72,21 +79,20 @@ public final class AppendPlanCapture {
 	/**
 	 * How many times to run a workload before the one whose plan is kept.
 	 *
-	 * <p><b>Why a warm-up is needed for a plan.</b> pgjdbc sends the first {@code prepareThreshold}
-	 * executions of a statement one at a time with the parameter values attached, and PostgreSQL plans
-	 * each from the real values; from the sixth it switches to a server-side prepared statement, and
-	 * PostgreSQL may settle on a <em>generic</em> plan built against default selectivity instead. The
-	 * two can differ, and this suite has watched them differ in the direction nobody expects: capturing
-	 * a single execution of {@code append-type-and-tag} produced a 19ms sequential scan for an operation
-	 * that measures 0.9ms, because the measured run had long since moved to a generic plan using the tag
-	 * index while the one-shot custom plan had not. Six is pgjdbc's default threshold, and going a
-	 * couple past it costs three more appends and removes the whole question.
-	 *
-	 * <p>The consequence for reading the report: these are steady-state plans, which is what the
-	 * throughput numbers were measured on. An application issuing a given consistency boundary only a
-	 * handful of times gets the custom plan instead, and may get a different one.
+	 * <p>This is no longer what decides <em>which</em> plan is captured -- {@link AutoExplain.PlanCacheMode}
+	 * does that, after counting executions turned out to be off by one and produced a report whose
+	 * captured plans contradicted the measurements. What the warm-up is still for is everything else the
+	 * first execution of a statement pays and a benchmark in its millionth does not: the statement
+	 * becoming server-prepared, the pages it touches reaching shared buffers, the pool settling on one
+	 * connection.
 	 */
 	private static final int WARMUP_INVOCATIONS = 8;
+
+	/** Appended to the shape of the plan the measured run is running on. */
+	private static final String GENERIC_SUFFIX = " (generic plan)";
+
+	/** Appended to a custom plan, which is only reported when it differs from the generic one. */
+	private static final String CUSTOM_SUFFIX = " (custom plan, first executions only)";
 
 	private AppendPlanCapture ( ) { }
 
@@ -113,15 +119,80 @@ public final class AppendPlanCapture {
 		List<QueryPlans.Plan> plans = new ArrayList<>();
 		try {
 			WorkloadContext context = new WorkloadContext(target, spec, facts, Collision.SPREAD, 0, 1, spec.seed());
+			Map<String, String> generic = captureAll(conditional, context, image, prefix, dataSource,
+					AutoExplain.PlanCacheMode.GENERIC);
+			Map<String, String> custom = captureAll(conditional, context, image, prefix, dataSource,
+					AutoExplain.PlanCacheMode.CUSTOM);
+
 			for ( Workload workload : conditional ) {
-				captureOne(workload, context, image, prefix).ifPresent(plans::add);
+				String steadyState = generic.get(workload.name());
+				if ( steadyState == null ) {
+					continue;
+				}
+				plans.add(new QueryPlans.Plan(
+						QueryPlans.CAPTURED_SHAPE_PREFIX + workload.name() + GENERIC_SUFFIX, "", steadyState));
+
+				String firstExecutions = custom.get(workload.name());
+				if ( firstExecutions != null && !sameShape(firstExecutions, steadyState) ) {
+					plans.add(new QueryPlans.Plan(
+							QueryPlans.CAPTURED_SHAPE_PREFIX + workload.name() + CUSTOM_SUFFIX, "",
+							firstExecutions));
+				}
 			}
 		} catch ( RuntimeException e ) {
 			LOGGER.warn("could not capture the store's own append plans", e);
 		} finally {
+			AutoExplain.resetPlanCacheMode(dataSource);
 			removeCapturedEvents(dataSource, prefix, headBefore);
 		}
 		return plans;
+	}
+
+	/**
+	 * Every workload's plan under one plan-cache mode, keyed by workload name.
+	 *
+	 * <p>The mode is set on the database and the pool's connections are retired, so the round runs on
+	 * connections that carry it. A mode that cannot be set means the round is skipped rather than
+	 * silently capturing whatever the server felt like planning -- the case this whole class exists to
+	 * stop being reported as fact.
+	 */
+	private static Map<String, String> captureAll ( List<Workload> workloads, WorkloadContext context,
+			String image, String prefix, DataSource dataSource, AutoExplain.PlanCacheMode mode ) {
+		if ( !AutoExplain.planCacheMode(dataSource, mode) ) {
+			return Map.of();
+		}
+		Map<String, String> plans = new LinkedHashMap<>();
+		for ( Workload workload : workloads ) {
+			captureOne(workload, context, image, prefix)
+					.ifPresent(explain -> plans.put(workload.name(), explain));
+		}
+		return plans;
+	}
+
+	/**
+	 * Whether two plans differ only in their numbers.
+	 *
+	 * <p>Reduces a plan to the nodes it is made of -- their kind and what they read -- and compares
+	 * that, so a custom plan is reported beside the generic one when it uses a different index or scans
+	 * where the other seeks, and suppressed when it is the same plan with different row counts. That
+	 * distinction is the entire reason for capturing twice; two identical plans in the report would only
+	 * make the section longer.
+	 */
+	private static boolean sameShape ( String one, String other ) {
+		return nodesOf(one).equals(nodesOf(other));
+	}
+
+	private static List<String> nodesOf ( String explain ) {
+		List<String> nodes = new ArrayList<>();
+		for ( String line : explain.split("\n") ) {
+			int cost = line.indexOf("  (cost=");
+			if ( cost < 0 ) {
+				continue;
+			}
+			String node = line.substring(0, cost).strip();
+			nodes.add(node.startsWith("->") ? node.substring(2).strip() : node);
+		}
+		return nodes;
 	}
 
 	/**
@@ -139,10 +210,10 @@ public final class AppendPlanCapture {
 				&& !name.startsWith("append-idempotent");
 	}
 
-	private static Optional<QueryPlans.Plan> captureOne ( Workload workload, WorkloadContext context,
+	private static Optional<String> captureOne ( Workload workload, WorkloadContext context,
 			String image, String prefix ) {
-		// Warm past the driver's threshold before marking the log, so what is captured is the plan the
-		// measured run had rather than the one a first execution gets.
+		// Warm before marking the log, so what is captured is a statement the server has seen before and
+		// whose pages are in shared buffers, as they are throughout a measured trial.
 		for ( int i = 0; i < WARMUP_INVOCATIONS; i++ ) {
 			invokeQuietly(workload, context);
 		}
@@ -154,8 +225,7 @@ public final class AppendPlanCapture {
 			Optional<String> plan = AutoExplain.matching(
 					AutoExplain.plansIn(PostgresContainer.logs(image), mark), wanted);
 			if ( plan.isPresent() ) {
-				return plan.map(explain -> new QueryPlans.Plan(
-						QueryPlans.CAPTURED_SHAPE_PREFIX + workload.name(), "", explain));
+				return plan;
 			}
 			sleep();
 		}

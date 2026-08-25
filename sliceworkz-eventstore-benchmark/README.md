@@ -209,17 +209,28 @@ Each run writes `report.json` (the record) and `report.md` (a rendering of it) b
   Enough to answer *did the planner use an index*, and no substitute for the real thing if the query
   builder changes.
 - **The DCB check's plans are real.** After the last measurement, the report turns on `auto_explain`,
-  runs each conditional-append workload once, and reads the plan the server logged for the statement
-  the store itself issued — then deletes the events that capture appended, so the corpus stays the
-  size its manifest records. Only on a Testcontainers target, whose log this process can read.
+  runs each conditional-append workload, and reads the plan the server logged for the statement the
+  store itself issued — then deletes the events that capture appended, so the corpus stays the size
+  its manifest records. Only on a Testcontainers target, whose log this process can read.
 
   Worth knowing why this is not also a reconstruction. The hand-written version of these came out
   *inverted* against the measurements: a shape planning as a sub-millisecond index-only scan measured
   slowest, one planning as an eight-millisecond sequential scan measured nearly fastest. The
   predicate was right and the parameterisation was not — the store binds its tag arrays and cursor as
-  JDBC parameters and re-uses the statement, so PostgreSQL plans it generically against default
-  selectivity, while inlining the same values as literals earns a custom plan from real statistics.
-  That difference alone decides index-versus-scan, which is the only question the plans are for.
+  JDBC parameters and re-uses the statement, so PostgreSQL settles on a plan built against default
+  selectivity, while inlining the same values as literals earns one built from real statistics. That
+  difference alone decides index-versus-scan, which is the only question the plans are for.
+- **Each captured plan says whether it is the generic or the custom one, and that matters.**
+  PostgreSQL holds both for a re-used prepared statement: the *custom* plan is re-planned from the
+  actual parameter values, the *generic* one is planned once against default selectivity, and it
+  switches to generic around the tenth execution. A benchmark loop therefore runs on the generic
+  plan — so that is the one to read against the throughput, and the report prints the measured
+  ms/op beside it to make a mismatch visible. Where the custom plan differs it is shown underneath,
+  because "this boundary is cheap the first few times and expensive forever after" is a real
+  property of the store and not an artefact of the capture. Both are pinned with `plan_cache_mode`
+  rather than reached by counting executions, which is how the capture got this wrong once already:
+  eight warm-up invocations plus one left it one execution short of the switch, and it reported the
+  last custom plan — 1.0ms — for an operation measuring 15.9ms.
 - **Load results carry correctness checks**, and a run that fails one is reported as unsound. Events
   in must equal events out; nothing may be projected twice.
 

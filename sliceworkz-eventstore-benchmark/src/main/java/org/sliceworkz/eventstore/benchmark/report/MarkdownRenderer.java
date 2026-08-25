@@ -338,24 +338,50 @@ final class MarkdownRenderer {
 				out.append(APPEND_PLAN_CAVEAT);
 				warned = true;
 			}
-			out.append("### %s%s\n\n".formatted(plan.shape(),
+			out.append("### %s%s%s\n\n".formatted(plan.shape(), measured(plan),
 					QueryPlans.isSequentialScan(plan) ? " — **sequential scan**" : ""));
 			out.append("```\n").append(plan.explain()).append("\n```\n\n");
 		}
 	}
 
 	/**
+	 * What the operation this plan belongs to actually cost, next to the plan's own timings.
+	 *
+	 * <p>The comparison that catches a capture describing something other than what was measured, which
+	 * is a failure mode this section has had twice and which is invisible without doing this division by
+	 * hand. A plan whose own execution time is an order of magnitude under the measured cost of the
+	 * operation containing it is not the plan that operation was running.
+	 */
+	private String measured ( QueryPlans.Plan plan ) {
+		if ( !plan.shape().startsWith(QueryPlans.CAPTURED_SHAPE_PREFIX) ) {
+			return "";
+		}
+		String remainder = plan.shape().substring(QueryPlans.CAPTURED_SHAPE_PREFIX.length());
+		int suffix = remainder.indexOf(" (");
+		String workload = suffix < 0 ? remainder : remainder.substring(0, suffix);
+
+		return report.benchmarks().stream()
+				.filter(row -> row.workload().equals(workload))
+				.filter(row -> row.target().contains("postgres"))
+				.filter(row -> row.operationsPerSecond() > 0)
+				.findFirst()
+				.map(row -> " — measured %.2f ms/op".formatted(1000 / row.operationsPerSecond()))
+				.orElse("");
+	}
+
+	/**
 	 * The append-predicate plans are known not to describe the store's own execution, and the report
 	 * says so rather than letting a reader take them for an explanation of the curve above.
 	 *
-	 * <p>They currently invert it: {@code append-types} plans as a sub-millisecond index-only scan and
-	 * measures the slowest of the tagged shapes, while {@code append-type-and-tag} plans as an
-	 * eight-millisecond sequential scan and measures nearly the fastest. A capture that contradicts
-	 * the measurement is describing a different query, and the difference is the parameterisation: the
-	 * store binds its tag arrays and its cursor as JDBC parameters and re-uses the statement, so
-	 * PostgreSQL plans it generically with default selectivity, while these statements inline the tag
-	 * arrays as literals and get a custom plan from real statistics. That is enough to flip
-	 * index-versus-scan, which is precisely the question the section exists to answer.
+	 * <p>They invert it: {@code append-types} plans as a sub-millisecond index-only scan and measures
+	 * the slowest of the tagged shapes, while {@code append-type-and-tag} plans as an eight-millisecond
+	 * sequential scan and measures nearly the fastest. A capture that contradicts the measurement is
+	 * describing a different query, and the difference is the parameterisation: the store binds its tag
+	 * arrays and its cursor as JDBC parameters and re-uses the statement, so PostgreSQL settles on a
+	 * generic plan against default selectivity, while these statements inline the arrays as literals and
+	 * are planned from real statistics every time. That is enough to flip index-versus-scan, which is
+	 * precisely the question the section exists to answer -- and it is why the captured plans below are
+	 * taken with the plan cache pinned rather than left to the server's own switch-over.
 	 */
 	/**
 	 * Introduces the plans read back from the server for the store's own statements -- the ones that
@@ -363,10 +389,20 @@ final class MarkdownRenderer {
 	 */
 	private static final String CAPTURED_PLAN_NOTE = """
 			> **These are the store's own statements, explained by the server.** Captured by running each\s
-			> workload once with `auto_explain` on, after the last measurement, so the SQL is the one the\s
-			> backend built, the parameters are bound as it binds them, and the plan is the one PostgreSQL\s
-			> chose. Where these and the reconstructed plans above disagree, these are the ones that\s
-			> describe what was measured.
+			> workload with `auto_explain` on, after the last measurement, so the SQL is the one the backend\s
+			> built, the parameters are bound as it binds them, and the plan is the one PostgreSQL chose.\s
+			> Where these and the reconstructed plans above disagree, these are the ones that describe what\s
+			> was measured.
+			>
+			> **Generic against custom.** The backend re-uses its prepared statements, so PostgreSQL holds\s
+			> two plans for each: a *generic* one planned once against default selectivity, and a *custom*\s
+			> one re-planned from the actual parameter values. It starts on custom and switches to generic\s
+			> around the tenth execution, so a benchmark loop runs on the generic plan and an application\s
+			> issuing a given consistency boundary a handful of times may not. The generic plan is the one\s
+			> to read against the throughput above. A custom plan appears below it only where it is a\s
+			> genuinely different plan, and the pair is then worth reading together: the same boundary\s
+			> costing very different amounts depending on how often it is issued is a property of the\s
+			> store worth knowing about.
 
 			""";
 

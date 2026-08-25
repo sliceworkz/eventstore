@@ -68,6 +68,23 @@ public record RunReport (
 		try {
 			Files.createDirectories(directory);
 			Files.writeString(directory.resolve(FILE_NAME), JSON.writeValueAsString(this));
+			writeMarkdownTo(directory);
+		} catch ( IOException e ) {
+			throw new UncheckedIOException("could not write the run report to " + directory, e);
+		}
+	}
+
+	/**
+	 * Renders {@code report.md} again from what this report already holds, leaving the JSON alone.
+	 *
+	 * <p>The JSON is the record and the Markdown is a view of it, so a change to how a run is
+	 * <em>presented</em> -- a table that was listing the wrong steps, a paragraph that has since been
+	 * shown to be wrong -- should cost a second rather than another measured run. Everything the
+	 * renderer reads is in the JSON, captured query plans included.
+	 */
+	public void writeMarkdownTo ( Path directory ) {
+		try {
+			Files.createDirectories(directory);
 			Files.writeString(directory.resolve("report.md"), new MarkdownRenderer(this).render());
 		} catch ( IOException e ) {
 			throw new UncheckedIOException("could not write the run report to " + directory, e);

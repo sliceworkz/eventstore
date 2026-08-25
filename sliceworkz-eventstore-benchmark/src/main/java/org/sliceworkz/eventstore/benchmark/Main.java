@@ -459,11 +459,17 @@ public final class Main {
 						: Reports.SCRATCH_ROOT.toString()));
 
 		RunReport current = RunReport.read(runDirectory);
+		// Re-render before anything else looks at it. The JSON is the record and the Markdown a view of
+		// it, so a run measured before a change to how it is presented should not have to be measured
+		// again -- and publishing a directory whose Markdown was rendered by an older version of the
+		// renderer commits a baseline that disagrees with its own data.
+		current.writeMarkdownTo(runDirectory);
+
 		System.out.println("run       : %s".formatted(runDirectory));
 		System.out.println("profile   : %s".formatted(current.manifest().profileName()));
 		System.out.println("version   : %s".formatted(current.manifest().suiteVersion()));
 		System.out.println("corpus    : %s".formatted(current.manifest().corpusFingerprint()));
-		System.out.println("markdown  : %s".formatted(runDirectory.resolve("report.md")));
+		System.out.println("markdown  : %s (re-rendered)".formatted(runDirectory.resolve("report.md")));
 
 		if ( options.containsKey("publish") ) {
 			Path published = Reports.publish(runDirectory, options.containsKey("force"));
@@ -849,7 +855,7 @@ public final class Main {
 			            [--out=<dir>]        where to write results (default target/benchmark/<profile>)
 			            [--yes]              required for a run estimated at over an hour
 			  load      --profile=<name>     run the profile's load scenario against a growing store
-			  report    [--run=<dir>]        render a run; diffs the latest committed baseline
+			  report    [--run=<dir>]        re-render a run from its stored data; diffs the latest baseline
 			            [--baseline=<path>]  diff a particular baseline instead
 			            [--publish]          copy the run into the committed results
 			            [--force]            publish despite the run not meeting the conditions

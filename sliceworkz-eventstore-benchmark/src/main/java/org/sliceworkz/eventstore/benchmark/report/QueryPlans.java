@@ -67,6 +67,13 @@ public final class QueryPlans {
 	 */
 	public static final String APPEND_SHAPE_PREFIX = "DCB check: ";
 
+	/**
+	 * Marks a plan {@link AppendPlanCapture} read back from the server for the store's own statement.
+	 * Checked before {@link #APPEND_SHAPE_PREFIX}, and deliberately does not start with it: these carry
+	 * none of that qualification, being the plan PostgreSQL actually chose rather than a reconstruction.
+	 */
+	public static final String CAPTURED_SHAPE_PREFIX = "DCB check as issued: ";
+
 	private QueryPlans ( ) { }
 
 	/**

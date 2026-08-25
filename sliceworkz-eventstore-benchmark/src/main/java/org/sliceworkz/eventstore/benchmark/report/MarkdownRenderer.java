@@ -327,8 +327,14 @@ final class MarkdownRenderer {
 				+ "the real thing if the query builder changes.\n\n");
 
 		boolean warned = false;
+		boolean introduced = false;
 		for ( QueryPlans.Plan plan : report.plans() ) {
-			if ( !warned && plan.shape().startsWith(QueryPlans.APPEND_SHAPE_PREFIX) ) {
+			if ( plan.shape().startsWith(QueryPlans.CAPTURED_SHAPE_PREFIX) ) {
+				if ( !introduced ) {
+					out.append(CAPTURED_PLAN_NOTE);
+					introduced = true;
+				}
+			} else if ( !warned && plan.shape().startsWith(QueryPlans.APPEND_SHAPE_PREFIX) ) {
 				out.append(APPEND_PLAN_CAVEAT);
 				warned = true;
 			}
@@ -351,6 +357,19 @@ final class MarkdownRenderer {
 	 * arrays as literals and get a custom plan from real statistics. That is enough to flip
 	 * index-versus-scan, which is precisely the question the section exists to answer.
 	 */
+	/**
+	 * Introduces the plans read back from the server for the store's own statements -- the ones that
+	 * need no qualification, and the ones to believe where they and the reconstructions disagree.
+	 */
+	private static final String CAPTURED_PLAN_NOTE = """
+			> **These are the store's own statements, explained by the server.** Captured by running each\s
+			> workload once with `auto_explain` on, after the last measurement, so the SQL is the one the\s
+			> backend built, the parameters are bound as it binds them, and the plan is the one PostgreSQL\s
+			> chose. Where these and the reconstructed plans above disagree, these are the ones that\s
+			> describe what was measured.
+
+			""";
+
 	private static final String APPEND_PLAN_CAVEAT = """
 			> **The plans below do not describe the store's own execution, and currently contradict the\s
 			> measurements above.** `append-types` plans as a sub-millisecond index-only scan and measures\s

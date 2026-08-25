@@ -204,10 +204,22 @@ Each run writes `report.json` (the record) and `report.md` (a rendering of it) b
   says which happened.
 - **A relative error above about 10%** means the measurement is too noisy to compare against
   anything.
-- **Query plans are representative, not real.** The backend builds its SQL internally and does not
-  expose it, so the report captures `EXPLAIN` for statements matching the shapes it issues. Enough to
-  answer *did the planner use an index*, and no substitute for the real thing if the query builder
-  changes.
+- **The read query plans are representative, not real.** The backend builds its SQL internally and
+  does not expose it, so the report captures `EXPLAIN` for statements matching the shapes it issues.
+  Enough to answer *did the planner use an index*, and no substitute for the real thing if the query
+  builder changes.
+- **The DCB check's plans are real.** After the last measurement, the report turns on `auto_explain`,
+  runs each conditional-append workload once, and reads the plan the server logged for the statement
+  the store itself issued — then deletes the events that capture appended, so the corpus stays the
+  size its manifest records. Only on a Testcontainers target, whose log this process can read.
+
+  Worth knowing why this is not also a reconstruction. The hand-written version of these came out
+  *inverted* against the measurements: a shape planning as a sub-millisecond index-only scan measured
+  slowest, one planning as an eight-millisecond sequential scan measured nearly fastest. The
+  predicate was right and the parameterisation was not — the store binds its tag arrays and cursor as
+  JDBC parameters and re-uses the statement, so PostgreSQL plans it generically against default
+  selectivity, while inlining the same values as literals earns a custom plan from real statistics.
+  That difference alone decides index-versus-scan, which is the only question the plans are for.
 - **Load results carry correctness checks**, and a run that fails one is reported as unsound. Events
   in must equal events out; nothing may be projected twice.
 

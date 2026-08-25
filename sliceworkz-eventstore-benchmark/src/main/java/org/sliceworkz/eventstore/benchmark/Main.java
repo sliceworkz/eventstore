@@ -24,6 +24,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import javax.sql.DataSource;
+
 import org.openjdk.jmh.runner.RunnerException;
 
 import org.sliceworkz.eventstore.benchmark.config.BenchmarkProfile;
@@ -38,6 +40,8 @@ import org.sliceworkz.eventstore.benchmark.env.TargetSpec;
 import org.sliceworkz.eventstore.benchmark.jmh.JmhRunner;
 import org.sliceworkz.eventstore.benchmark.load.LoadResult;
 import org.sliceworkz.eventstore.benchmark.load.LoadRunner;
+import org.sliceworkz.eventstore.benchmark.report.AppendPlanCapture;
+import org.sliceworkz.eventstore.benchmark.report.AutoExplain;
 import org.sliceworkz.eventstore.benchmark.report.BaselineComparator;
 import org.sliceworkz.eventstore.benchmark.report.BenchmarkRow;
 import org.sliceworkz.eventstore.benchmark.report.JmhResults;
@@ -370,12 +374,45 @@ public final class Main {
 					EnvironmentReport.capture(prepared.target()),
 					describeRestorePolicy(profile));
 
-			List<QueryPlans.Plan> plans = QueryPlans.capture(
-					prepared.target(), provisioner.prefix(), profile.corpus(), prepared.outcome().facts());
+			List<QueryPlans.Plan> plans = new ArrayList<>(QueryPlans.capture(
+					prepared.target(), provisioner.prefix(), profile.corpus(), prepared.outcome().facts()));
+			plans.addAll(captureAppendPlans(profile, provisioner, prepared));
 
 			RunReport report = new RunReport(manifest.finished(drift), benchmarks, loadResults, plans);
 			report.writeTo(output);
 			return report;
+		}
+	}
+
+	/**
+	 * Plans for the conditional appends, captured from the statements the store itself issued.
+	 *
+	 * <p>{@code auto_explain} is switched on for the database and then the pool's idle connections are
+	 * retired, so the store the rest of the report was built from starts explaining without being
+	 * rebuilt -- see {@link AutoExplain} for why opening a second store would not have helped.
+	 *
+	 * <p>Only for a Testcontainers PostgreSQL, because the plans come back through the container's log
+	 * and this process has no way to read an external server's. Everything else about the report is
+	 * unchanged on such a target; it simply carries the hand-written plans alone.
+	 */
+	private static List<QueryPlans.Plan> captureAppendPlans ( BenchmarkProfile profile,
+			CorpusProvisioner provisioner, CorpusProvisioner.Prepared prepared ) {
+		TargetSpec spec = targetToDescribe(profile);
+		if ( profile.jmh() == null || spec.backend() != TargetSpec.Backend.POSTGRES
+				|| spec.server() != TargetSpec.PostgresServer.TESTCONTAINERS
+				|| prepared.target().dataSource().isEmpty() ) {
+			return List.of();
+		}
+		DataSource dataSource = prepared.target().dataSource().get();
+		if ( !AutoExplain.enable(dataSource) ) {
+			return List.of();
+		}
+		try {
+			return AppendPlanCapture.capture(prepared.target(), spec.image(), provisioner.prefix(),
+					profile.corpus(), prepared.outcome().facts(),
+					Workloads.resolve(profile.jmh().workloads(), profile.corpus()));
+		} finally {
+			AutoExplain.disable(dataSource);
 		}
 	}
 

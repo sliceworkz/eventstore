@@ -101,6 +101,9 @@ public final class WorkloadContext {
 	/** Opened on first use; see {@link #crm()} for why this one cannot be eager. */
 	private EventStream<CrmEvent> crm;
 
+	/** Entity-scoped inventory streams, opened on demand; see {@link #inventoryFor}. */
+	private final Map<String, EventStream<InventoryEvent>> scopedInventory = new HashMap<>();
+
 	/**
 	 * The last reference this thread knows for a given consistency boundary.
 	 *
@@ -183,9 +186,49 @@ public final class WorkloadContext {
 	/**
 	 * A read stream over the inventory context. Under {@code PER_ENTITY} this reads across every
 	 * purpose, which is what a query filtering by tag rather than by stream has to do.
+	 *
+	 * <p><b>On Postgres a wildcard purpose is not free, and the profiles have to say which question
+	 * they are asking.</b> {@code stream_purpose} is the second column of both
+	 * {@code idx_events_stream_position} and {@code idx_events_stream_tags}, so leaving it unbound
+	 * takes the equality off column two: an ordered read can no longer descend to a start condition
+	 * and a {@code LIMIT} cannot be pushed into the scan. That is a real cost of reading across
+	 * entities and belongs in the measurement -- but it is the wrong thing to charge a read that
+	 * names one entity, which under this design would address that entity's own stream. Use
+	 * {@link #inventoryFor} for those; see {@link #streamScopesEntity}.
 	 */
 	public EventStream<InventoryEvent> inventory ( ) {
 		return inventory;
+	}
+
+	/**
+	 * The inventory stream to read one entity's history through, honouring the corpus's design.
+	 *
+	 * <p>Under {@code PER_ENTITY} that is the entity's own stream, so the read is scoped by
+	 * {@code stream_purpose} and needs no tag filter at all. Under every other design it is the one
+	 * context-wide stream, and scoping to an entity remains a tag filter the caller applies.
+	 *
+	 * <p>Cached per entity because a stream is a handle rather than a connection and the workloads
+	 * ask for two of them; nothing here subscribes, so nothing here owns anything to close.
+	 */
+	public EventStream<InventoryEvent> inventoryFor ( String entityId ) {
+		if ( !streamScopesEntity() || entityId == null ) {
+			return inventory;
+		}
+		return scopedInventory.computeIfAbsent(entityId, id -> target.store().getEventStream(
+				EventStreamId.forContext(WebshopContext.INVENTORY.streamContext()).withPurpose(id),
+				InventoryEvent.class));
+	}
+
+	/**
+	 * Whether the stream {@link #inventoryFor} hands back already scopes to the entity.
+	 *
+	 * <p>A workload reading one entity branches on this rather than always filtering by tag: under
+	 * {@code PER_ENTITY} the stream <em>is</em> the entity, so a tag filter on top would add a GIN
+	 * predicate that selects nothing further and would charge the design for work its users would
+	 * never do.
+	 */
+	public boolean streamScopesEntity ( ) {
+		return spec.streamDesign() == StreamDesign.PER_ENTITY;
 	}
 
 	public EventStream<SalesEvent> sales ( ) {

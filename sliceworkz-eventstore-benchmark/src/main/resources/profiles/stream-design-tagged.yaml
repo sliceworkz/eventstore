@@ -9,6 +9,11 @@ description: >
   single entity all hash to the same advisory lock key, since the key is the stream -- so the
   contention story is the other half of the trade and write-contention-one-stream is where it shows.
 
+  The query-by-stream-* and query-last-event-by-stream workloads are here as the control half of the
+  addressing pairs described in stream-design-per-entity. On a tagged corpus a tag filter is the only
+  way to isolate an entity, so each is the same query as its query-by-entity-* counterpart and must
+  report the same number. A gap between a pair here is a harness fault, not a finding.
+
 corpus:
   volume: 100000
   streamDesign: TAGGED
@@ -29,9 +34,12 @@ jmh:
   workloads:
     - query-by-entity-hot
     - query-by-entity-cold
+    - query-by-stream-hot
+    - query-by-stream-cold
     - query-by-tag-needle
     - query-by-tag-swathe
     - query-last-event
+    - query-last-event-by-stream
     - query-stream-page
     - append-none
     - append-type-and-tag

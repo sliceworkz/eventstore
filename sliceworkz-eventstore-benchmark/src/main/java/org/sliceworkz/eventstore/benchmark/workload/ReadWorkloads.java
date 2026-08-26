@@ -72,9 +72,12 @@ public final class ReadWorkloads {
 				byTagSwathe(),
 				byEntityHot(),
 				byEntityCold(),
+				byStreamHot(),
+				byStreamCold(),
 				byMultiTag(),
 				byOrGroups(),
 				lastEvent(),
+				lastEventByStream(),
 				cursorWalk(),
 				byId(),
 				wildcard(),
@@ -169,7 +172,17 @@ public final class ReadWorkloads {
 		};
 	}
 
-	/** A plain page of the inventory stream: the cheapest possible read, and the baseline. */
+	/**
+	 * A plain page of the inventory stream: the cheapest possible read, and the baseline.
+	 *
+	 * <p><b>Under {@code PER_ENTITY} this is genuinely a cross-entity read, and there is deliberately
+	 * no stream-addressed sibling for it.</b> Reading a context in order means reading across every
+	 * purpose under that design, so the wildcard is the question rather than an artefact of how the
+	 * harness asks it -- unlike the entity-scoped reads, which do have siblings. A per-entity page
+	 * would return one entity's fifty events against this one's five hundred, which is not the same
+	 * measurement wearing a different name; it is a different measurement, and no ratio between the
+	 * two would mean anything.
+	 */
 	private static Workload streamPage ( ) {
 		return simple("query-stream-page",
 				"one page of 500 events from the inventory stream, unfiltered -- the read baseline",
@@ -217,24 +230,49 @@ public final class ReadWorkloads {
 						.toList());
 	}
 
-	/** One entity's whole history, for the busiest entity: the realistic worst case for a decider. */
+	/**
+	 * One entity's whole history <em>by tag</em>, for the busiest entity: the realistic worst case for
+	 * a decider, and half of the addressing pair described on {@link #byStreamHot()}.
+	 */
 	private static Workload byEntityHot ( ) {
 		return simple("query-by-entity-hot",
-				"the full history of the busiest SKU -- what loading a contended decision costs",
-				context -> context.inventory()
-						.query(EventQuery.forEvents(EventTypesFilter.any(),
-								Tags.of(TagKeys.SKU, context.facts().hotEntity())))
-						.toList());
+				"the full history of the busiest SKU, addressed by tag -- what a contended decision costs",
+				context -> byTag(context, context.facts().hotEntity()));
 	}
 
 	/** The same read for an entity out in the tail, which is what most reads actually look like. */
 	private static Workload byEntityCold ( ) {
 		return simple("query-by-entity-cold",
-				"the full history of a long-tail SKU -- what loading a typical decision costs",
-				context -> context.inventory()
-						.query(EventQuery.forEvents(EventTypesFilter.any(),
-								Tags.of(TagKeys.SKU, context.facts().coldEntity())))
-						.toList());
+				"the full history of a long-tail SKU, addressed by tag -- what a typical decision costs",
+				context -> byTag(context, context.facts().coldEntity()));
+	}
+
+	/**
+	 * The same history, addressed the way this corpus's stream design makes natural.
+	 *
+	 * <p><b>This exists because the tag-addressed reads above understate {@code PER_ENTITY} on exactly
+	 * the reads it is chosen for.</b> A wildcard purpose unbinds the second column of both indexes, so
+	 * a per-entity corpus read by tag pays for a scan across every entity's stream -- which is a real
+	 * cost of a cross-entity query and an imaginary one for a read that names a single entity. An
+	 * application that picked per-entity streams would read that entity's stream; this pair is what
+	 * lets the report say which of the two a difference belongs to.
+	 *
+	 * <p><b>Under {@code TAGGED} the two are the same query by construction</b>, since a tag filter is
+	 * the only way to isolate an entity there. That is not redundancy, it is the control: the pair
+	 * must report the same number on a tagged corpus, and a gap between them there means the harness
+	 * changed the question rather than the design answering it differently.
+	 */
+	private static Workload byStreamHot ( ) {
+		return simple("query-by-stream-hot",
+				"the full history of the busiest SKU, addressed by stream where the design allows it",
+				context -> entityHistory(context, context.facts().hotEntity()));
+	}
+
+	/** The long-tail entity read the same way; the other half of the addressing pair. */
+	private static Workload byStreamCold ( ) {
+		return simple("query-by-stream-cold",
+				"the full history of a long-tail SKU, addressed by stream where the design allows it",
+				context -> entityHistory(context, context.facts().coldEntity()));
 	}
 
 	/**
@@ -291,11 +329,41 @@ public final class ReadWorkloads {
 	 */
 	private static Workload lastEvent ( ) {
 		return simple("query-last-event",
-				"the most recent event for one SKU, backwards with limit 1 -- the savepoint probe",
+				"the most recent event for one SKU, addressed by tag, backwards with limit 1",
 				context -> context.inventory()
-						.query(EventQuery.forEvents(EventTypesFilter.of(InventoryEvent.StockCounted.class),
-								Tags.of(TagKeys.SKU, context.facts().hotEntity())).backwards().limit(1))
+						.query(savepointProbe(Tags.of(TagKeys.SKU, context.facts().hotEntity())))
 						.toList());
+	}
+
+	/**
+	 * The savepoint probe addressed by stream, paired with {@link #lastEvent()} for the same reason
+	 * {@link #byStreamHot()} is paired with {@link #byEntityHot()}.
+	 *
+	 * <p>This is the shape where the addressing matters most, and predictably so: a backwards
+	 * {@code limit 1} is entirely a question of whether the ordering can be served by an index, and a
+	 * wildcard purpose is exactly what stops it being.
+	 */
+	private static Workload lastEventByStream ( ) {
+		return simple("query-last-event-by-stream",
+				"the most recent event for one SKU, addressed by stream where the design allows it",
+				context -> {
+					String entity = context.facts().hotEntity();
+					// under PER_ENTITY the stream already is the entity, so the tag filter would add a
+					// predicate that selects nothing further -- see WorkloadContext.streamScopesEntity
+					return context.inventoryFor(entity)
+							.query(savepointProbe(context.streamScopesEntity()
+									? Tags.none()
+									: Tags.of(TagKeys.SKU, entity)))
+							.toList();
+				});
+	}
+
+	/** The savepoint query itself: one event type, newest first, one row. */
+	private static EventQuery savepointProbe ( Tags tags ) {
+		return EventQuery
+				.forEvents(EventTypesFilter.of(InventoryEvent.StockCounted.class), tags)
+				.backwards()
+				.limit(1);
 	}
 
 	/**
@@ -411,6 +479,24 @@ public final class ReadWorkloads {
 	}
 
 	/* ---------------------------------------------------------------- helpers */
+
+	/** One entity's whole history, isolated by tag: the only way to do it on a context-wide stream. */
+	private static List<Event<InventoryEvent>> byTag ( WorkloadContext context, String entity ) {
+		return context.inventory()
+				.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of(TagKeys.SKU, entity)))
+				.toList();
+	}
+
+	/**
+	 * The same history, addressed however this corpus's design makes natural -- by stream where the
+	 * stream is the entity, by tag where it is not.
+	 */
+	private static List<Event<InventoryEvent>> entityHistory ( WorkloadContext context, String entity ) {
+		if ( context.streamScopesEntity() ) {
+			return context.inventoryFor(entity).query(EventQuery.matchAll()).toList();
+		}
+		return byTag(context, entity);
+	}
 
 	/** An {@code EventQuery} of n OR-ed filter items, each naming a different entity. */
 	static EventQuery orGroupQuery ( WorkloadContext context, int groups ) {

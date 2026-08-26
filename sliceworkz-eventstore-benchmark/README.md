@@ -78,7 +78,7 @@ profile, and the result lives in `CLAUDE.md` and in `PostgresCursorBoundaryTest`
 | `dcb-plan-cache` ⇄ `dcb-plan-cache-small` | whether planning every conditional append pays for itself, and at what store size the answer flips | ~25 min / ~12 min |
 | `write-contention-spread` / `-one-stream` / `-one-boundary` | where throughput saturates, and how much is the advisory lock versus conflict-retry | ~20 min each |
 | `read-shapes` ⇄ `crowded-store` ⇄ `crowded-database` | what a store holding other domains costs, and separately what sharing a database costs | ~20 min each |
-| `stream-design-tagged` ⇄ `stream-design-per-entity` | which stream design to pick | ~30 min each |
+| `stream-design-tagged` ⇄ `stream-design-per-entity` | which stream design to pick | ~40 min each |
 | `metrics-cost` | what the library's own meters cost — three targets in one run, no `compare` needed | ~10 min |
 | `shredding-cost` | what crypto-shredding costs per event and per new data subject | ~8 min |
 | `upcasting-cost` ⇄ `read-shapes` | what reading history through upcasters costs | ~10 min |
@@ -284,6 +284,35 @@ Deleting only the appended rows would be cheaper and leaves dead tuples for auto
 *during the next measurement*, which is noise exactly where it does most damage.
 
 A profile whose workloads are all read-only skips restoring entirely, and the report says so.
+
+## How a read addresses an entity, and why some workloads come in pairs
+
+A workload that reads "one entity's history" has to decide *how* to name that entity, and under
+`PER_ENTITY` the two available answers do not cost the same. Naming it by tag means a wildcard
+purpose — and `stream_purpose` is the second column of both `idx_events_stream_position` and
+`idx_events_stream_tags`, so leaving it unbound takes the equality off column two: an ordered read
+can no longer descend to a start condition and a `LIMIT` cannot be pushed into the scan. Naming it by
+stream keeps that column pinned.
+
+That is a real property of the design, but charging it to a read that names a single entity describes
+an application nobody would write. So the entity-scoped reads ship as **pairs**:
+
+| by tag | by stream |
+|---|---|
+| `query-by-entity-hot` | `query-by-stream-hot` |
+| `query-by-entity-cold` | `query-by-stream-cold` |
+| `query-last-event` | `query-last-event-by-stream` |
+
+Each pair reads the same events — verified by `dry-run`, which reports the count per workload — so
+**the gap within a pair is the cost of the addressing, and the gap between the two profiles on the
+same workload is the cost of the design.** Under `TAGGED` a tag filter is the only way to isolate an
+entity, so each pair is one query written twice and must report the same number; a gap there is a
+harness fault rather than a finding, which makes the tagged half a free control.
+
+`query-stream-page` deliberately has **no** stream-addressed sibling. Reading a context in order
+genuinely is a cross-entity read under `PER_ENTITY`, so the wildcard is the question rather than an
+artefact of how it is asked — and a per-entity page would return one entity's fifty events against
+five hundred, which is a different measurement rather than the same one addressed differently.
 
 ## How a conditional append avoids conflicting with itself
 

@@ -30,9 +30,15 @@ corpus:
   #     numbers came from was never the size on the label, and the plans, captured against the
   #     restored corpus, describe a different table from the one that was measured.
   #
-  # 5.000 events with a 1-second iteration keeps the store inside a factor of two of its nominal size
-  # and leaves nine companions available, while staying twenty times smaller than the 100.000-event
-  # corpus -- which is the comparison this profile exists to make.
+  # 5.000 events with a 1-second iteration keeps every *conditional* workload inside a factor of two
+  # of the nominal size (measured: 27-70% growth) and leaves nine companions available, while staying
+  # twenty times smaller than the 100.000-event corpus -- which is the comparison this profile makes.
+  #
+  # append-none is the exception and cannot be fixed by sizing: it takes no consistency check, so it
+  # runs five times faster than anything else here and puts ~11.000 events in during its second --
+  # 251% growth, which the run summary now prints. That does not damage what the control is for. It
+  # exists to say whether the machine moved between the two targets, and an unconditional append's
+  # plan does not depend on the table's size the way a DCB check's does.
   volume: 5000
   streamDesign: TAGGED
   composition: CLEAN

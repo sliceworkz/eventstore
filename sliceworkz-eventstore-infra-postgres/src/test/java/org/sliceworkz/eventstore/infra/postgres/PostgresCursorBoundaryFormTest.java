@@ -112,11 +112,16 @@ public class PostgresCursorBoundaryFormTest {
 				List<StoredEvent> all = read(storage, stream, null, Limit.none(), QueryDirection.FORWARD, null);
 				assertEquals(SEED_APPENDS * SEED_BATCH + 2, all.size(), "the seeded stream is not the size it should be");
 
-				// Cursors worth trying: the start of the stream, its midpoint, and the reference
+				// Cursors worth trying: near the start of the stream, its midpoint, and the reference
 				// immediately before the inverted event -- the last of those is the one a wrong
 				// expansion gets wrong, since the inverted event holds a LOWER position than it.
+				//
+				// All three are interior, deliberately. The first event is the tempting choice for
+				// "near the start" and it is the one cursor that reads empty going backwards, which
+				// the non-degeneracy guard below rightly refuses: two forms agreeing on nothing agree
+				// on nothing. The second event exercises the same boundary with one event behind it.
 				List<EventReference> cursors = List.of(
-						all.get(0).reference(),
+						all.get(1).reference(),
 						all.get(all.size() / 2).reference(),
 						all.get(all.size() - 2).reference());
 

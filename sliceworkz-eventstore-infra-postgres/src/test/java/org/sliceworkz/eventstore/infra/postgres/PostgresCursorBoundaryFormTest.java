@@ -108,8 +108,9 @@ public class PostgresCursorBoundaryFormTest {
 				seed(storage, stream, tags);
 				invert(storage, dataSource, prefix, stream, tags);
 
+				// invert() adds two: one appended through the store and one inserted behind it.
 				List<StoredEvent> all = read(storage, stream, null, Limit.none(), QueryDirection.FORWARD, null);
-				assertEquals(SEED_APPENDS * SEED_BATCH + 1, all.size(), "the seeded stream is not the size it should be");
+				assertEquals(SEED_APPENDS * SEED_BATCH + 2, all.size(), "the seeded stream is not the size it should be");
 
 				// Cursors worth trying: the start of the stream, its midpoint, and the reference
 				// immediately before the inverted event -- the last of those is the one a wrong
@@ -150,20 +151,22 @@ public class PostgresCursorBoundaryFormTest {
 				Tags tags = Tags.of("account", "42");
 				EventQuery boundary = EventQuery.forEvents(EventTypesFilter.any(), tags);
 
-				storage.append(AppendCriteria.none(), Optional.of(stream),
-						List.of(event(stream, "MoneyDeposited", tags)));
-				EventReference reference = read(storage, stream, null, Limit.none(), QueryDirection.FORWARD, null)
-						.get(0).reference();
-
-				// An event that every reader sorts AFTER the reference while holding a LOWER position:
-				// the case a position-only comparison misses, and the case a row comparison has to get
-				// right for the same reason the expansion did.
+				// Two events: one appended through the store, and one that every reader sorts AFTER it
+				// while holding a LOWER position -- the case a position-only comparison misses, and the
+				// case a row comparison has to get right for the same reason the expansion did.
 				invert(storage, dataSource, prefix, stream, tags);
 				List<StoredEvent> replay = read(storage, stream, null, Limit.none(), QueryDirection.FORWARD, null);
 				assertEquals(2, replay.size(), "expected both events to be readable");
+
+				// The reference a decider would hold before the inverted event became visible, and the
+				// inverted event itself. Read order is the (tx, position) order, so the inverted event is
+				// last despite its lower position -- which is the whole point of it.
+				EventReference reference = replay.get(0).reference();
 				EventReference inverted = replay.get(1).reference();
 				assertTrue(inverted.position() < reference.position(),
 						"the inversion did not happen, so this proves nothing");
+				assertTrue(inverted.happenedAfter(reference),
+						"the inverted event must count as happening after the reference");
 
 				assertThrows(OptimisticLockingException.class,
 						() -> storage.append(AppendCriteria.of(boundary, reference), Optional.of(stream),
@@ -198,16 +201,29 @@ public class PostgresCursorBoundaryFormTest {
 						CursorBoundaryForm.ROW_COMPARISON);
 				String both = "%n-- EXPANDED_OR --%n%s%n-- ROW_COMPARISON --%n%s".formatted(expanded, row);
 
-				assertTrue(row.contains("Index Scan"), () ->
-						"the row comparison must reach the events through an index scan" + both);
-				assertFalse(row.contains("Bitmap"), () ->
-						"a bitmap means the boundary was not a start condition: its result has no order, so"
-								+ " the LIMIT cannot be pushed into the scan" + both);
-				assertFalse(row.contains("Sort"), () ->
-						"a sort above the scan means the index did not supply the order the query asks for" + both);
+				// Asserted in the order the mechanism has to hold, so a failure says which step broke.
+				// First: the boundary is an index condition at all. This is the part that is genuinely
+				// about PostgreSQL rather than about this store -- whether a row comparison over index
+				// columns three and four, on xid8, is something the btree can evaluate.
 				assertTrue(indexCondition(row).contains("event_position"), () ->
 						"event_position has to appear in the Index Cond, not only in a Filter -- that is what"
 								+ " makes the scan start at the cursor rather than at the head of the stream" + both);
+
+				// Second: one index scan, not two unioned. The disjunction needs an arm per case; the row
+				// comparison is a single condition, which is what removes the BitmapOr.
+				assertFalse(row.contains("BitmapOr"), () ->
+						"the row comparison still needed a union of two index scans, which is the thing it"
+								+ " exists to avoid" + both);
+
+				// Third: the scan supplies the order, so the LIMIT can stop it early instead of a Sort
+				// having to consume every matching row first. This is where the paging cost actually is.
+				assertFalse(row.contains("Sort"), () ->
+						"a sort above the scan means the index did not supply the order the query asks for,"
+								+ " so the LIMIT cannot be pushed into the scan and a page costs the whole"
+								+ " remainder of the stream" + both);
+				assertTrue(row.contains("Index Scan") && !row.contains("Bitmap"), () ->
+						"an ordered range scan is a plain Index Scan; a Bitmap Index Scan discards the order"
+								+ " the index could have supplied" + both);
 
 				// If the two spellings plan identically there is nothing here to choose between, and the
 				// setting has no reason to exist. Worth failing over rather than measuring for 25 minutes.
@@ -319,7 +335,13 @@ public class PostgresCursorBoundaryFormTest {
 			sql.append(" AND stream_context = ? AND stream_purpose = ?");
 			parameters.add(stream.context());
 			parameters.add(stream.purpose());
-			sql.append(" ORDER BY event_tx, event_position LIMIT ").append(PAGE);
+			// The read path's ORDER BY, verbatim, and the cast in it is load-bearing rather than
+			// redundant: the select list projects event_tx::text, which PostgreSQL names event_tx, and
+			// SQL resolves a bare name in ORDER BY to an *output* column before it looks at the table.
+			// Written as "ORDER BY event_tx" this sorted the page by the text rendering of a transaction
+			// id -- '9' after '10' -- and, being an expression over no index, put a Sort above every plan
+			// and made this test's question unanswerable. Written as an expression it cannot be captured.
+			sql.append(" ORDER BY event_tx::xid8, event_position LIMIT ").append(PAGE);
 
 			try ( Connection connection = dataSource.getConnection() ) {
 				connection.setAutoCommit(false);

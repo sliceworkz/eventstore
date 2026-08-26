@@ -1,0 +1,57 @@
+name: dcb-plan-cache-small
+description: >
+  The small-store half of the plan-cache pair. Identical to dcb-plan-cache in targets, workloads and
+  entity density -- 50 events per entity, as there -- and differing in the one property that decides
+  whether planning per append is worth paying for: the size of the table it is planning against.
+
+  Why the size is the question. Planning a conditional append costs the same whatever the store
+  holds; what it buys is a sequential scan avoided, and that scan is proportional to the table. At
+  100.000 events the scan is ~15ms and the trade is not close. At 1.000 the whole events table is a
+  few dozen pages, a scan of it is microseconds, and there is nothing left for the planning to save.
+  If PER_APPEND is a net loss anywhere, it is here -- and a recommendation that does not say so would
+  be advice to make small stores slower.
+
+  Read this against dcb-plan-cache with `compare`, and read append-none first: it takes no
+  consistency check and so cannot be affected by the setting in either profile. Where it moves, the
+  machine moved.
+
+corpus:
+  volume: 1000
+  streamDesign: TAGGED
+  composition: CLEAN
+  payload: REALISTIC
+  # 50 events per entity, the same density as the 100.000-event corpus. Holding the density rather
+  # than the entity count is what keeps a tag as selective here as there, so the difference between
+  # the two profiles is the table's size and not how much of it a boundary matches.
+  entityCount: 20
+  seed: 20260823
+
+targets:
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: OFF
+    appendPlanning: SERVER_DEFAULT
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: OFF
+    appendPlanning: PER_APPEND
+
+jmh:
+  workloads:
+    - append-none
+    - append-types
+    - append-type-and-tag
+    - append-multi-tag
+    - append-or-groups-2
+    - append-or-groups-3
+    - append-or-groups-5
+    - append-or-groups-10
+    - append-empty-boundary
+    - decide-then-append
+  threads: [ 1 ]
+  forks: 4
+  warmupIterations: 3
+  measurementIterations: 5
+  iterationSeconds: 2

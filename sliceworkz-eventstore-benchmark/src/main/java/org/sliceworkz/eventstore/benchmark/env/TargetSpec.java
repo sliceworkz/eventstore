@@ -36,6 +36,7 @@ import java.time.Duration;
  * @param schemaMode what the store is allowed to do to the schema when it opens
  * @param notificationStartupTimeout how long {@code build()} waits for LISTEN/NOTIFY to register
  * @param appendPlanning how PostgreSQL may plan the DCB check; ignored for {@link Backend#INMEM}
+ * @param cursorBoundary how cursor and {@code until} boundaries are spelled; ignored for {@link Backend#INMEM}
  */
 public record TargetSpec (
 		Backend backend,
@@ -46,7 +47,8 @@ public record TargetSpec (
 		Integer resultLimit,
 		SchemaMode schemaMode,
 		Duration notificationStartupTimeout,
-		AppendPlanning appendPlanning ) {
+		AppendPlanning appendPlanning,
+		CursorBoundary cursorBoundary ) {
 
 	/** Which storage implementation is under measurement. */
 	public enum Backend {
@@ -140,6 +142,33 @@ public record TargetSpec (
 		PER_APPEND
 	}
 
+	/**
+	 * How the {@code (event_tx, event_position)} cursor and {@code until} boundaries are spelled in SQL —
+	 * a dimension for the same reason {@link AppendPlanning} is one, and with a sharper question behind
+	 * it: whether the two spellings, which mean exactly the same thing, cost the same.
+	 *
+	 * <p>Every paged read conjoins the boundary with {@code stream_context = ? AND stream_purpose = ?},
+	 * and {@code idx_events_stream_position} leads with those two columns and continues with the two the
+	 * boundary compares. A row comparison over the trailing pair is something a btree can turn into a
+	 * start condition — descend to the cursor, walk in order, stop at the {@code LIMIT} — so a page costs
+	 * what the page returns. A disjunction is not a start condition, so the same predicate becomes a
+	 * filter over the whole stream or a {@code BitmapOr} whose unordered result needs a sort above it,
+	 * and the cost follows how deep the cursor already sits.
+	 *
+	 * <p>That is the theory, and it is exactly the kind of theory a benchmark exists to refuse: whether
+	 * PostgreSQL really builds the start condition for a row comparison over index columns three and
+	 * four, on {@code xid8}, on 16 as well as 18, is not something to reason out. Hence a pair of
+	 * targets rather than a change.
+	 */
+	public enum CursorBoundary {
+
+		/** The historical spelling: {@code (event_tx > ?) OR (event_tx = ? AND event_position > ?)}. */
+		EXPANDED_OR,
+
+		/** The row constructor comparison: {@code (event_tx, event_position) > (?, ?)}. */
+		ROW_COMPARISON
+	}
+
 	/** The default LISTEN/NOTIFY startup deadline: generous, because a cold pool is not a failure. */
 	public static final Duration DEFAULT_NOTIFICATION_STARTUP_TIMEOUT = Duration.ofSeconds(30);
 
@@ -159,6 +188,9 @@ public record TargetSpec (
 		if ( appendPlanning == null ) {
 			appendPlanning = AppendPlanning.SERVER_DEFAULT;
 		}
+		if ( cursorBoundary == null ) {
+			cursorBoundary = CursorBoundary.EXPANDED_OR;
+		}
 		if ( backend == Backend.POSTGRES ) {
 			if ( server == null ) {
 				server = PostgresServer.TESTCONTAINERS;
@@ -175,13 +207,13 @@ public record TargetSpec (
 	/** The in-memory baseline, with no instrumentation and no shredding. */
 	public static TargetSpec inmem ( ) {
 		return new TargetSpec(Backend.INMEM, null, null, MetricsMode.OFF, false, null, SchemaMode.ENSURE,
-				null, null);
+				null, null, null);
 	}
 
 	/** A containerised PostgreSQL of the given image, with no instrumentation and no shredding. */
 	public static TargetSpec postgres ( String image ) {
 		return new TargetSpec(Backend.POSTGRES, PostgresServer.TESTCONTAINERS, image,
-				MetricsMode.OFF, false, null, SchemaMode.ENSURE, null, null);
+				MetricsMode.OFF, false, null, SchemaMode.ENSURE, null, null, null);
 	}
 
 	/** Whether measuring this target needs a Docker daemon. */
@@ -208,6 +240,9 @@ public record TargetSpec (
 		// distinguishable targets rather than two rows the report would silently collapse into one.
 		if ( appendPlanning == AppendPlanning.PER_APPEND ) {
 			description.append("/plan=per-append");
+		}
+		if ( cursorBoundary == CursorBoundary.ROW_COMPARISON ) {
+			description.append("/cursor=row");
 		}
 		return description.toString();
 	}

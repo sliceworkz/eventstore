@@ -34,6 +34,7 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -194,6 +195,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * start working, and a per-append WARN on the write path would be its own outage.
 	 */
 	private final AtomicBoolean planningWarningLogged = new AtomicBoolean();
+
+	/**
+	 * See {@link CursorBoundaryForm}. Defaults from {@link #CURSOR_BOUNDARY_FORM_PROPERTY} so a whole
+	 * JVM can be flipped without a code change, which is what the benchmark's forks do.
+	 */
+	private volatile CursorBoundaryForm cursorBoundaryForm = CursorBoundaryForm.fromSystemProperty();
 
 	private static final JsonMapper JSONMAPPER = JsonMapper.builder().build();
 
@@ -1166,6 +1173,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * reference with a higher position than an event that becomes visible, and sorts later, moments
 	 * afterwards.
 	 * <p>
+	 * <em>How</em> that tuple comparison is spelled is a separate question from what it means, and one
+	 * the planner cares about: see {@link CursorBoundaryForm}.
+	 * <p>
 	 * The {@code index} part of an {@link EventReference} has no column, exactly as in
 	 * {@link #addUntilBoundary}: it distinguishes sub-events an upcaster produced from one stored
 	 * event. Two sub-events of the <em>same</em> stored event are therefore indistinguishable here —
@@ -1177,18 +1187,42 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * @param after the reference to seek past, or null for no cursor (in which case nothing is appended)
 	 * @param direction which side of the reference to keep
 	 */
-	private void addCursorBoundary(StringBuilder sqlBuilder, List<Object> parameters, EventReference after, QueryDirection direction) {
+	// package-private, not private: PostgresCursorBoundaryFormTest builds an EXPLAIN around the
+	// predicate this produces, so that the plan it asserts on is the store's own SQL and not a copy.
+	void addCursorBoundary(StringBuilder sqlBuilder, List<Object> parameters, EventReference after, QueryDirection direction) {
 		if ( after == null ) {
 			return;
 		}
-		if ( direction == QueryDirection.FORWARD ) {
-			sqlBuilder.append(" AND ((event_tx>?::xid8) OR (event_tx = ?::xid8 AND event_position > ?))");
-		} else {
-			sqlBuilder.append(" AND ((event_tx<?::xid8) OR (event_tx = ?::xid8 AND event_position < ?))");
+		appendTupleBoundary(sqlBuilder, parameters, after,
+				direction == QueryDirection.FORWARD ? ">" : "<");
+	}
+
+	/**
+	 * Appends one {@code (event_tx, event_position)} comparison, in whichever of the two equivalent
+	 * spellings this storage is configured for; see {@link CursorBoundaryForm} for what distinguishes
+	 * them and why the choice is not the caller's business.
+	 *
+	 * @param sqlBuilder the statement being built
+	 * @param parameters the parameter list being built alongside it
+	 * @param boundary the reference the tuple is compared against
+	 * @param comparison the SQL operator, one of {@code >}, {@code <} or {@code <=}
+	 */
+	private void appendTupleBoundary(StringBuilder sqlBuilder, List<Object> parameters,
+			EventReference boundary, String comparison) {
+		if ( cursorBoundaryForm == CursorBoundaryForm.ROW_COMPARISON ) {
+			sqlBuilder.append(" AND (event_tx, event_position) ").append(comparison).append(" (?::xid8, ?)");
+			parameters.add(Long.toUnsignedString(boundary.tx()));
+			parameters.add(boundary.position());
+			return;
 		}
-		parameters.add(Long.toUnsignedString(after.tx()));
-		parameters.add(Long.toUnsignedString(after.tx()));
-		parameters.add(after.position());
+		// The hand-written expansion. Note the first arm drops the "or equal" part of a <= boundary --
+		// correctly, since equality on event_tx is what the second arm covers.
+		String strictly = comparison.startsWith("<") ? "<" : ">";
+		sqlBuilder.append(" AND ((event_tx").append(strictly).append("?::xid8) OR (event_tx = ?::xid8 AND event_position ")
+				.append(comparison).append(" ?))");
+		parameters.add(Long.toUnsignedString(boundary.tx()));
+		parameters.add(Long.toUnsignedString(boundary.tx()));
+		parameters.add(boundary.position());
 	}
 
 	/**
@@ -1213,14 +1247,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * @param parameters the parameter list being built alongside it
 	 * @param until the boundary, or null for no boundary (in which case nothing is appended)
 	 */
-	private void addUntilBoundary(StringBuilder sqlBuilder, List<Object> parameters, EventReference until) {
+	// package-private for the same reason as addCursorBoundary.
+	void addUntilBoundary(StringBuilder sqlBuilder, List<Object> parameters, EventReference until) {
 		if ( until == null ) {
 			return;
 		}
-		sqlBuilder.append(" AND ((event_tx<?::xid8) OR (event_tx = ?::xid8 AND event_position <= ?))");
-		parameters.add(Long.toUnsignedString(until.tx()));
-		parameters.add(Long.toUnsignedString(until.tx()));
-		parameters.add(until.position());
+		appendTupleBoundary(sqlBuilder, parameters, until, "<=");
 	}
 
 	private void addEventFilterFiltering(StringBuilder sqlBuilder, List<Object> parameters, EventFilter filter) {
@@ -1395,6 +1427,87 @@ public class PostgresEventStorageImpl implements EventStorage {
 						+ " keep choosing between its custom and generic plans", e);
 			}
 		}
+	}
+
+	/**
+	 * The system property naming the default {@link CursorBoundaryForm} for a whole JVM, e.g.
+	 * {@code -Deventstore.postgres.cursorBoundaryForm=ROW_COMPARISON}. Case-insensitive; an
+	 * unrecognised value is ignored with a WARN rather than failing a store that is otherwise fine.
+	 */
+	public static final String CURSOR_BOUNDARY_FORM_PROPERTY = "eventstore.postgres.cursorBoundaryForm";
+
+	/**
+	 * How the {@code (event_tx, event_position)} cursor and {@code until} boundaries are spelled in SQL.
+	 *
+	 * <p><b>The two forms mean exactly the same thing.</b> SQL defines a row constructor comparison as
+	 * the lexicographic expansion the other form writes by hand, so this is a question of shape and
+	 * never of semantics — which is what makes it safe to have as a setting at all.
+	 *
+	 * <p><b>Why the shape can matter anyway.</b> A boundary is nearly always conjoined with
+	 * {@code stream_context = ? AND stream_purpose = ?}, and {@code idx_events_stream_position} is
+	 * {@code (stream_context, stream_purpose, event_tx, event_position)}. With the leading two columns
+	 * pinned by equality, a row comparison over the trailing two is a single index descent: land on the
+	 * cursor and walk the leaf pages in order, so a page costs what the page returns. A disjunction is
+	 * not a start condition, so the same predicate becomes either a filter applied to the whole stream
+	 * or a {@code BitmapOr} of two scans — and a bitmap has no order, which puts a sort above it and
+	 * stops the {@code LIMIT} being pushed into the scan. Both are proportional to how deep the cursor
+	 * already sits rather than to the page size, which is the wrong shape for {@code Projector}'s paging.
+	 *
+	 * <p><b>Why it is nevertheless not the default.</b> Whether PostgreSQL really builds that start
+	 * condition here — for a row comparison over index columns 3 and 4, on {@code xid8}, across the
+	 * supported major versions — is a question for measurement rather than for reasoning, and
+	 * {@code sliceworkz-eventstore-benchmark}'s {@code cursor-boundary-form} profile is what answers it.
+	 * Until it has, the historical form stays in charge of every store that does not ask otherwise.
+	 *
+	 * <p>Not on the public {@code Builder} on purpose: this is an experiment with a decision pending, not
+	 * a knob to design a deployment around. When the measurement lands, one form becomes unconditional
+	 * and this enum goes away.
+	 */
+	public enum CursorBoundaryForm {
+
+		/**
+		 * {@code (event_tx > ?) OR (event_tx = ? AND event_position > ?)} — the hand-written expansion,
+		 * and what every store has used so far.
+		 */
+		EXPANDED_OR,
+
+		/**
+		 * {@code (event_tx, event_position) > (?, ?)} — the row constructor comparison, which is what a
+		 * btree can turn into a start condition.
+		 */
+		ROW_COMPARISON;
+
+		/** The form named by {@link #CURSOR_BOUNDARY_FORM_PROPERTY}, or {@link #EXPANDED_OR}. */
+		static CursorBoundaryForm fromSystemProperty ( ) {
+			String configured = System.getProperty(CURSOR_BOUNDARY_FORM_PROPERTY);
+			if ( configured == null || configured.isBlank() ) {
+				return EXPANDED_OR;
+			}
+			try {
+				return valueOf(configured.strip().toUpperCase(Locale.ROOT));
+			} catch ( IllegalArgumentException e ) {
+				LOGGER.warn("ignoring unrecognised {}='{}'; expected one of {}",
+						CURSOR_BOUNDARY_FORM_PROPERTY, configured, Arrays.toString(values()));
+				return EXPANDED_OR;
+			}
+		}
+	}
+
+	/** How this storage spells its cursor and {@code until} boundaries; see {@link CursorBoundaryForm}. */
+	public CursorBoundaryForm getCursorBoundaryForm ( ) {
+		return cursorBoundaryForm;
+	}
+
+	/**
+	 * Sets how this storage spells its cursor and {@code until} boundaries; see {@link CursorBoundaryForm}.
+	 *
+	 * <p>Safe to call on a running storage — the field is read while a statement's text is being built,
+	 * and the two forms are equivalent, so a change between two reads cannot make either wrong.
+	 *
+	 * @param form the form; {@code null} restores {@link CursorBoundaryForm#EXPANDED_OR}
+	 */
+	public void setCursorBoundaryForm ( CursorBoundaryForm form ) {
+		this.cursorBoundaryForm = form == null ? CursorBoundaryForm.EXPANDED_OR : form;
 	}
 
 	/**

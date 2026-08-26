@@ -397,10 +397,42 @@ public final class Main {
 	 */
 	private static List<QueryPlans.Plan> captureAppendPlans ( BenchmarkProfile profile,
 			CorpusProvisioner provisioner, CorpusProvisioner.Prepared prepared ) {
-		TargetSpec spec = targetToDescribe(profile);
-		if ( profile.jmh() == null || spec.backend() != TargetSpec.Backend.POSTGRES
-				|| spec.server() != TargetSpec.PostgresServer.TESTCONTAINERS
-				|| prepared.target().dataSource().isEmpty() ) {
+		if ( profile.jmh() == null ) {
+			return List.of();
+		}
+		List<Workload> workloads = Workloads.resolve(profile.jmh().workloads(), profile.corpus());
+		List<QueryPlans.Plan> plans = new ArrayList<>();
+
+		// Every PostgreSQL target, not just the first. A profile measuring one configuration against
+		// another -- which is how the suite answers whether a setting is worth having -- differs in
+		// exactly the thing a plan would explain, so explaining only one half of the pair leaves the
+		// interesting half unaccounted for. The first target reuses the store the report was built
+		// from; the rest open their own, which is a corpus reuse and a few seconds.
+		for ( TargetSpec spec : profile.targets() ) {
+			if ( !canCapturePlansOn(spec) ) {
+				continue;
+			}
+			if ( spec.equals(targetToDescribe(profile)) ) {
+				plans.addAll(captureAppendPlansOn(prepared, spec, provisioner, profile, workloads));
+			} else {
+				try ( CorpusProvisioner.Prepared other = provisioner.open(spec, false, null) ) {
+					plans.addAll(captureAppendPlansOn(other, spec, provisioner, profile, workloads));
+				}
+			}
+		}
+		return plans;
+	}
+
+	/** Whether this process can read back the plans a target's server logs. */
+	private static boolean canCapturePlansOn ( TargetSpec spec ) {
+		return spec.backend() == TargetSpec.Backend.POSTGRES
+				&& spec.server() == TargetSpec.PostgresServer.TESTCONTAINERS;
+	}
+
+	private static List<QueryPlans.Plan> captureAppendPlansOn ( CorpusProvisioner.Prepared prepared,
+			TargetSpec spec, CorpusProvisioner provisioner, BenchmarkProfile profile,
+			List<Workload> workloads ) {
+		if ( prepared.target().dataSource().isEmpty() ) {
 			return List.of();
 		}
 		DataSource dataSource = prepared.target().dataSource().get();
@@ -409,8 +441,7 @@ public final class Main {
 		}
 		try {
 			return AppendPlanCapture.capture(prepared.target(), spec.image(), provisioner.prefix(),
-					profile.corpus(), prepared.outcome().facts(),
-					Workloads.resolve(profile.jmh().workloads(), profile.corpus()));
+					profile.corpus(), prepared.outcome().facts(), workloads, spec.describe());
 		} finally {
 			AutoExplain.disable(dataSource);
 		}

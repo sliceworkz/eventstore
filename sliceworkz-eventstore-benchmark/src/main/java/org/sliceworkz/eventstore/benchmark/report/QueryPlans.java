@@ -74,6 +74,22 @@ public final class QueryPlans {
 	 */
 	public static final String CAPTURED_SHAPE_PREFIX = "DCB check as issued: ";
 
+	/**
+	 * Separates the workload from the target in a captured plan's shape.
+	 *
+	 * <p>A run measuring two PostgreSQL configurations explains both, so a plan has to say which store
+	 * it came from -- and the renderer has to be able to get back to that target's rows, since the
+	 * measured ms/op it prints beside a plan is only meaningful for the store the plan came from.
+	 */
+	public static final String SHAPE_TARGET_SEPARATOR = " @ ";
+
+	/** A captured plan's shape, minus the prefix: {@code append-types @ postgres:18/metrics=off}. */
+	public static String shapeFor ( String workload, String targetLabel ) {
+		return targetLabel == null || targetLabel.isBlank()
+				? workload
+				: workload + SHAPE_TARGET_SEPARATOR + targetLabel;
+	}
+
 	private QueryPlans ( ) { }
 
 	/**

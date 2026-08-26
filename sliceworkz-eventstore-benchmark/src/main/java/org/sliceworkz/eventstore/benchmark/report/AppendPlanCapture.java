@@ -105,7 +105,7 @@ public final class AppendPlanCapture {
 	 *        this process cannot read -- in which case nothing is captured
 	 */
 	public static List<QueryPlans.Plan> capture ( BenchmarkTarget target, String image, String prefix,
-			CorpusSpec spec, CorpusFacts facts, List<Workload> workloads ) {
+			CorpusSpec spec, CorpusFacts facts, List<Workload> workloads, String targetLabel ) {
 		if ( image == null || target.dataSource().isEmpty() ) {
 			return List.of();
 		}
@@ -129,14 +129,13 @@ public final class AppendPlanCapture {
 				if ( steadyState == null ) {
 					continue;
 				}
-				plans.add(new QueryPlans.Plan(
-						QueryPlans.CAPTURED_SHAPE_PREFIX + workload.name() + GENERIC_SUFFIX, "", steadyState));
+				String shape = QueryPlans.CAPTURED_SHAPE_PREFIX
+						+ QueryPlans.shapeFor(workload.name(), targetLabel);
+				plans.add(new QueryPlans.Plan(shape + GENERIC_SUFFIX, "", steadyState));
 
 				String firstExecutions = custom.get(workload.name());
 				if ( firstExecutions != null && !sameShape(firstExecutions, steadyState) ) {
-					plans.add(new QueryPlans.Plan(
-							QueryPlans.CAPTURED_SHAPE_PREFIX + workload.name() + CUSTOM_SUFFIX, "",
-							firstExecutions));
+					plans.add(new QueryPlans.Plan(shape + CUSTOM_SUFFIX, "", firstExecutions));
 				}
 			}
 		} catch ( RuntimeException e ) {

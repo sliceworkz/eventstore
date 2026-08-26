@@ -344,12 +344,10 @@ final class MarkdownRenderer {
 				+ "themselves -- the backend builds its SQL internally and does not expose it. Enough to "
 				+ "answer whether the planner used an index or scanned the table, and no substitute for "
 				+ "the real thing if the query builder changes.\n\n");
-		planTarget().ifPresent(target -> out.append(
-				"Captured against **%s**, and the ms/op beside each plan is that target's. A profile "
-						.formatted(target)
-						+ "measuring several PostgreSQL targets explains only the first: the plans are a "
-						+ "property of one store's configuration, and reporting them without saying whose "
-						+ "would be worse than not reporting them.\n\n"));
+		out.append("The reconstructed statements below describe the run's first PostgreSQL target. The "
+				+ "captured ones name the target they came from, since a plan is a property of one "
+				+ "store's configuration and a profile measuring a setting against itself explains "
+				+ "both halves; the ms/op beside each is that same target's.\n\n");
 
 		boolean warned = false;
 		boolean introduced = false;
@@ -383,29 +381,23 @@ final class MarkdownRenderer {
 		}
 		String remainder = plan.shape().substring(QueryPlans.CAPTURED_SHAPE_PREFIX.length());
 		int suffix = remainder.indexOf(" (");
-		String workload = suffix < 0 ? remainder : remainder.substring(0, suffix);
+		String subject = suffix < 0 ? remainder : remainder.substring(0, suffix);
 
-		return planTarget()
-				.flatMap(target -> report.benchmarks().stream()
-						.filter(row -> row.workload().equals(workload))
-						.filter(row -> row.target().equals(target))
-						.filter(row -> row.operationsPerSecond() > 0)
-						.findFirst())
+		int separator = subject.indexOf(QueryPlans.SHAPE_TARGET_SEPARATOR);
+		String workload = separator < 0 ? subject : subject.substring(0, separator);
+		// A plan from before the target was recorded in its shape falls back to the first PostgreSQL
+		// row, which is what such a plan described. Reading a two-target run's plans that way would be
+		// wrong, but a two-target run could not have produced a shape without a target in it.
+		String target = separator < 0 ? null
+				: subject.substring(separator + QueryPlans.SHAPE_TARGET_SEPARATOR.length());
+
+		return report.benchmarks().stream()
+				.filter(row -> row.workload().equals(workload))
+				.filter(row -> target == null ? row.target().startsWith("postgres") : row.target().equals(target))
+				.filter(row -> row.operationsPerSecond() > 0)
+				.findFirst()
 				.map(row -> " — measured %.2f ms/op".formatted(1000 / row.operationsPerSecond()))
 				.orElse("");
-	}
-
-	/**
-	 * The target the captured plans belong to: the run's first PostgreSQL one.
-	 *
-	 * <p>The same rule the launcher applies when it decides which store to open for the capture. Stated
-	 * twice rather than recorded once because the manifest's shape is what a baseline diff compares, and
-	 * a profile with two PostgreSQL targets -- which is how a configuration is measured against itself --
-	 * is exactly where reading "some postgres row" instead of "this one" would put the wrong ms/op
-	 * beside a plan.
-	 */
-	private Optional<String> planTarget ( ) {
-		return report.manifest().targets().stream().filter(target -> target.startsWith("postgres")).findFirst();
 	}
 
 	/**

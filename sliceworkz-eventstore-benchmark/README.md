@@ -60,13 +60,17 @@ java -jar target/*.jar compare --a=target/benchmark/tagged --b=target/benchmark/
 ## Profiles that ship
 
 Paired profiles are listed together: run both, then `compare` them. They differ in one corpus
-property and are otherwise identical — same volume, entity count, seed, workloads and targets — which
-is what makes the percentage between them mean something.
+property and are otherwise identical — same seed, workloads and targets — which is what makes the
+percentage between them mean something. Where the property under test *is* the volume, as in the
+plan-cache pair, the entity count moves with it so that events-per-entity stays fixed: a tag has to
+be as selective in the small corpus as in the large one, or the pair measures selectivity rather than
+size.
 
 | profile | the question | runtime |
 |---|---|---|
 | `smoke`, `smoke-postgres` | does the harness work | seconds |
 | `dcb-cost-curve` | what the DCB check costs, and how it grows with OR-ed facts | ~15 min |
+| `dcb-plan-cache` ⇄ `dcb-plan-cache-small` | whether planning every conditional append pays for itself, and at what store size the answer flips | ~25 min / ~12 min |
 | `write-contention-spread` / `-one-stream` / `-one-boundary` | where throughput saturates, and how much is the advisory lock versus conflict-retry | ~20 min each |
 | `read-shapes` ⇄ `crowded-store` ⇄ `crowded-database` | what a store holding other domains costs, and separately what sharing a database costs | ~20 min each |
 | `stream-design-tagged` ⇄ `stream-design-per-entity` | which stream design to pick | ~30 min each |

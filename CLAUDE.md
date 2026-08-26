@@ -1433,9 +1433,35 @@ can pass all of it and still violate the boundary in production.
     no extra round trip, no effect on any other statement sharing the connection, and unlike
     `SET plan_cache_mode` it cannot leak. It is best effort against a `DataSource` that will not unwrap
     to pgjdbc, which is a single WARN rather than a failed append.
-  - **The default is unchanged (`SERVER_DEFAULT`)** until the pair has been measured rather than reasoned
-    about: `sliceworkz-eventstore-benchmark`'s `dcb-plan-cache` profile runs both modes over one corpus in
-    one run, with `append-none` as the control that must not move.
+  - **The default stays `SERVER_DEFAULT`, and that is now a measurement rather than a reservation.**
+    `sliceworkz-eventstore-benchmark`'s `dcb-plan-cache` profile runs both modes over one corpus in one
+    run, with `append-none` as the control that must not move; `dcb-plan-cache-small` is the same
+    profile against a 5.000-event corpus, so the pair isolates the one property that decides whether
+    planning per append pays for itself — the size of the table being planned against. What the two say:
+    - **`PER_APPEND` only ever buys a plan the server got wrong**, and where it does not change the plan
+      it costs about a quarter to a third of a conditional append's throughput (measured on the small
+      corpus: 0.70–0.74× on the or-groups shapes, 0.88–0.95× on `decide-then-append`, the canonical
+      `type-and-tag` check and the empty-boundary case). That is the price of parse+analyze per
+      execution, and it is charged on every conditional append whether or not there is anything to fix.
+    - **Where the generic plan is bad, it is very bad**, which is why the setting exists. A types-only
+      filter has a catastrophic generic plan at any store size (small corpus: 1.49× in `PER_APPEND`'s
+      favour, against a generic plan measuring 0.51 ops/ms to the custom plan's 12.60), and three or
+      more OR-ed facts flip to a whole-table scan on the 100.000-event corpus for a ~10× loss.
+    - **At the widest shape it cannot help at all.** `append-or-groups-10` on 100.000 events reports the
+      *same* sequential scan under `force_custom_plan` — real tag statistics do not rescue a ten-way
+      `BitmapOr` there — so `PER_APPEND` pays the planning and gets the plan it was trying to avoid.
+    - **Small stores never need it.** At 5.000 events the server keeps the custom plan on every shape
+      unaided, and the captured plan is identical at one, two, three, five and ten facts (a `BitmapOr`
+      over `idx_events_stream_position`, cost 12.62 → 12.65). The 42% decline across that width is
+      statement handling — 17 bound parameters against 62 — and not data access, so nothing about it is
+      a planning problem.
+
+    So `PER_APPEND` is a remedy for a store observed to have flipped, not a setting to turn on
+    generally: reach for it when appends on one shape jump by an order of magnitude with no change in
+    the data, and leave it alone otherwise. These are Testcontainers runs on a developer machine, which
+    is enough to establish the direction and the rough magnitude and is deliberately not published under
+    `results/` — the publisher refuses a Testcontainers run for exactly this reason.
+
     `PostgresConditionalAppendPlanningTest` pins the mechanism per backend — that the statement does reach
     the plan cache by default and does not under `PER_APPEND` — and that neither mode changes what a
     consistency boundary means.

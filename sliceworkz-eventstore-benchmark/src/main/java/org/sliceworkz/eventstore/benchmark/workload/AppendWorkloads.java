@@ -116,7 +116,7 @@ public final class AppendWorkloads {
 
 			@Override
 			public WorkloadRequirement requirement ( ) {
-				return new WorkloadRequirement(true, java.util.Set.of(PayloadProfile.SHREDDED), false);
+				return new WorkloadRequirement(true, java.util.Set.of(PayloadProfile.SHREDDED), false, 0);
 			}
 
 			@Override
@@ -242,6 +242,14 @@ public final class AppendWorkloads {
 		return new AbstractConditionalAppend("append-or-groups-" + groups,
 				"a DCB check over %d OR-ed filter items -- a decision resting on %d separate facts"
 						.formatted(groups, groups)) {
+
+			@Override
+			public WorkloadRequirement requirement ( ) {
+				// the first item is scoped to the entity being appended to; the rest need one distinct
+				// companion each. Without this the companion index wraps on a small corpus and the
+				// filter repeats a tag -- ten disjuncts over six facts, reported as ten facts.
+				return WorkloadRequirement.mutatingOverCompanions(groups - 1);
+			}
 
 			@Override
 			EventFilter filterFor ( WorkloadContext context, String sku ) {
@@ -489,7 +497,7 @@ public final class AppendWorkloads {
 		}
 
 		@Override
-		public final WorkloadRequirement requirement ( ) {
+		public WorkloadRequirement requirement ( ) {
 			return WorkloadRequirement.mutating();
 		}
 

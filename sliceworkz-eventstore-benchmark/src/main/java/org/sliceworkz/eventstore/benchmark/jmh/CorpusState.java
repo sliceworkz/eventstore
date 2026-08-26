@@ -124,7 +124,7 @@ public class CorpusState {
 		} finally {
 			// Read off the restore rather than from endTrial's return, because a trial that drifted past
 			// the threshold throws -- and that is exactly the trial whose figure the report needs.
-			BenchmarkConfig.recordDrift(restore.lastMeasuredDrift());
+			BenchmarkConfig.recordDrift(restore.lastMeasuredDrift(), restore.worstIterationGrowth());
 			try {
 				// Hand the store back as the corpus its manifest describes, so the next fork reuses it
 				// instead of correctly refusing to and rebuilding a hundred thousand events.

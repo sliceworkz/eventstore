@@ -79,7 +79,7 @@ public final class JmhRunner {
 	 *        which is the ordinary case, since only a read-write run at the large tier does
 	 */
 	public record RunOutcome ( List<JmhResults.ResultFile> resultFiles, int benchmarksRun,
-			java.util.OptionalDouble worstDrift ) { }
+			java.util.OptionalDouble worstDrift, java.util.OptionalDouble worstIterationGrowth ) { }
 
 	/**
 	 * Runs a profile's JMH benchmarks.
@@ -157,7 +157,8 @@ public final class JmhRunner {
 			}
 		}
 
-		return new RunOutcome(List.copyOf(resultFiles), benchmarks, BenchmarkConfig.worstDriftIn(driftFile));
+		return new RunOutcome(List.copyOf(resultFiles), benchmarks, BenchmarkConfig.worstDriftIn(driftFile),
+				BenchmarkConfig.worstIterationGrowthIn(driftFile));
 	}
 
 	private static Options optionsFor ( BenchmarkProfile profile, List<Workload> workloads,

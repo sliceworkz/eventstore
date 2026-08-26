@@ -252,9 +252,31 @@ public final class WorkloadContext {
 	}
 
 	private int companionCount ( ) {
-		// never reserve more than a quarter of a small entity space; on a toy corpus there is nothing
-		// to hold back and or-groups accepts a little self-conflict rather than starving the rotation
-		return Math.min(MAX_COMPANION_ENTITIES, spec.entityCount() / 4);
+		return companionCapacity(spec.entityCount());
+	}
+
+	/**
+	 * How many <em>distinct</em> companion entities a corpus of this size can offer.
+	 *
+	 * <p>Never more than a quarter of the entity space: on a toy corpus there is nothing to hold back,
+	 * and reserving most of it would starve the rotation the appends draw from.
+	 *
+	 * <p><b>Ask this before widening a filter, and refuse rather than wrap.</b> {@link #companionEntity}
+	 * takes its index modulo this number, so a workload asking for more companions than exist gets the
+	 * same entity back twice and builds a filter with a duplicated disjunct. Nothing throws and nothing
+	 * is logged: {@code append-or-groups-10} on a 20-entity corpus (capacity 5) builds ten disjuncts
+	 * over six distinct SKUs and is reported as a ten-fact decision. That is a different measurement
+	 * wearing the same name -- the statement is as long as it claims while the predicate is not as wide
+	 * -- so {@link WorkloadRequirement#distinctCompanions()} declares the need and the pairing is
+	 * rejected at setup.
+	 */
+	public static int companionCapacity ( int entityCount ) {
+		return Math.min(MAX_COMPANION_ENTITIES, entityCount / 4);
+	}
+
+	/** The smallest {@code entityCount} whose companion band holds this many distinct entities. */
+	public static int entityCountFor ( int distinctCompanions ) {
+		return distinctCompanions * 4;
 	}
 
 	/** Whether an entity is one of the reserved companions, so nothing writes to it by accident. */
@@ -298,7 +320,7 @@ public final class WorkloadContext {
 	 * workloads build when it captures their query plans.
 	 */
 	public static String companionEntity ( int i, int entityCount ) {
-		int count = Math.min(MAX_COMPANION_ENTITIES, entityCount / 4);
+		int count = companionCapacity(entityCount);
 		if ( count <= 0 ) {
 			// nothing to reserve: fall back to an ordinary entity and accept the self-conflict
 			return "SKU-%06d".formatted(Math.floorMod(i, Math.max(entityCount, 1)));

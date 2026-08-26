@@ -94,13 +94,14 @@ public record BenchmarkConfig ( BenchmarkProfile profile, int targetIndex, Colli
 	 * <p>Never throws. A drift figure is worth having and is not worth failing a completed trial over,
 	 * and the reader treats an absent file as "not measured" rather than as zero.
 	 */
-	public static void recordDrift ( double drift ) {
+	public static void recordDrift ( double drift, double iterationGrowth ) {
 		String path = System.getProperty(DRIFT_FILE_PROPERTY);
 		if ( path == null || path.isBlank() ) {
 			return;
 		}
 		try {
-			java.nio.file.Files.writeString(java.nio.file.Path.of(path), drift + System.lineSeparator(),
+			java.nio.file.Files.writeString(java.nio.file.Path.of(path),
+					drift + " " + iterationGrowth + System.lineSeparator(),
 					java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
 		} catch ( java.io.IOException e ) {
 			org.slf4j.LoggerFactory.getLogger(BenchmarkConfig.class)
@@ -117,6 +118,21 @@ public record BenchmarkConfig ( BenchmarkProfile profile, int targetIndex, Colli
 	 * badly drifted trial comes to look clean.
 	 */
 	public static java.util.OptionalDouble worstDriftIn ( java.nio.file.Path driftFile ) {
+		return worstColumnIn(driftFile, 0);
+	}
+
+	/**
+	 * The worst single-iteration growth any trial reported, or empty when none did.
+	 *
+	 * <p>Recorded alongside the drift and reported separately, because under a restore-per-iteration
+	 * policy the drift is zero by construction and says nothing about how far the store moved inside an
+	 * iteration -- see {@code CorpusRestore.worstIterationGrowth()}.
+	 */
+	public static java.util.OptionalDouble worstIterationGrowthIn ( java.nio.file.Path driftFile ) {
+		return worstColumnIn(driftFile, 1);
+	}
+
+	private static java.util.OptionalDouble worstColumnIn ( java.nio.file.Path driftFile, int column ) {
 		if ( !java.nio.file.Files.isReadable(driftFile) ) {
 			return java.util.OptionalDouble.empty();
 		}
@@ -124,7 +140,10 @@ public record BenchmarkConfig ( BenchmarkProfile profile, int targetIndex, Colli
 			return java.nio.file.Files.readAllLines(driftFile).stream()
 					.map(String::strip)
 					.filter(line -> !line.isEmpty())
-					.mapToDouble(Double::parseDouble)
+					.map(line -> line.split("\\s+"))
+					// a line written before growth was recorded carries the drift only; it is not a zero
+					.filter(fields -> fields.length > column)
+					.mapToDouble(fields -> Double.parseDouble(fields[column]))
 					.max();
 		} catch ( java.io.IOException | NumberFormatException e ) {
 			return java.util.OptionalDouble.empty();

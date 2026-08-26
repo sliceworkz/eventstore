@@ -255,6 +255,15 @@ public final class Main {
 					outcome.worstDrift().orElse(0));
 			outcome.worstDrift().ifPresent(drift -> System.out.println(
 					"  drift    %.2f%% (worst of any trial)".formatted(drift * 100)));
+			// Printed beside the drift and not folded into it. Under a restore-per-iteration policy the
+			// drift is zero by construction, so a summary carrying only that reads "0.00%" for a run
+			// whose log warned twenty times that the store grew twenty-five-fold inside each iteration.
+			// Both are true; only together do they say whether the numbers describe the corpus named.
+			outcome.worstIterationGrowth()
+					.stream().filter(growth -> growth > 0.25d)
+					.forEach(growth -> System.out.println(
+							"  growth   %.0f%% within one iteration (worst): these numbers describe a store larger than the corpus"
+									.formatted(growth * 100)));
 			System.out.println("  report   %s".formatted(output.resolve("report.md")));
 			written.manifest().reasonsNotPublishable().forEach(
 					reason -> System.out.println("  note     not publishable: %s".formatted(reason)));

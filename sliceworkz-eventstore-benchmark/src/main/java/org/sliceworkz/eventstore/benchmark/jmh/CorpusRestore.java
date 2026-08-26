@@ -96,6 +96,7 @@ public final class CorpusRestore {
 
 	/** What {@link #endTrial()} last computed, kept so a trial that failed on it can still report it. */
 	private double lastMeasuredDrift;
+	private double worstIterationGrowth;
 
 	public CorpusRestore ( BenchmarkTarget target, CorpusSpec spec, String prefix, boolean mutating ) {
 		this.target = target;
@@ -157,6 +158,7 @@ public final class CorpusRestore {
 			// store several times over inside a single iteration, and failing the trial for it would fail
 			// every append benchmark this suite has.
 			warnIfIterationGrowthIsLarge(drift, now);
+			worstIterationGrowth = Math.max(worstIterationGrowth, drift);
 			lastMeasuredDrift = 0;
 			return 0;
 		}
@@ -300,6 +302,22 @@ public final class CorpusRestore {
 	}
 
 	/** The drift {@link #endTrial()} last computed, available even when it threw over it. */
+	/**
+	 * The largest single-iteration growth this trial saw, as a fraction of the corpus.
+	 *
+	 * <p><b>Reported beside the drift, because on its own the drift misleads.</b> Under
+	 * {@link Policy#PER_ITERATION} the drift is zero by construction -- the corpus is put back before
+	 * every iteration -- so a summary carrying only that figure says "0.00%" for a run whose store
+	 * multiplied twenty-five-fold inside each measured iteration. Both numbers are true and they answer
+	 * different questions: the drift asks whether one measurement contaminated the next, this asks
+	 * whether any measurement was taken against the size on the label. A profile that reads clean on the
+	 * first and badly on the second is measuring a store it does not describe -- and the captured query
+	 * plans, taken against the restored corpus, then describe a different table again.
+	 */
+	public double worstIterationGrowth ( ) {
+		return worstIterationGrowth;
+	}
+
 	public double lastMeasuredDrift ( ) {
 		return lastMeasuredDrift;
 	}

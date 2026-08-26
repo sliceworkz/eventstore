@@ -1308,6 +1308,42 @@ can pass all of it and still violate the boundary in production.
   `addUntilBoundary`; comparing `event_position` alone is a different order and silently drops events.
   Writers that do not hold the append lock (unconditional appends, `importEvents`, raw SQL) are where the
   inversion actually comes from, which is why the advisory lock below does not subsume this
+- **That tuple comparison is written as a SQL row constructor — `(event_tx, event_position) > (?, ?)` —
+  and the lexicographic expansion it is equivalent to is several times slower.** SQL defines the two as
+  the same predicate, so nothing about what a boundary *means* depends on the spelling. What depends on
+  it is whether PostgreSQL can use it: a boundary is nearly always conjoined with `stream_context = ?
+  AND stream_purpose = ?`, and `idx_events_stream_position` is `(stream_context, stream_purpose,
+  event_tx, event_position)`, so with the leading two pinned by equality a row comparison over the
+  trailing two becomes an index **start condition** — descend once to the cursor, walk the leaves in
+  order — and a page costs what the page returns. A disjunction is not a start condition and lands in a
+  `Filter`.
+  - **Measured** (PG18, 100.000-event `TAGGED` corpus, cursor at the midpoint, one page of 500). The
+    expansion still used the index, but only for the stream columns, and then discarded every event
+    before the cursor to reach page one: `Rows Removed by Filter: 27500`, 1295 buffers, 3.344ms. The row
+    comparison starts the scan at the cursor: nothing filtered, 27 buffers, 0.165ms. End to end that was
+    **2.9× on a five-page cursor walk and 2.0× on a projector run**, with `query-stream-page` and
+    `append-none` — the shapes carrying no boundary — unmoved, which is what says the difference is the
+    boundary and not the machine.
+  - **The cost of the expansion grows with how deep the cursor already sits**, not with the page size.
+    That is the wrong shape for the way `Projector` pages, and it grows silently: every result is
+    correct, so only a plan shows it.
+  - **It also improves the plans the server *caches* for the DCB check**, which was not what it was for.
+    A conditional append's `NOT EXISTS` carries the same boundary, and under the expansion the *generic*
+    plan for the canonical `type + tag` check was a whole-table sequential scan (19.5ms, 100.008 rows
+    discarded for a row that is not there); with the row comparison it is an index scan (0.23ms). The
+    or-groups cliff is unaffected — that one is the tag disjunction, not the cursor.
+  - **There is no setting for this, deliberately.** The two spellings are semantically identical, so no
+    deployment can want the slower one, and a knob whose right value is the same everywhere is an
+    unmade decision left in the code. `PostgresCursorBoundaryTest` guards it per backend (16, 17, 18):
+    the boundary must reach the `Index Cond`, with no `BitmapOr` and no `Sort` above the scan. That test
+    exists because the expansion is what anyone rewriting this would naturally reach for, and nothing
+    else would notice.
+  - **A related trap in the same statement**: the read path's `ORDER BY event_tx::xid8, event_position`
+    looks redundantly cast and is not. The select list projects `event_tx::text`, which PostgreSQL names
+    `event_tx`, and SQL resolves a bare name in `ORDER BY` to an **output** column before it looks at the
+    table — so `ORDER BY event_tx` sorts by the *text* rendering of a transaction id (`'9'` after `'10'`)
+    on an expression no index can supply, putting a `Sort` above every ordered read. Written as an
+    expression the name cannot be captured. Do not "simplify" that cast away
 - **A long-running *writing* transaction anywhere in the cluster freezes what this store can read.** The
   barrier above is `event_tx < pg_snapshot_xmin(pg_current_snapshot())`, and `pg_snapshot_xmin` is the
   oldest transaction id still running — a property of the whole PostgreSQL cluster, not of this store.
@@ -1428,6 +1464,12 @@ can pass all of it and still violate the boundary in production.
     (the canonical check), `append-multi-tag` and `decide-then-append` all measure around 1ms/op against
     generic plans that take 20–28ms. The canonical check is therefore one bad estimate away from the
     same fate, and nothing in the store would say if it flipped.
+  - **The row-comparison cursor boundary took most of that risk away, after the fact.** Those 20–28ms
+    generic plans were whole-table sequential scans measured while the boundary was still written as a
+    disjunction. With the row comparison the generic plan for `append-type-and-tag` is an index scan at
+    **0.23ms** rather than a seq scan at 19.5ms, and `decide-then-append` likewise — so for the
+    single-item shapes a flip to the generic plan is no longer a cliff at all. What is unchanged is the
+    or-groups curve below: that cliff is the tag disjunction, and the boundary was never its cause.
   - **`conditionalAppendPlanning(PER_APPEND)` takes the choice away**, planning every conditional append
     from its own values. Implemented as `setPrepareThreshold(0)` on that one statement through pgjdbc —
     no extra round trip, no effect on any other statement sharing the connection, and unlike

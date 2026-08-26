@@ -384,8 +384,7 @@ public final class Main {
 					describeRestorePolicy(profile));
 
 			List<QueryPlans.Plan> plans = new ArrayList<>(QueryPlans.capture(
-					prepared.target(), provisioner.prefix(), profile.corpus(), prepared.outcome().facts(),
-					profile.targets().stream().map(TargetSpec::cursorBoundary).toList()));
+					prepared.target(), provisioner.prefix(), profile.corpus(), prepared.outcome().facts()));
 			plans.addAll(captureAppendPlans(profile, provisioner, prepared));
 
 			RunReport report = new RunReport(manifest.finished(drift), benchmarks, loadResults, plans);

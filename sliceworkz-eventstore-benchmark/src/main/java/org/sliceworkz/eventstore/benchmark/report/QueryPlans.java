@@ -33,7 +33,6 @@ import org.sliceworkz.eventstore.benchmark.corpus.CorpusSpec;
 import org.sliceworkz.eventstore.benchmark.corpus.CorpusGenerator;
 import org.sliceworkz.eventstore.benchmark.domain.TagKeys;
 import org.sliceworkz.eventstore.benchmark.env.BenchmarkTarget;
-import org.sliceworkz.eventstore.benchmark.env.TargetSpec.CursorBoundary;
 import org.sliceworkz.eventstore.benchmark.workload.WorkloadContext;
 
 /**
@@ -99,8 +98,7 @@ public final class QueryPlans {
 	 * <p>Runs after measurement, never during: {@code EXPLAIN ANALYZE} executes the query, and doing
 	 * that alongside a benchmark would be measuring the benchmark's observer.
 	 */
-	public static List<Plan> capture ( BenchmarkTarget target, String prefix, CorpusSpec spec,
-			CorpusFacts facts, List<CursorBoundary> forms ) {
+	public static List<Plan> capture ( BenchmarkTarget target, String prefix, CorpusSpec spec, CorpusFacts facts ) {
 		if ( target.dataSource().isEmpty() ) {
 			return List.of();
 		}
@@ -173,31 +171,21 @@ public final class QueryPlans {
 				"inventory", perEntity ? facts.hotEntity() : "default",
 				TagKeys.SKU + ":" + facts.hotEntity()));
 
-		// Everything above reads from the head of a stream, where there is no cursor to compare
-		// against, so none of it is affected by how a boundary is spelled. Everything below carries
-		// one -- and a profile measuring the two spellings against each other would be left with the
-		// interesting half unaccounted for if only the first target's were explained. Hence once per
-		// distinct form rather than once per run, with the form named only when there is a choice, so
-		// that a profile with one form keeps the titles its committed baselines were recorded under.
-		List<CursorBoundary> distinct = forms == null || forms.isEmpty()
-				? List.of(CursorBoundary.EXPANDED_OR)
-				: forms.stream().distinct().toList();
-		for ( CursorBoundary form : distinct ) {
-			String label = distinct.size() > 1 ? " -- " + boundaryLabel(form) : "";
-			facts.midCursor().ifPresent(cursor -> plans.add(capture(dataSource,
-					"cursor page from the midpoint (limit 500)" + label,
-					"""
-					SELECT event_position, event_tx::text, event_id, event_type, event_data, event_tags
-					FROM %sevents
-					WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
-					  AND %s
-					  AND stream_context = ?%s
-					ORDER BY event_tx::xid8, event_position
-					LIMIT 500""".formatted(prefix, tupleBoundary(form, ">"), purposeClause),
-					withScope(perEntity, tupleParameters(form, cursor.tx(), cursor.position())))));
+		// The one read shape that carries a boundary; everything above reads from the head of a stream,
+		// where there is no cursor to compare against.
+		facts.midCursor().ifPresent(cursor -> plans.add(capture(dataSource,
+				"cursor page from the midpoint (limit 500)",
+				"""
+				SELECT event_position, event_tx::text, event_id, event_type, event_data, event_tags
+				FROM %sevents
+				WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
+				  AND %s
+				  AND stream_context = ?%s
+				ORDER BY event_tx::xid8, event_position
+				LIMIT 500""".formatted(prefix, tupleBoundary(">"), purposeClause),
+				withScope(perEntity, tupleParameters(cursor.tx(), cursor.position())))));
 
-			plans.addAll(appendPredicates(dataSource, prefix, spec, facts, perEntity, form, label));
-		}
+		plans.addAll(appendPredicates(dataSource, prefix, spec, facts, perEntity));
 
 		return plans.stream().filter(java.util.Objects::nonNull).toList();
 	}
@@ -227,7 +215,7 @@ public final class QueryPlans {
 	 * filter, because the append-side check does not have one either.
 	 */
 	private static List<Plan> appendPredicates ( DataSource dataSource, String prefix, CorpusSpec spec,
-			CorpusFacts facts, boolean perEntity, CursorBoundary form, String label ) {
+			CorpusFacts facts, boolean perEntity ) {
 		List<Plan> plans = new ArrayList<>();
 
 		String purpose = perEntity ? facts.hotEntity() : "default";
@@ -248,17 +236,17 @@ public final class QueryPlans {
 			return plans;
 		}
 		String sku = TagKeys.SKU + ":" + facts.hotEntity();
-		String anchor = " -- boundary %,d events back".formatted(distance) + label;
+		String anchor = " -- boundary %,d events back".formatted(distance);
 
-		plans.add(appendPredicate(dataSource, prefix, purpose, boundary, form,
+		plans.add(appendPredicate(dataSource, prefix, purpose, boundary,
 				APPEND_SHAPE_PREFIX + "event types only, no tag (append-types)" + anchor,
 				"event_type IN ('StockReserved','StockPicked')"));
 
-		plans.add(appendPredicate(dataSource, prefix, purpose, boundary, form,
+		plans.add(appendPredicate(dataSource, prefix, purpose, boundary,
 				APPEND_SHAPE_PREFIX + "four types scoped to one SKU (append-type-and-tag)" + anchor,
 				stockTypesWithTags("ARRAY['" + sku + "']")));
 
-		plans.add(appendPredicate(dataSource, prefix, purpose, boundary, form,
+		plans.add(appendPredicate(dataSource, prefix, purpose, boundary,
 				APPEND_SHAPE_PREFIX + "one item carrying three AND-ed tags (append-multi-tag)" + anchor,
 				stockTypesWithTags("ARRAY['" + sku + "','" + TagKeys.CHANNEL + ":web','"
 						+ TagKeys.WAREHOUSE + ":WH-1']")));
@@ -274,7 +262,7 @@ public final class QueryPlans {
 						"ARRAY['" + TagKeys.SKU + ":"
 								+ WorkloadContext.companionEntity(i, spec.entityCount()) + "']"));
 			}
-			plans.add(appendPredicate(dataSource, prefix, purpose, boundary, form,
+			plans.add(appendPredicate(dataSource, prefix, purpose, boundary,
 					APPEND_SHAPE_PREFIX + "%d OR-ed filter items (append-or-groups-%d)%s".formatted(groups, groups, anchor),
 					predicate.toString()));
 		}
@@ -342,9 +330,9 @@ public final class QueryPlans {
 	}
 
 	private static Plan appendPredicate ( DataSource dataSource, String prefix, String purpose, Boundary head,
-			CursorBoundary form, String shape, String filter ) {
+			String shape, String filter ) {
 		List<String> parameters = new ArrayList<>(List.of("inventory", purpose));
-		parameters.addAll(List.of(tupleParameters(form, head.tx(), head.position())));
+		parameters.addAll(List.of(tupleParameters(head.tx(), head.position())));
 		return capture(dataSource, shape,
 				"""
 				SELECT 1
@@ -352,37 +340,30 @@ public final class QueryPlans {
 				WHERE stream_context = ? AND stream_purpose = ?
 				  AND ( %s )
 				  AND %s
-				LIMIT 1""".formatted(prefix, filter, tupleBoundary(form, ">")),
+				LIMIT 1""".formatted(prefix, filter, tupleBoundary(">")),
 				parameters.toArray(new String[0]));
 	}
 
 	/**
-	 * The {@code (event_tx, event_position)} boundary, spelled the way the target under measurement
-	 * spells it -- see {@code PostgresEventStorageImpl.CursorBoundaryForm}.
+	 * The {@code (event_tx, event_position)} boundary, as a row constructor comparison -- the spelling
+	 * the store uses, and the one a btree can turn into a start condition. See
+	 * {@code PostgresEventStorageImpl.appendTupleBoundary}.
 	 *
 	 * <p>A copy of the store's predicate rather than the store's predicate itself, exactly as every
 	 * statement in this class is a copy of a read path rather than the read path. What that costs is
 	 * that the two can drift; what it buys is a plan for a statement {@code EXPLAIN ANALYZE} may
 	 * execute without appending anything.
 	 */
-	private static String tupleBoundary ( CursorBoundary form, String comparison ) {
-		if ( form == CursorBoundary.ROW_COMPARISON ) {
-			return "(event_tx, event_position) %s (?::xid8, ?::bigint)".formatted(comparison);
-		}
-		String strictly = comparison.startsWith("<") ? "<" : ">";
-		return "( event_tx %s ?::xid8 OR ( event_tx = ?::xid8 AND event_position %s ?::bigint ) )"
-				.formatted(strictly, comparison);
+	private static String tupleBoundary ( String comparison ) {
+		return "(event_tx, event_position) %s (?::xid8, ?::bigint)".formatted(comparison);
 	}
 
-	/** The parameters {@link #tupleBoundary} binds: the row form needs the transaction id once, not twice. */
-	private static String[] tupleParameters ( CursorBoundary form, String tx, long position ) {
-		return form == CursorBoundary.ROW_COMPARISON
-				? new String[] { tx, String.valueOf(position) }
-				: new String[] { tx, tx, String.valueOf(position) };
+	private static String[] tupleParameters ( String tx, long position ) {
+		return new String[] { tx, String.valueOf(position) };
 	}
 
-	private static String[] tupleParameters ( CursorBoundary form, long tx, long position ) {
-		return tupleParameters(form, Long.toUnsignedString(tx), position);
+	private static String[] tupleParameters ( long tx, long position ) {
+		return tupleParameters(Long.toUnsignedString(tx), position);
 	}
 
 	/** Boundary parameters first, then the stream scope, matching the order the statement binds them. */
@@ -395,17 +376,6 @@ public final class QueryPlans {
 		return parameters.toArray(new String[0]);
 	}
 
-	/** How a captured plan's title names which spelling produced it. */
-	private static String boundaryLabel ( CursorBoundary form ) {
-		return form == CursorBoundary.ROW_COMPARISON ? "row comparison" : "expanded OR";
-	}
-
-	/**
-	 * Binds the context, the purpose where the design has a fixed one, then the rest.
-	 *
-	 * <p>A PER_ENTITY corpus has no single purpose to scope a store-wide read to, so the predicate is
-	 * absent from the SQL and its parameter must be absent too.
-	 */
 	private static String[] scoped ( boolean perEntity, String context, String purpose, String... rest ) {
 		List<String> parameters = new ArrayList<>();
 		parameters.add(context);

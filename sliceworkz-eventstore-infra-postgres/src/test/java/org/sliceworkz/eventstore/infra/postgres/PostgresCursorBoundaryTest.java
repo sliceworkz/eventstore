@@ -19,7 +19,6 @@ package org.sliceworkz.eventstore.infra.postgres;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -42,7 +41,6 @@ import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorageImpl.CursorBoundaryForm;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
@@ -55,30 +53,32 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 
 /**
- * Pins down {@link CursorBoundaryForm}: that the two spellings of the {@code (event_tx,
- * event_position)} boundary agree on every event, and that only one of them can drive the index as a
- * range.
+ * Guards the {@code (event_tx, event_position)} boundary: that it means what it should, and that it is
+ * still <em>spelled</em> in the one way PostgreSQL can drive an index with.
  * <p>
- * <b>What the setting is for.</b> A cursor boundary is nearly always conjoined with
- * {@code stream_context = ? AND stream_purpose = ?}, and {@code idx_events_stream_position} is
- * {@code (stream_context, stream_purpose, event_tx, event_position)}. With the leading two columns
- * pinned by equality, a row constructor comparison over the trailing two is something a btree can turn
- * into a <em>start condition</em> — descend once to the cursor and walk the leaves in order — so a page
- * costs what the page returns. A disjunction is not a start condition, so the same predicate becomes a
- * filter over the whole stream, or a {@code BitmapOr} whose unordered result needs a sort above it.
+ * <b>Why the spelling needs a test at all.</b> The store writes the boundary as a SQL row constructor
+ * comparison, {@code (event_tx, event_position) > (?, ?)}. The lexicographic expansion —
+ * {@code event_tx > ? OR (event_tx = ? AND event_position > ?)} — is exactly equivalent, reads more
+ * explicitly, and is what anyone rewriting this would naturally reach for. It is also several times
+ * slower, and nothing about the results would say so: measured on a 100.000-event corpus with the
+ * cursor at the midpoint, the expansion still used the index for the stream columns and then dropped
+ * 27.500 rows in a {@code Filter} to reach page one (3.34ms, 1295 buffers) where the row comparison
+ * starts the scan at the cursor (0.165ms, 27 buffers). The cost of the expansion grows with how deep
+ * the cursor sits, which is the wrong shape for the way {@code Projector} pages, and it grows
+ * silently.
  * <p>
- * <b>What each half of this test decides, and what it deliberately leaves alone.</b> Equivalence is the
- * half that must hold forever: SQL defines a row comparison as exactly the lexicographic expansion the
- * other form writes by hand, so any disagreement between them is a bug in this backend rather than a
- * property of PostgreSQL — and the inversion case, where {@code event_tx} and {@code event_position}
- * order events differently, is where a wrong expansion would actually show. The plan half decides the
- * one thing that cannot be reasoned out: whether PostgreSQL <em>can</em> use a row comparison over
- * index columns three and four, on {@code xid8}, on this major version. It asks that with
- * {@code enable_seqscan} off, because the question is what the predicate can drive and not what the
- * planner picks on a small table — what it picks on a real one, and what that is worth, belongs to
- * {@code sliceworkz-eventstore-benchmark}'s {@code cursor-boundary-form} profile.
+ * So the plan test below is not about a setting — there is no setting — but about a property of the
+ * read path that no correctness test can notice and no reviewer can see in a diff. It asks with
+ * {@code enable_seqscan} off, because what it decides is whether the predicate <em>can</em> be a start
+ * condition; what the planner picks on a real store, and what that is worth, belongs to
+ * {@code sliceworkz-eventstore-benchmark}.
+ * <p>
+ * The rest is ordinary semantics, and the case worth having is the inversion: {@code event_position}
+ * comes from a sequence and {@code event_tx} is assigned independently, so an event can hold a lower
+ * position and sort <em>after</em> one with a higher position. A boundary that compares positions
+ * alone reads and locks against a history the store does not agree with.
  */
-public class PostgresCursorBoundaryFormTest {
+public class PostgresCursorBoundaryTest {
 
 	/** Enough events to page through several times, in enough appends to give distinct transactions. */
 	private static final int SEED_APPENDS = 10;
@@ -98,74 +98,65 @@ public class PostgresCursorBoundaryFormTest {
 		}
 
 		@Test
-		public void testTheTwoFormsReadTheSameEvents ( ) throws Exception {
-			String prefix = "cursorequiv_";
+		public void testPagingVisitsEveryEventOnceInTheReadOrder ( ) throws Exception {
+			String prefix = "cursorpaging_";
 			DataSource dataSource = PostgresContainer.dataSource(image);
 			PostgresEventStorageImpl storage = open(prefix, dataSource);
 			try {
 				EventStreamId stream = EventStreamId.forContext("inventory").withPurpose("sku-1");
 				Tags tags = Tags.of("sku", "SKU-1");
 				seed(storage, stream, tags);
+				// invert() adds two: one appended through the store and one inserted behind it, holding a
+				// lower position and a higher tx. Paging has to cross that without losing or repeating it.
 				invert(storage, dataSource, prefix, stream, tags);
 
-				// invert() adds two: one appended through the store and one inserted behind it.
 				List<StoredEvent> all = read(storage, stream, null, Limit.none(), QueryDirection.FORWARD, null);
 				assertEquals(SEED_APPENDS * SEED_BATCH + 2, all.size(), "the seeded stream is not the size it should be");
+				assertTrue(all.getLast().reference().position() < all.get(all.size() - 2).reference().position(),
+						"the inversion did not happen, so paging across it proves nothing");
 
-				// Cursors worth trying: near the start of the stream, its midpoint, and the reference
-				// immediately before the inverted event -- the last of those is the one a wrong
-				// expansion gets wrong, since the inverted event holds a LOWER position than it.
-				//
-				// All three are interior, deliberately. The first event is the tempting choice for
-				// "near the start" and it is the one cursor that reads empty going backwards, which
-				// the non-degeneracy guard below rightly refuses: two forms agreeing on nothing agree
-				// on nothing. The second event exercises the same boundary with one event behind it.
-				List<EventReference> cursors = List.of(
-						all.get(1).reference(),
-						all.get(all.size() / 2).reference(),
-						all.get(all.size() - 2).reference());
+				assertEquals(ids(all), walk(storage, stream),
+						"paging with a cursor must visit exactly the events an unbounded read returns, in order");
 
-				for ( EventReference cursor : cursors ) {
-					// Forward and backward paging, and the until boundary, which is the same predicate
-					// with <= and is direction-independent by contract.
-					assertSameBothWays(storage, stream, cursor, Limit.to(PAGE), QueryDirection.FORWARD, null);
-					assertSameBothWays(storage, stream, cursor, Limit.to(PAGE), QueryDirection.BACKWARD, null);
-					assertSameBothWays(storage, stream, null, Limit.none(), QueryDirection.FORWARD, cursor);
-					assertSameBothWays(storage, stream, null, Limit.none(), QueryDirection.BACKWARD, cursor);
+				// Cursors worth trying: near the start, the midpoint, and the reference immediately before
+				// the inverted event -- the last is where a boundary comparing positions alone goes wrong.
+				// All interior: reading backwards from the first event matches nothing, and two reads
+				// agreeing on nothing agree on nothing.
+				for ( int index : new int[] { 1, all.size() / 2, all.size() - 2 } ) {
+					EventReference cursor = all.get(index).reference();
+					assertEquals(ids(all.subList(index + 1, all.size())),
+							ids(read(storage, stream, cursor, Limit.none(), QueryDirection.FORWARD, null)),
+							"forward from index %d must be everything after it".formatted(index));
+					// until is the same predicate with <=, and is direction-independent by contract.
+					assertEquals(ids(all.subList(0, index + 1)),
+							ids(read(storage, stream, null, Limit.none(), QueryDirection.FORWARD, cursor)),
+							"until index %d must be everything up to and including it".formatted(index));
+					assertEquals(ids(all.subList(0, index)).reversed(),
+							ids(read(storage, stream, cursor, Limit.none(), QueryDirection.BACKWARD, null)),
+							"backward from index %d must be everything before it, newest first".formatted(index));
 				}
-
-				// A whole walk, not just its first page: a cursor form that is wrong only at a
-				// transaction boundary would still agree on page one.
-				assertEquals(walk(storage, stream, CursorBoundaryForm.EXPANDED_OR),
-						walk(storage, stream, CursorBoundaryForm.ROW_COMPARISON),
-						"paging the whole stream must visit the same events in the same order either way");
 			} finally {
 				storage.close();
 			}
 		}
 
 		@Test
-		public void testTheRowComparisonStillEnforcesTheBoundary ( ) throws Exception {
+		public void testTheBoundaryStillSeesAnEventThatSortsAfterALowerPosition ( ) throws Exception {
 			String prefix = "cursorboundary_";
 			DataSource dataSource = PostgresContainer.dataSource(image);
 			PostgresEventStorageImpl storage = open(prefix, dataSource);
 			try {
-				storage.setCursorBoundaryForm(CursorBoundaryForm.ROW_COMPARISON);
-
 				EventStreamId stream = EventStreamId.forContext("account").withPurpose("42");
 				Tags tags = Tags.of("account", "42");
 				EventQuery boundary = EventQuery.forEvents(EventTypesFilter.any(), tags);
 
-				// Two events: one appended through the store, and one that every reader sorts AFTER it
-				// while holding a LOWER position -- the case a position-only comparison misses, and the
-				// case a row comparison has to get right for the same reason the expansion did.
 				invert(storage, dataSource, prefix, stream, tags);
 				List<StoredEvent> replay = read(storage, stream, null, Limit.none(), QueryDirection.FORWARD, null);
 				assertEquals(2, replay.size(), "expected both events to be readable");
 
 				// The reference a decider would hold before the inverted event became visible, and the
-				// inverted event itself. Read order is the (tx, position) order, so the inverted event is
-				// last despite its lower position -- which is the whole point of it.
+				// inverted event itself -- last in read order despite its lower position, which is the
+				// whole point of it.
 				EventReference reference = replay.get(0).reference();
 				EventReference inverted = replay.get(1).reference();
 				assertTrue(inverted.position() < reference.position(),
@@ -176,7 +167,7 @@ public class PostgresCursorBoundaryFormTest {
 				assertThrows(OptimisticLockingException.class,
 						() -> storage.append(AppendCriteria.of(boundary, reference), Optional.of(stream),
 								List.of(event(stream, "MoneyWithdrawn", tags))),
-						"a row comparison must still see an event that sorts after a stale reference");
+						"the DCB check must see an event that sorts after a stale reference");
 
 				assertEquals(1, storage.append(AppendCriteria.of(boundary, inverted), Optional.of(stream),
 						List.of(event(stream, "MoneyWithdrawn", tags))).size(),
@@ -187,7 +178,7 @@ public class PostgresCursorBoundaryFormTest {
 		}
 
 		@Test
-		public void testOnlyTheRowComparisonDrivesTheIndexAsARange ( ) throws Exception {
+		public void testTheBoundaryDrivesTheIndexAsARange ( ) throws Exception {
 			String prefix = "cursorplan_";
 			DataSource dataSource = PostgresContainer.dataSource(image);
 			PostgresEventStorageImpl storage = open(prefix, dataSource);
@@ -198,42 +189,30 @@ public class PostgresCursorBoundaryFormTest {
 				analyze(dataSource, prefix);
 
 				List<StoredEvent> all = read(storage, stream, null, Limit.none(), QueryDirection.FORWARD, null);
-				EventReference cursor = all.get(all.size() / 2).reference();
-
-				String expanded = explainPage(storage, dataSource, prefix, stream, cursor,
-						CursorBoundaryForm.EXPANDED_OR);
-				String row = explainPage(storage, dataSource, prefix, stream, cursor,
-						CursorBoundaryForm.ROW_COMPARISON);
-				String both = "%n-- EXPANDED_OR --%n%s%n-- ROW_COMPARISON --%n%s".formatted(expanded, row);
+				String plan = explainPage(storage, dataSource, prefix, stream, all.get(all.size() / 2).reference());
 
 				// Asserted in the order the mechanism has to hold, so a failure says which step broke.
-				// First: the boundary is an index condition at all. This is the part that is genuinely
-				// about PostgreSQL rather than about this store -- whether a row comparison over index
-				// columns three and four, on xid8, is something the btree can evaluate.
-				assertTrue(indexCondition(row).contains("event_position"), () ->
+				// First: the boundary is an index condition at all, rather than a filter applied to rows
+				// the scan already had to fetch.
+				assertTrue(indexCondition(plan).contains("event_position"), () ->
 						"event_position has to appear in the Index Cond, not only in a Filter -- that is what"
-								+ " makes the scan start at the cursor rather than at the head of the stream" + both);
+								+ " makes the scan start at the cursor rather than at the head of the stream\n" + plan);
 
-				// Second: one index scan, not two unioned. The disjunction needs an arm per case; the row
-				// comparison is a single condition, which is what removes the BitmapOr.
-				assertFalse(row.contains("BitmapOr"), () ->
-						"the row comparison still needed a union of two index scans, which is the thing it"
-								+ " exists to avoid" + both);
+				// Second: one index scan, not two unioned. The expansion needs an arm per case; a row
+				// comparison is a single condition, which is what keeps the BitmapOr away.
+				assertFalse(plan.contains("BitmapOr"), () ->
+						"the boundary needed a union of two index scans, which is what the row comparison"
+								+ " exists to avoid\n" + plan);
 
-				// Third: the scan supplies the order, so the LIMIT can stop it early instead of a Sort
-				// having to consume every matching row first. This is where the paging cost actually is.
-				assertFalse(row.contains("Sort"), () ->
+				// Third: the scan supplies the order, so the LIMIT stops it early instead of a Sort having
+				// to consume every matching row first. This is where the paging cost actually is.
+				assertFalse(plan.contains("Sort"), () ->
 						"a sort above the scan means the index did not supply the order the query asks for,"
 								+ " so the LIMIT cannot be pushed into the scan and a page costs the whole"
-								+ " remainder of the stream" + both);
-				assertTrue(row.contains("Index Scan") && !row.contains("Bitmap"), () ->
+								+ " remainder of the stream\n" + plan);
+				assertTrue(plan.contains("Index Scan") && !plan.contains("Bitmap"), () ->
 						"an ordered range scan is a plain Index Scan; a Bitmap Index Scan discards the order"
-								+ " the index could have supplied" + both);
-
-				// If the two spellings plan identically there is nothing here to choose between, and the
-				// setting has no reason to exist. Worth failing over rather than measuring for 25 minutes.
-				assertNotEquals(expanded, row,
-						"the two spellings produced the same plan, so the row comparison buys nothing:" + both);
+								+ " the index could have supplied\n" + plan);
 			} finally {
 				storage.close();
 			}
@@ -262,9 +241,9 @@ public class PostgresCursorBoundaryFormTest {
 		}
 
 		/**
-		 * Adds one event holding a position lower than every event appended after this call, in a
-		 * transaction that takes a higher {@code tx} — so {@code event_tx} and {@code event_position}
-		 * order the stream differently, which is the case the boundary exists to get right.
+		 * Adds one event holding a position lower than the event appended just before it, in a transaction
+		 * that takes a higher {@code tx} — so {@code event_tx} and {@code event_position} order the stream
+		 * differently, which is the case the boundary exists to get right.
 		 */
 		private void invert ( PostgresEventStorageImpl storage, DataSource dataSource, String prefix,
 				EventStreamId stream, Tags tags ) throws SQLException {
@@ -277,31 +256,12 @@ public class PostgresCursorBoundaryFormTest {
 		/** Reads through the store, with the given cursor, limit, direction and {@code until}. */
 		private List<StoredEvent> read ( PostgresEventStorageImpl storage, EventStreamId stream,
 				EventReference cursor, Limit limit, QueryDirection direction, EventReference until ) {
-			EventQuery query = until == null
-					? EventQuery.matchAll()
-					: EventQuery.matchAll().until(until);
+			EventQuery query = until == null ? EventQuery.matchAll() : EventQuery.matchAll().until(until);
 			return storage.query(query, Optional.of(stream), cursor, limit, direction).toList();
 		}
 
-		/** Asserts one read returns the same events, in the same order, under both spellings. */
-		private void assertSameBothWays ( PostgresEventStorageImpl storage, EventStreamId stream,
-				EventReference cursor, Limit limit, QueryDirection direction, EventReference until ) {
-			storage.setCursorBoundaryForm(CursorBoundaryForm.EXPANDED_OR);
-			List<String> expanded = ids(read(storage, stream, cursor, limit, direction, until));
-			storage.setCursorBoundaryForm(CursorBoundaryForm.ROW_COMPARISON);
-			List<String> row = ids(read(storage, stream, cursor, limit, direction, until));
-
-			assertFalse(expanded.isEmpty(),
-					"the read matched nothing, so agreeing on it proves nothing (cursor=%s until=%s direction=%s)"
-							.formatted(cursor, until, direction));
-			assertEquals(expanded, row,
-					"the two boundary spellings disagreed (cursor=%s until=%s direction=%s)"
-							.formatted(cursor, until, direction));
-		}
-
-		/** Pages the whole stream with the given form, carrying a cursor, and answers what it visited. */
-		private List<String> walk ( PostgresEventStorageImpl storage, EventStreamId stream, CursorBoundaryForm form ) {
-			storage.setCursorBoundaryForm(form);
+		/** Pages the whole stream, carrying a cursor, and answers what it visited. */
+		private List<String> walk ( PostgresEventStorageImpl storage, EventStreamId stream ) {
 			List<String> visited = new ArrayList<>();
 			EventReference cursor = null;
 			while ( true ) {
@@ -310,7 +270,7 @@ public class PostgresCursorBoundaryFormTest {
 					return visited;
 				}
 				visited.addAll(ids(page));
-				cursor = page.get(page.size() - 1).reference();
+				cursor = page.getLast().reference();
 			}
 		}
 
@@ -328,9 +288,7 @@ public class PostgresCursorBoundaryFormTest {
 		 * is whether the predicate <em>can</em> be a start condition.
 		 */
 		private String explainPage ( PostgresEventStorageImpl storage, DataSource dataSource, String prefix,
-				EventStreamId stream, EventReference cursor, CursorBoundaryForm form ) throws SQLException {
-			storage.setCursorBoundaryForm(form);
-
+				EventStreamId stream, EventReference cursor ) throws SQLException {
 			StringBuilder sql = new StringBuilder(
 					"EXPLAIN (COSTS OFF) SELECT event_position, event_tx::text, event_id FROM %sevents"
 							.formatted(prefix)
@@ -343,9 +301,9 @@ public class PostgresCursorBoundaryFormTest {
 			// The read path's ORDER BY, verbatim, and the cast in it is load-bearing rather than
 			// redundant: the select list projects event_tx::text, which PostgreSQL names event_tx, and
 			// SQL resolves a bare name in ORDER BY to an *output* column before it looks at the table.
-			// Written as "ORDER BY event_tx" this sorted the page by the text rendering of a transaction
-			// id -- '9' after '10' -- and, being an expression over no index, put a Sort above every plan
-			// and made this test's question unanswerable. Written as an expression it cannot be captured.
+			// Written as "ORDER BY event_tx" this sorts the page by the text rendering of a transaction
+			// id -- '9' after '10' -- on an expression no index can supply, which puts a Sort above every
+			// plan. Written as an expression the name cannot be captured.
 			sql.append(" ORDER BY event_tx::xid8, event_position LIMIT ").append(PAGE);
 
 			try ( Connection connection = dataSource.getConnection() ) {

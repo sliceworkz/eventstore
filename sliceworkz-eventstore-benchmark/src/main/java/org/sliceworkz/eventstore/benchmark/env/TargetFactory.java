@@ -161,16 +161,6 @@ public final class TargetFactory {
 
 			EventStorage storage = builder.build();
 
-			// Not on the public Builder: the row-comparison form is an experiment with a decision
-			// pending, so it is reachable from here and from a system property and nowhere else. See
-			// TargetSpec.CursorBoundary, and PostgresEventStorageImpl.CursorBoundaryForm for the SQL.
-			if ( storage instanceof PostgresEventStorageImpl postgres ) {
-				postgres.setCursorBoundaryForm(switch ( spec.cursorBoundary() ) {
-					case ROW_COMPARISON -> PostgresEventStorageImpl.CursorBoundaryForm.ROW_COMPARISON;
-					case EXPANDED_OR -> PostgresEventStorageImpl.CursorBoundaryForm.EXPANDED_OR;
-				});
-			}
-
 			// ensure-schema.sql creates <prefix>shredding_keys unconditionally, so a key store on this
 			// store's own database needs no extra builder call -- only a schema that has been ensured
 			// at least once, which provisioning guarantees

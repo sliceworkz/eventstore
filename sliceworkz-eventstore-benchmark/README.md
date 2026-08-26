@@ -66,12 +66,16 @@ plan-cache pair, the entity count moves with it so that events-per-entity stays 
 be as selective in the small corpus as in the large one, or the pair measures selectivity rather than
 size.
 
+A profile that only ever existed to decide something is deleted once it has. `cursor-boundary-form`
+compared the two spellings of the cursor boundary, found the row comparison 2.9x faster on a cursor
+walk, and was removed along with the losing spelling — a profile that cannot run is worse than no
+profile, and the result lives in `CLAUDE.md` and in `PostgresCursorBoundaryTest`.
+
 | profile | the question | runtime |
 |---|---|---|
 | `smoke`, `smoke-postgres` | does the harness work | seconds |
 | `dcb-cost-curve` | what the DCB check costs, and how it grows with OR-ed facts | ~15 min |
 | `dcb-plan-cache` ⇄ `dcb-plan-cache-small` | whether planning every conditional append pays for itself, and at what store size the answer flips | ~25 min / ~12 min |
-| `cursor-boundary-form` | whether writing the cursor boundary as a row comparison lets it drive the index as a range — two targets in one run, no `compare` needed | ~15 min |
 | `write-contention-spread` / `-one-stream` / `-one-boundary` | where throughput saturates, and how much is the advisory lock versus conflict-retry | ~20 min each |
 | `read-shapes` ⇄ `crowded-store` ⇄ `crowded-database` | what a store holding other domains costs, and separately what sharing a database costs | ~20 min each |
 | `stream-design-tagged` ⇄ `stream-design-per-entity` | which stream design to pick | ~30 min each |

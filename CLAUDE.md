@@ -55,7 +55,7 @@ mvn clean install -DskipTests
 
 **EventStream:**
 - Identified by `EventStreamId` which consists of a context and optional purpose
-- Purpose is optional: `EventStreamId.forContext("x")` defaults purpose to `"default"`, so a context that needs only one stream can ignore purpose entirely. Set a purpose only to distinguish multiple streams within a context (e.g. per-instance, or separating event kinds)
+- Purpose is optional: `EventStreamId.forContext("x")` defaults purpose to `"default"`, so a context that needs only one stream can ignore purpose entirely. Set a purpose only to distinguish multiple streams within a context (e.g. per-instance, or separating event kinds). Whether to make the purpose an *entity id* — a stream per SKU rather than a stream per context — is the one layout decision with measured consequences on both reads and write contention; see "Choosing a stream design" under Benchmarking
 - Supports both reading (via `query()`) and writing (via `append()`)
 - Type-safe through generic parameter `<DOMAIN_EVENT_TYPE>`
 - Combines `EventSource` (reading) and `EventSink` (writing) interfaces
@@ -1131,6 +1131,70 @@ Two of those four have no profile behind them, deliberately: a per-meter heap fi
 time are properties of a snapshot rather than of a throughput, and inventing a workload to produce a
 number that shape would produce a worse one. They stay as recorded observations, and are marked as
 such rather than quietly dropped.
+
+### Choosing a stream design: one stream per context, or one per entity
+
+The question every application author has to answer first — a stream per bounded context with
+entities told apart by tags (`inventory/default`, every event tagged `sku:`), or a stream per entity
+with the id as the purpose (`inventory/WIDGET-42`). Both are ordinary uses of `EventStreamId`, and
+until now the answer here was a guess. `stream-design-tagged` and `stream-design-per-entity` are the
+same corpus in every property but that one — 100.000 events, `CLEAN`, `REALISTIC`, 2000 entities,
+one seed — so the difference between them is attributable.
+
+**Per-entity wins or ties everything except reading a context in order.** Measured per-entity ÷
+tagged, PG18, 0.00% store drift on both sides, with `append-none` as the control that must not move
+(1.04× at one thread, 0.98× at eight):
+
+| workload | 1 thread | 8 threads |
+|---|---|---|
+| `append-type-and-tag` (the canonical DCB check) | 4.2× | **16.8×** |
+| `decide-then-append` | 1.4× | 2.3× |
+| `query-by-stream-cold` | 2.4× | 2.2× |
+| `query-by-tag-needle` | 1.5× | 1.4× |
+| `query-by-stream-hot` | 1.2× | 1.2× |
+| `query-last-event-by-stream` | 1.1× | 1.2× |
+| `query-by-tag-swathe` | 1.1× | 1.0× |
+| **`query-stream-page`** (matchAll, 500 events, in order) | **0.074** | **0.066** |
+
+- **The 16.8× on conditional appends is the advisory lock, not the index.** Appends are serialized
+  per stream by `pg_advisory_xact_lock` keyed on `(prefix, context, purpose)` — so under `tagged`
+  every conditional append in a context takes the *same* lock and eight writers take turns, while
+  under `per-entity` writers to different entities take different locks and do not meet. The gap is
+  4.2× single-threaded and grows with writers, which is the signature of contention rather than of a
+  cheaper plan.
+- **The one real cost is paging a context in order: 13–15× slower.** That is not an artefact and
+  there is no addressing trick that recovers it — under `per-entity`, reading a whole context *is* a
+  cross-entity read, so `stream_purpose` is unbound, and it is the second column of both
+  `idx_events_stream_position` and `idx_events_stream_tags`. An ordered read loses its start
+  condition and the `LIMIT` cannot be pushed into the scan. Anything shaped like `query-stream-page`
+  pays this: a whole-context replay, a `Projector` over a context, an export. Weigh it against how
+  often the application actually does that versus how often it reads or writes one entity.
+- **Read one entity through its own stream, or the design buys you nothing.** This is the trap, and
+  it is entirely in the calling code: `EventStreamId.forContext("inventory")` with a wildcard purpose
+  addresses a per-entity corpus *the tagged way* and lands in exactly the unbound-column-2 case
+  above. Measured on the same per-entity corpus, the savepoint probe (`.backwards().limit(1)`) is
+  **0.562 ops/ms addressed by tag against 16.183 addressed by stream** at one thread, and 2.938
+  against 67.448 at eight — 23–29×. Read by tag it looks like a 24× regression against `tagged`; read
+  by stream it is ahead. Choosing `per-entity` and then querying by tag is the worst of both.
+- **The suite guards that distinction rather than trusting it.** Each `query-by-entity-*` /
+  `query-by-stream-*` pair is the *same* query asked two ways, so on the `tagged` corpus the two must
+  report the same number — a gap there is a harness fault, not a finding. They do agree (0.046/0.047,
+  8.062/8.517, 13.915/14.387 at one thread), which is what licenses reading the per-entity gap as the
+  cost of addressing.
+- **Not measured here, and it is the real bill for `per-entity`:** 2000 distinct purposes is past the
+  default `MeterOptions.maxPurposeTagValues()` cap of 1000, so a store with metrics on pools the tail
+  under `_other`. Both profiles run with metrics **off** deliberately, so this comparison says nothing
+  about that cost — `metrics-cost` is where it is measured rather than assumed. See the metrics
+  section above for what a distinct purpose costs.
+
+**Caveats, in the suite's own terms.** These are Testcontainers runs on a developer machine:
+direction and rough magnitude, deliberately not published under `results/` — the publisher refuses a
+Testcontainers run for exactly this reason. Several per-entity figures carry 29–36% relative error
+(`append-type-and-tag` at one thread is 7.069 ± 2.042; `query-by-stream-cold` at eight is 76.944 ±
+28.053), so read those as "clearly faster" rather than as ratios to two digits. The `append-*`
+workloads grow the store 165–172% within an iteration on **both** sides, which is why the pair is
+compared and neither figure is quoted alone. The entity count at which the answer flips is not
+established: 2000 is one point on that curve, and the corpus knob to move is `entityCount`.
 
 ## Naming Conventions
 

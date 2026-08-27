@@ -102,6 +102,15 @@ final class LiveLatencyProbe implements AutoCloseable {
 				.build();
 	}
 
+	/**
+	 * Opens the measured window, so the ramp-up's appends are still tracked for the delivery check but
+	 * no longer timed. Called when the runner starts measuring, alongside the service-time recorder's
+	 * own switch -- the two windows have to be the same one or the summaries are over different runs.
+	 */
+	void recordFrom ( long nanos ) {
+		pending.recordFrom(nanos);
+	}
+
 	/** Notes an append, if the workload's result carried the reference of one. */
 	void appended ( Object result, long startedAtNanos ) {
 		if ( !scenario.needsSubscription() ) {

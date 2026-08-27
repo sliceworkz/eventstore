@@ -344,10 +344,21 @@ final class MarkdownRenderer {
 				+ "themselves -- the backend builds its SQL internally and does not expose it. Enough to "
 				+ "answer whether the planner used an index or scanned the table, and no substitute for "
 				+ "the real thing if the query builder changes.\n\n");
-		out.append("The reconstructed statements below describe the run's first PostgreSQL target. The "
-				+ "captured ones name the target they came from, since a plan is a property of one "
-				+ "store's configuration and a profile measuring a setting against itself explains "
-				+ "both halves; the ms/op beside each is that same target's.\n\n");
+		// Whether anything captured the store's own statements decides how the reconstructions may be
+		// described: pointing at captured plans that are not in this report sends the reader looking for
+		// a section that does not exist. A load run has no captured plans at all -- nothing runs under
+		// auto_explain there -- so the reconstructions are all the report has, and they have to be
+		// introduced as such rather than as the lesser half of a pair.
+		boolean hasCaptured = report.plans().stream()
+				.anyMatch(plan -> plan.shape().startsWith(QueryPlans.CAPTURED_SHAPE_PREFIX));
+
+		out.append("The reconstructed statements below describe the run's first PostgreSQL target.");
+		out.append(hasCaptured
+				? " The captured ones name the target they came from, since a plan is a property of one "
+						+ "store's configuration and a profile measuring a setting against itself explains "
+						+ "both halves; the ms/op beside each is that same target's.\n\n"
+				: " This run captured none of the store's own statements, so every plan here is a "
+						+ "reconstruction.\n\n");
 
 		boolean warned = false;
 		boolean introduced = false;
@@ -359,6 +370,7 @@ final class MarkdownRenderer {
 				}
 			} else if ( !warned && plan.shape().startsWith(QueryPlans.APPEND_SHAPE_PREFIX) ) {
 				out.append(APPEND_PLAN_CAVEAT);
+				out.append(hasCaptured ? CAPTURED_PLAN_POINTER : NO_CAPTURED_PLAN_NOTE);
 				warned = true;
 			}
 			out.append("### %s%s%s\n\n".formatted(plan.shape(), measured(plan),
@@ -448,8 +460,24 @@ final class MarkdownRenderer {
 			> the store binds them as JDBC parameters and re-uses the statement, so what it actually runs\s
 			> is whichever of the custom and generic plans the server settled on -- and for several of\s
 			> these shapes that is the generic one, which is a different plan entirely. Read these as the\s
-			> shape of the predicate. The captured plans further down are the ones to read against the\s
+			> shape of the predicate.""";
+
+	/** Where the run captured the store's own statements too, they are the ones to believe. */
+	private static final String CAPTURED_PLAN_POINTER = """
+			 The captured plans further down are the ones to read against the\s
 			> measurements.
+
+			""";
+
+	/**
+	 * Where it did not, saying so is the point: the caveat above explains why a reconstruction may
+	 * differ from what ran, and without this it would trail off into a pointer to a section that is not
+	 * in this report. A load run is the case -- nothing there executes under {@code auto_explain}.
+	 */
+	private static final String NO_CAPTURED_PLAN_NOTE = """
+			 This run captured none of the store's own\s
+			> statements, so there is nothing here to check them against: read the shapes, and take the\s
+			> plan a measurement actually ran on from a `jmh` run over the same corpus.
 
 			""";
 

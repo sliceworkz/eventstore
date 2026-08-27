@@ -14,6 +14,12 @@ description: >
   This is a load profile with no jmh section: these paths need a store that is growing and a live
   subscription, neither of which survives JMH's restore-between-iterations discipline.
 
+  A containerised target runs with fsync off, which matters more here than in any other profile:
+  every number below is a commit that never reached a disk, so the absolute latencies are optimistic
+  in a way a throughput profile would barely notice. The subtraction survives it -- both scenarios
+  pay the same discount -- so read the gap between them as the cost of the projection, and take the
+  absolute figures from an external server before quoting them as latency.
+
 corpus:
   volume: 100000
   streamDesign: TAGGED

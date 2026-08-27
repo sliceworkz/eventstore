@@ -19,6 +19,7 @@ package org.sliceworkz.eventstore.benchmark.load;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
 /**
@@ -40,24 +41,40 @@ import java.util.concurrent.atomic.LongAdder;
  * by a notification that did not strictly cover it. For a latency histogram the error is bounded by
  * how far apart two concurrently-committing appends land, which is microseconds -- far below anything
  * this measures. It would be wrong to use this for a cursor; it is fine for a stopwatch.
+ *
+ * <p><b>Every append is tracked, only the measured ones are timed.</b> The two are deliberately
+ * separate: the delivery check has to account for the whole run, ramp-up included, because every
+ * append made had to be announced somewhere -- while the histogram must not carry the ramp-up, whose
+ * job is to be slow. Recording both from the same pool is how the delivery latencies came to be
+ * summarised over 26.001 samples where service time had 24.001, the difference being exactly one
+ * ramp-up: the cold first notifications and the projector's first batch over a full corpus sat in
+ * the p99.9, which is precisely the percentile the scenario exists to report.
  */
 final class PendingAppends {
 
 	private final ConcurrentSkipListMap<Long, Long> startedAtByPosition = new ConcurrentSkipListMap<>();
 	private final LongAdder recorded = new LongAdder();
+	private final AtomicLong recordingFrom = new AtomicLong(Long.MAX_VALUE);
 
 	/** Notes that an event at this position was appended now. */
 	void appended ( long position, long startedAtNanos ) {
 		startedAtByPosition.put(position, startedAtNanos);
 	}
 
+	/** Opens the measured window: appends made from this instant on are timed, earlier ones are not. */
+	void recordFrom ( long nanos ) {
+		recordingFrom.set(nanos);
+	}
+
 	/**
-	 * Records a latency for every append at or below {@code upToPosition}, and forgets them.
+	 * Times every append at or below {@code upToPosition} that was made inside the measured window,
+	 * and forgets them all -- including the ramp-up's, which are drained and counted but not timed.
 	 *
 	 * @return how many were drained
 	 */
 	int drainUpTo ( long upToPosition, long nowNanos, LatencyRecorder into ) {
 		int drained = 0;
+		long from = recordingFrom.get();
 		Map.Entry<Long, Long> entry;
 		while ( ( entry = startedAtByPosition.pollFirstEntry() ) != null ) {
 			if ( entry.getKey() > upToPosition ) {
@@ -65,7 +82,9 @@ final class PendingAppends {
 				startedAtByPosition.put(entry.getKey(), entry.getValue());
 				break;
 			}
-			into.record(nowNanos - entry.getValue());
+			if ( entry.getValue() >= from ) {
+				into.record(nowNanos - entry.getValue());
+			}
 			drained++;
 		}
 		recorded.add(drained);

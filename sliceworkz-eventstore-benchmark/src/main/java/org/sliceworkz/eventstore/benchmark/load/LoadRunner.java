@@ -130,6 +130,7 @@ public final class LoadRunner {
 		sleep(Duration.ofSeconds(settings.rampUpSeconds()));
 		long measureFrom = System.nanoTime();
 		recordingFrom.set(measureFrom);
+		probe.recordFrom(measureFrom);
 		counters.resetForMeasurement();
 		LOGGER.info("ramp-up done after {}s; measuring for {}s",
 				settings.rampUpSeconds(), settings.durationSeconds());

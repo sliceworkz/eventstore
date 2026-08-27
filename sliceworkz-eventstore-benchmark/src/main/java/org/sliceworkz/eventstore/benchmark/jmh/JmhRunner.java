@@ -35,6 +35,7 @@ import org.openjdk.jmh.runner.options.TimeValue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.sliceworkz.eventstore.benchmark.config.BenchmarkProfile;
+import org.sliceworkz.eventstore.benchmark.corpus.CorpusFingerprint;
 import org.sliceworkz.eventstore.benchmark.env.TargetFactory;
 import org.sliceworkz.eventstore.benchmark.env.TargetSpec;
 import org.sliceworkz.eventstore.benchmark.report.JmhResults;
@@ -200,7 +201,7 @@ public final class JmhRunner {
 			arguments.add("-D%s=%s".formatted(TargetFactory.INHERITED_JDBC_URL_PROPERTY, jdbcUrl));
 			LOGGER.info("forks will attach to the container already started at {}", jdbcUrl);
 
-			warmServer(dataSource);
+			warmServer(dataSource, CorpusFingerprint.prefixFor(profile.corpus()));
 		}
 		return arguments;
 	}
@@ -228,17 +229,31 @@ public final class JmhRunner {
 	}
 
 	/**
-	 * Touches the events table so the server's cache is warm before fork 1 starts.
+	 * Reads the events table so the server's cache is warm before fork 1 starts.
 	 *
 	 * <p>Without this, fork 1 measures a cold PostgreSQL and forks 2 and 3 measure a warm one, and the
 	 * difference shows up as inter-fork variance that looks like noise and is not.
+	 *
+	 * <p>This used to issue {@code SELECT 1}, which warms nothing: it reads no page of the corpus, so
+	 * the method did not do what its own name and comment said. A sequential read of the table is the
+	 * cheap version of what fork 1 would otherwise pay for.
+	 *
+	 * <p><b>It cannot help the first target of a run, and that is a real limit rather than an
+	 * oversight here.</b> The corpus is generated inside the first fork's trial setup, so on a fresh
+	 * container there is no table to warm at this point -- the statement fails, is logged at DEBUG and
+	 * the run goes on. Every later target inherits the buffer pool the earlier ones filled. So a
+	 * profile whose targets differ in one setting has its <em>first</em> target measured against a
+	 * colder server than the rest, which is a difference between targets that has nothing to do with
+	 * the setting under test. Read a cross-target table with that in mind, and confirm a surprising
+	 * one by re-running with the targets in the opposite order.
 	 */
-	private static void warmServer ( DataSource dataSource ) {
+	private static void warmServer ( DataSource dataSource, String prefix ) {
 		try ( var connection = dataSource.getConnection();
 				var statement = connection.createStatement() ) {
-			statement.execute("SELECT 1");
+			statement.execute("SELECT count(*) FROM " + prefix + "events");
 		} catch ( Exception e ) {
-			LOGGER.warn("could not warm the server before the run; fork 1 may be measurably colder", e);
+			// Ordinary on the first target of a fresh container: the corpus is not provisioned yet.
+			LOGGER.debug("could not warm the server before the run; fork 1 may be measurably colder", e);
 		}
 	}
 }

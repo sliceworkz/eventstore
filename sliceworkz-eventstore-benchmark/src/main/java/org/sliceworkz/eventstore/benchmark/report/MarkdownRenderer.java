@@ -136,6 +136,9 @@ final class MarkdownRenderer {
 
 	private void derived ( StringBuilder out ) {
 		StringBuilder body = new StringBuilder();
+		// The targets side by side comes first, because for a profile whose targets differ in one
+		// setting it is the whole question and every per-target table below answers a different one.
+		targetComparison(body);
 		// Every derived table is computed per target and says which one it is about. Averaging an
 		// in-memory store and a PostgreSQL one would produce a number describing neither, and comparing
 		// the two is a job for `compare`, not for a table that quietly picked whichever came first.
@@ -155,6 +158,73 @@ final class MarkdownRenderer {
 	/** The targets this run measured, in the order their rows appear. */
 	private List<String> distinctTargets ( ) {
 		return report.benchmarks().stream().map(BenchmarkRow::target).distinct().toList();
+	}
+
+	/**
+	 * Every workload against every target, with the first target as the reference.
+	 *
+	 * <p>A profile whose targets differ in one setting -- metrics-cost, dcb-plan-cache -- exists to
+	 * ask what that setting costs, and the per-target tables below cannot answer it: each describes
+	 * one target, so the reader is left doing the division by hand off the "every measurement" table.
+	 * Both profiles' descriptions promise the comparison needs no second report, and until this
+	 * section they were promising something the report did not render.
+	 *
+	 * <p><b>The reference is the first target, and target order is itself a confound.</b> The corpus
+	 * is generated inside the first fork of the first target, so on a fresh container that target is
+	 * measured against a colder server than the ones after it -- see {@code JmhRunner.warmServer}.
+	 * That is a difference between targets owing nothing to the setting under test, and it moves the
+	 * ratios in this table by several percent in a direction the setting cannot explain. Hence the
+	 * note below the table rather than a silent percentage: a ratio worth acting on should survive
+	 * re-running the profile with its targets in the opposite order.
+	 */
+	private void targetComparison ( StringBuilder out ) {
+		List<String> targets = distinctTargets();
+		if ( targets.size() < 2 ) {
+			return;
+		}
+		String reference = targets.getFirst();
+
+		// Only workloads every target actually measured: a partial row would invite a comparison
+		// between a number and a blank, which is the kind of table people read a ratio off anyway.
+		List<String> workloads = report.benchmarks().stream()
+				.map(BenchmarkRow::workload)
+				.distinct()
+				.filter(workload -> targets.stream().allMatch(t -> rowFor(t, workload) != null))
+				.toList();
+		if ( workloads.isEmpty() ) {
+			return;
+		}
+
+		out.append("### The targets side by side\n\n");
+		out.append("| workload | threads | ").append(String.join(" | ", targets)).append(" |\n");
+		out.append("|---".repeat(targets.size() + 2)).append("|\n");
+
+		for ( String workload : workloads ) {
+			BenchmarkRow base = rowFor(reference, workload);
+			out.append("| %s | %d ".formatted(workload, base.threads()));
+			for ( String target : targets ) {
+				BenchmarkRow row = rowFor(target, workload);
+				out.append(target.equals(reference)
+						? "| %s %s ".formatted(row.scoreWithError(), row.unit())
+						: "| %s %s (%.2fx) ".formatted(row.scoreWithError(), row.unit(),
+								base.score() == 0.0d ? Double.NaN : row.score() / base.score()));
+			}
+			out.append("|\n");
+		}
+
+		out.append("\nRelative to **%s**, higher is better. ".formatted(reference));
+		out.append("A ratio is only about the setting these targets differ in if it is larger than ");
+		out.append("both error bars and survives running the profile with the targets in the opposite ");
+		out.append("order: the first target is measured against a server the later ones then inherit ");
+		out.append("warm, which is worth a few percent on its own.\n\n");
+	}
+
+	/** The row for one target and workload, or null where that pair was not measured. */
+	private BenchmarkRow rowFor ( String target, String workload ) {
+		return report.benchmarks().stream()
+				.filter(row -> row.target().equals(target) && row.workload().equals(workload))
+				.findFirst()
+				.orElse(null);
 	}
 
 	/** A section heading, carrying the target when this run measured more than one. */

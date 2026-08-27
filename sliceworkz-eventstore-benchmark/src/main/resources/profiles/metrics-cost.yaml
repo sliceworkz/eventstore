@@ -10,19 +10,22 @@ description: >
   into `_other`. Under a TAGGED design all three targets would look identical, which would be a true
   measurement of the wrong thing.
 
-  The targets run uninstrumented LAST, and the order is the measurement rather than a preference.
-  A run in the other order reported the two instrumented stores 8% FASTER than the uninstrumented
-  one on both append workloads -- which meters cannot do -- while the two instrumented targets sat
-  0.7% apart, inside their error bars. That is the signature of position in the run, not of the
-  setting: the corpus is generated inside the first fork of the first target, so that target is
-  measured against a server the ones after it inherit warm. Whichever target goes first pays for it.
+  The targets run uninstrumented LAST, and the order is a finding rather than a preference. Run the
+  other way round, this profile reported the two instrumented stores 8% FASTER than the
+  uninstrumented one on both append workloads -- which meters cannot do. Reversed, metrics=off came
+  out fastest instead of slowest, and the ranking again followed position rather than the setting.
+  The cause is that the corpus is generated inside the first fork of the first target, so whichever
+  target goes first is measured against a server the ones after it inherit warm.
 
-  So read this profile as a pair of comparisons, not one. Capped against unlimited is clean -- same
-  position, adjacent in the order -- and is where the cap's throughput cost is actually visible.
-  Uninstrumented against either is confounded by order, and the only honest reading of it is the
-  difference between what this run says and what the reverse order said. If metrics=off comes out
-  fastest here having come out slowest there, the gap is the ordering and the meters cost nothing
-  measurable; if it comes out slowest in both, the effect is real and worth chasing.
+  What the pair of runs establishes: the meters cost nothing measurable in throughput, at any cap.
+  Across both orders every target sits within about 1% of every other on all four workloads, capped
+  against unlimited flips sign between runs, and the only structure that survives is monotone in
+  position. That is consistent with what the cap is for -- it bounds heap and scrape size, not
+  speed -- and this profile deliberately measures only the half it can.
+
+  Keep reading it as two comparisons. Capped against unlimited is clean, being adjacent in the
+  order. Anything involving the first target carries the ordering with it, and a difference worth
+  acting on has to survive the reverse order.
 
 corpus:
   volume: 100000

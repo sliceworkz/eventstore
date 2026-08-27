@@ -586,6 +586,19 @@ secondary identifier … (e.g. customer ID, order number)", and half the example
   where a per-purpose breakdown is worth having — and above it the meters stay flat while the events are
   still counted, pooled under `_other`. Re-measured at 10.000 purposes: 15.015 meters instead of 150.000,
   and a 2.3 MB scrape instead of 23 MB.
+- **The cost is heap and scrape size, not speed — and that half is now measured.** The
+  `metrics-cost` profile runs one corpus (100.000 events, `PER_ENTITY`, 2000 entities, so twice the
+  default cap) against three stores that differ only in this setting: no meters, capped, uncapped.
+  On PG18 all three land within about 1% of each other on unconditional appends, the canonical DCB
+  check, an entity read and the savepoint probe — and capped against unlimited flips sign between
+  runs, which is what no effect looks like. So a store past the cap is not paying for it in
+  throughput, and neither is an instrumented store against an uninstrumented one; what an uncapped
+  store spends is the memory and the series above, for as long as the process runs.
+  - **Reading that profile taught the suite something about itself.** Run with the uninstrumented
+    store first it reported the *instrumented* ones 8% faster, which meters cannot do: the corpus is
+    generated inside the first fork of the first target, so whichever target runs first is measured
+    against a colder server. Reversing the order reversed the ranking. The figures above are the
+    ones that survive both orders; a cross-target percentage that does not is measuring the harness.
 - **Admission is first-come-first-served and permanent.** A purpose that got its own tag value keeps it
   for the life of the store, so a dashboard built on that series does not lose it when traffic widens.
   The flip side is that *which* purposes get through is arrival order and not stable across restarts —
@@ -1124,7 +1137,7 @@ measurement, and where one matters, run the profile that would replace it:
 |---|---|
 | `~5%` for the append advisory lock | `write-contention-spread` against `write-contention-one-stream` |
 | `~175µs / 139KB` vs `~36µs / 69KB` for a fresh vs shared serde | not covered — the suite always shares, since that is what the store does now |
-| `15 meters / ~5.5 KB` per distinct purpose | `metrics-cost` (throughput only; the heap figure has no workload) |
+| `15 meters / ~5.5 KB` per distinct purpose | the heap figure has no workload and stays a recorded observation; the *throughput* half is now measured — see the metrics section, and it is nil |
 | `1230ms → 460ms` for the statement-level append trigger | `ingest-saturation`, and only as a total — the trigger is not timed separately |
 
 Two of those four have no profile behind them, deliberately: a per-meter heap figure and a per-trigger

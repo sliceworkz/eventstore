@@ -1167,8 +1167,10 @@ tagged, PG18, 0.00% store drift on both sides, with `append-none` as the control
   cross-entity read, so `stream_purpose` is unbound, and it is the second column of both
   `idx_events_stream_position` and `idx_events_stream_tags`. An ordered read loses its start
   condition and the `LIMIT` cannot be pushed into the scan. Anything shaped like `query-stream-page`
-  pays this: a whole-context replay, a `Projector` over a context, an export. Weigh it against how
-  often the application actually does that versus how often it reads or writes one entity.
+  is expected to pay it — a whole-context replay, a `Projector` over a context, an export — though
+  only the page is measured: `replay-batches` is not in these two profiles, so the replay cost is
+  inferred from the shape it shares rather than observed. Weigh the trade against how often the
+  application reads a whole context versus how often it reads or writes one entity.
 - **Read one entity through its own stream, or the design buys you nothing.** This is the trap, and
   it is entirely in the calling code: `EventStreamId.forContext("inventory")` with a wildcard purpose
   addresses a per-entity corpus *the tagged way* and lands in exactly the unbound-column-2 case

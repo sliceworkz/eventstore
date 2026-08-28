@@ -88,11 +88,20 @@ public final class AppendPlanCapture {
 	 */
 	private static final int WARMUP_INVOCATIONS = 8;
 
-	/** Appended to the shape of the plan the measured run is running on. */
-	private static final String GENERIC_SUFFIX = " (generic plan)";
+	/**
+	 * Appended to the shape of the plan the measured run is running on.
+	 *
+	 * <p>Both suffixes name the collision mode the capture was addressed under, and everything from the
+	 * opening bracket is what {@code MarkdownRenderer.measured} already cuts off before matching a plan
+	 * to its row, so this costs the shape nothing it is parsed for. It is here because a report can be
+	 * re-rendered by a later version of the renderer than the one that measured it: a plan captured
+	 * before the capture honoured the profile's mode carries no marker, and one that does carries the
+	 * mode it really used, so neither can be read as the other.
+	 */
+	private static final String GENERIC_SUFFIX = " (collision=%s, generic plan)";
 
 	/** Appended to a custom plan, which is only reported when it differs from the generic one. */
-	private static final String CUSTOM_SUFFIX = " (custom plan, first executions only)";
+	private static final String CUSTOM_SUFFIX = " (collision=%s, custom plan, first executions only)";
 
 	private AppendPlanCapture ( ) { }
 
@@ -142,11 +151,12 @@ public final class AppendPlanCapture {
 				}
 				String shape = QueryPlans.CAPTURED_SHAPE_PREFIX
 						+ QueryPlans.shapeFor(workload.name(), targetLabel);
-				plans.add(new QueryPlans.Plan(shape + GENERIC_SUFFIX, "", steadyState));
+				plans.add(new QueryPlans.Plan(shape + GENERIC_SUFFIX.formatted(collision.label()), "", steadyState));
 
 				String firstExecutions = custom.get(workload.name());
 				if ( firstExecutions != null && !sameShape(firstExecutions, steadyState) ) {
-					plans.add(new QueryPlans.Plan(shape + CUSTOM_SUFFIX, "", firstExecutions));
+					plans.add(new QueryPlans.Plan(shape + CUSTOM_SUFFIX.formatted(collision.label()), "",
+							firstExecutions));
 				}
 			}
 		} catch ( RuntimeException e ) {

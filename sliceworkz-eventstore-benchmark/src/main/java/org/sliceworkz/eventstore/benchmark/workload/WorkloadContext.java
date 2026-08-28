@@ -85,6 +85,11 @@ public final class WorkloadContext {
 		 */
 		ONE_BOUNDARY;
 
+		/** The spelling a profile uses, so a report naming a mode names it the way the YAML does. */
+		public String label ( ) {
+			return name().toLowerCase(java.util.Locale.ROOT).replace('_', '-');
+		}
+
 		public static Collision parse ( String value ) {
 			if ( value == null || value.isBlank() ) {
 				return SPREAD;

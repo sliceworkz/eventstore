@@ -507,10 +507,13 @@ final class MarkdownRenderer {
 			> Where these and the reconstructed plans above disagree, these are the ones that describe what\s
 			> was measured.
 			>
-			> **The capture uses the profile's collision mode**, so a contention profile's plan is addressed\s
-			> at the stream and the boundary its measured appends were. It runs on one thread, which is what\s
-			> it can be: contention between writers is not a property of a plan and `auto_explain` would not\s
-			> attribute it. So these explain *where* a profile's appends go, never what they wait for.
+			> **A plan says which collision mode it was captured under, and it is the profile's own.** So a\s
+			> contention profile's plan is addressed at the stream and the boundary its measured appends\s
+			> were. It runs on one thread, which is what it can be: contention between writers is not a\s
+			> property of a plan and `auto_explain` would not attribute it, so these explain *where* a\s
+			> profile's appends go and never what they wait for. A plan whose heading names no mode was\s
+			> captured before the capture honoured the profile's -- it was addressed as `spread`, whatever\s
+			> the profile ran, and describes that.
 			>
 			> **Generic against custom, and both are shown.** The backend re-uses its prepared statements,\s
 			> so PostgreSQL holds two plans for each: a *generic* one planned once against default\s

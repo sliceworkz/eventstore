@@ -151,8 +151,12 @@ public final class QueryPlans {
 	 *
 	 * <p>Runs after measurement, never during: {@code EXPLAIN ANALYZE} executes the query, and doing
 	 * that alongside a benchmark would be measuring the benchmark's observer.
+	 *
+	 * @param includeAppendPredicates whether to also reconstruct the DCB check's predicates, which is
+	 *        worth doing only for a profile that appends
 	 */
-	public static List<Plan> capture ( BenchmarkTarget target, String prefix, CorpusSpec spec, CorpusFacts facts ) {
+	public static List<Plan> capture ( BenchmarkTarget target, String prefix, CorpusSpec spec,
+			CorpusFacts facts, boolean includeAppendPredicates ) {
 		if ( target.dataSource().isEmpty() ) {
 			return List.of();
 		}
@@ -239,7 +243,12 @@ public final class QueryPlans {
 				LIMIT 500""".formatted(prefix, tupleBoundary(">"), purposeClause),
 				withScope(perEntity, tupleParameters(cursor.tx(), cursor.position())))));
 
-		plans.addAll(appendPredicates(dataSource, prefix, spec, facts, perEntity));
+		// Only where the profile appends. A read-only profile used to carry six DCB-check plans for
+		// statements it never issued, under a caveat saying they might not describe what ran -- which
+		// was true and beside the point, since nothing in the run ran anything like them.
+		if ( includeAppendPredicates ) {
+			plans.addAll(appendPredicates(dataSource, prefix, spec, facts, perEntity));
+		}
 
 		return plans.stream().filter(java.util.Objects::nonNull).toList();
 	}

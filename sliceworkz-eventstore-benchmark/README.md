@@ -341,25 +341,57 @@ in-memory store tells you nothing about what it costs in production, and points 
 in-memory backends are for tests and for separating library cost from database cost, which is what
 this suite uses them for.
 
-## The library's own per-event cost is ~2µs, and it dominates most reads
+## The library's own per-event cost is roughly 2µs, and it is most of a page read
 
-Two independent derivations from `read-shapes` on PG18, subtracting the server's reported execution
-time from the measured operation:
+Subtracting the server's own execution time from the measured operation, `read-shapes` on PG18:
 
-| workload | events returned | server | measured | per event |
+| workload | events | server (captured) | measured | per event |
 |---|---|---|---|---|
-| `query-stream-page` | 500 | 0.172 ms | 1.145 ms | **1.95 µs** |
-| `query-by-entity-hot` | 6,876 | 5.93 ms | 21.7 ms | **2.30 µs** |
+| `query-by-entity-hot` | 6,876 | 5.68 ms | 21.32 ms | **2.27 µs** |
+| `query-stream-page` | 500 | 0.42 ms | 1.05 ms | **1.25 µs** |
 
-So on a 500-event page **85% of what the caller waits for is JDBC plus deserialisation, not the
-database**. It also confirms the harness is doing the one thing it must: `query()` returns a stream
-whose rows storage has already read but whose deserialisation is lazy, so a workload consuming it
-without a terminal operation would time the SQL and skip the serde. These two numbers agreeing is what
-says `stream.forEach(bh::consume)` is really deserialising.
+**Trust the first row and treat the second as a lower bound**, because the subtrahend is not as solid
+as it looks. A captured plan's `actual time` is produced under `auto_explain` with timing and buffers
+on, which costs the server real work per node per row — so it *overstates* the statement's true cost,
+and subtracting it *understates* what is left. On `query-by-entity-hot` that hardly matters: the plan
+sorts 6,876 rows and its own work dwarfs the instrumentation. On a 500-row page it matters a lot —
+the same statement reconstructed with literals came back at 0.18 ms rather than 0.42 ms, which would
+put the page's per-event cost at 1.95 µs instead of 1.25 µs.
 
-Caveat in the suite's own terms: a Testcontainers run on a developer machine, so the magnitude rather
-than the third digit, and the subtraction assumes the captured plan describes the measured statement —
-which is exactly what `ReadPlanCapture` exists to make true.
+So: **~2 µs per event**, and between **60% and 83%** of a 500-event page's wall time is JDBC plus
+deserialisation rather than PostgreSQL, with the spread being how much of the server's reported time
+is the observer. Either way the conclusion is the same and it is the useful one — bounding a read with
+`EventQuery.limit(n)` is worth more than it looks, because the cost being bounded is mostly per-event
+and downstream of the query.
+
+It also confirms the harness is doing the one thing it must: `query()` returns a stream whose rows
+storage has already read but whose deserialisation is lazy, so a workload consuming it without a
+terminal operation would time the SQL and skip the serde. Two independent derivations landing on the
+same order is what says `stream.forEach(bh::consume)` is really deserialising.
+
+## How much a number can move between two runs of the same profile
+
+**About 10–15%, which is larger than most of the error bars beside it.** Two `read-shapes` runs an
+hour apart on the same machine, same corpus fingerprint, same code:
+
+| | run 1 | run 2 | change | within-run error |
+|---|---|---|---|---|
+| `query-by-entity-hot` (inmem) | 0.054 | 0.065 | **+20%** | 2.0% / 2.4% |
+| `query-by-entity-cold` (inmem) | 0.104 | 0.123 | +18% | 17% / 7.4% |
+| `query-by-id` (pg) | 47.109 | 41.557 | −12% | 5.0% / 4.2% |
+| `query-cursor-walk` (pg) | 0.179 | 0.154 | −14% | 5.0% / 4.6% |
+| `query-stream-page` (inmem) | 3.321 | 3.322 | 0.0% | 4.4% / 1.3% |
+
+JMH's error bar describes the spread *within* one run — across its forks and iterations — and a fresh
+JVM on a machine whose caches, frequency and background load have moved on is a wider question than
+that. Some workloads reproduce to three digits and others move a fifth.
+
+The practical rule: **a difference under about 15% between two separate runs is not a finding.** That
+is why `compare --a --b` exists for configurations measured *in the same run*, where both sides share
+a machine state, and why `report --baseline` is for watching a number over releases rather than for
+adjudicating a change worth a few percent. It is also why the profile pairs in this suite always carry
+a control workload that must not move: the control absorbs exactly this drift, and a ratio taken
+against it says more than either number alone.
 
 ## How mutation is handled
 

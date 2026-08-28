@@ -1156,20 +1156,43 @@ such rather than quietly dropped.
 the context under test, on the in-memory backend and PostgreSQL side by side. Two things came out of
 it that are worth carrying here.
 
-**Deserialisation is ~2µs per event, and on an ordinary page it is most of the wait.** Subtracting the
-server's own execution time from the measured operation, on PG18 over the 100.000-event `TAGGED`
-corpus:
+**Deserialisation is roughly 2µs per event, and on an ordinary page it is most of the wait.**
+Subtracting the server's own execution time from the measured operation, on PG18 over the
+100.000-event `TAGGED` corpus:
 
 | workload | events returned | server | measured | per event |
 |---|---|---|---|---|
-| `query-stream-page` | 500 | 0.172 ms | 1.145 ms | **1.95 µs** |
-| `query-by-entity-hot` | 6,876 | 5.93 ms | 21.7 ms | **2.30 µs** |
+| `query-by-entity-hot` | 6,876 | 5.68 ms | 21.32 ms | **2.27 µs** |
+| `query-stream-page` | 500 | 0.42 ms | 1.05 ms | **1.25 µs** (lower bound) |
 
-So a 500-event page spends about **85%** of its time in JDBC and the serde rather than in PostgreSQL.
-Two consequences: bounding a read with `EventQuery.limit(n)` is worth more than it looks, because the
-cost being bounded is mostly per-event and downstream of the query; and tuning the database is the
-wrong first move for a read that returns thousands of events, because the database is not where the
-time is going. (Testcontainers on a developer machine — the magnitude, not the third digit.)
+So a 500-event page spends **60–83%** of its time in JDBC and the serde rather than in PostgreSQL —
+the range being how much of the server's *reported* time is the `auto_explain` instrumentation that
+reported it, which inflates a fast statement and so deflates the remainder. The 6.876-event read is
+the trustworthy row, because there the server's own work dwarfs the observer. Two consequences either
+way: bounding a read with `EventQuery.limit(n)` is worth more than it looks, because the cost being
+bounded is mostly per-event and downstream of the query; and tuning the database is the wrong first
+move for a read that returns thousands of events, because the database is not where the time is going.
+(Testcontainers on a developer machine — the magnitude, not the third digit.)
+
+**Two read shapes do not use the index you would assume, and the captured plans say so.**
+
+- **A wildcard read scans the whole table, whatever its limit.** `EventStreamId.anyContext()` binds no
+  stream column, so `ORDER BY event_tx, event_position` has no index to walk: PG18 answers
+  `query-wildcard`'s `limit(500)` with a **parallel sequential scan over all 100.000 rows** feeding a
+  top-N heapsort — 4.428 buffers and ~20ms for 500 events. Its cost is the size of the store and not
+  the size of the page, which matters for the paths that legitimately use a wildcard stream: the raw
+  import check, an export, a store-wide projection.
+- **An OR-of-facts read does not use the tag index at all.** `query-by-or-groups` (five items, each a
+  type set plus a `sku:` tag) plans as an ordered index scan on `idx_events_stream_position` with the
+  whole disjunction as a `Filter` — 2.196 rows discarded to return 500. The tag index serves a single
+  containment predicate, not a disjunction of them, which is the read-side counterpart of the
+  or-groups cliff on the append side.
+- **The savepoint probe's two plans are 30× apart, and the server currently picks the right one.**
+  `query-last-event` (`.backwards().limit(1)`, type + tag) has a custom plan that is an index scan
+  backward over `idx_events_stream_type_position` — 6 buffers, 0.03ms — and a generic plan that is a
+  `BitmapAnd` of the tag and stream-type indexes, 231 buffers and 1.0ms. The custom plan's estimate is
+  16× cheaper, so PostgreSQL keeps it; the measurement (0.074 ms/op) agrees. Worth knowing that the
+  most common read in a DCB application has a 30× worse plan one statistics change away.
 
 **The in-memory backends are an unindexed linear scan, so they are not a "fast store" the database
 should beat.** `InMemoryEventStorageImpl` holds a `List` and matches in Java, with `Stream.limit` on

@@ -385,13 +385,24 @@ public final class Main {
 					describeRestorePolicy(profile));
 
 			List<QueryPlans.Plan> plans = new ArrayList<>(QueryPlans.capture(
-					prepared.target(), provisioner.prefix(), profile.corpus(), prepared.outcome().facts()));
+					prepared.target(), provisioner.prefix(), profile.corpus(), prepared.outcome().facts(),
+					appends(profile)));
 			plans.addAll(captureIssuedPlans(profile, provisioner, prepared));
 
 			RunReport report = new RunReport(manifest.finished(drift), benchmarks, loadResults, plans);
 			report.writeTo(output);
 			return report;
 		}
+	}
+
+	/** Whether this profile's JMH half runs anything that appends, which decides two things below. */
+	private static boolean appends ( BenchmarkProfile profile ) {
+		if ( profile.jmh() == null ) {
+			return false;
+		}
+		return Workloads.resolve(profile.jmh().workloads(), profile.corpus()).stream()
+				.anyMatch(workload -> workload.name().startsWith("append-")
+						|| workload.name().equals("decide-then-append"));
 	}
 
 	/**

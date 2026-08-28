@@ -557,8 +557,17 @@ final class MarkdownRenderer {
 			> execution it compares their **estimated** costs and adopts the generic plan if it looks no\s
 			> worse. So neither one is automatically what the throughput above was measured on: match the\s
 			> plans by their `cost=` estimates -- the cheaper-looking of the two is the one the server\s
-			> chose, and its actual time should be near the measured ms/op in the heading. Where the two\s
-			> are the same plan only one is shown.
+			> chose. Where the two are the same plan only one is shown.
+			>
+			> **A captured plan's own `actual time` is an upper bound, not a measurement.** It was\s
+			> produced under `auto_explain` with timing and buffers on, which costs the server real work\s
+			> per node per row, and it is one execution rather than a steady-state average. On a fast\s
+			> statement that overhead is most of what the plan reports: a needle tag query captured at\s
+			> 0.374ms belongs to an operation measured at **0.239ms end to end**, deserialisation\s
+			> included. So read the plan for its shape, its indexes, its row counts and its buffers, and\s
+			> do not subtract its time from the measured ms/op expecting the remainder to mean anything\s
+			> on a sub-millisecond read. The subtraction is only safe where the plan's time dominates the\s
+			> instrumentation -- a read returning thousands of rows.
 			""";
 
 	private static final String CAPTURED_APPEND_ESTIMATES = """
@@ -592,8 +601,8 @@ final class MarkdownRenderer {
 	 */
 	private static final String NO_CAPTURED_PLAN_NOTE = """
 			 This run captured none of the store's own\s
-			> statements, so there is nothing here to check them against: read the shapes, and take the\s
-			> plan a measurement actually ran on from a `jmh` run over the same corpus.
+			> *append* statements, so there is nothing here to check these against: read the shapes, and\s
+			> take the plan a measurement actually ran on from a `jmh` run over the same corpus.
 
 			""";
 

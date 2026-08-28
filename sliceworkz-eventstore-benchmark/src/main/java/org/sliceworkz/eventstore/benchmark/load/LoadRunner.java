@@ -74,6 +74,8 @@ public final class LoadRunner {
 			TargetSpec targetSpec ) {
 		LoadScenario scenario = LoadScenario.parse(settings.scenario());
 		Collision collision = Collision.parse(settings.collision());
+		WorkloadContext.collisionCaveat(collision, profile.corpus().streamDesign())
+				.ifPresent(caveat -> LOGGER.warn("scenario '{}': {}", settings.scenario(), caveat));
 		CorpusProvisioner provisioner = new CorpusProvisioner(profile.corpus());
 
 		try ( CorpusProvisioner.Prepared prepared = provisioner.open(targetSpec, false, null) ) {

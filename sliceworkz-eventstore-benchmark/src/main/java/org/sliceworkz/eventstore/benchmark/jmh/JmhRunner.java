@@ -40,6 +40,7 @@ import org.sliceworkz.eventstore.benchmark.env.TargetFactory;
 import org.sliceworkz.eventstore.benchmark.env.TargetSpec;
 import org.sliceworkz.eventstore.benchmark.report.JmhResults;
 import org.sliceworkz.eventstore.benchmark.workload.Workload;
+import org.sliceworkz.eventstore.benchmark.workload.WorkloadContext;
 import org.sliceworkz.eventstore.benchmark.workload.WorkloadContext.Collision;
 import org.sliceworkz.eventstore.benchmark.workload.Workloads;
 import org.sliceworkz.eventstore.testing.backend.PostgresContainer;
@@ -124,6 +125,11 @@ public final class JmhRunner {
 		} catch ( java.io.IOException e ) {
 			throw new IllegalStateException("could not create the output directory " + outputDirectory, e);
 		}
+
+		// Said once, here, rather than per fork: a mode that cannot mean what it says is a property of the
+		// profile, and the run is worth starting anyway -- it just measures something else.
+		WorkloadContext.collisionCaveat(collisionOf(profile), profile.corpus().streamDesign())
+				.ifPresent(caveat -> LOGGER.warn("profile '{}': {}", profile.name(), caveat));
 
 		int benchmarks = 0;
 		List<JmhResults.ResultFile> resultFiles = new ArrayList<>();

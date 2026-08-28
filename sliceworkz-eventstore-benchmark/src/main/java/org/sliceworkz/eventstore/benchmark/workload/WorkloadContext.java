@@ -61,15 +61,27 @@ public final class WorkloadContext {
 		 */
 		SPREAD,
 		/**
-		 * Every thread writes to one stream. Under {@code PER_ENTITY} that means one purpose, so on
-		 * Postgres every conditional append serialises on the same advisory lock -- this measures the
-		 * lock, not the store.
+		 * Every thread writes to one stream while their boundaries stay disjoint: on Postgres every
+		 * conditional append serialises on the same advisory lock and none of them logically conflicts,
+		 * so the gap to {@link #SPREAD} is the lock and nothing else.
+		 *
+		 * <p><b>Only {@code PER_ENTITY} can express this, and the arrangement is deliberately
+		 * artificial.</b> Threads draw the same rotation of entities {@code SPREAD} does -- so the
+		 * boundaries, the filters and the tags are identical -- while every append is written into the
+		 * <em>hot entity's</em> stream. That puts one entity's events in another's stream, which no
+		 * application would do; it is the only way to hold the boundary distribution fixed and vary
+		 * nothing but the lock. Under a design with one stream per context there is only ever one
+		 * stream, so this mode degenerates into {@code SPREAD} and
+		 * {@link WorkloadContext#collisionCaveat} says so.
 		 */
 		ONE_STREAM,
 		/**
 		 * Every thread writes at the same consistency boundary. Most appends lose and raise
 		 * {@code OptimisticLockingException}; the conflict rate and the cost of retrying are the
 		 * measurement, not the throughput.
+		 *
+		 * <p>Under {@code PER_ENTITY} one boundary is also one stream, so this is the lock <em>and</em>
+		 * the conflicts; {@code ONE_STREAM} is what isolates the first half.
 		 */
 		ONE_BOUNDARY;
 
@@ -253,31 +265,66 @@ public final class WorkloadContext {
 	/**
 	 * The stream id to write to for a given entity, honouring both the corpus's stream design and the
 	 * collision mode.
+	 *
+	 * <p><b>This is the only place the two contention modes differ</b>, and it is where the difference
+	 * belongs: {@link #nextEntity()} decides which boundary an append is checked against, this decides
+	 * which stream it lands in, and on Postgres it is the stream that keys the advisory lock. Under
+	 * {@link Collision#ONE_STREAM} every writer is aimed at the hot entity's stream while keeping the
+	 * boundary it drew, so the lock is shared and no two appends conflict.
 	 */
 	public EventStreamId streamIdFor ( WebshopContext context, String entityId ) {
 		if ( spec.streamDesign() != StreamDesign.PER_ENTITY ) {
-			// one stream per context: every writer is on it regardless of collision mode
+			// one stream per context: every writer is on it, and so is every advisory lock, regardless of
+			// collision mode -- which is why ONE_STREAM cannot mean anything here
 			return EventStreamId.forContext(context.streamContext());
 		}
 		if ( entityId == null ) {
 			// reading across every entity
 			return EventStreamId.forContext(context.streamContext()).anyPurpose();
 		}
-		return EventStreamId.forContext(context.streamContext()).withPurpose(entityId);
+		String purpose = collision == Collision.ONE_STREAM ? facts.hotEntity() : entityId;
+		return EventStreamId.forContext(context.streamContext()).withPurpose(purpose);
+	}
+
+	/**
+	 * Why this pairing of collision mode and stream design measures less than it claims, if it does.
+	 *
+	 * <p>A collision mode is a statement about where writers meet, and under a design with one stream
+	 * per context they meet everywhere: there is a single advisory lock for the whole context, so
+	 * {@link Collision#SPREAD} already serialises every conditional append and {@link
+	 * Collision#ONE_STREAM} adds nothing to it. That is not a small distortion -- it is a profile pair
+	 * whose difference is zero by construction, which reads as "contention is free" rather than as "this
+	 * profile cannot ask that question". Reported at the start of a run rather than left in the numbers.
+	 */
+	public static Optional<String> collisionCaveat ( Collision collision, StreamDesign design ) {
+		if ( collision == Collision.ONE_STREAM && design != StreamDesign.PER_ENTITY ) {
+			return Optional.of(
+					"collision=one-stream needs streamDesign=PER_ENTITY to mean anything: with one stream per "
+							+ "context every writer already shares that stream's advisory lock, so this run "
+							+ "measures what collision=spread measures");
+		}
+		return Optional.empty();
 	}
 
 	/**
 	 * The next SKU this thread should work on.
 	 *
 	 * <p>Under {@link Collision#SPREAD} each thread gets a disjoint slice, so threads never share a
-	 * boundary. The other two modes deliberately return the same entity for every thread -- the hot
-	 * one, since a contention measurement against an entity with three events would be measuring
-	 * nothing.
+	 * boundary. {@link Collision#ONE_STREAM} draws from the <em>same</em> rotation, because what it
+	 * varies is the stream the append lands in and not the boundary it is checked against -- see
+	 * {@link #streamIdFor}. Only {@link Collision#ONE_BOUNDARY} pins every thread to one entity, and it
+	 * picks the hot one, since a contention measurement against an entity holding three events would be
+	 * measuring nothing.
+	 *
+	 * <p>This used to answer {@code facts.hotEntity()} for {@code ONE_STREAM} as well, which made the
+	 * two contention modes the same measurement under a different name: identical throughput, identical
+	 * conflict counts, and a pair of profiles whose descriptions promised a distinction the numbers
+	 * could not contain.
 	 */
 	public String nextEntity ( ) {
 		return switch ( collision ) {
-			case ONE_STREAM, ONE_BOUNDARY -> facts.hotEntity();
-			case SPREAD -> {
+			case ONE_BOUNDARY -> facts.hotEntity();
+			case SPREAD, ONE_STREAM -> {
 				// stride by thread count so the slices interleave rather than sitting in disjoint
 				// position ranges, which would give each thread a different part of the index
 				int raw = ( rotation++ * threadCount + threadIndex ) % writableEntityCount();

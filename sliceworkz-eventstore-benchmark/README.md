@@ -347,6 +347,32 @@ draws collide with near-certainty. It counts instead.
 boundary too and the conflicts are the measurement. Read a conflict count under `spread` as a harness
 fault; read one under `one-boundary` as the result.
 
+### The collision modes only separate under `PER_ENTITY`
+
+A mode says where writers meet, and on PostgreSQL where they meet is decided by the append advisory
+lock, which is keyed on `(prefix, stream_context, stream_purpose)`. So the three modes are three
+questions only when a stream can tell two entities apart:
+
+| mode | stream | boundary | what it measures |
+|---|---|---|---|
+| `spread` | one per entity | one per entity | the ceiling: no shared lock, no shared boundary |
+| `one-stream` | the hot entity's, for everyone | the same rotation `spread` draws | the lock alone |
+| `one-boundary` | the hot entity's | the hot entity's | the lock *and* conflict-and-retry |
+
+`one-stream` is deliberately artificial: it writes one entity's events into another's stream, which
+no application would do. That is the only arrangement that holds the boundaries, the filters and the
+tags identical to `spread` and varies nothing but the lock.
+
+**Under `TAGGED` none of this is expressible**, and the three `write-contention-*` profiles were
+originally written that way. One stream per context is one advisory lock for the whole context, so
+`spread` spreads boundaries and not locks, and its gap to `one-stream` is zero by construction —
+which reads as "contention is free" rather than as "this profile cannot ask that question". Worse,
+`one-stream` and `one-boundary` both aimed every thread at the hot entity, so they were one
+measurement under two names: identical throughput, identical conflict counts, two reports. Both
+halves are fixed — the profiles are `PER_ENTITY`, `one-stream` now varies the stream rather than the
+entity, and a run pairing `one-stream` with any other design logs a warning saying what it is
+actually measuring.
+
 ## Layout
 
 ```

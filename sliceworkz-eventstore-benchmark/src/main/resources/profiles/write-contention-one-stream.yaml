@@ -5,13 +5,23 @@ description: >
   conflict. Diff it against write-contention-spread and the difference is the lock; against
   write-contention-one-boundary and the difference is conflict-and-retry on top of the lock.
 
+  Threads draw exactly the rotation of SKUs that write-contention-spread draws, and every append is
+  then written into the hot SKU's stream instead of its own. That puts one entity's events in
+  another's stream, which no application would do -- and it is the only arrangement that holds the
+  boundaries, the filters and the tags fixed while varying nothing but the lock.
+
+  It therefore requires PER_ENTITY, and the profile was previously TAGGED, where a single stream per
+  context means one advisory lock for every writer regardless of mode. This profile and one-boundary
+  both aimed every thread at the hot SKU, so they were one measurement under two names and reported
+  identical throughput and identical conflict counts.
+
   Note that append-none is in the workload list deliberately even though it takes no lock: it is the
   line that should stay flat while the other two bend, and a run where it bends too is measuring
   something else.
 
 corpus:
   volume: 100000
-  streamDesign: TAGGED
+  streamDesign: PER_ENTITY
   composition: CLEAN
   payload: REALISTIC
   entityCount: 2000

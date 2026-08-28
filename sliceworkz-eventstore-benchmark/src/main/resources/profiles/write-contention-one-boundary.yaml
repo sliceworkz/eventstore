@@ -5,9 +5,13 @@ description: >
   report says so -- a store can raise its operations per second while lowering the work done, and only
   the conflict rate beside it says which happened. Read the "useful/s" column, not the score.
 
+  PER_ENTITY to match the other two contention profiles, so the three differ in the collision mode
+  and in nothing else. Under this design one boundary is also one stream, so this profile carries the
+  lock and the conflicts together; write-contention-one-stream is what isolates the first half.
+
 corpus:
   volume: 100000
-  streamDesign: TAGGED
+  streamDesign: PER_ENTITY
   composition: CLEAN
   payload: REALISTIC
   entityCount: 2000

@@ -5,9 +5,15 @@ description: >
   for the other two contention profiles: whatever this curve does is the store scaling, and the gap
   between it and one-stream or one-boundary is what contention costs.
 
+  PER_ENTITY is load-bearing here and the three profiles were previously TAGGED, which quietly made
+  the set unable to ask its own question. The append lock is keyed on (prefix, context, purpose), so
+  with one stream per context every writer takes the same lock whatever the collision mode: "spread"
+  spread the boundaries and not the locks, and its gap to one-stream was zero by construction. Under
+  PER_ENTITY a SKU is a purpose, so distinct SKUs really are distinct locks.
+
 corpus:
   volume: 100000
-  streamDesign: TAGGED
+  streamDesign: PER_ENTITY
   composition: CLEAN
   payload: REALISTIC
   entityCount: 2000

@@ -414,12 +414,29 @@ final class MarkdownRenderer {
 				+ "themselves -- the backend builds its SQL internally and does not expose it. Enough to "
 				+ "answer whether the planner used an index or scanned the table, and no substitute for "
 				+ "the real thing if the query builder changes.\n\n");
+		// The read reconstructions were the quiet half of this. They inline their tag arrays as literals
+		// and are planned from real statistics, so they can be slower than the statement the store runs
+		// -- a needle tag query once reconstructed to 0.267ms of execution against a 0.205ms measured
+		// operation, a plan explaining something it cannot fit inside. Where the reads were captured,
+		// say which to read.
+		if ( report.plans().stream()
+				.anyMatch(plan -> plan.shape().startsWith(QueryPlans.CAPTURED_READ_SHAPE_PREFIX)) ) {
+			out.append("**The reconstructions are the weaker half of this section, including for the "
+					+ "reads.** They inline as literals what the store binds as parameters, so a "
+					+ "reconstruction can report an execution time the whole measured operation fits "
+					+ "inside -- which is not a fast plan but a different one. Read the captured plans "
+					+ "further down against the measurements, and these for the shape of the "
+					+ "predicate.\n\n");
+		}
 		// Whether anything captured the store's own statements decides how the reconstructions may be
 		// described: pointing at captured plans that are not in this report sends the reader looking for
 		// a section that does not exist. A load run has no captured plans at all -- nothing runs under
 		// auto_explain there -- so the reconstructions are all the report has, and they have to be
 		// introduced as such rather than as the lesser half of a pair.
-		boolean hasCaptured = report.plans().stream()
+		boolean hasCaptured = report.plans().stream().anyMatch(QueryPlans::isCaptured);
+		// Separately, because the append reconstructions' caveat points at captured plans to believe
+		// instead -- and a run that captured only reads has none of those to point at.
+		boolean hasCapturedAppends = report.plans().stream()
 				.anyMatch(plan -> plan.shape().startsWith(QueryPlans.CAPTURED_SHAPE_PREFIX));
 
 		out.append("The reconstructed statements below describe the run's first PostgreSQL target.");
@@ -433,14 +450,14 @@ final class MarkdownRenderer {
 		boolean warned = false;
 		boolean introduced = false;
 		for ( QueryPlans.Plan plan : report.plans() ) {
-			if ( plan.shape().startsWith(QueryPlans.CAPTURED_SHAPE_PREFIX) ) {
+			if ( QueryPlans.isCaptured(plan) ) {
 				if ( !introduced ) {
-					out.append(CAPTURED_PLAN_NOTE);
+					out.append(capturedPlanNote(hasCapturedAppends));
 					introduced = true;
 				}
 			} else if ( !warned && plan.shape().startsWith(QueryPlans.APPEND_SHAPE_PREFIX) ) {
 				out.append(APPEND_PLAN_CAVEAT);
-				out.append(hasCaptured ? CAPTURED_PLAN_POINTER : NO_CAPTURED_PLAN_NOTE);
+				out.append(hasCapturedAppends ? CAPTURED_PLAN_POINTER : NO_CAPTURED_PLAN_NOTE);
 				warned = true;
 			}
 			out.append("### %s%s%s\n\n".formatted(plan.shape(), measured(plan),
@@ -458,10 +475,10 @@ final class MarkdownRenderer {
 	 * operation containing it is not the plan that operation was running.
 	 */
 	private String measured ( QueryPlans.Plan plan ) {
-		if ( !plan.shape().startsWith(QueryPlans.CAPTURED_SHAPE_PREFIX) ) {
+		if ( !QueryPlans.isCaptured(plan) ) {
 			return "";
 		}
-		String remainder = plan.shape().substring(QueryPlans.CAPTURED_SHAPE_PREFIX.length());
+		String remainder = QueryPlans.capturedSubject(plan);
 		int suffix = remainder.indexOf(" (");
 		String subject = suffix < 0 ? remainder : remainder.substring(0, suffix);
 
@@ -499,13 +516,29 @@ final class MarkdownRenderer {
 	/**
 	 * Introduces the plans read back from the server for the store's own statements -- the ones that
 	 * need no qualification, and the ones to believe where they and the reconstructions disagree.
+	 *
+	 * <p>Assembled rather than constant because two of its four paragraphs are about the append and
+	 * would describe nothing in a read-only run. A profile that measures only reads captured no
+	 * collision mode and issues no {@code NOT EXISTS}, and printing both anyway would have the section
+	 * explain a hazard the run cannot exhibit.
 	 */
-	private static final String CAPTURED_PLAN_NOTE = """
+	private static String capturedPlanNote ( boolean hasCapturedAppends ) {
+		return CAPTURED_PLAN_INTRO
+				+ ( hasCapturedAppends ? CAPTURED_APPEND_ADDRESSING : "" )
+				+ CAPTURED_PLAN_CACHE
+				+ ( hasCapturedAppends ? CAPTURED_APPEND_ESTIMATES : "" )
+				+ "\n";
+	}
+
+	private static final String CAPTURED_PLAN_INTRO = """
 			> **These are the store's own statements, explained by the server.** Captured by running each\s
 			> workload with `auto_explain` on, after the last measurement, so the SQL is the one the backend\s
 			> built, the parameters are bound as it binds them, and the plan is the one PostgreSQL chose.\s
 			> Where these and the reconstructed plans above disagree, these are the ones that describe what\s
 			> was measured.
+			""";
+
+	private static final String CAPTURED_APPEND_ADDRESSING = """
 			>
 			> **A plan says which collision mode it was captured under, and it is the profile's own.** So a\s
 			> contention profile's plan is addressed at the stream and the boundary its measured appends\s
@@ -514,6 +547,9 @@ final class MarkdownRenderer {
 			> profile's appends go and never what they wait for. A plan whose heading names no mode was\s
 			> captured before the capture honoured the profile's -- it was addressed as `spread`, whatever\s
 			> the profile ran, and describes that.
+			""";
+
+	private static final String CAPTURED_PLAN_CACHE = """
 			>
 			> **Generic against custom, and both are shown.** The backend re-uses its prepared statements,\s
 			> so PostgreSQL holds two plans for each: a *generic* one planned once against default\s
@@ -523,13 +559,15 @@ final class MarkdownRenderer {
 			> plans by their `cost=` estimates -- the cheaper-looking of the two is the one the server\s
 			> chose, and its actual time should be near the measured ms/op in the heading. Where the two\s
 			> are the same plan only one is shown.
+			""";
+
+	private static final String CAPTURED_APPEND_ESTIMATES = """
 			>
 			> That comparison is on estimates, and a DCB check is exactly the shape that defeats it: the\s
 			> expected result is *no rows*, while the planner prices a `NOT EXISTS` by how soon it expects\s
 			> to find one. A wider filter makes it expect a match sooner, so the generic plan's estimate\s
 			> **falls** as facts are added while the custom plan's rises -- and once it drops below, the\s
 			> server switches to a plan that scans the whole table for a row that is not there.
-
 			""";
 
 	private static final String APPEND_PLAN_CAVEAT = """

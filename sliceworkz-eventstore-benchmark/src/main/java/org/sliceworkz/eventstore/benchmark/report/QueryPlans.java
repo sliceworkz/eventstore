@@ -75,6 +75,16 @@ public final class QueryPlans {
 	public static final String CAPTURED_SHAPE_PREFIX = "DCB check as issued: ";
 
 	/**
+	 * Marks a plan {@link ReadPlanCapture} read back from the server for one of the store's own reads.
+	 *
+	 * <p>Separate from {@link #CAPTURED_SHAPE_PREFIX} because the two carry different qualifications --
+	 * an append plan names the collision mode it was addressed under, a read has no such thing -- and
+	 * because a report holding only one of them should introduce only that one. {@link #isCaptured}
+	 * is what the renderer asks where the distinction does not matter.
+	 */
+	public static final String CAPTURED_READ_SHAPE_PREFIX = "read as issued: ";
+
+	/**
 	 * Separates the workload from the target in a captured plan's shape.
 	 *
 	 * <p>A run measuring two PostgreSQL configurations explains both, so a plan has to say which store
@@ -88,6 +98,50 @@ public final class QueryPlans {
 		return targetLabel == null || targetLabel.isBlank()
 				? workload
 				: workload + SHAPE_TARGET_SEPARATOR + targetLabel;
+	}
+
+	/** Whether this plan came back from the server for a statement the store itself issued. */
+	public static boolean isCaptured ( Plan plan ) {
+		return plan.shape().startsWith(CAPTURED_SHAPE_PREFIX)
+				|| plan.shape().startsWith(CAPTURED_READ_SHAPE_PREFIX);
+	}
+
+	/** A captured plan's shape with whichever prefix it carries removed, for matching it to its row. */
+	public static String capturedSubject ( Plan plan ) {
+		String shape = plan.shape();
+		if ( shape.startsWith(CAPTURED_SHAPE_PREFIX) ) {
+			return shape.substring(CAPTURED_SHAPE_PREFIX.length());
+		}
+		if ( shape.startsWith(CAPTURED_READ_SHAPE_PREFIX) ) {
+			return shape.substring(CAPTURED_READ_SHAPE_PREFIX.length());
+		}
+		return shape;
+	}
+
+	/**
+	 * Whether two plans differ only in their numbers.
+	 *
+	 * <p>Reduces a plan to the nodes it is made of -- their kind and what they read -- and compares
+	 * that, so a custom plan is reported beside the generic one when it uses a different index or scans
+	 * where the other seeks, and suppressed when it is the same plan with different row counts. That
+	 * distinction is the entire reason for capturing twice; two identical plans in the report would only
+	 * make the section longer.
+	 */
+	public static boolean sameShape ( String one, String other ) {
+		return nodesOf(one).equals(nodesOf(other));
+	}
+
+	private static List<String> nodesOf ( String explain ) {
+		List<String> nodes = new ArrayList<>();
+		for ( String line : explain.split("\n") ) {
+			int cost = line.indexOf("  (cost=");
+			if ( cost < 0 ) {
+				continue;
+			}
+			String node = line.substring(0, cost).strip();
+			nodes.add(node.startsWith("->") ? node.substring(2).strip() : node);
+		}
+		return nodes;
 	}
 
 	private QueryPlans ( ) { }

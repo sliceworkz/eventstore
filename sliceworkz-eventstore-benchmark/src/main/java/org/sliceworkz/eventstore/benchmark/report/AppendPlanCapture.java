@@ -154,7 +154,7 @@ public final class AppendPlanCapture {
 				plans.add(new QueryPlans.Plan(shape + GENERIC_SUFFIX.formatted(collision.label()), "", steadyState));
 
 				String firstExecutions = custom.get(workload.name());
-				if ( firstExecutions != null && !sameShape(firstExecutions, steadyState) ) {
+				if ( firstExecutions != null && !QueryPlans.sameShape(firstExecutions, steadyState) ) {
 					plans.add(new QueryPlans.Plan(shape + CUSTOM_SUFFIX.formatted(collision.label()), "",
 							firstExecutions));
 				}
@@ -187,32 +187,6 @@ public final class AppendPlanCapture {
 					.ifPresent(explain -> plans.put(workload.name(), explain));
 		}
 		return plans;
-	}
-
-	/**
-	 * Whether two plans differ only in their numbers.
-	 *
-	 * <p>Reduces a plan to the nodes it is made of -- their kind and what they read -- and compares
-	 * that, so a custom plan is reported beside the generic one when it uses a different index or scans
-	 * where the other seeks, and suppressed when it is the same plan with different row counts. That
-	 * distinction is the entire reason for capturing twice; two identical plans in the report would only
-	 * make the section longer.
-	 */
-	private static boolean sameShape ( String one, String other ) {
-		return nodesOf(one).equals(nodesOf(other));
-	}
-
-	private static List<String> nodesOf ( String explain ) {
-		List<String> nodes = new ArrayList<>();
-		for ( String line : explain.split("\n") ) {
-			int cost = line.indexOf("  (cost=");
-			if ( cost < 0 ) {
-				continue;
-			}
-			String node = line.substring(0, cost).strip();
-			nodes.add(node.startsWith("->") ? node.substring(2).strip() : node);
-		}
-		return nodes;
 	}
 
 	/**

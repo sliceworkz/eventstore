@@ -213,10 +213,22 @@ Each run writes `report.json` (the record) and `report.md` (a rendering of it) b
   says which happened.
 - **A relative error above about 10%** means the measurement is too noisy to compare against
   anything.
-- **The read query plans are representative, not real.** The backend builds its SQL internally and
-  does not expose it, so the report captures `EXPLAIN` for statements matching the shapes it issues.
-  Enough to answer *did the planner use an index*, and no substitute for the real thing if the query
-  builder changes.
+- **The reads' plans are real too, and the reconstructions are kept beside them.** Every read
+  workload is re-run under the same `auto_explain` window as the appends and the plan the server
+  logged for the store's own `SELECT` is captured; the hand-written statements matching each shape
+  stay in the report as the shape of the predicate.
+
+  This was the quiet half of the reconstruction problem, and it took a run to see. The read
+  reconstructions inline their tag arrays as literals and are planned from real column statistics,
+  so they can report an execution time the *whole measured operation* fits inside: `read-shapes` had
+  the needle tag query reconstructing to **0.267ms of execution alone** against a **0.205ms**
+  measured operation — statement, round trip and deserialisation included. A plan cannot explain
+  something it is slower than. Nothing in the report could have caught that, because there was
+  nothing captured to check the reconstruction against.
+
+  Nothing is written, so unlike the append capture there is nothing to undo afterwards. A workload
+  issuing several statements — `query-cursor-walk`, `replay-batches` — is explained by its *last*,
+  which is the deepest cursor and the only one of the set worth a plan.
 - **The DCB check's plans are real.** After the last measurement, the report turns on `auto_explain`,
   runs each conditional-append workload, and reads the plan the server logged for the statement the
   store itself issued — then deletes the events that capture appended, so the corpus stays the size
@@ -264,7 +276,9 @@ Each run writes `report.json` (the record) and `report.md` (a rendering of it) b
 
 - **In-memory is not a deployment target.** It is there to answer "what does the library cost on top
   of the database", which no PostgreSQL measurement alone can separate out. Its append numbers in
-  particular are a monitor, not a durable write.
+  particular are a monitor, not a durable write — and it is *not* a fast-store baseline that
+  PostgreSQL is expected to lose to. See the next section, which is the single easiest way to
+  misread a report from this suite.
 - **A conditional append that comes out faster than an unconditional one is noise**, whatever the
   backend: it does strictly more work. The report says so where it happens.
 - **`.limit(n)` counts stored events, not returned ones.** Against a `LEGACY` corpus a page of 500
@@ -277,6 +291,75 @@ Each run writes `report.json` (the record) and `report.md` (a rendering of it) b
   anywhere in the cluster stalls what this store can read, silently. If a run's numbers collapse with
   nothing else changing, check `pg_stat_activity` for `backend_xid IS NOT NULL` before blaming the
   store — the main `CLAUDE.md` has the query.
+
+## The in-memory target has no index, and that decides half its numbers
+
+**It is a linear scan.** `InMemoryEventStorageImpl` holds one `List` and answers a query by streaming
+it and matching in Java (`eventlog.stream()`, then a `Stream.limit` on top). There is no index of any
+kind, so its cost is **how far into the log the scan must walk**, and not how many events come back.
+
+That makes the obvious sanity check — *"in-memory must beat PostgreSQL on every read, or the harness
+is measuring itself"* — wrong, and it was written into the original plan for this suite. At 10⁵ events
+inmem loses more than half the read shapes, and loses them by two orders of magnitude. From
+`read-shapes` (PG18, Testcontainers, one thread, ops/ms):
+
+| workload | limit? | inmem | postgres:18 | inmem ÷ pg |
+|---|---|---|---|---|
+| `query-by-entity-cold` | none | 0.104 | 8.064 | **0.013** |
+| `query-by-tag-needle` | none | 0.155 | 4.886 | **0.032** |
+| `query-last-event` | 1, backwards | 1.394 | 14.665 | 0.095 |
+| `query-by-tag-swathe` | 500 | 0.124 | 0.591 | 0.21 |
+| `query-by-multi-tag` | 500 | 0.098 | 0.370 | 0.26 |
+| `query-by-entity-hot` | none | 0.054 | 0.046 | 1.17 |
+| `query-cursor-walk` | 500 | 0.471 | 0.179 | 2.6 |
+| `query-by-type` | 500 | 2.850 | 0.892 | 3.2 |
+| `query-stream-page` | 500 | 3.321 | 0.873 | 3.8 |
+| `query-by-or-groups` | 500 | 1.460 | 0.354 | 4.1 |
+| `query-by-id` | map lookup | 1928 | 47.1 | 41 |
+| `query-wildcard` | 500 | 5.013 | 0.054 | 93 |
+
+The rule that fits every row: **inmem wins exactly where a limit fills before the scan gets far.**
+`query-by-tag-needle` carries no limit and matches ten events, so it walks all 100.000 at ~64ns each;
+`query-stream-page` fills its 500 immediately and stops. A limit is not enough on its own —
+`query-by-tag-swathe` and `query-by-multi-tag` carry one and still lose, because their matches are too
+sparse to fill it early. PostgreSQL's GIN index makes the selective end of that range *cheaper*, which
+is the whole point of having one.
+
+So the real check, and what a broken harness would look like:
+
+- **inmem beating PostgreSQL on limited reads over dense matches, and losing on selective unlimited
+  ones, is correct.** Both directions are expected.
+- **inmem losing on `query-stream-page`, `query-by-id` or `query-wildcard` would be a fault** — those
+  are a bounded walk from the head and a map lookup, with nothing for an index to improve.
+- **The two backends landing within ~20% of each other on a read returning thousands of events is also
+  correct**, and it is the clearest thing in the table: `query-by-entity-hot` returns 6.876 events and
+  comes out 0.054 against 0.046, because at that size both are paying the same per-event
+  deserialisation and the storage difference washes out. That per-event cost is ~2µs — see below.
+
+**The practical consequence for anyone using the library**: prototyping tag-query cost against the
+in-memory store tells you nothing about what it costs in production, and points the wrong way. The
+in-memory backends are for tests and for separating library cost from database cost, which is what
+this suite uses them for.
+
+## The library's own per-event cost is ~2µs, and it dominates most reads
+
+Two independent derivations from `read-shapes` on PG18, subtracting the server's reported execution
+time from the measured operation:
+
+| workload | events returned | server | measured | per event |
+|---|---|---|---|---|
+| `query-stream-page` | 500 | 0.172 ms | 1.145 ms | **1.95 µs** |
+| `query-by-entity-hot` | 6,876 | 5.93 ms | 21.7 ms | **2.30 µs** |
+
+So on a 500-event page **85% of what the caller waits for is JDBC plus deserialisation, not the
+database**. It also confirms the harness is doing the one thing it must: `query()` returns a stream
+whose rows storage has already read but whose deserialisation is lazy, so a workload consuming it
+without a terminal operation would time the SQL and skip the serde. These two numbers agreeing is what
+says `stream.forEach(bh::consume)` is really deserialising.
+
+Caveat in the suite's own terms: a Testcontainers run on a developer machine, so the magnitude rather
+than the third digit, and the subtraction assumes the captured plan describes the measured statement —
+which is exactly what `ReadPlanCapture` exists to make true.
 
 ## How mutation is handled
 

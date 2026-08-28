@@ -240,6 +240,11 @@ mvn clean install -DskipTests
 ### Storage Implementations
 
 **In-Memory (Development/Testing):**
+
+Correctness-equivalent to Postgres and *not* performance-equivalent: it is an unindexed linear scan,
+so a selective tag query costs it a walk of the whole log where Postgres does an index lookup. Do not
+size an application from it — see "What a read costs" under Benchmarking.
+
 ```java
 EventStorage storage = InMemoryEventStorage.newBuilder().build();
 EventStore store = EventStoreFactory.get().eventStore(storage);
@@ -1144,6 +1149,46 @@ Two of those four have no profile behind them, deliberately: a per-meter heap fi
 time are properties of a snapshot rather than of a throughput, and inventing a workload to produce a
 number that shape would produce a worse one. They stay as recorded observations, and are marked as
 such rather than quietly dropped.
+
+### What a read costs, and how much of it is the library rather than the database
+
+`read-shapes` is the profile that asks what each query shape costs against a store holding nothing but
+the context under test, on the in-memory backend and PostgreSQL side by side. Two things came out of
+it that are worth carrying here.
+
+**Deserialisation is ~2µs per event, and on an ordinary page it is most of the wait.** Subtracting the
+server's own execution time from the measured operation, on PG18 over the 100.000-event `TAGGED`
+corpus:
+
+| workload | events returned | server | measured | per event |
+|---|---|---|---|---|
+| `query-stream-page` | 500 | 0.172 ms | 1.145 ms | **1.95 µs** |
+| `query-by-entity-hot` | 6,876 | 5.93 ms | 21.7 ms | **2.30 µs** |
+
+So a 500-event page spends about **85%** of its time in JDBC and the serde rather than in PostgreSQL.
+Two consequences: bounding a read with `EventQuery.limit(n)` is worth more than it looks, because the
+cost being bounded is mostly per-event and downstream of the query; and tuning the database is the
+wrong first move for a read that returns thousands of events, because the database is not where the
+time is going. (Testcontainers on a developer machine — the magnitude, not the third digit.)
+
+**The in-memory backends are an unindexed linear scan, so they are not a "fast store" the database
+should beat.** `InMemoryEventStorageImpl` holds a `List` and matches in Java, with `Stream.limit` on
+top: its cost is *how far into the log the scan walks*, not how many events come back. At 100.000
+events that makes it **31× slower than PostgreSQL on a needle tag query** (0.155 against 4.886 ops/ms)
+and **78× slower reading one long-tail entity's history** (0.104 against 8.064), while still being
+3–90× *faster* on the shapes where a limit fills immediately — a page, a wildcard read, `getEventById`.
+The rule that fits every row is that a limit only helps when the matches are dense enough to fill it
+early.
+
+- **What this means in practice**: an application prototyped against the in-memory store learns
+  nothing about what its tag queries will cost in production, and learns it backwards. Selective tag
+  queries are the case Postgres's GIN index exists for, and the case the in-memory store is worst at.
+- It also means the two backends converge on any read returning thousands of events —
+  `query-by-entity-hot` is 0.054 against 0.046 — because at that size both are paying the same ~2µs
+  per event and the storage difference washes out. That is the same figure arrived at from the other
+  side.
+- The in-memory backends stay the right thing for tests and for the TCK. They are a correctness
+  substitute, never a performance one.
 
 ### Choosing a stream design: one stream per context, or one per entity
 

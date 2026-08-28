@@ -46,6 +46,7 @@ import org.sliceworkz.eventstore.benchmark.report.BaselineComparator;
 import org.sliceworkz.eventstore.benchmark.report.BenchmarkRow;
 import org.sliceworkz.eventstore.benchmark.report.JmhResults;
 import org.sliceworkz.eventstore.benchmark.report.QueryPlans;
+import org.sliceworkz.eventstore.benchmark.report.ReadPlanCapture;
 import org.sliceworkz.eventstore.benchmark.report.Reports;
 import org.sliceworkz.eventstore.benchmark.report.RunManifest;
 import org.sliceworkz.eventstore.benchmark.report.RunReport;
@@ -385,7 +386,7 @@ public final class Main {
 
 			List<QueryPlans.Plan> plans = new ArrayList<>(QueryPlans.capture(
 					prepared.target(), provisioner.prefix(), profile.corpus(), prepared.outcome().facts()));
-			plans.addAll(captureAppendPlans(profile, provisioner, prepared));
+			plans.addAll(captureIssuedPlans(profile, provisioner, prepared));
 
 			RunReport report = new RunReport(manifest.finished(drift), benchmarks, loadResults, plans);
 			report.writeTo(output);
@@ -394,7 +395,8 @@ public final class Main {
 	}
 
 	/**
-	 * Plans for the conditional appends, captured from the statements the store itself issued.
+	 * Plans for the conditional appends and the reads alike, captured from the statements the store
+	 * itself issued.
 	 *
 	 * <p>{@code auto_explain} is switched on for the database and then the pool's idle connections are
 	 * retired, so the store the rest of the report was built from starts explaining without being
@@ -403,8 +405,12 @@ public final class Main {
 	 * <p>Only for a Testcontainers PostgreSQL, because the plans come back through the container's log
 	 * and this process has no way to read an external server's. Everything else about the report is
 	 * unchanged on such a target; it simply carries the hand-written plans alone.
+	 *
+	 * <p>Both halves run inside the one {@code auto_explain} window rather than each opening its own:
+	 * enabling it retires the pool's connections, and doing that twice would cost the second capture a
+	 * cold pool for no gain.
 	 */
-	private static List<QueryPlans.Plan> captureAppendPlans ( BenchmarkProfile profile,
+	private static List<QueryPlans.Plan> captureIssuedPlans ( BenchmarkProfile profile,
 			CorpusProvisioner provisioner, CorpusProvisioner.Prepared prepared ) {
 		if ( profile.jmh() == null ) {
 			return List.of();
@@ -422,10 +428,10 @@ public final class Main {
 				continue;
 			}
 			if ( spec.equals(targetToDescribe(profile)) ) {
-				plans.addAll(captureAppendPlansOn(prepared, spec, provisioner, profile, workloads));
+				plans.addAll(captureIssuedPlansOn(prepared, spec, provisioner, profile, workloads));
 			} else {
 				try ( CorpusProvisioner.Prepared other = provisioner.open(spec, false, null) ) {
-					plans.addAll(captureAppendPlansOn(other, spec, provisioner, profile, workloads));
+					plans.addAll(captureIssuedPlansOn(other, spec, provisioner, profile, workloads));
 				}
 			}
 		}
@@ -438,7 +444,7 @@ public final class Main {
 				&& spec.server() == TargetSpec.PostgresServer.TESTCONTAINERS;
 	}
 
-	private static List<QueryPlans.Plan> captureAppendPlansOn ( CorpusProvisioner.Prepared prepared,
+	private static List<QueryPlans.Plan> captureIssuedPlansOn ( CorpusProvisioner.Prepared prepared,
 			TargetSpec spec, CorpusProvisioner provisioner, BenchmarkProfile profile,
 			List<Workload> workloads ) {
 		if ( prepared.target().dataSource().isEmpty() ) {
@@ -449,9 +455,15 @@ public final class Main {
 			return List.of();
 		}
 		try {
-			return AppendPlanCapture.capture(prepared.target(), spec.image(), provisioner.prefix(),
-					profile.corpus(), prepared.outcome().facts(), workloads, spec.describe(),
-					profile.collision());
+			// Appends first, then reads, because the renderer introduces the captured plans once at the
+			// first of them and the introduction it writes depends on an append being among them.
+			List<QueryPlans.Plan> plans = new ArrayList<>(
+					AppendPlanCapture.capture(prepared.target(), spec.image(), provisioner.prefix(),
+							profile.corpus(), prepared.outcome().facts(), workloads, spec.describe(),
+							profile.collision()));
+			plans.addAll(ReadPlanCapture.capture(prepared.target(), spec.image(), provisioner.prefix(),
+					profile.corpus(), prepared.outcome().facts(), workloads, spec.describe()));
+			return plans;
 		} finally {
 			AutoExplain.disable(dataSource);
 		}

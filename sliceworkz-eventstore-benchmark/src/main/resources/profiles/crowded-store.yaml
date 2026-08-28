@@ -38,7 +38,15 @@ jmh:
     - query-by-id
     - query-wildcard
   threads: [ 1 ]
-  forks: 2
+  # Three forks, not two. The first run of this trio put five inmem measurements above the 10%
+  # relative error the report itself calls uncomparable -- query-by-tag-swathe at 74.7% and
+  # query-by-multi-tag at 49.3% -- and the spread was *between* forks and tight within them: fork 1
+  # gave 0.148-0.158 on swathe where fork 2 gave 0.089-0.101. That is a per-JVM regime, so the fork
+  # is the sampling unit and two of them is n=2. More iterations inside a fork would only measure
+  # the same regime longer. read-shapes, crowded-store and crowded-database carry identical settings
+  # on purpose: the first is the control the other two are compared against, and a control measured
+  # differently is not one.
+  forks: 3
   warmupIterations: 2
-  measurementIterations: 3
+  measurementIterations: 4
   iterationSeconds: 5

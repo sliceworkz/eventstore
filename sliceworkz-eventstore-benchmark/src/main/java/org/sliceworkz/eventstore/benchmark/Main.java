@@ -450,7 +450,8 @@ public final class Main {
 		}
 		try {
 			return AppendPlanCapture.capture(prepared.target(), spec.image(), provisioner.prefix(),
-					profile.corpus(), prepared.outcome().facts(), workloads, spec.describe());
+					profile.corpus(), prepared.outcome().facts(), workloads, spec.describe(),
+					profile.collision());
 		} finally {
 			AutoExplain.disable(dataSource);
 		}

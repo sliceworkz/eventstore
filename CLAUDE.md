@@ -1241,9 +1241,21 @@ move (11.3 / 11.6 / 10.9 at one thread; 33.5 / 34.2 / 33.6 at eight — it does 
   contention at all, so that gap is the artificial part of `one-stream`: every append lands in the
   hot entity's stream, which therefore grows by every thread's events within an iteration while its
   DCB check still has to find one SKU's tag inside it. Why `one-boundary` is *faster* than spread at
-  one thread (8.150) despite dumping into the same stream is not established — plausibly its cursor
-  is recent enough to keep the row-comparison start condition cheap, but that is a guess, and the
-  captured append plans in each run's `report.md` are where it would be settled.
+  one thread (8.150) despite dumping into the same stream is still not established — but the captured
+  append plans now rule out the obvious answer. All three runs explain `append-type-and-tag` as the
+  same generic plan, an index scan on `idx_events_stream_position` at cost 15.57, 20 buffers and
+  0.02ms for the `NOT EXISTS`, so nothing the three arrangements left behind in the data changes how
+  that statement is planned or executed. Whatever separates 0.12ms from 0.18ms per operation sits
+  above the statement.
+  - **Those captured plans are a control rather than evidence, and that is a harness fault now
+    fixed.** The capture was hardwired to `spread`, so all three explained the same SKU at the same
+    cursor and could only ever come back identical — they described a statement that two of the three
+    profiles never issued. It now runs the profile's collision mode, so a re-run of the trio produces
+    plans addressed where its appends actually went, which is what would settle this.
+  - **One thing the capture does settle already**: `one-boundary`'s `decide-then-append` measures
+    24.01ms/op at *one* thread, where nothing conflicts, against an append statement the server
+    executes in a fraction of a millisecond. The decide read is essentially the whole of it, which is
+    what "it re-reads the boundary every writer is growing" costs when the writer growing it is you.
 - **At one shared boundary, adding writers makes the system strictly worse.** Not slower per
   operation — worse in work done: useful appends fall 8.15 → 0.22 ops/ms from one writer to
   sixteen, a 37× collapse, while the conflict rate climbs 0% → 4.9% → 13.6% → **82%**. Throughput

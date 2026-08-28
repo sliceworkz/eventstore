@@ -21,6 +21,7 @@ import java.util.List;
 
 import org.sliceworkz.eventstore.benchmark.corpus.CorpusSpec;
 import org.sliceworkz.eventstore.benchmark.env.TargetSpec;
+import org.sliceworkz.eventstore.benchmark.workload.WorkloadContext.Collision;
 
 /**
  * One named benchmark configuration: which corpora to build, which stores to open over them, and
@@ -180,6 +181,27 @@ public record BenchmarkProfile (
 	/** Whether running this profile needs a Docker daemon. */
 	public boolean requiresDocker ( ) {
 		return targets.stream().anyMatch(TargetSpec::requiresDocker);
+	}
+
+	/**
+	 * Where this profile's writers collide, resolved from whichever half declares it.
+	 *
+	 * <p>It lives here rather than in the JMH runner because more than the runner needs it: the plan
+	 * capture reproduces the arrangement it explains, and a capture that quietly used {@code SPREAD}
+	 * against a contention profile explained a statement that profile never issued -- three
+	 * write-contention runs produced byte-identical captured plans while their measured throughputs
+	 * differed fourfold, which reads as "the plans are the same, so the gap is elsewhere" and was
+	 * really "the capture did not reproduce either arrangement".
+	 *
+	 * <p>An unset JMH collision falls back to the first load scenario's, which keeps a profile
+	 * measuring contention consistent across both halves without having to say so twice. A profile
+	 * with neither spreads its writers, the one mode where a thread count means what it appears to.
+	 */
+	public Collision collision ( ) {
+		if ( jmh != null && jmh.collision() != null ) {
+			return Collision.parse(jmh.collision());
+		}
+		return load.isEmpty() ? Collision.SPREAD : Collision.parse(load.getFirst().collision());
 	}
 
 	/** A rough total runtime, for the estimate printed before a run starts. */

@@ -507,6 +507,11 @@ final class MarkdownRenderer {
 			> Where these and the reconstructed plans above disagree, these are the ones that describe what\s
 			> was measured.
 			>
+			> **The capture uses the profile's collision mode**, so a contention profile's plan is addressed\s
+			> at the stream and the boundary its measured appends were. It runs on one thread, which is what\s
+			> it can be: contention between writers is not a property of a plan and `auto_explain` would not\s
+			> attribute it. So these explain *where* a profile's appends go, never what they wait for.
+			>
 			> **Generic against custom, and both are shown.** The backend re-uses its prepared statements,\s
 			> so PostgreSQL holds two plans for each: a *generic* one planned once against default\s
 			> selectivity, and a *custom* one re-planned from the actual parameter values. From the tenth\s

@@ -222,6 +222,16 @@ Each run writes `report.json` (the record) and `report.md` (a rendering of it) b
   store itself issued — then deletes the events that capture appended, so the corpus stays the size
   its manifest records. Only on a Testcontainers target, whose log this process can read.
 
+  **It runs the workload the way the profile does, collision mode included, on one thread.** That is
+  what makes a contention profile's captured plan describe a statement that profile actually issues:
+  addressed at the stream and the boundary its measured appends were. The capture used to be
+  hardwired to `spread`, and the symptom was quiet — the three `write-contention-*` runs came back
+  with byte-identical captured plans, same parameters and same cursor, while their measured
+  throughputs differed fourfold. That reads as "the plans are the same, so the gap is elsewhere",
+  and it was really "the capture reproduced none of the three arrangements". One thread is all it
+  can be: contention between writers is not a property of a plan, so these say where a profile's
+  appends go and never what they wait for.
+
   Worth knowing why this is not also a reconstruction. The hand-written version of these came out
   *inverted* against the measurements: a shape planning as a sub-millisecond index-only scan measured
   slowest, one planning as an eight-millisecond sequential scan measured nearly fastest. The

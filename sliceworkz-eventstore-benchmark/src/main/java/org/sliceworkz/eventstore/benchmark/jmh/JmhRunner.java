@@ -41,7 +41,6 @@ import org.sliceworkz.eventstore.benchmark.env.TargetSpec;
 import org.sliceworkz.eventstore.benchmark.report.JmhResults;
 import org.sliceworkz.eventstore.benchmark.workload.Workload;
 import org.sliceworkz.eventstore.benchmark.workload.WorkloadContext;
-import org.sliceworkz.eventstore.benchmark.workload.WorkloadContext.Collision;
 import org.sliceworkz.eventstore.benchmark.workload.Workloads;
 import org.sliceworkz.eventstore.testing.backend.PostgresContainer;
 
@@ -128,7 +127,7 @@ public final class JmhRunner {
 
 		// Said once, here, rather than per fork: a mode that cannot mean what it says is a property of the
 		// profile, and the run is worth starting anyway -- it just measures something else.
-		WorkloadContext.collisionCaveat(collisionOf(profile), profile.corpus().streamDesign())
+		WorkloadContext.collisionCaveat(profile.collision(), profile.corpus().streamDesign())
 				.ifPresent(caveat -> LOGGER.warn("profile '{}': {}", profile.name(), caveat));
 
 		int benchmarks = 0;
@@ -197,7 +196,7 @@ public final class JmhRunner {
 	private static List<String> forkArgumentsFor ( TargetSpec target, String profileRef, BenchmarkProfile profile,
 			int targetIndex, Path driftFile ) {
 		List<String> arguments = new ArrayList<>(List.of(
-				BenchmarkConfig.jvmArgsFor(profileRef, targetIndex, collisionOf(profile), driftFile)));
+				BenchmarkConfig.jvmArgsFor(profileRef, targetIndex, profile.collision(), driftFile)));
 
 		if ( target.requiresDocker() ) {
 			// started once, here; see the class comment on why a fork must not start its own
@@ -210,19 +209,6 @@ public final class JmhRunner {
 			warmServer(dataSource, CorpusFingerprint.prefixFor(profile.corpus()));
 		}
 		return arguments;
-	}
-
-	private static Collision collisionOf ( BenchmarkProfile profile ) {
-		if ( profile.jmh().collision() != null ) {
-			return Collision.parse(profile.jmh().collision());
-		}
-		// Unset, so fall back to the first load scenario's, which keeps a profile measuring contention
-		// consistent across both halves without having to say so twice.  A profile with neither spreads
-		// its writers, which is the only honest default: it is the one mode where a thread count means
-		// what it appears to.
-		return profile.load().isEmpty()
-				? Collision.SPREAD
-				: Collision.parse(profile.load().getFirst().collision());
 	}
 
 	private static String jdbcUrlOf ( DataSource dataSource ) {

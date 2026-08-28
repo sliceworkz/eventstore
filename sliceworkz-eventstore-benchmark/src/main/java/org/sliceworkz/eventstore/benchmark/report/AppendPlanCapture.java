@@ -103,9 +103,15 @@ public final class AppendPlanCapture {
 	 *        carry the setting
 	 * @param image the container image tag whose log carries the plans, or null for a server whose log
 	 *        this process cannot read -- in which case nothing is captured
+	 * @param collision the profile's collision mode, so the captured statement is addressed the way the
+	 *        measured ones were. This used to be hardwired to {@link Collision#SPREAD}, which made a
+	 *        contention profile's captured plan describe a statement it never issued: the three
+	 *        write-contention profiles came back with byte-identical plans -- same parameters, same
+	 *        cursor, same cost -- while their measured throughputs differed fourfold
 	 */
 	public static List<QueryPlans.Plan> capture ( BenchmarkTarget target, String image, String prefix,
-			CorpusSpec spec, CorpusFacts facts, List<Workload> workloads, String targetLabel ) {
+			CorpusSpec spec, CorpusFacts facts, List<Workload> workloads, String targetLabel,
+			Collision collision ) {
 		if ( image == null || target.dataSource().isEmpty() ) {
 			return List.of();
 		}
@@ -118,7 +124,12 @@ public final class AppendPlanCapture {
 		long headBefore = headPosition(dataSource, prefix);
 		List<QueryPlans.Plan> plans = new ArrayList<>();
 		try {
-			WorkloadContext context = new WorkloadContext(target, spec, facts, Collision.SPREAD, 0, 1, spec.seed());
+			// One thread, and the profile's own collision mode: at one writer that reproduces where the
+			// appends are addressed -- which stream, which boundary -- without reproducing the contention
+			// between writers, which no single-threaded capture could show and which auto_explain would
+			// not attribute anyway. An OptimisticLockingException under ONE_BOUNDARY is expected and still
+			// leaves a plan in the log, so a losing append is explained like a winning one.
+			WorkloadContext context = new WorkloadContext(target, spec, facts, collision, 0, 1, spec.seed());
 			Map<String, String> generic = captureAll(conditional, context, image, prefix, dataSource,
 					AutoExplain.PlanCacheMode.GENERIC);
 			Map<String, String> custom = captureAll(conditional, context, image, prefix, dataSource,

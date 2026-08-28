@@ -1237,25 +1237,36 @@ move (11.3 / 11.6 / 10.9 at one thread; 33.5 / 34.2 / 33.6 at eight — it does 
   can now put a number on. The `~5%` in it is a different quantity — what the lock costs when
   nothing contends for it — and measuring that needs a build with the lock removed, which is why it
   stays a recorded observation.
-- **Read the 4.2× at *one* thread as the arrangement, not the lock.** With one writer there is no
-  contention at all, so that gap is the artificial part of `one-stream`: every append lands in the
-  hot entity's stream, which therefore grows by every thread's events within an iteration while its
-  DCB check still has to find one SKU's tag inside it. Why `one-boundary` is *faster* than spread at
-  one thread (8.150) despite dumping into the same stream is still not established — but the captured
-  append plans now rule out the obvious answer. All three runs explain `append-type-and-tag` as the
-  same generic plan, an index scan on `idx_events_stream_position` at cost 15.57, 20 buffers and
-  0.02ms for the `NOT EXISTS`, so nothing the three arrangements left behind in the data changes how
-  that statement is planned or executed. Whatever separates 0.12ms from 0.18ms per operation sits
-  above the statement.
-  - **Those captured plans are a control rather than evidence, and that is a harness fault now
-    fixed.** The capture was hardwired to `spread`, so all three explained the same SKU at the same
-    cursor and could only ever come back identical — they described a statement that two of the three
-    profiles never issued. It now runs the profile's collision mode, so a re-run of the trio produces
-    plans addressed where its appends actually went, which is what would settle this.
-  - **One thing the capture does settle already**: `one-boundary`'s `decide-then-append` measures
-    24.01ms/op at *one* thread, where nothing conflicts, against an append statement the server
-    executes in a fraction of a millisecond. The decide read is essentially the whole of it, which is
-    what "it re-reads the boundary every writer is growing" costs when the writer growing it is you.
+- **Read the one-thread ordering as the arrangement, not the lock** — with one writer nothing
+  contends, so what separates 1.30 from 5.45 from 8.15 ops/ms is *where each profile addresses its
+  append*, and the captured plans now say so directly rather than by elimination. Each profile
+  explains the append it actually issues (the capture used to be hardwired to `spread`, so all three
+  came back byte-identical while their throughputs differed fourfold — a harness fault, now fixed;
+  a plan heading names the mode it was captured under):
+  - **`spread`** — stream and tag are the same entity, and the cursor is that entity's own last
+    event. The `NOT EXISTS` starts at the cursor and stops: no rows removed, 3 buffers, **0.017ms**.
+  - **`one-stream`** — the artificial one, and it shows: the append is addressed at the hot entity's
+    stream while the tag and the cursor come from the *rotated* entity, so the scan starts at a
+    cursor belonging to a different entity and walks the hot stream's rows to reach the tag —
+    `Rows Removed by Filter: 13`, 9 buffers, **0.059ms** (70 rows and 24 buffers on
+    `decide-then-append`). That is the cost of a boundary check hunting one SKU inside a stream every
+    thread is growing, and it is the whole of the one-thread gap. Its *custom* plan even changes
+    shape — a bitmap index scan on `idx_events_stream_tags`, cost 52.03 against the generic plan's
+    15.57 — so this is the one arrangement where the two plans disagree.
+  - **`one-boundary`** — stream, tag and cursor are all the hot entity, and the cursor is the
+    boundary the writer itself just wrote, so it sits at the head of the index (`7349218/100008`, not
+    the corpus midpoint). Nothing to walk, nothing removed, **0.027ms**. That is why it is *faster*
+    than `spread` at one thread despite dumping into one stream, and it is what the earlier write-up
+    called unestablished.
+  - **`decide-then-append` is a read cost, not an append cost.** On `one-boundary` at one thread,
+    where nothing conflicts, it measures **22.30 ms/op** against an append statement the server
+    executes in **0.223ms** — so ~99% of it is the decide read. That is what "it re-reads the
+    boundary every writer is growing" costs when the writer growing it is you.
+- **The trio was re-run against the fixed capture and reproduces**: `append-type-and-tag` at
+  1/4/8/16 threads came back 5.77 / 16.91 / 23.91 / 23.44 (`spread`), 1.36 / 1.37 / 1.42 / 1.34
+  (`one-stream`) and 8.85 / 6.30 / 4.76 / 1.23 (`one-boundary`), with the control flat and the
+  one-boundary conflict rate again 0% → 5.0% → 13.4% → 82%. The table above is the first run; the
+  second agrees within its error bars.
 - **At one shared boundary, adding writers makes the system strictly worse.** Not slower per
   operation — worse in work done: useful appends fall 8.15 → 0.22 ops/ms from one writer to
   sixteen, a 37× collapse, while the conflict rate climbs 0% → 4.9% → 13.6% → **82%**. Throughput

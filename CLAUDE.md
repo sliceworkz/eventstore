@@ -1135,7 +1135,7 @@ measurement, and where one matters, run the profile that would replace it:
 
 | figure in this document | profile that would re-derive it |
 |---|---|
-| `~5%` for the append advisory lock | `write-contention-spread` against `write-contention-one-stream` |
+| `~5%` for the append advisory lock | not covered — that is the lock's *uncontended* overhead, which needs a build without it. What the suite measures is the sentence after it, the hot-stream ceiling: see "What a shared append lock costs" below |
 | `~175µs / 139KB` vs `~36µs / 69KB` for a fresh vs shared serde | not covered — the suite always shares, since that is what the store does now |
 | `15 meters / ~5.5 KB` per distinct purpose | the heap figure has no workload and stays a recorded observation; the *throughput* half is now measured — see the metrics section, and it is nil |
 | `1230ms → 460ms` for the statement-level append trigger | `ingest-saturation`, and only as a total — the trigger is not timed separately |
@@ -1210,6 +1210,56 @@ Testcontainers run for exactly this reason. Several per-entity figures carry 29�
 workloads grow the store 165–172% within an iteration on **both** sides, which is why the pair is
 compared and neither figure is quoted alone. The entity count at which the answer flips is not
 established: 2000 is one point on that curve, and the corpus knob to move is `entityCount`.
+
+### What a shared append lock costs, and what a shared boundary costs
+
+The three `write-contention-*` profiles are one corpus (100.000 events, `PER_ENTITY`, 2000
+entities) driven three ways, so the difference between them is where the writers meet: `spread`
+gives each thread its own entity, hence its own stream and its own advisory lock; `one-stream`
+draws the *same* rotation of entities and writes every append into the hot entity's stream, so the
+lock is shared and no two appends conflict; `one-boundary` puts every thread on the hot entity, so
+they share the lock and the boundary. PG18, metrics off, `append-none` as the control that must not
+move (11.3 / 11.6 / 10.9 at one thread; 33.5 / 34.2 / 33.6 at eight — it does not).
+
+`append-type-and-tag`, the canonical DCB check, in ops/ms:
+
+| threads | `spread` | `one-stream` | `one-boundary` | `one-boundary` useful |
+|---|---|---|---|---|
+| 1 | 5.450 | 1.303 | 8.150 | 8.150 |
+| 4 | 16.982 | 1.358 | 6.399 | 6.09 |
+| 8 | 24.058 | 1.394 | 4.657 | 4.02 |
+| 16 | 23.587 | 1.335 | 1.241 | 0.22 |
+
+- **A shared lock does not slow an append down; it stops throughput scaling at all.** Spread
+  writers go 5.45 → 24.06 from one to eight threads (4.4×, saturating at sixteen); writers sharing
+  one stream's lock go 1.30 → 1.39 (1.07×) across the same sixteen-fold increase. That flatness is
+  the ceiling the advisory-lock note above warns about, and it is the half of that note the suite
+  can now put a number on. The `~5%` in it is a different quantity — what the lock costs when
+  nothing contends for it — and measuring that needs a build with the lock removed, which is why it
+  stays a recorded observation.
+- **Read the 4.2× at *one* thread as the arrangement, not the lock.** With one writer there is no
+  contention at all, so that gap is the artificial part of `one-stream`: every append lands in the
+  hot entity's stream, which therefore grows by every thread's events within an iteration while its
+  DCB check still has to find one SKU's tag inside it. Why `one-boundary` is *faster* than spread at
+  one thread (8.150) despite dumping into the same stream is not established — plausibly its cursor
+  is recent enough to keep the row-comparison start condition cheap, but that is a guess, and the
+  captured append plans in each run's `report.md` are where it would be settled.
+- **At one shared boundary, adding writers makes the system strictly worse.** Not slower per
+  operation — worse in work done: useful appends fall 8.15 → 0.22 ops/ms from one writer to
+  sixteen, a 37× collapse, while the conflict rate climbs 0% → 4.9% → 13.6% → **82%**. Throughput
+  alone hides it (1.241 ops/ms at sixteen threads still looks like work), which is exactly why the
+  report carries a useful/s column beside the score. `decide-then-append` is worse still —
+  0.042 → 0.222 ops/ms at 93% conflicts, so 0.042 → 0.016 useful — because it re-reads the whole
+  boundary each time and that boundary is the thing every writer is growing.
+- **What an application does with this**: a coupon redeemed at most N times, a counter, a single
+  aggregate everyone touches — a boundary that hot has a one-writer ceiling, and more instances
+  behind it buy nothing. Widening the boundary (one per basket rather than one per coupon) is the
+  fix; the lock, by contrast, is bought off by the stream layout, which is what `PER_ENTITY` above
+  is for.
+- **Same caveats as the stream-design pair**: Testcontainers on a developer machine, so direction
+  and magnitude rather than publishable figures, and both profiles grow the store 68–69% within an
+  iteration. The relative errors here are tighter than in that pair (2–10%), and the comparator
+  reports the `spread` → `one-stream` gap as outside both error bars at every thread count.
 
 ## Naming Conventions
 

@@ -184,6 +184,14 @@ creates other prefixed stores, which are *other tables* in the same database: sh
 autovacuum and the cluster-wide notification queue, but not one row of extra work for any query. The
 report does not conflate them and neither should a reading of it.
 
+Measured, they land as far apart as that suggests: `crowded-store` moves two of twelve read shapes by
+5.4× and 3.9×, `crowded-database` moves none of them outside the run-to-run band. Read the second as
+*coexistence is free*, not as *sharing a database is free* — the neighbour stores are written once
+during provisioning and idle for the whole run, so nothing of theirs competes for a buffer, dirties a
+page, or holds a transaction id. A neighbour under load is a question neither profile asks, and the
+one that would hurt most is not throughput at all: a long-running writing transaction anywhere in the
+cluster stalls this store's reads outright, through `pg_snapshot_xmin`.
+
 ## PostgreSQL targets
 
 `TESTCONTAINERS` needs a Docker daemon and nothing else. It is sound for comparing two runs on one

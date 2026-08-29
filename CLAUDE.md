@@ -1260,6 +1260,38 @@ over time would interleave them, adding heap scatter and index bloat *within* th
 corpus leaves pristine. So read the ten unchanged workloads as "sharing a table costs nothing that
 a stream-scoped index can prune", not as "sharing a table is free".
 
+### What three million-event stores in the same database cost
+
+`crowded-database` is the other half of that pair, and it isolates the mechanism `crowded-store`
+cannot: the context under test is the *same* 100.000-event `CLEAN` corpus as `read-shapes`, in its
+own tables, with three further stores of 1.000.000 events each under their own prefixes in the same
+database. Nothing is shared but the cluster — shared buffers, WAL, autovacuum, the notification
+queue, `pg_snapshot_xmin`.
+
+**The answer is nothing measurable.** All twelve read shapes land inside the run-to-run band against
+the `read-shapes` control (0.94–1.18×, and the two ends of that are the needle tag query and
+`query-by-id`, both of which move that much between two runs of the *same* profile). The wildcard
+read — the one shape whose cost is the size of the table — is 0.051 against 0.051, which is the row
+that says the neighbours really are in different tables: it scans the store under test and never
+touches them.
+
+**The captured plans confirm it behaves as the control rather than merely scoring like it.**
+`query-by-or-groups` gets the ordered `idx_events_stream_position` scan with the disjunction as a
+`Filter`, 2.196 rows discarded and 129 buffers — the `read-shapes` plan, not the `BitmapOr` that
+`crowded-store` flips to. `query-last-event`'s *generic* plan pulls 6.876 rows through
+`idx_events_tags` (231 buffers), against 40.227 in `crowded-store`. So the or-groups collapse and
+the widened savepoint blast radius in the previous section are attributable to **events of other
+domains in the same table**, and not to table size, index size, or the presence of other stores.
+
+**The caveat is the important part: the neighbours are idle.** They are written once during
+provisioning and never read or written again, so none of the mechanisms this profile names is
+actually exercised — nothing of theirs competes for shared buffers, nothing dirties pages, autovacuum
+has nothing to do, and no transaction of theirs holds an xid. What is established is that a store
+does not pay for *coexisting* with large neighbours. A busy neighbour is a different question, and
+the one to keep in mind is the `pg_snapshot_xmin` stall documented under the PostgreSQL notes: a
+long-running **writing** transaction in a neighbouring store — or in another database of the same
+cluster — freezes what this store can read, and no amount of table separation prevents it.
+
 ### Choosing a stream design: one stream per context, or one per entity
 
 The question every application author has to answer first — a stream per bounded context with

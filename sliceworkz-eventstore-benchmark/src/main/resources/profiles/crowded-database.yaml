@@ -8,6 +8,12 @@ description: >
   Expect a smaller effect than crowded-store, and treat a large one as a finding rather than as
   confirmation -- it would mean the store is losing to its neighbours somewhere it does not read.
 
+  What this measures is coexistence, not contention: the neighbours are written once while the corpus
+  is provisioned and are then idle for the whole run, so none of the four mechanisms named above is
+  actually exercised by them. A null result here says a store does not pay for large neighbours
+  sitting next to it; it says nothing about a neighbour under load, and in particular nothing about
+  the pg_snapshot_xmin stall a long-running writing transaction anywhere in the cluster causes.
+
 corpus:
   volume: 100000
   streamDesign: TAGGED

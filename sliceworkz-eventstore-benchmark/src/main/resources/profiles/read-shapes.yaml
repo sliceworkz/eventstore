@@ -1,0 +1,54 @@
+name: read-shapes
+description: >
+  What each query shape costs against a store holding nothing but the context under test. The control
+  for the composition profiles: crowded-store and crowded-database run these exact workloads over the
+  same volume and the same targets, so `compare` between them attributes the difference to what else
+  is in the way and nothing else.
+
+  Selectivity is two workloads rather than one on purpose. A tag matching ten events and a tag
+  matching one percent of the store are different plans, and a single "tag query" number would be an
+  average of two regimes that never occur together.
+
+corpus:
+  volume: 100000
+  streamDesign: TAGGED
+  composition: CLEAN
+  payload: REALISTIC
+  entityCount: 2000
+  seed: 20260823
+
+targets:
+  - backend: INMEM
+    metrics: OFF
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: OFF
+
+jmh:
+  workloads:
+    - query-stream-page
+    - query-by-type
+    - query-by-tag-needle
+    - query-by-tag-swathe
+    - query-by-entity-hot
+    - query-by-entity-cold
+    - query-by-multi-tag
+    - query-by-or-groups
+    - query-last-event
+    - query-cursor-walk
+    - query-by-id
+    - query-wildcard
+  threads: [ 1 ]
+  # Three forks, not two. The first run of this trio put five inmem measurements above the 10%
+  # relative error the report itself calls uncomparable -- query-by-tag-swathe at 74.7% and
+  # query-by-multi-tag at 49.3% -- and the spread was *between* forks and tight within them: fork 1
+  # gave 0.148-0.158 on swathe where fork 2 gave 0.089-0.101. That is a per-JVM regime, so the fork
+  # is the sampling unit and two of them is n=2. More iterations inside a fork would only measure
+  # the same regime longer. read-shapes, crowded-store and crowded-database carry identical settings
+  # on purpose: the first is the control the other two are compared against, and a control measured
+  # differently is not one.
+  forks: 3
+  warmupIterations: 2
+  measurementIterations: 4
+  iterationSeconds: 5

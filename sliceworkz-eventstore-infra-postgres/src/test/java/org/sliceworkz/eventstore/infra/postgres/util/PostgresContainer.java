@@ -100,6 +100,31 @@ public class PostgresContainer {
 	}
 
 	/**
+	 * A pool holding exactly one connection to the shared test database, <em>not</em> tracked in the
+	 * per-image slot {@link #dataSource(String)} uses — the caller closes what it gets.
+	 * <p>
+	 * One connection means one PostgreSQL <em>session</em>, which is what makes session-scoped state
+	 * observable: a test can borrow the same physical connection the store just used and ask the server
+	 * what that session holds — {@code pg_prepared_statements} above all, which is per session and
+	 * otherwise invisible from outside. Give such a store a separate monitoring DataSource: the
+	 * LISTEN/NOTIFY monitors hold a connection each for the storage's lifetime, and they would take this
+	 * one and never give it back.
+	 *
+	 * @param image the container to connect to
+	 * @return a pool the caller is responsible for closing
+	 */
+	public static HikariDataSource singleConnectionDataSource ( String image ) {
+		PostgreSQLContainer container = container(image);
+		HikariConfig config = new HikariConfig();
+		config.setUsername(container.getUsername());
+		config.setPassword(container.getPassword());
+		config.setJdbcUrl(container.getJdbcUrl());
+		config.setMaximumPoolSize(1);
+		config.setMinimumIdle(1);
+		return new HikariDataSource(config);
+	}
+
+	/**
 	 * A pool for another database and another role in the same container, <em>not</em> tracked in the
 	 * per-image slot {@link #dataSource(String)} uses — the caller closes what it gets.
 	 * <p>

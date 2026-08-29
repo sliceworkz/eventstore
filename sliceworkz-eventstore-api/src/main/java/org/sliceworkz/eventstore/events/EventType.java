@@ -45,7 +45,13 @@ package org.sliceworkz.eventstore.events;
  * @see LegacyEvent
  * @see Upcast
  */
-public record EventType ( String name ) {
+public record EventType ( String name ) implements java.io.Serializable {
+
+	/**
+	 * Serializable so {@link EventDeserializationException} can carry the stored type name across a
+	 * process boundary; see {@link EventReference} for the reasoning.
+	 */
+	private static final long serialVersionUID = 1L;
 
 	/**
 	 * Creates an EventType from a domain event object.

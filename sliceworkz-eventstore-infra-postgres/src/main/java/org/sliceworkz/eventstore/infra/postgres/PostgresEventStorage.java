@@ -221,6 +221,8 @@ public interface PostgresEventStorage {
 		private MeterOptions meterOptions = MeterOptions.defaults();
 		private ShreddingCodec shreddingCodec;
 		private boolean shreddingOnOwnDataSource;
+		private PostgresEventStorageImpl.ConditionalAppendPlanning conditionalAppendPlanning =
+				PostgresEventStorageImpl.ConditionalAppendPlanning.SERVER_DEFAULT;
 
 		private Builder ( ) {
 
@@ -418,6 +420,38 @@ public interface PostgresEventStorage {
 		 */
 		public Builder notificationStartupTimeout ( Duration timeout ) {
 			this.notificationStartupTimeout = timeout == null ? PostgresEventStorageImpl.DEFAULT_NOTIFICATION_STARTUP_TIMEOUT : timeout;
+			return this;
+		}
+
+		/**
+		 * Chooses how PostgreSQL may plan the DCB consistency check.
+		 * <p>
+		 * The check is a re-used prepared statement, so the server holds a <em>custom</em> plan built from
+		 * the actual parameter values and a <em>generic</em> one built against default selectivity, and
+		 * from the tenth execution it adopts the generic plan if its estimate looks no worse. A DCB check
+		 * is the shape that misleads that comparison: its expected result is <em>no rows</em>, while a
+		 * {@code NOT EXISTS} is priced by how soon a row is expected to turn up, so each extra OR-ed fact
+		 * makes the generic plan look cheaper while the custom one — built from real tag statistics — looks
+		 * dearer. Past the crossing the server settles on a plan that scans the whole events table for a
+		 * row that is not there, and never reconsiders.
+		 * <p>
+		 * {@link PostgresEventStorageImpl.ConditionalAppendPlanning#PER_APPEND} takes the choice away and
+		 * plans every conditional append from its own values, at the cost of planning per append.
+		 * Unconditional appends and every read are unaffected either way.
+		 * <pre>{@code
+		 * EventStorage storage = PostgresEventStorage.newBuilder()
+		 *     .conditionalAppendPlanning(ConditionalAppendPlanning.PER_APPEND)
+		 *     .build();
+		 * }</pre>
+		 *
+		 * @param planning the mode; {@code null} restores the default
+		 * @return this Builder for method chaining
+		 */
+		public Builder conditionalAppendPlanning (
+				PostgresEventStorageImpl.ConditionalAppendPlanning planning ) {
+			this.conditionalAppendPlanning = planning == null
+					? PostgresEventStorageImpl.ConditionalAppendPlanning.SERVER_DEFAULT
+					: planning;
 			return this;
 		}
 
@@ -641,6 +675,8 @@ public interface PostgresEventStorage {
 				PostgresEventStorageImpl result = nativeUuidv7
 					? new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, createdDataSources, meterRegistry)
 					: new PostgresLegacyEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, createdDataSources, meterRegistry);
+
+				result.setConditionalAppendPlanning(conditionalAppendPlanning);
 
 				switch ( databaseInitMode ) {
 					case NONE       -> { }

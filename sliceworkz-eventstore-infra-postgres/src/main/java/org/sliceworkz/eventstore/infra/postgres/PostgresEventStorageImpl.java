@@ -34,6 +34,7 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -183,6 +184,17 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private volatile CountDownLatch bookmarkMonitorReady;
 
 	private final MeterRegistry meterRegistry;
+
+	/** See {@link ConditionalAppendPlanning}; set by the builder before the storage is started. */
+	private volatile ConditionalAppendPlanning conditionalAppendPlanning =
+			ConditionalAppendPlanning.SERVER_DEFAULT;
+
+	/**
+	 * Whether the warning about being unable to apply {@link #conditionalAppendPlanning} has been
+	 * logged. Once, not per append: it is a property of the driver under this storage, so it cannot
+	 * start working, and a per-append WARN on the write path would be its own outage.
+	 */
+	private final AtomicBoolean planningWarningLogged = new AtomicBoolean();
 
 	private static final JsonMapper JSONMAPPER = JsonMapper.builder().build();
 
@@ -1155,6 +1167,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * reference with a higher position than an event that becomes visible, and sorts later, moments
 	 * afterwards.
 	 * <p>
+	 * <em>How</em> that tuple comparison is spelled is a separate question from what it means, and the
+	 * planner cares about it a great deal: see {@link #appendTupleBoundary}.
+	 * <p>
 	 * The {@code index} part of an {@link EventReference} has no column, exactly as in
 	 * {@link #addUntilBoundary}: it distinguishes sub-events an upcaster produced from one stored
 	 * event. Two sub-events of the <em>same</em> stored event are therefore indistinguishable here —
@@ -1166,18 +1181,62 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * @param after the reference to seek past, or null for no cursor (in which case nothing is appended)
 	 * @param direction which side of the reference to keep
 	 */
-	private void addCursorBoundary(StringBuilder sqlBuilder, List<Object> parameters, EventReference after, QueryDirection direction) {
+	// package-private, not private: PostgresCursorBoundaryTest builds an EXPLAIN around the predicate
+	// this produces, so that the plan it asserts on is the store's own SQL and not a copy.
+	void addCursorBoundary(StringBuilder sqlBuilder, List<Object> parameters, EventReference after, QueryDirection direction) {
 		if ( after == null ) {
 			return;
 		}
-		if ( direction == QueryDirection.FORWARD ) {
-			sqlBuilder.append(" AND ((event_tx>?::xid8) OR (event_tx = ?::xid8 AND event_position > ?))");
-		} else {
-			sqlBuilder.append(" AND ((event_tx<?::xid8) OR (event_tx = ?::xid8 AND event_position < ?))");
-		}
-		parameters.add(Long.toUnsignedString(after.tx()));
-		parameters.add(Long.toUnsignedString(after.tx()));
-		parameters.add(after.position());
+		appendTupleBoundary(sqlBuilder, parameters, after,
+				direction == QueryDirection.FORWARD ? ">" : "<");
+	}
+
+	/**
+	 * Appends one {@code (event_tx, event_position)} comparison, as a SQL <em>row constructor
+	 * comparison</em> rather than as the lexicographic expansion it is equivalent to.
+	 *
+	 * <p><b>The two are the same predicate and not the same plan.</b> SQL defines
+	 * {@code (a, b) > (x, y)} as exactly {@code a > x OR (a = x AND b > y)}, so nothing about what a
+	 * boundary <em>means</em> depends on which is written. What does depend on it is whether PostgreSQL
+	 * can use it: a boundary is nearly always conjoined with {@code stream_context = ? AND
+	 * stream_purpose = ?}, and {@code idx_events_stream_position} is {@code (stream_context,
+	 * stream_purpose, event_tx, event_position)}. With the leading two columns pinned by equality, a row
+	 * comparison over the trailing two becomes an index <em>start condition</em> — descend once to the
+	 * cursor and walk the leaves in order — so a page costs what the page returns. A disjunction is not
+	 * a start condition, and lands in a {@code Filter} instead.
+	 *
+	 * <p><b>Measured, on a 100.000-event corpus with the cursor at the midpoint</b> (PG18, one page of
+	 * 500). The expansion still used the index, but only for the stream columns, and then discarded
+	 * every event before the cursor to reach page one:
+	 * <pre>
+	 * expansion:      Filter: ((event_tx &gt; …) OR (event_tx = … AND event_position &gt; …))
+	 *                 Rows Removed by Filter: 27500   Buffers: 1295   Execution Time: 3.344 ms
+	 * row comparison: Index Cond: (… AND (ROW(event_tx, event_position) &gt; ROW(…)))
+	 *                 Rows Removed by Filter: none    Buffers:   27   Execution Time: 0.165 ms
+	 * </pre>
+	 * The cost of the expansion is proportional to how deep the cursor already sits rather than to the
+	 * page size, which is the wrong shape for the way {@code Projector} pages — so the gap widens with
+	 * every page of a replay. End to end that was 2.9x on a five-page cursor walk and 2.0x on a
+	 * projector run, with the shapes that carry no boundary unmoved.
+	 *
+	 * <p><b>It also improves the plans the server caches for the DCB check</b>, which is a separate
+	 * question from the read path and was not what this was for. A conditional append's {@code NOT
+	 * EXISTS} carries the same boundary, and under the expansion the <em>generic</em> plan for the
+	 * canonical {@code type + tag} check was a whole-table sequential scan (19.5ms, 100.008 rows
+	 * discarded); with the row comparison it is an index scan (0.23ms). See
+	 * {@code conditionalAppendPlanning} for what remains: filters OR-ing three or more facts still flip,
+	 * because that cliff is the tag disjunction rather than the cursor.
+	 *
+	 * @param sqlBuilder the statement being built
+	 * @param parameters the parameter list being built alongside it
+	 * @param boundary the reference the tuple is compared against
+	 * @param comparison the SQL operator, one of {@code >}, {@code <} or {@code <=}
+	 */
+	private void appendTupleBoundary(StringBuilder sqlBuilder, List<Object> parameters,
+			EventReference boundary, String comparison) {
+		sqlBuilder.append(" AND (event_tx, event_position) ").append(comparison).append(" (?::xid8, ?)");
+		parameters.add(Long.toUnsignedString(boundary.tx()));
+		parameters.add(boundary.position());
 	}
 
 	/**
@@ -1202,14 +1261,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * @param parameters the parameter list being built alongside it
 	 * @param until the boundary, or null for no boundary (in which case nothing is appended)
 	 */
-	private void addUntilBoundary(StringBuilder sqlBuilder, List<Object> parameters, EventReference until) {
+	// package-private for the same reason as addCursorBoundary.
+	void addUntilBoundary(StringBuilder sqlBuilder, List<Object> parameters, EventReference until) {
 		if ( until == null ) {
 			return;
 		}
-		sqlBuilder.append(" AND ((event_tx<?::xid8) OR (event_tx = ?::xid8 AND event_position <= ?))");
-		parameters.add(Long.toUnsignedString(until.tx()));
-		parameters.add(Long.toUnsignedString(until.tx()));
-		parameters.add(until.position());
+		appendTupleBoundary(sqlBuilder, parameters, until, "<=");
 	}
 
 	private void addEventFilterFiltering(StringBuilder sqlBuilder, List<Object> parameters, EventFilter filter) {
@@ -1309,6 +1366,82 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * nothing.
 	 */
 	private static final String ACQUIRE_APPEND_LOCK = "SELECT pg_advisory_xact_lock(?)";
+
+	/**
+	 * How PostgreSQL is allowed to plan the conditional append's {@code NOT EXISTS}.
+	 *
+	 * <p><b>Why this is a setting at all.</b> The consistency check is a re-used prepared statement, so
+	 * PostgreSQL holds two plans for it: a <em>custom</em> one re-planned from the actual parameter
+	 * values, and a <em>generic</em> one planned once against default selectivity. From the tenth
+	 * execution it compares their estimated costs and adopts the generic plan if it looks no worse.
+	 *
+	 * <p><b>A DCB check is the shape that defeats that comparison.</b> Its expected result is <em>no
+	 * rows</em>, while the planner prices a {@code NOT EXISTS} by how soon it expects to find one. Every
+	 * OR-ed fact a decision rests on makes the generic plan expect a match sooner, so its estimate
+	 * <em>falls</em> while the custom plan's — built from real tag statistics — rises. Once the estimates
+	 * cross, the server adopts a plan that scans the whole events table looking for a row that is not
+	 * there, and it never reconsiders.
+	 */
+	public enum ConditionalAppendPlanning {
+
+		/**
+		 * Plan every conditional append from its own parameter values.
+		 *
+		 * <p>Costs planning per append and removes the cliff. Equivalent to
+		 * {@code SET plan_cache_mode = 'force_custom_plan'} for this statement, done through the driver
+		 * so it needs no extra round trip and touches no other statement.
+		 */
+		PER_APPEND,
+
+		/**
+		 * Let PostgreSQL choose between its custom and generic plans, as it does for any other
+		 * statement. The historical behaviour, and the default.
+		 */
+		SERVER_DEFAULT
+	}
+
+	/** How this storage lets PostgreSQL plan its conditional appends. */
+	public ConditionalAppendPlanning getConditionalAppendPlanning ( ) {
+		return conditionalAppendPlanning;
+	}
+
+	/**
+	 * Sets how PostgreSQL may plan the conditional append; see {@link ConditionalAppendPlanning}.
+	 *
+	 * @param planning the mode; {@code null} restores {@link ConditionalAppendPlanning#SERVER_DEFAULT}
+	 */
+	public void setConditionalAppendPlanning ( ConditionalAppendPlanning planning ) {
+		this.conditionalAppendPlanning = planning == null ? ConditionalAppendPlanning.SERVER_DEFAULT : planning;
+	}
+
+	/**
+	 * Keeps the conditional append off the server's prepared-statement plan cache, where asked to.
+	 *
+	 * <p>Done through the driver rather than with {@code SET LOCAL plan_cache_mode}: pgjdbc only makes a
+	 * statement server-prepared after {@code prepareThreshold} executions, and a threshold of zero keeps
+	 * it unnamed forever, so PostgreSQL plans every execution from the values bound to it. That costs no
+	 * extra round trip on the write path and — unlike the GUC — cannot leak onto any other statement
+	 * sharing the connection.
+	 *
+	 * <p><b>Best effort, and loud once if it fails.</b> A {@code DataSource} that is not pgjdbc, or a
+	 * proxy that will not unwrap to it, leaves the store running exactly as it did before with a
+	 * configured setting silently not applied — which is worth one WARN naming what was asked for, and
+	 * not worth failing an append over.
+	 */
+	private void applyConditionalAppendPlanning ( PreparedStatement statement ) {
+		if ( conditionalAppendPlanning != ConditionalAppendPlanning.PER_APPEND ) {
+			return;
+		}
+		try {
+			statement.unwrap(org.postgresql.PGStatement.class).setPrepareThreshold(0);
+		} catch ( SQLException | RuntimeException e ) {
+			if ( planningWarningLogged.compareAndSet(false, true) ) {
+				LOGGER.warn("conditional appends were configured to be planned per append, but this"
+						+ " DataSource does not expose a PostgreSQL statement to say so; PostgreSQL will"
+						+ " keep choosing between its custom and generic plans", e);
+			}
+		}
+	}
 
 	/**
 	 * Statement that serializes schema scripts; see {@link #executeSqlScripts} and {@link #schemaLockKey}.
@@ -1555,6 +1688,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 				try ( PreparedStatement stmt = writeConnection.prepareStatement(sqlBuilder.toString()) ) {
 
 					if ( ! appendCriteria.isNone() ) {
+						applyConditionalAppendPlanning(stmt);
+
 						// Serialize this stream's conditional appends: the NOT EXISTS below is a phantom
 						// check, which READ COMMITTED does not protect. Held until this transaction ends,
 						// and taken as its own statement so the INSERT's snapshot is taken after the

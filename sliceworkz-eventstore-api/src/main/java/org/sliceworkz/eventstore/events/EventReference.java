@@ -63,7 +63,26 @@ package org.sliceworkz.eventstore.events;
  * @see EventId
  * @see org.sliceworkz.eventstore.stream.AppendCriteria
  */
-public record EventReference ( EventId id, long position, long tx, int index ) {
+public record EventReference ( EventId id, long position, long tx, int index )
+		implements java.io.Serializable {
+
+	/**
+	 * A reference is a portable value, so it is serializable -- and being a record, safely so.
+	 * <p>
+	 * The immediate reason is that exceptions carry one: {@code ProjectorException} and
+	 * {@code EventDeserializationException} exist largely to name the event that failed, and a
+	 * {@code Throwable} is {@code Serializable}, so a non-serializable field there means the exception
+	 * cannot cross a process boundary at all -- a forked test or benchmark harness, a remote
+	 * invocation, a distributed job runner reports a {@code NotSerializableException} in place of the
+	 * real failure. The broader reason is that a reference is a cursor: handing one to another service
+	 * or holding one in a distributed cache is an ordinary thing to want.
+	 * <p>
+	 * Records deserialize through their canonical constructor rather than by field injection, so the
+	 * validation below is re-applied on the way in and no stream can conjure a reference with a null id
+	 * or a non-positive position. That is what makes this cheap to commit to; a classic class with the
+	 * same invariants would not be.
+	 */
+	private static final long serialVersionUID = 1L;
 
 	/**
 	 * Constructs an EventReference with validation.

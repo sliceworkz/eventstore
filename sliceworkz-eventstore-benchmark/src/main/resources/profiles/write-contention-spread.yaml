@@ -1,0 +1,40 @@
+name: write-contention-spread
+description: >
+  How append throughput scales with writers when they do not collide -- each thread on its own SKU,
+  so no two conditional appends take the same advisory lock and no boundary is shared. The control
+  for the other two contention profiles: whatever this curve does is the store scaling, and the gap
+  between it and one-stream or one-boundary is what contention costs.
+
+  PER_ENTITY is load-bearing here and the three profiles were previously TAGGED, which quietly made
+  the set unable to ask its own question. The append lock is keyed on (prefix, context, purpose), so
+  with one stream per context every writer takes the same lock whatever the collision mode: "spread"
+  spread the boundaries and not the locks, and its gap to one-stream was zero by construction. Under
+  PER_ENTITY a SKU is a purpose, so distinct SKUs really are distinct locks.
+
+corpus:
+  volume: 100000
+  streamDesign: PER_ENTITY
+  composition: CLEAN
+  payload: REALISTIC
+  entityCount: 2000
+  seed: 20260823
+
+targets:
+  - backend: INMEM
+    metrics: OFF
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: OFF
+
+jmh:
+  workloads:
+    - append-none
+    - append-type-and-tag
+    - decide-then-append
+  threads: [ 1, 4, 8, 16 ]
+  collision: spread
+  forks: 4
+  warmupIterations: 3
+  measurementIterations: 5
+  iterationSeconds: 2

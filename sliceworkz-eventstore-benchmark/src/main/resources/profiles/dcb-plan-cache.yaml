@@ -1,0 +1,55 @@
+name: dcb-plan-cache
+description: >
+  What PostgreSQL's plan-cache decision costs a DCB check, measured both ways in one run. The two
+  targets are the same container, the same corpus and the same workloads; the only difference is
+  whether the conditional append is left to the server's choice between its custom and generic plans,
+  or planned from its own parameter values every time.
+
+  The suspicion under test: a DCB check expects no rows, while a NOT EXISTS is priced by how soon a
+  row is expected to turn up, so each added OR-ed fact makes the generic plan look cheaper while the
+  custom one -- built from real tag statistics -- looks dearer. Past the crossing, the server settles
+  on a plan that scans the whole events table for a row that is not there, and never reconsiders.
+  If that is what happens, the per-append target should be flat where the default one falls off a
+  cliff, and no worse anywhere else.
+
+corpus:
+  volume: 100000
+  streamDesign: TAGGED
+  composition: CLEAN
+  payload: REALISTIC
+  entityCount: 2000
+  seed: 20260823
+
+targets:
+  # One container, one corpus, one JVM per fork: the only difference between these two is the
+  # planning mode, which is what makes the difference between them attributable to it.
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: OFF
+    appendPlanning: SERVER_DEFAULT
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: OFF
+    appendPlanning: PER_APPEND
+
+jmh:
+  workloads:
+    # append-none is the control: it takes no consistency check at all, so the two targets must agree
+    # on it. If they do not, the run measured something other than the planning mode.
+    - append-none
+    - append-types
+    - append-type-and-tag
+    - append-multi-tag
+    - append-or-groups-2
+    - append-or-groups-3
+    - append-or-groups-5
+    - append-or-groups-10
+    - append-empty-boundary
+    - decide-then-append
+  threads: [ 1 ]
+  forks: 4
+  warmupIterations: 3
+  measurementIterations: 5
+  iterationSeconds: 2

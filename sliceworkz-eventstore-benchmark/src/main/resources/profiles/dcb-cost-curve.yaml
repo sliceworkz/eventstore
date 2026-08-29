@@ -1,0 +1,42 @@
+name: dcb-cost-curve
+description: >
+  What the DCB consistency check costs over an unconditional append, and how that grows with the
+  number of OR-ed facts a decision rests on. Walks append-none through to a ten-item filter, single
+  threaded, so the number is the check itself rather than contention for it. On PostgreSQL the
+  unconditional append is also the only one taking no advisory lock, so the first step of the curve
+  is the whole mechanism and the rest is the predicate widening.
+
+corpus:
+  volume: 100000
+  streamDesign: TAGGED
+  composition: CLEAN
+  payload: REALISTIC
+  entityCount: 2000
+  seed: 20260823
+
+targets:
+  - backend: INMEM
+    metrics: OFF
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: OFF
+
+jmh:
+  workloads:
+    - append-none
+    - append-types
+    - append-type-and-tag
+    - append-multi-tag
+    - append-or-groups-2
+    - append-or-groups-3
+    - append-or-groups-4
+    - append-or-groups-5
+    - append-or-groups-10
+    - append-empty-boundary
+    - decide-then-append
+  threads: [ 1 ]
+  forks: 4
+  warmupIterations: 3
+  measurementIterations: 5
+  iterationSeconds: 2

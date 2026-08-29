@@ -1,0 +1,65 @@
+name: metrics-cost
+description: >
+  What the library's own instrumentation costs, measured rather than assumed. One corpus, three
+  stores over it: no meters, the default cap of a thousand distinct purposes, and no cap at all.
+  All three in one run, so the comparison needs no second report and no environment to match.
+
+  The corpus is deliberately PER_ENTITY with two thousand entities, which is the configuration where
+  the cap does something: an uncapped store registers a meter set per purpose and keeps every one of
+  them for the life of the process, while the capped store pools everything past the first thousand
+  into `_other`. Under a TAGGED design all three targets would look identical, which would be a true
+  measurement of the wrong thing.
+
+  The targets run uninstrumented LAST, and the order is a finding rather than a preference. Run the
+  other way round, this profile reported the two instrumented stores 8% FASTER than the
+  uninstrumented one on both append workloads -- which meters cannot do. Reversed, metrics=off came
+  out fastest instead of slowest, and the ranking again followed position rather than the setting.
+  The cause is that the corpus is generated inside the first fork of the first target, so whichever
+  target goes first is measured against a server the ones after it inherit warm.
+
+  What the pair of runs establishes: the meters cost nothing measurable in throughput, at any cap.
+  Across both orders every target sits within about 1% of every other on all four workloads, capped
+  against unlimited flips sign between runs, and the only structure that survives is monotone in
+  position. That is consistent with what the cap is for -- it bounds heap and scrape size, not
+  speed -- and this profile deliberately measures only the half it can.
+
+  Keep reading it as two comparisons. Capped against unlimited is clean, being adjacent in the
+  order. Anything involving the first target carries the ordering with it, and a difference worth
+  acting on has to survive the reverse order.
+
+corpus:
+  volume: 100000
+  streamDesign: PER_ENTITY
+  composition: CLEAN
+  payload: REALISTIC
+  entityCount: 2000
+  seed: 20260823
+
+targets:
+  # Reversed deliberately -- see the description. The first target absorbs the corpus generation and
+  # a cold server, so putting the uninstrumented store last is what makes the previous run's result
+  # falsifiable rather than repeating it with the handicap in the same place.
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: UNLIMITED
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: CAPPED
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: OFF
+
+jmh:
+  workloads:
+    - append-none
+    - append-type-and-tag
+    - query-by-entity-hot
+    - query-last-event
+  threads: [ 1 ]
+  forks: 4
+  warmupIterations: 3
+  measurementIterations: 5
+  iterationSeconds: 2

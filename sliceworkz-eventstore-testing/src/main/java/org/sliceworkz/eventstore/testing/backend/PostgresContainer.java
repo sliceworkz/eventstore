@@ -113,4 +113,24 @@ public final class PostgresContainer {
 		}
 	}
 
+	/**
+	 * Everything the server has written to its standard error since the container started, or an empty
+	 * string where no container is running for that image.
+	 *
+	 * <p>The image logs to stderr rather than through the logging collector, so this is the only way to
+	 * read anything the server reports about itself -- which is what a caller that has turned on a
+	 * module logging into the server log, {@code auto_explain} above all, needs to get its output back.
+	 *
+	 * <p>The whole log is returned every time; a caller wanting the part produced by one operation
+	 * should note the length before and take the tail afterwards. It grows for the life of the
+	 * container, so this is a diagnostic facility rather than something to poll.
+	 *
+	 * @param image the PostgreSQL image tag
+	 * @return the accumulated server log, never null
+	 */
+	public static synchronized String logs ( String image ) {
+		PostgreSQLContainer container = CONTAINERS.get(image);
+		return container == null ? "" : container.getLogs();
+	}
+
 }

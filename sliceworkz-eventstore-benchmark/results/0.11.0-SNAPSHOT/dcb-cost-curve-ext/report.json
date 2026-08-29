@@ -1,0 +1,425 @@
+{
+  "manifest" : {
+    "suiteVersion" : "0.11.0-SNAPSHOT",
+    "profileName" : "dcb-cost-curve-ext",
+    "profileDescription" : "What the DCB consistency check costs over an unconditional append, and how that grows with the number of OR-ed facts a decision rests on. Walks append-none through to a ten-item filter, single threaded, so the number is the check itself rather than contention for it. On PostgreSQL the unconditional append is also the only one taking no advisory lock, so the first step of the curve is the whole mechanism and the rest is the predicate widening.\n",
+    "profileJson" : "{\"name\":\"dcb-cost-curve-ext\",\"description\":\"What the DCB consistency check costs over an unconditional append, and how that grows with the number of OR-ed facts a decision rests on. Walks append-none through to a ten-item filter, single threaded, so the number is the check itself rather than contention for it. On PostgreSQL the unconditional append is also the only one taking no advisory lock, so the first step of the curve is the whole mechanism and the rest is the predicate widening.\\n\",\"corpus\":{\"volume\":100000,\"streamDesign\":\"TAGGED\",\"composition\":\"CLEAN\",\"payload\":\"REALISTIC\",\"entityCount\":2000,\"neighbourVolumes\":[],\"seed\":20260823},\"targets\":[{\"backend\":\"INMEM\",\"server\":null,\"image\":null,\"metrics\":\"OFF\",\"shredding\":false,\"resultLimit\":null,\"schemaMode\":\"ENSURE\",\"notificationStartupTimeout\":\"PT30S\",\"appendPlanning\":\"SERVER_DEFAULT\"},{\"backend\":\"POSTGRES\",\"server\":\"EXTERNAL\",\"image\":\"postgres:18\",\"metrics\":\"OFF\",\"shredding\":false,\"resultLimit\":null,\"schemaMode\":\"ENSURE\",\"notificationStartupTimeout\":\"PT30S\",\"appendPlanning\":\"SERVER_DEFAULT\"}],\"jmh\":{\"workloads\":[\"append-none\",\"append-types\",\"append-type-and-tag\",\"append-multi-tag\",\"append-or-groups-2\",\"append-or-groups-3\",\"append-or-groups-4\",\"append-or-groups-5\",\"append-or-groups-10\",\"append-empty-boundary\",\"decide-then-append\"],\"threads\":[1],\"forks\":4,\"warmupIterations\":3,\"measurementIterations\":5,\"iterationSeconds\":2,\"collision\":null},\"load\":[]}",
+    "corpusFingerprint" : "bm_628labzk3k7h_",
+    "corpus" : {
+      "volume" : 100000,
+      "streamDesign" : "TAGGED",
+      "composition" : "CLEAN",
+      "payload" : "REALISTIC",
+      "entityCount" : 2000,
+      "neighbourVolumes" : [ ],
+      "seed" : 20260823
+    },
+    "facts" : {
+      "hotEntity" : "SKU-000000",
+      "coldEntity" : "SKU-001729",
+      "needleTagValue" : "needle",
+      "swatheTagValue" : "swathe",
+      "matchCounts" : {
+        "coldEntity" : 1,
+        "swathe" : 1000,
+        "needle" : 10,
+        "total" : 100000,
+        "hotEntity" : 6876
+      },
+      "midCursorRef" : "018cc262-bcb8-7f16-982b-a31097450530:786:27500",
+      "replayUntilRef" : "018cc255-0118-7209-8190-b356ea15a1ae:775:5000",
+      "knownEventId" : "018cc251-f400-74eb-8412-04a7d99e38f3",
+      "streamPurposes" : [ ],
+      "meanPayloadBytes" : 141.24
+    },
+    "targets" : [ "inmem/metrics=off", "postgres:external/metrics=off" ],
+    "environment" : {
+      "jvm" : {
+        "java.version" : "21.0.12",
+        "java.vm.name" : "OpenJDK 64-Bit Server VM",
+        "java.vm.version" : "21.0.12+8-1-26.04-Ubuntu",
+        "java.vendor" : "Ubuntu",
+        "max.heap.bytes" : "16399728640"
+      },
+      "host" : {
+        "os.name" : "Linux",
+        "os.version" : "7.0.0-30-generic",
+        "os.arch" : "amd64",
+        "available.processors" : "16",
+        "cpu.model" : "AMD Ryzen AI 7 350 w/ Radeon 860M",
+        "memory.total" : "64055560 kB"
+      },
+      "postgres" : {
+        "autovacuum" : "on",
+        "autovacuum_analyze_scale_factor" : "0.1",
+        "autovacuum_vacuum_scale_factor" : "0.2",
+        "checkpoint_completion_target" : "0.9",
+        "effective_cache_size" : "5242888kB",
+        "effective_io_concurrency" : "16",
+        "fsync" : "on",
+        "full_page_writes" : "on",
+        "jit" : "on",
+        "lc_messages" : "en_US.UTF-8",
+        "maintenance_work_mem" : "65536kB",
+        "max_connections" : "100",
+        "max_parallel_workers" : "8",
+        "max_parallel_workers_per_gather" : "2",
+        "max_wal_size" : "1024MB",
+        "max_worker_processes" : "8",
+        "min_wal_size" : "80MB",
+        "random_page_cost" : "4",
+        "seq_page_cost" : "1",
+        "server_version" : "18.6 (Ubuntu 18.6-0ubuntu0.26.04.1)",
+        "shared_buffers" : "163848kB",
+        "synchronous_commit" : "on",
+        "track_io_timing" : "off",
+        "wal_compression" : "off",
+        "work_mem" : "4096kB",
+        "version" : "PostgreSQL 18.6 (Ubuntu 18.6-0ubuntu0.26.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0, 64-bit",
+        "current_database" : "bmdb"
+      }
+    },
+    "restorePolicy" : "restored before every iteration",
+    "driftFraction" : 0.0,
+    "startedAt" : "2026-08-29T14:03:56.980773038Z",
+    "finishedAt" : "2026-08-29T14:46:05.274655864Z"
+  },
+  "benchmarks" : [ {
+    "target" : "inmem/metrics=off",
+    "workload" : "append-none",
+    "threads" : 1,
+    "mode" : "thrpt",
+    "score" : 36.704161841682755,
+    "error" : 0.34783630800997045,
+    "unit" : "ops/ms",
+    "secondary" : {
+      "ok" : 1468344.0,
+      "deduplicated" : 0.0,
+      "conflicts" : 0.0
+    }
+  }, {
+    "target" : "inmem/metrics=off",
+    "workload" : "append-types",
+    "threads" : 1,
+    "mode" : "thrpt",
+    "score" : 1.168552894724432,
+    "error" : 0.03661510556803422,
+    "unit" : "ops/ms",
+    "secondary" : {
+      "ok" : 46756.0,
+      "deduplicated" : 0.0,
+      "conflicts" : 0.0
+    }
+  }, {
+    "target" : "inmem/metrics=off",
+    "workload" : "append-type-and-tag",
+    "threads" : 1,
+    "mode" : "thrpt",
+    "score" : 0.34790241255631504,
+    "error" : 0.018086269373522562,
+    "unit" : "ops/ms",
+    "secondary" : {
+      "ok" : 13933.0,
+      "deduplicated" : 0.0,
+      "conflicts" : 0.0
+    }
+  }, {
+    "target" : "inmem/metrics=off",
+    "workload" : "append-multi-tag",
+    "threads" : 1,
+    "mode" : "thrpt",
+    "score" : 0.17547866315875607,
+    "error" : 0.002468501935078438,
+    "unit" : "ops/ms",
+    "secondary" : {
+      "ok" : 7048.0,
+      "deduplicated" : 0.0,
+      "conflicts" : 0.0
+    }
+  }, {
+    "target" : "inmem/metrics=off",
+    "workload" : "append-or-groups-2",
+    "threads" : 1,
+    "mode" : "thrpt",
+    "score" : 0.4750759227376121,
+    "error" : 0.010074748857399037,
+    "unit" : "ops/ms",
+    "secondary" : {
+      "ok" : 19015.0,
+      "deduplicated" : 0.0,
+      "conflicts" : 0.0
+    }
+  }, {
+    "target" : "inmem/metrics=off",
+    "workload" : "append-or-groups-3",
+    "threads" : 1,
+    "mode" : "thrpt",
+    "score" : 0.46026949249504173,
+    "error" : 0.009849128451145413,
+    "unit" : "ops/ms",
+    "secondary" : {
+      "ok" : 18423.0,
+      "deduplicated" : 0.0,
+      "conflicts" : 0.0
+    }
+  }, {
+    "target" : "inmem/metrics=off",
+    "workload" : "append-or-groups-4",
+    "threads" : 1,
+    "mode" : "thrpt",
+    "score" : 0.4562300897700534,
+    "error" : 0.00837070143199597,
+    "unit" : "ops/ms",
+    "secondary" : {
+      "ok" : 18262.0,
+      "deduplicated" : 0.0,
+      "conflicts" : 0.0
+    }
+  }, {
+    "target" : "inmem/metrics=off",
+    "workload" : "append-or-groups-5",
+    "threads" : 1,
+    "mode" : "thrpt",
+    "score" : 0.449411780542738,
+    "error" : 0.008803753081771443,
+    "unit" : "ops/ms",
+    "secondary" : {
+      "ok" : 17990.0,
+      "deduplicated" : 0.0,
+      "conflicts" : 0.0
+    }
+  }, {
+    "target" : "inmem/metrics=off",
+    "workload" : "append-or-groups-10",
+    "threads" : 1,
+    "mode" : "thrpt",
+    "score" : 0.4389472548906534,
+    "error" : 0.010271869870115989,
+    "unit" : "ops/ms",
+    "secondary" : {
+      "ok" : 17570.0,
+      "deduplicated" : 0.0,
+      "conflicts" : 0.0
+    }
+  }, {
+    "target" : "inmem/metrics=off",
+    "workload" : "append-empty-boundary",
+    "threads" : 1,
+    "mode" : "thrpt",
+    "score" : 0.109879377484015,
+    "error" : 0.003770535616942713,
+    "unit" : "ops/ms",
+    "secondary" : {
+      "ok" : 4408.0,
+      "deduplicated" : 0.0,
+      "conflicts" : 0.0
+    }
+  }, {
+    "target" : "inmem/metrics=off",
+    "workload" : "decide-then-append",
+    "threads" : 1,
+    "mode" : "thrpt",
+    "score" : 0.08948346903211221,
+    "error" : 0.001979858978089998,
+    "unit" : "ops/ms",
+    "secondary" : {
+      "ok" : 3590.0,
+      "deduplicated" : 0.0,
+      "conflicts" : 0.0
+    }
+  }, {
+    "target" : "postgres:external/metrics=off",
+    "workload" : "append-none",
+    "threads" : 1,
+    "mode" : "thrpt",
+    "score" : 3.669133349672903,
+    "error" : 0.04842298809494257,
+    "unit" : "ops/ms",
+    "secondary" : {
+      "ok" : 146786.0,
+      "deduplicated" : 0.0,
+      "conflicts" : 0.0
+    }
+  }, {
+    "target" : "postgres:external/metrics=off",
+    "workload" : "append-types",
+    "threads" : 1,
+    "mode" : "thrpt",
+    "score" : 3.244204705282865,
+    "error" : 0.0764763848985047,
+    "unit" : "ops/ms",
+    "secondary" : {
+      "ok" : 129786.0,
+      "deduplicated" : 0.0,
+      "conflicts" : 0.0
+    }
+  }, {
+    "target" : "postgres:external/metrics=off",
+    "workload" : "append-type-and-tag",
+    "threads" : 1,
+    "mode" : "thrpt",
+    "score" : 0.9669335471007316,
+    "error" : 0.009581514906582518,
+    "unit" : "ops/ms",
+    "secondary" : {
+      "ok" : 38827.0,
+      "deduplicated" : 0.0,
+      "conflicts" : 0.0
+    }
+  }, {
+    "target" : "postgres:external/metrics=off",
+    "workload" : "append-multi-tag",
+    "threads" : 1,
+    "mode" : "thrpt",
+    "score" : 0.9063224613246315,
+    "error" : 0.015423139281964576,
+    "unit" : "ops/ms",
+    "secondary" : {
+      "ok" : 36269.0,
+      "deduplicated" : 0.0,
+      "conflicts" : 0.0
+    }
+  }, {
+    "target" : "postgres:external/metrics=off",
+    "workload" : "append-or-groups-2",
+    "threads" : 1,
+    "mode" : "thrpt",
+    "score" : 0.07307064270835523,
+    "error" : 0.001600139567052544,
+    "unit" : "ops/ms",
+    "secondary" : {
+      "ok" : 2933.0,
+      "deduplicated" : 0.0,
+      "conflicts" : 0.0
+    }
+  }, {
+    "target" : "postgres:external/metrics=off",
+    "workload" : "append-or-groups-3",
+    "threads" : 1,
+    "mode" : "thrpt",
+    "score" : 0.06998489472838396,
+    "error" : 0.0016732342810907564,
+    "unit" : "ops/ms",
+    "secondary" : {
+      "ok" : 2813.0,
+      "deduplicated" : 0.0,
+      "conflicts" : 0.0
+    }
+  }, {
+    "target" : "postgres:external/metrics=off",
+    "workload" : "append-or-groups-4",
+    "threads" : 1,
+    "mode" : "thrpt",
+    "score" : 0.06520900890902231,
+    "error" : 0.0033041468646239237,
+    "unit" : "ops/ms",
+    "secondary" : {
+      "ok" : 2619.0,
+      "deduplicated" : 0.0,
+      "conflicts" : 0.0
+    }
+  }, {
+    "target" : "postgres:external/metrics=off",
+    "workload" : "append-or-groups-5",
+    "threads" : 1,
+    "mode" : "thrpt",
+    "score" : 0.06354468647666053,
+    "error" : 0.0019043507968962239,
+    "unit" : "ops/ms",
+    "secondary" : {
+      "ok" : 2553.0,
+      "deduplicated" : 0.0,
+      "conflicts" : 0.0
+    }
+  }, {
+    "target" : "postgres:external/metrics=off",
+    "workload" : "append-or-groups-10",
+    "threads" : 1,
+    "mode" : "thrpt",
+    "score" : 0.06362761111745897,
+    "error" : 0.002203437882148181,
+    "unit" : "ops/ms",
+    "secondary" : {
+      "ok" : 2554.0,
+      "deduplicated" : 0.0,
+      "conflicts" : 0.0
+    }
+  }, {
+    "target" : "postgres:external/metrics=off",
+    "workload" : "append-empty-boundary",
+    "threads" : 1,
+    "mode" : "thrpt",
+    "score" : 1.5645949830126855,
+    "error" : 0.03712515473915625,
+    "unit" : "ops/ms",
+    "secondary" : {
+      "ok" : 62601.0,
+      "deduplicated" : 0.0,
+      "conflicts" : 0.0
+    }
+  }, {
+    "target" : "postgres:external/metrics=off",
+    "workload" : "decide-then-append",
+    "threads" : 1,
+    "mode" : "thrpt",
+    "score" : 0.8321592759135056,
+    "error" : 0.015676211349350395,
+    "unit" : "ops/ms",
+    "secondary" : {
+      "ok" : 33359.0,
+      "deduplicated" : 0.0,
+      "conflicts" : 0.0
+    }
+  } ],
+  "load" : [ ],
+  "plans" : [ {
+    "shape" : "stream page (unfiltered, limit 500)",
+    "sql" : "SELECT event_position, event_tx::text, event_id, event_type, event_data, event_tags\nFROM bm_628labzk3k7h_events\nWHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())\n  AND stream_context = ? AND stream_purpose = ?\nORDER BY event_tx::xid8, event_position\nLIMIT 500",
+    "explain" : "Limit  (cost=0.42..179.46 rows=500 width=313) (actual time=0.022..0.170 rows=500.00 loops=1)\n  Buffers: shared hit=37\n  ->  Index Scan using bm_628labzk3k7h_idx_events_stream_position on bm_628labzk3k7h_events  (cost=0.42..19693.41 rows=54997 width=313) (actual time=0.021..0.144 rows=500.00 loops=1)\n        Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))\n        Index Searches: 1\n        Buffers: shared hit=37\nPlanning:\n  Buffers: shared hit=72\nPlanning Time: 0.332 ms\nExecution Time: 0.198 ms"
+  }, {
+    "shape" : "tag needle (~10 matches)",
+    "sql" : "SELECT event_position, event_tx::text, event_id, event_type, event_data, event_tags\nFROM bm_628labzk3k7h_events\nWHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())\n  AND stream_context = ? AND stream_purpose = ?\n  AND ((event_tags @> ARRAY[?]::text[]))\nORDER BY event_tx::xid8, event_position",
+    "explain" : "Sort  (cost=57.71..57.72 rows=7 width=313) (actual time=0.267..0.267 rows=10.00 loops=1)\n  Sort Key: event_tx, event_position\n  Sort Method: quicksort  Memory: 27kB\n  Buffers: shared hit=59\n  ->  Bitmap Heap Scan on bm_628labzk3k7h_events  (cost=30.24..57.61 rows=7 width=313) (actual time=0.233..0.254 rows=10.00 loops=1)\n        Recheck Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{campaign:needle}'::text[]))\n        Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))\n        Heap Blocks: exact=10\n        Buffers: shared hit=51\n        ->  Bitmap Index Scan on bm_628labzk3k7h_idx_events_stream_tags  (cost=0.00..30.24 rows=7 width=0) (actual time=0.224..0.224 rows=10.00 loops=1)\n              Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{campaign:needle}'::text[]))\n              Index Searches: 1\n              Buffers: shared hit=41\nPlanning:\n  Buffers: shared hit=12\nPlanning Time: 0.096 ms\nExecution Time: 0.302 ms"
+  }, {
+    "shape" : "tag swathe (~1% of the store)",
+    "sql" : "SELECT event_position, event_tx::text, event_id, event_type, event_data, event_tags\nFROM bm_628labzk3k7h_events\nWHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())\n  AND stream_context = ? AND stream_purpose = ?\n  AND ((event_tags @> ARRAY[?]::text[]))\nORDER BY event_tx::xid8, event_position\nLIMIT 500",
+    "explain" : "Limit  (cost=1604.31..1605.56 rows=500 width=313) (actual time=1.887..1.920 rows=500.00 loops=1)\n  Buffers: shared hit=1041\n  ->  Sort  (cost=1604.31..1605.68 rows=548 width=313) (actual time=1.886..1.898 rows=500.00 loops=1)\n        Sort Key: event_tx, event_position\n        Sort Method: quicksort  Memory: 442kB\n        Buffers: shared hit=1041\n        ->  Bitmap Heap Scan on bm_628labzk3k7h_events  (cost=33.08..1579.38 rows=548 width=313) (actual time=0.484..1.650 rows=1000.00 loops=1)\n              Recheck Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{campaign:swathe}'::text[]))\n              Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))\n              Heap Blocks: exact=1000\n              Buffers: shared hit=1041\n              ->  Bitmap Index Scan on bm_628labzk3k7h_idx_events_stream_tags  (cost=0.00..32.94 rows=548 width=0) (actual time=0.416..0.416 rows=1000.00 loops=1)\n                    Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{campaign:swathe}'::text[]))\n                    Index Searches: 1\n                    Buffers: shared hit=41\nPlanning:\n  Buffers: shared hit=3\nPlanning Time: 0.069 ms\nExecution Time: 1.950 ms"
+  }, {
+    "shape" : "one entity's whole history (hot)",
+    "sql" : "SELECT event_position, event_tx::text, event_id, event_type, event_data, event_tags\nFROM bm_628labzk3k7h_events\nWHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())\n  AND stream_context = ? AND stream_purpose = ?\n  AND ((event_tags @> ARRAY[?]::text[]))\nORDER BY event_tx::xid8, event_position",
+    "explain" : "Sort  (cost=4756.79..4766.16 rows=3749 width=313) (actual time=5.373..5.538 rows=6876.00 loops=1)\n  Sort Key: event_tx, event_position\n  Sort Method: quicksort  Memory: 1910kB\n  Buffers: shared hit=2026\n  ->  Bitmap Heap Scan on bm_628labzk3k7h_events  (cost=54.01..4534.24 rows=3749 width=313) (actual time=1.287..3.465 rows=6876.00 loops=1)\n        Recheck Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-000000}'::text[]))\n        Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))\n        Heap Blocks: exact=1982\n        Buffers: shared hit=2026\n        ->  Bitmap Index Scan on bm_628labzk3k7h_idx_events_stream_tags  (cost=0.00..53.07 rows=3749 width=0) (actual time=1.151..1.151 rows=6876.00 loops=1)\n              Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-000000}'::text[]))\n              Index Searches: 1\n              Buffers: shared hit=44\nPlanning:\n  Buffers: shared hit=3\nPlanning Time: 0.083 ms\nExecution Time: 5.825 ms"
+  }, {
+    "shape" : "most recent event, backwards limit 1",
+    "sql" : "SELECT event_position, event_tx::text, event_id, event_type, event_data, event_tags\nFROM bm_628labzk3k7h_events\nWHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())\n  AND stream_context = ? AND stream_purpose = ?\n  AND ((event_tags @> ARRAY[?]::text[]))\nORDER BY event_tx::xid8 DESC, event_position DESC\nLIMIT 1",
+    "explain" : "Limit  (cost=0.42..5.64 rows=1 width=313) (actual time=0.021..0.021 rows=1.00 loops=1)\n  Buffers: shared hit=5\n  ->  Index Scan Backward using bm_628labzk3k7h_idx_events_stream_position on bm_628labzk3k7h_events  (cost=0.42..19574.66 rows=3749 width=313) (actual time=0.020..0.020 rows=1.00 loops=1)\n        Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))\n        Filter: (event_tags @> '{sku:SKU-000000}'::text[])\n        Rows Removed by Filter: 20\n        Index Searches: 1\n        Buffers: shared hit=5\nPlanning:\n  Buffers: shared hit=11\nPlanning Time: 0.138 ms\nExecution Time: 0.030 ms"
+  }, {
+    "shape" : "cursor page from the midpoint (limit 500)",
+    "sql" : "SELECT event_position, event_tx::text, event_id, event_type, event_data, event_tags\nFROM bm_628labzk3k7h_events\nWHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())\n  AND (event_tx, event_position) > (?::xid8, ?::bigint)\n  AND stream_context = ? AND stream_purpose = ?\nORDER BY event_tx::xid8, event_position\nLIMIT 500",
+    "explain" : "Limit  (cost=0.42..235.89 rows=500 width=313) (actual time=0.011..0.141 rows=500.00 loops=1)\n  Buffers: shared hit=34\n  ->  Index Scan using bm_628labzk3k7h_idx_events_stream_position on bm_628labzk3k7h_events  (cost=0.42..18724.22 rows=39759 width=313) (actual time=0.010..0.118 rows=500.00 loops=1)\n        Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())) AND (ROW(event_tx, event_position) > ROW('786'::xid8, '27500'::bigint)))\n        Index Searches: 1\n        Buffers: shared hit=34\nPlanning:\n  Buffers: shared hit=14\nPlanning Time: 0.097 ms\nExecution Time: 0.171 ms"
+  }, {
+    "shape" : "DCB check: event types only, no tag (append-types) -- boundary 2,000 events back",
+    "sql" : "SELECT 1\nFROM bm_628labzk3k7h_events\nWHERE stream_context = ? AND stream_purpose = ?\n  AND ( event_type IN ('StockReserved','StockPicked') )\n  AND (event_tx, event_position) > (?::xid8, ?::bigint)\nLIMIT 1",
+    "explain" : "Limit  (cost=0.42..0.50 rows=1 width=4) (actual time=0.040..0.041 rows=1.00 loops=1)\n  Buffers: shared hit=4\n  ->  Index Only Scan using bm_628labzk3k7h_idx_events_stream_type_position on bm_628labzk3k7h_events  (cost=0.42..803.92 rows=10043 width=4) (actual time=0.039..0.039 rows=1.00 loops=1)\n        Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_type = ANY ('{StockReserved,StockPicked}'::text[])) AND (ROW(event_tx, event_position) > ROW('799'::xid8, '53000'::bigint)))\n        Heap Fetches: 0\n        Index Searches: 1\n        Buffers: shared hit=4\nPlanning:\n  Buffers: shared hit=2\nPlanning Time: 0.167 ms\nExecution Time: 0.059 ms"
+  }, {
+    "shape" : "DCB check: four types scoped to one SKU (append-type-and-tag) -- boundary 2,000 events back",
+    "sql" : "SELECT 1\nFROM bm_628labzk3k7h_events\nWHERE stream_context = ? AND stream_purpose = ?\n  AND ( ( event_type IN ('StockReceived','StockReserved','StockReleased','StockPicked') AND event_tags @> ARRAY['sku:SKU-000000']::text[] ) )\n  AND (event_tx, event_position) > (?::xid8, ?::bigint)\nLIMIT 1",
+    "explain" : "Limit  (cost=0.00..7.71 rows=1 width=4) (actual time=0.088..0.088 rows=1.00 loops=1)\n  Buffers: shared hit=10\n  ->  Seq Scan on bm_628labzk3k7h_events  (cost=0.00..7084.00 rows=919 width=4) (actual time=0.088..0.088 rows=1.00 loops=1)\n        Filter: ((event_tags @> '{sku:SKU-000000}'::text[]) AND (stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_type = ANY ('{StockReceived,StockReserved,StockReleased,StockPicked}'::text[])) AND (ROW(event_tx, event_position) > ROW('799'::xid8, '53000'::bigint)))\n        Rows Removed by Filter: 241\n        Buffers: shared hit=10\nPlanning:\n  Buffers: shared hit=3\nPlanning Time: 0.118 ms\nExecution Time: 0.098 ms"
+  }, {
+    "shape" : "DCB check: one item carrying three AND-ed tags (append-multi-tag) -- boundary 2,000 events back",
+    "sql" : "SELECT 1\nFROM bm_628labzk3k7h_events\nWHERE stream_context = ? AND stream_purpose = ?\n  AND ( ( event_type IN ('StockReceived','StockReserved','StockReleased','StockPicked') AND event_tags @> ARRAY['sku:SKU-000000','channel:web','warehouse:WH-1']::text[] ) )\n  AND (event_tx, event_position) > (?::xid8, ?::bigint)\nLIMIT 1",
+    "explain" : "Limit  (cost=49.67..61.83 rows=1 width=4) (actual time=1.933..1.933 rows=1.00 loops=1)\n  Buffers: shared hit=72\n  ->  Bitmap Heap Scan on bm_628labzk3k7h_events  (cost=49.67..1277.94 rows=101 width=4) (actual time=1.932..1.932 rows=1.00 loops=1)\n        Recheck Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-000000,channel:web,warehouse:WH-1}'::text[]))\n        Filter: ((event_type = ANY ('{StockReceived,StockReserved,StockReleased,StockPicked}'::text[])) AND (ROW(event_tx, event_position) > ROW('799'::xid8, '53000'::bigint)))\n        Rows Removed by Filter: 2\n        Heap Blocks: exact=3\n        Buffers: shared hit=72\n        ->  Bitmap Index Scan on bm_628labzk3k7h_idx_events_stream_tags  (cost=0.00..49.64 rows=411 width=0) (actual time=1.885..1.885 rows=705.00 loops=1)\n              Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-000000,channel:web,warehouse:WH-1}'::text[]))\n              Index Searches: 1\n              Buffers: shared hit=68\nPlanning:\n  Buffers: shared hit=3\nPlanning Time: 0.135 ms\nExecution Time: 1.950 ms"
+  }, {
+    "shape" : "DCB check: 2 OR-ed filter items (append-or-groups-2) -- boundary 2,000 events back",
+    "sql" : "SELECT 1\nFROM bm_628labzk3k7h_events\nWHERE stream_context = ? AND stream_purpose = ?\n  AND ( ( event_type IN ('StockReceived','StockReserved','StockReleased','StockPicked') AND event_tags @> ARRAY['sku:SKU-000000']::text[] ) OR ( event_type IN ('StockReceived','StockReserved','StockReleased','StockPicked') AND event_tags @> ARRAY['sku:SKU-000251']::text[] ) )\n  AND (event_tx, event_position) > (?::xid8, ?::bigint)\nLIMIT 1",
+    "explain" : "Limit  (cost=0.00..7.96 rows=1 width=4) (actual time=0.091..0.092 rows=1.00 loops=1)\n  Buffers: shared hit=10\n  ->  Seq Scan on bm_628labzk3k7h_events  (cost=0.00..7334.00 rows=921 width=4) (actual time=0.091..0.091 rows=1.00 loops=1)\n        Filter: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_type = ANY ('{StockReceived,StockReserved,StockReleased,StockPicked}'::text[])) AND ((event_tags @> '{sku:SKU-000000}'::text[]) OR (event_tags @> '{sku:SKU-000251}'::text[])) AND (ROW(event_tx, event_position) > ROW('799'::xid8, '53000'::bigint)))\n        Rows Removed by Filter: 241\n        Buffers: shared hit=10\nPlanning:\n  Buffers: shared hit=6\nPlanning Time: 0.115 ms\nExecution Time: 0.100 ms"
+  }, {
+    "shape" : "DCB check: 5 OR-ed filter items (append-or-groups-5) -- boundary 2,000 events back",
+    "sql" : "SELECT 1\nFROM bm_628labzk3k7h_events\nWHERE stream_context = ? AND stream_purpose = ?\n  AND ( ( event_type IN ('StockReceived','StockReserved','StockReleased','StockPicked') AND event_tags @> ARRAY['sku:SKU-000000']::text[] ) OR ( event_type IN ('StockReceived','StockReserved','StockReleased','StockPicked') AND event_tags @> ARRAY['sku:SKU-000251']::text[] ) OR ( event_type IN ('StockReceived','StockReserved','StockReleased','StockPicked') AND event_tags @> ARRAY['sku:SKU-000252']::text[] ) OR ( event_type IN ('StockReceived','StockReserved','StockReleased','StockPicked') AND event_tags @> ARRAY['sku:SKU-000253']::text[] ) OR ( event_type IN ('StockReceived','StockReserved','StockReleased','StockPicked') AND event_tags @> ARRAY['sku:SKU-000254']::text[] ) )\n  AND (event_tx, event_position) > (?::xid8, ?::bigint)\nLIMIT 1",
+    "explain" : "Limit  (cost=0.00..8.71 rows=1 width=4) (actual time=0.028..0.028 rows=1.00 loops=1)\n  Buffers: shared hit=10\n  ->  Seq Scan on bm_628labzk3k7h_events  (cost=0.00..8084.00 rows=928 width=4) (actual time=0.028..0.028 rows=1.00 loops=1)\n        Filter: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_type = ANY ('{StockReceived,StockReserved,StockReleased,StockPicked}'::text[])) AND (ROW(event_tx, event_position) > ROW('799'::xid8, '53000'::bigint)) AND ((event_tags @> '{sku:SKU-000000}'::text[]) OR (event_tags @> '{sku:SKU-000251}'::text[]) OR (event_tags @> '{sku:SKU-000252}'::text[]) OR (event_tags @> '{sku:SKU-000253}'::text[]) OR (event_tags @> '{sku:SKU-000254}'::text[])))\n        Rows Removed by Filter: 241\n        Buffers: shared hit=10\nPlanning:\n  Buffers: shared hit=12\nPlanning Time: 0.091 ms\nExecution Time: 0.033 ms"
+  }, {
+    "shape" : "DCB check: 10 OR-ed filter items (append-or-groups-10) -- boundary 2,000 events back",
+    "sql" : "SELECT 1\nFROM bm_628labzk3k7h_events\nWHERE stream_context = ? AND stream_purpose = ?\n  AND ( ( event_type IN ('StockReceived','StockReserved','StockReleased','StockPicked') AND event_tags @> ARRAY['sku:SKU-000000']::text[] ) OR ( event_type IN ('StockReceived','StockReserved','StockReleased','StockPicked') AND event_tags @> ARRAY['sku:SKU-000251']::text[] ) OR ( event_type IN ('StockReceived','StockReserved','StockReleased','StockPicked') AND event_tags @> ARRAY['sku:SKU-000252']::text[] ) OR ( event_type IN ('StockReceived','StockReserved','StockReleased','StockPicked') AND event_tags @> ARRAY['sku:SKU-000253']::text[] ) OR ( event_type IN ('StockReceived','StockReserved','StockReleased','StockPicked') AND event_tags @> ARRAY['sku:SKU-000254']::text[] ) OR ( event_type IN ('StockReceived','StockReserved','StockReleased','StockPicked') AND event_tags @> ARRAY['sku:SKU-000255']::text[] ) OR ( event_type IN ('StockReceived','StockReserved','StockReleased','StockPicked') AND event_tags @> ARRAY['sku:SKU-000256']::text[] ) OR ( event_type IN ('StockReceived','StockReserved','StockReleased','StockPicked') AND event_tags @> ARRAY['sku:SKU-000257']::text[] ) OR ( event_type IN ('StockReceived','StockReserved','StockReleased','StockPicked') AND event_tags @> ARRAY['sku:SKU-000258']::text[] ) OR ( event_type IN ('StockReceived','StockReserved','StockReleased','StockPicked') AND event_tags @> ARRAY['sku:SKU-000259']::text[] ) )\n  AND (event_tx, event_position) > (?::xid8, ?::bigint)\nLIMIT 1",
+    "explain" : "Limit  (cost=0.00..9.94 rows=1 width=4) (actual time=0.027..0.028 rows=1.00 loops=1)\n  Buffers: shared hit=10\n  ->  Seq Scan on bm_628labzk3k7h_events  (cost=0.00..9334.00 rows=939 width=4) (actual time=0.027..0.027 rows=1.00 loops=1)\n        Filter: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_type = ANY ('{StockReceived,StockReserved,StockReleased,StockPicked}'::text[])) AND (ROW(event_tx, event_position) > ROW('799'::xid8, '53000'::bigint)) AND ((event_tags @> '{sku:SKU-000000}'::text[]) OR (event_tags @> '{sku:SKU-000251}'::text[]) OR (event_tags @> '{sku:SKU-000252}'::text[]) OR (event_tags @> '{sku:SKU-000253}'::text[]) OR (event_tags @> '{sku:SKU-000254}'::text[]) OR (event_tags @> '{sku:SKU-000255}'::text[]) OR (event_tags @> '{sku:SKU-000256}'::text[]) OR (event_tags @> '{sku:SKU-000257}'::text[]) OR (event_tags @> '{sku:SKU-000258}'::text[]) OR (event_tags @> '{sku:SKU-000259}'::text[])))\n        Rows Removed by Filter: 241\n        Buffers: shared hit=10\nPlanning:\n  Buffers: shared hit=22\nPlanning Time: 0.113 ms\nExecution Time: 0.031 ms"
+  } ],
+  "sound" : true
+}

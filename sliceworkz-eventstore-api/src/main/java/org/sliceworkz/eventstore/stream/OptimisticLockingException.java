@@ -121,8 +121,28 @@ import org.sliceworkz.eventstore.query.EventFilter;
  */
 public class OptimisticLockingException extends RuntimeException {
 
-	private final EventFilter filter;
-    private final Optional<EventReference> expectedLastEventReference;
+	private static final long serialVersionUID = 1L;
+
+	/**
+	 * The filter is {@code transient}; the reference is held unwrapped and is not.
+	 * <p>
+	 * A {@code Throwable} is {@code Serializable}, so every field it holds has to be -- and neither
+	 * {@link EventFilter} nor {@link Optional} is. That made this exception, the most common failure the
+	 * library raises, unserializable: anything pushing a throwable across a process boundary (a forked
+	 * test or benchmark harness, a remote invocation, a distributed job runner) reported a
+	 * {@code NotSerializableException} instead, so the real failure was replaced by a complaint about
+	 * how it was being transported.
+	 * <p>
+	 * The two fields are treated differently because they are different kinds of thing.
+	 * {@link EventReference} is a portable value and is serializable, so it is kept -- and holding it
+	 * unwrapped rather than as an {@code Optional} is what lets
+	 * {@link #getExpectedLastEventReference()} keep its documented "never null" contract on the far
+	 * side, reading {@code Optional.empty()} rather than {@code null}. A filter is a query shape over a
+	 * graph of six further types, wanted by nobody across a boundary, so it is dropped rather than
+	 * dragging that whole graph into a serialization commitment. The message already names it in text.
+	 */
+	private final transient EventFilter filter;
+	private final EventReference expectedLastEventReference;
 
     /**
      * Constructs a new OptimisticLockingException with the filter and expected reference that failed.
@@ -146,7 +166,8 @@ public class OptimisticLockingException extends RuntimeException {
 	    		            "Optimistic locking failed. Empty EventStream expected and Events found for EventFilter: %s".formatted(filter)
         );
         this.filter = filter;
-        this.expectedLastEventReference = expectedLastEventReference;
+        this.expectedLastEventReference =
+        		expectedLastEventReference == null ? null : expectedLastEventReference.orElse(null);
     }
 
     /**
@@ -155,7 +176,8 @@ public class OptimisticLockingException extends RuntimeException {
      * This filter defines which events were considered relevant for the business decision.
      * It can be used to re-query the stream and retry the operation with fresh data.
      *
-     * @return the EventFilter from the AppendCriteria, never null
+     * @return the EventFilter from the AppendCriteria, never null -- except on an instance that has
+     *         been deserialized, where it is null because the filter is not itself serializable
      */
 	public EventFilter getFilter() {
 		return filter;
@@ -170,10 +192,11 @@ public class OptimisticLockingException extends RuntimeException {
 	 * The actual stream contained new matching events after this reference (or any events if empty),
 	 * causing the optimistic locking check to fail.
 	 *
-	 * @return Optional containing the expected last EventReference, or empty if no events were expected
+	 * @return Optional containing the expected last EventReference, or empty if no events were expected;
+	 *         never null, including on a deserialized instance
 	 */
 	public Optional<EventReference> getExpectedLastEventReference() {
-		return expectedLastEventReference;
+		return Optional.ofNullable(expectedLastEventReference);
 	}
 
 }

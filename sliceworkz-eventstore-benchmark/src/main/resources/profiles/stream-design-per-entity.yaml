@@ -1,0 +1,58 @@
+name: stream-design-per-entity
+description: >
+  One stream per entity, the purpose being the entity id. The other half of the shootout: identical
+  to stream-design-tagged in volume, payload, entity count, seed, workloads and targets, differing in
+  the one property under test.
+
+  Here the btree (context, purpose, tx, position) prefix is highly selective and GIN is barely used,
+  and conditional appends to different entities take different advisory locks. The costs are on the
+  other side: two thousand distinct purposes, which is past the default meter cap of one thousand --
+  metrics are off in these targets, and metrics-cost is where that bill is measured rather than
+  assumed.
+
+  Read it together with the addressing pairs. query-by-entity-* and query-last-event address an
+  entity by tag, which under this design means a wildcard purpose -- and stream_purpose is the second
+  column of both indexes, so leaving it unbound costs an ordered read its start condition. The
+  query-by-stream-* and query-last-event-by-stream siblings address the same entity through its own
+  stream, which is what an application that chose this design would do. The gap between a pair is the
+  cost of the addressing; the gap between the two profiles on the same workload is the cost of the
+  design. Conflating them understates this profile on exactly the reads it exists for.
+
+  query-stream-page has no sibling on purpose: reading a context in order genuinely is a cross-entity
+  read here, so the wildcard is the question rather than an artefact of how it is asked.
+
+corpus:
+  volume: 100000
+  streamDesign: PER_ENTITY
+  composition: CLEAN
+  payload: REALISTIC
+  entityCount: 2000
+  seed: 20260823
+
+targets:
+  - backend: INMEM
+    metrics: OFF
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: OFF
+
+jmh:
+  workloads:
+    - query-by-entity-hot
+    - query-by-entity-cold
+    - query-by-stream-hot
+    - query-by-stream-cold
+    - query-by-tag-needle
+    - query-by-tag-swathe
+    - query-last-event
+    - query-last-event-by-stream
+    - query-stream-page
+    - append-none
+    - append-type-and-tag
+    - decide-then-append
+  threads: [ 1, 8 ]
+  forks: 2
+  warmupIterations: 2
+  measurementIterations: 3
+  iterationSeconds: 5

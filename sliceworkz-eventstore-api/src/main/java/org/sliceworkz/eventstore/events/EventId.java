@@ -46,7 +46,10 @@ import java.util.UUID;
  * @see EventReference
  * @see Event
  */
-public record EventId ( String value ) {
+public record EventId ( String value ) implements java.io.Serializable {
+
+	/** Serializable because {@link EventReference} holds one; see that type for the reasoning. */
+	private static final long serialVersionUID = 1L;
 
 	/**
 	 * Constructs an EventId with validation.

@@ -45,6 +45,10 @@
 		<testcontainers.postgresql.version>2.0.5</testcontainers.postgresql.version>
 	    <awaitility.version>4.3.0</awaitility.version>
 
+		<!-- benchmark suite only (sliceworkz-eventstore-benchmark) -->
+		<jmh.version>1.37</jmh.version>
+		<hdrhistogram.version>2.2.2</hdrhistogram.version>
+
 		<maven.maven-surefire-plugin.version>3.5.6</maven.maven-surefire-plugin.version>
 		<maven.maven-compiler-plugin.version>3.15.0</maven.maven-compiler-plugin.version>
 		<maven.maven-source-plugin.version>3.4.0</maven.maven-source-plugin.version>
@@ -102,6 +106,32 @@
 			    <artifactId>awaitility</artifactId>
 			    <version>${awaitility.version}</version>
 			    <scope>test</scope>
+			</dependency>
+
+			<!-- Jackson YAML, for the benchmark suite's profile files -->
+			<dependency>
+			    <groupId>tools.jackson.dataformat</groupId>
+			    <artifactId>jackson-dataformat-yaml</artifactId>
+			    <version>${jackson.version}</version>
+			</dependency>
+
+			<!-- JMH: the benchmark suite's measurement harness -->
+			<dependency>
+			    <groupId>org.openjdk.jmh</groupId>
+			    <artifactId>jmh-core</artifactId>
+			    <version>${jmh.version}</version>
+			</dependency>
+			<dependency>
+			    <groupId>org.openjdk.jmh</groupId>
+			    <artifactId>jmh-generator-annprocess</artifactId>
+			    <version>${jmh.version}</version>
+			</dependency>
+
+			<!-- HdrHistogram: latency recording in the benchmark load runner -->
+			<dependency>
+			    <groupId>org.hdrhistogram</groupId>
+			    <artifactId>HdrHistogram</artifactId>
+			    <version>${hdrhistogram.version}</version>
 			</dependency>
 
 			<!-- PostgreSQL -->

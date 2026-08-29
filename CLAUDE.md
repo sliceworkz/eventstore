@@ -1213,6 +1213,53 @@ early.
 - The in-memory backends stay the right thing for tests and for the TCK. They are a correctness
   substitute, never a performance one.
 
+### What five other domains in the same table cost
+
+`crowded-store` is `read-shapes` over a store holding five further bounded contexts at five times
+the volume — 100.000 events under test inside a 600.000-event table. **Ten of the twelve read
+shapes do not move at all** (0.93–1.18× against the control, inside the run-to-run band). Two
+collapse, and the captured plans say why in a way the throughputs alone would not.
+
+**A tag's selectivity is a property of the table, not of your context.** `idx_events_tags` is not
+stream-scoped, so a bitmap scan on it returns every context's events carrying that tag and the
+stream scoping only prunes afterwards. `sku:SKU-000000` identifies **6.876** events in `inventory`
+and **40.227** in the crowded table, because catalog, payments and shipping tag their events with
+`sku:` too — realistically, since those events really are about a SKU.
+
+**That flips `query-by-or-groups` from a limit-bounded plan to a full-materialisation one**, which
+is the whole 5.4× (0.347 → 0.064 ops/ms):
+
+| | `read-shapes` | `crowded-store` |
+|---|---|---|
+| plan | ordered index scan on `idx_events_stream_position`, OR as a `Filter` | `BitmapOr` of five `BitmapAnd`s over `idx_events_tags` + `idx_events_stream_type_position` |
+| rows touched to return 500 | 2.196 discarded | **11.122 materialised** |
+| buffers | 129 | **4.139** |
+| server time | 1.7 ms | 15.4 ms |
+
+The first plan walks the stream in order and stops when the limit fills; the second computes the
+whole bitmap union and then top-N sorts it. **`EventQuery.limit(n)` only bounds work while the plan
+is one the limit can stop early**, and which plan that is depends on what else is in the table.
+
+**The savepoint probe survived, and its bad plan got much worse.** `query-last-event`'s custom plan
+is unchanged — index scan backward, 6 buffers, 0.029ms — and the server still keeps it, so the
+measurement is unharmed (14.819 against the control's 13.489). But its *generic* plan now pulls
+those same 40.227 rows through the bare tag index: 239 buffers and 4.43ms, against 231 buffers and
+1.007ms uncrowded. The gap between the plan PostgreSQL picks and the one it might pick widens from
+**30× to 153×** — so crowding a table does not slow the most common DCB read down, it enlarges the
+blast radius of a statistics change that would.
+
+**A wildcard read costs the size of the table, confirmed.** 0.051 → 0.013 ops/ms (19.6 → 76.9
+ms/op) for a 6× bigger table: parallel sequential scan over all 600.000 rows, 23.731 buffers, and
+JIT compilation on top. Sub-linear only because two parallel workers absorb some of it.
+
+**The caveat that keeps this honest: the noise is written as contiguous blocks after the context
+under test** (`CorpusGenerator` generates inventory, then sales, then each noise context in turn),
+so `inventory`'s heap pages and its range of every stream-scoped index are untouched — the hot
+entity reads 1.998 heap blocks in both corpora, identically. A real store accumulating six domains
+over time would interleave them, adding heap scatter and index bloat *within* the range this
+corpus leaves pristine. So read the ten unchanged workloads as "sharing a table costs nothing that
+a stream-scoped index can prune", not as "sharing a table is free".
+
 ### Choosing a stream design: one stream per context, or one per entity
 
 The question every application author has to answer first — a stream per bounded context with

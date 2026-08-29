@@ -105,6 +105,7 @@ public record RunManifest (
 	 */
 	public boolean comparableTo ( RunManifest other ) {
 		return other != null
+				&& profileName.equals(other.profileName)
 				&& corpusFingerprint.equals(other.corpusFingerprint)
 				&& targets.equals(other.targets)
 				&& environment.comparableTo(other.environment);
@@ -113,6 +114,15 @@ public record RunManifest (
 	/** Everything that differs from another manifest, for explaining a refusal to compare. */
 	public List<String> differencesFrom ( RunManifest other ) {
 		List<String> differences = new java.util.ArrayList<>();
+		if ( !profileName.equals(other.profileName) ) {
+			// The corpus and targets are the visible half of a configuration; the profile carries the
+			// rest -- collision mode, thread sweep, iteration counts. The three write-contention
+			// profiles share one corpus, one target list and one machine and differ in nothing but the
+			// collision mode, so without this line a baseline diff between them reported the fourfold
+			// contention gap as a store regression.
+			differences.add(("profile: %s vs %s -- a baseline diff is the same question asked twice; for two "
+					+ "different profiles use `compare`").formatted(profileName, other.profileName));
+		}
 		if ( !corpusFingerprint.equals(other.corpusFingerprint) ) {
 			differences.add("corpus: %s vs %s".formatted(corpusFingerprint, other.corpusFingerprint));
 		}

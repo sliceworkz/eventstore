@@ -227,7 +227,6 @@ public final class LoadRunner {
 				parkUntil(dueAt);
 			}
 			long startedAt = paced ? dueAt : System.nanoTime();
-			long invokedAt = System.nanoTime();
 
 			try {
 				Object result = workload.invoke(context);
@@ -239,7 +238,10 @@ public final class LoadRunner {
 				}
 				counters.classify(result, writer, recording);
 				if ( writer ) {
-					probe.appended(result, invokedAt);
+					// timed from the append *returning*, which is what the probe documents: notify is
+					// pure delivery. Handing it the invoke time instead folded the append's own service
+					// time -- a whole Postgres commit -- into a number defined as containing none of it.
+					probe.appended(result, finishedAt);
 				}
 			} catch ( RuntimeException e ) {
 				if ( System.nanoTime() >= recordingFrom.get() ) {

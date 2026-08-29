@@ -6,10 +6,12 @@ description: >
   subtraction between them is what the projection costs. Split across two runs the same two numbers
   would sit in different reports, measured minutes apart, and the subtraction would be a guess.
 
-  Both are offered at a fixed rate rather than saturating, and latency is recorded against the
-  intended start time. Under saturation a store that falls behind reports the queueing delay as
+  Both are offered at a fixed rate rather than saturating, and the service time is recorded against
+  the intended start time. Under saturation a store that falls behind reports the queueing delay as
   someone else's problem and its own service times look excellent -- which is exactly the number a
-  latency benchmark must not produce.
+  latency benchmark must not produce. The delivery latencies are timed from the append returning, so
+  they carry none of the append's own service time: they answer "how long until someone else saw
+  it", and the schedule correction belongs to the service time alone.
 
   This is a load profile with no jmh section: these paths need a store that is growing and a live
   subscription, neither of which survives JMH's restore-between-iterations discipline.

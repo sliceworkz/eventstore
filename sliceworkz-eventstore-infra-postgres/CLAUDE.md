@@ -74,8 +74,8 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     A conditional append's `NOT EXISTS` carries the same boundary, and under the expansion the *generic*
     plan for the canonical `type + tag` check was a whole-table sequential scan (19.5ms, 100.008 rows
     discarded for a row that is not there); with the row comparison it is an index scan (0.23ms). An
-    or-groups cliff remains at two and three facts — that one is the tag disjunction, not the cursor —
-    but it no longer extends past it; see the plan-cache section below for the measured curve.
+    or-groups cliff remains from two facts up — that one is the tag disjunction, not the cursor —
+    and whether it extends past three varies run to run; see the plan-cache section below.
   - **There is no setting for this, deliberately.** The two spellings are semantically identical, so no
     deployment can want the slower one, and a knob whose right value is the same everywhere is an
     unmade decision left in the code. `PostgresCursorBoundaryTest` guards it per backend (16, 17, 18):
@@ -226,15 +226,29 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
 
     ops/ms, higher is better. What that says:
 
-    - **The cliff is a narrow band at two and three OR-ed facts, not a threshold.** There the server
+    - **The cliff begins at two OR-ed facts, and at two and three it is robust.** There the server
       adopts a generic plan that sequential-scans the whole events table — `Rows Removed by Filter:
       100044`, for a row that is not there — and a conditional append costs ~15ms instead of ~1.4ms.
       Nothing is logged and no meter moves. This is the case `PER_APPEND` exists for, and it is worth
-      9–11× where it applies.
-    - **The curve then recovers, which is why "three or more" would be the wrong rule.** At five and
-      ten facts the generic plan is no longer a sequential scan but a cursor-driven index scan, so the
-      default is already an order of magnitude faster than at three and `PER_APPEND` has nothing left
-      to rescue — it costs 0.68× at five and buys nothing at ten. A wider filter is not a worse plan.
+      9–15× where it applies.
+    - **Past three facts both regimes are real, and which one a run lands in is decided by the
+      statistics, not by the width.** In the table above — and in the first `dcb-cost-curve-ext` run
+      on a real server (0.583 / 0.623 / 0.534 ops/ms at four, five and ten) — the generic plan at
+      wide widths was a cursor-driven index scan, the default already an order of magnitude faster
+      than at three, and `PER_APPEND` had nothing to rescue (0.68× at five). The **second** run of
+      the same profile, corpus, server and settings landed the other way: flat on the
+      sequential-scan floor from two facts through ten (0.073 → 0.064 ops/ms against 0.967 at one,
+      13–15×), every width internally stable at 2–5% relative error, and the baseline comparator
+      flagged four, five and ten at −89% against the first run. The generic-vs-custom estimated-cost
+      comparison at those widths sits close enough to the crossover that the tag statistics
+      `ANALYZE` samples — re-taken on every corpus restore, and by autovacuum in production —
+      decide the side, and the adopted plan then persists for the life of the cached statement. So
+      read "the curve recovers" as one of two stable regimes rather than the shape of the curve:
+      from two facts up the generic plan is *at risk* at every width; in the cliffed regime
+      `PER_APPEND` pays its 9–15× everywhere, and its 0.68× cost at five facts belongs to the
+      recovered regime only. The committed `results/0.11.0-SNAPSHOT/dcb-cost-curve-ext/` run is the
+      cliffed regime — a later re-run landing on the fast side will baseline-diff as a large
+      improvement that is regime, not progress.
     - **A types-only filter is now *harmed* by it, 2.4×.** That reverses what the small corpus says
       (1.49× in `PER_APPEND`'s favour there) and it is the row-comparison cursor boundary that did it:
       the generic plan for that shape became an index-only scan, so per-append planning pays

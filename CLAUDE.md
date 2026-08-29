@@ -1148,7 +1148,8 @@ each figure as Testcontainers-on-a-developer-machine unless the module file says
   land within ~1% — so their cost is the heap and scrape size described in the metrics section above.
 - The DCB check's plan-cache cliff and its remedy are summarised under PostgreSQL below; the
   `dcb-cost-curve` profile measures the curve, reproduced on a real server in
-  `results/0.11.0-SNAPSHOT/dcb-cost-curve-ext/`.
+  `results/0.11.0-SNAPSHOT/dcb-cost-curve-ext/` — the committed run shows the fully cliffed regime,
+  every width past one fact on the floor; the postgres module's notes record both regimes.
 
 ## Naming Conventions
 
@@ -1302,9 +1303,11 @@ that bind everywhere:
   The diagnosis query and monitoring guidance are in the module file; do not "fix" this by bounding
   the barrier.
 - **The DCB check is a re-used prepared statement, and PostgreSQL's generic-plan choice can fall off
-  a cliff at two-to-three OR-ed facts** (~10× there, recovering at wider filters, absent on small
-  stores). `conditionalAppendPlanning(PER_APPEND)` is the remedy for a store *observed* to have
-  flipped — it costs 2.4× on a types-only filter, so never turn it on blind.
+  a cliff from two OR-ed facts up** (~10–15×, absent on small stores). The flip is robust at two and
+  three facts and *bistable across runs* at wider ones — the two `dcb-cost-curve-ext` runs on one
+  server landed widths four-plus on opposite sides, the sampled statistics deciding which.
+  `conditionalAppendPlanning(PER_APPEND)` is the remedy for a store *observed* to have flipped — it
+  costs 2.4× on a types-only filter, so never turn it on blind.
 - **Oldest supported PostgreSQL is 16**, and the `btree_gin` extension is required — creating it
   needs `CREATE` on the *database*, not the schema; a DBA installing it once is the recommended
   split, and an unprivileged role then starts against it silently.

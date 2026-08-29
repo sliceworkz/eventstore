@@ -277,6 +277,14 @@ Each run writes `report.json` (the record) and `report.md` (a rendering of it) b
   facts: at two the server keeps a `BitmapOr` over the tag index (1.5ms/op), and at three it adopts
   a generic plan that sequentially scans all 100.000 rows for a row that is not there (17ms/op),
   and stays there at four, five and ten. An eleven-fold cliff, from one more fact in the decision.
+
+  Where the flip lands past three facts is not stable across runs, and the two published
+  `dcb-cost-curve-ext` runs prove it: same profile, corpus, server and settings, and widths four to
+  ten came out on opposite sides — one run recovered to an index-scan generic plan, the other sat
+  flat on the sequential-scan floor from two facts up, each internally stable. The estimated-cost
+  comparison at those widths is close enough to the crossover that the statistics `ANALYZE` happens
+  to sample decide the side. Treat any width past one fact as at risk rather than reading the band
+  as fixed; the postgres module's `CLAUDE.md` records both regimes.
 - **Load results carry correctness checks**, and a run that fails one is reported as unsound. Events
   in must equal events out; nothing may be projected twice.
 

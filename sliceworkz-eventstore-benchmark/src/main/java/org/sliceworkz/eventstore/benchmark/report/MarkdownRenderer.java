@@ -117,6 +117,13 @@ final class MarkdownRenderer {
 		out.append("| composition | %s |\n".formatted(report.manifest().corpus().composition()));
 		out.append("| payload | %s |\n".formatted(report.manifest().corpus().payload()));
 		out.append("| entities | %,d |\n".formatted(report.manifest().corpus().entityCount()));
+		// Named because its absence is what made crowded-database report a finding it had not measured:
+		// the composition said MULTI_STORE, nothing built the neighbours, and the report repeated the
+		// claim. The provisioner verifies their row counts now, so this line describes what exists.
+		if ( !report.manifest().corpus().neighbourVolumes().isEmpty() ) {
+			out.append("| neighbour stores | %s |\n".formatted(report.manifest().corpus().neighbourVolumes()
+					.stream().map("%,d events"::formatted).reduce(( a, b ) -> a + ", " + b).orElse("none")));
+		}
 
 		if ( facts != null ) {
 			out.append("| hot entity | `%s`, %,d events |\n".formatted(

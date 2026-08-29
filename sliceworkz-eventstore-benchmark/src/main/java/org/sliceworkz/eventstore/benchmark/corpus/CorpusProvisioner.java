@@ -156,6 +156,10 @@ public final class CorpusProvisioner {
 		ManifestStore manifests = new ManifestStore(dataSource.get());
 		manifests.ensureTable();
 
+		// Before the corpus itself, and on the reuse path too: a reused corpus whose neighbours were
+		// never built is the exact state this profile was in.
+		provisionNeighbours(target.spec(), dataSource.get(), progress);
+
 		if ( !force ) {
 			Optional<Outcome> reused = tryReuse(manifests, started);
 			if ( reused.isPresent() ) {
@@ -168,6 +172,82 @@ public final class CorpusProvisioner {
 		manifests.forget(fingerprint);
 		emptyCorpusTables(dataSource.get());
 		return generateAndRecord(target, manifests, started, progress);
+	}
+
+	/**
+	 * Builds the other prefixed stores a {@code MULTI_STORE} corpus is defined to sit beside, and
+	 * fails if it cannot.
+	 *
+	 * <p><b>This did not exist, and the profile that needs it reported a finding because of it.</b>
+	 * {@link CorpusSpec#hasNeighbourStores()} and {@link CorpusFingerprint#neighbourPrefixFor} were
+	 * both written and neither was ever called, so {@code crowded-database} -- whose entire question
+	 * is what three million-event neighbours cost -- measured a database holding nothing but its own
+	 * 100.000 events. Every workload came back within noise of {@code read-shapes}, which is exactly
+	 * what a correct run measuring nothing looks like, and "sharing a database is free" was one
+	 * write-up away from being documented.
+	 *
+	 * <p>So this verifies rather than assumes: a neighbour whose row count does not match the volume
+	 * the spec declares is rebuilt, and one that cannot be built fails the provisioning. A corpus
+	 * that says {@code MULTI_STORE} now either has its neighbours or does not exist.
+	 *
+	 * <p>Row count is the whole reuse check, deliberately -- no manifest row per neighbour. The
+	 * neighbours carry no facts anybody reads and are pure background, so the count *is* the
+	 * property that matters, and checking it directly cannot go stale the way a manifest can.
+	 */
+	private void provisionNeighbours ( TargetSpec targetSpec, DataSource dataSource, LongConsumer progress ) {
+		if ( !spec.hasNeighbourStores() ) {
+			return;
+		}
+		ManifestStore manifests = new ManifestStore(dataSource);
+		for ( int index = 0; index < spec.neighbourVolumes().size(); index++ ) {
+			long volume = spec.neighbourVolumes().get(index);
+			String neighbourPrefix = CorpusFingerprint.neighbourPrefixFor(spec, index);
+
+			if ( manifests.countEvents(neighbourPrefix).orElse(-1L) == volume ) {
+				LOGGER.info("reusing neighbour store {} ({} events)", neighbourPrefix, volume);
+				continue;
+			}
+			LOGGER.info("building neighbour store {} of {}: {} events under prefix {}",
+					index + 1, spec.neighbourVolumes().size(), volume, neighbourPrefix);
+			buildNeighbour(targetSpec, neighbourPrefix, neighbourSpecFor(index, volume), progress);
+
+			long built = manifests.countEvents(neighbourPrefix).orElse(-1L);
+			if ( built != volume ) {
+				throw new IllegalStateException(
+						"neighbour store %s should hold %d events and holds %d: the corpus claims a "
+								.formatted(neighbourPrefix, volume, built)
+								+ "MULTI_STORE composition it does not have, and every measurement over it "
+								+ "would describe an uncrowded database");
+			}
+		}
+	}
+
+	/**
+	 * A neighbour's own spec: same shape as the corpus it sits beside, its own size, and no
+	 * neighbours of its own -- which is what stops the recursion.
+	 *
+	 * <p>CLEAN, because a neighbour is another application's store rather than another context in
+	 * this one; that distinction is the difference between the two crowding profiles. The seed is
+	 * offset so the neighbours do not all hold the same events as each other or as the corpus.
+	 */
+	private CorpusSpec neighbourSpecFor ( int index, long volume ) {
+		return new CorpusSpec(volume, spec.streamDesign(), CorpusSpec.Composition.CLEAN, spec.payload(),
+				(int) Math.min(spec.entityCount(), volume), List.of(), spec.seed() + 1_000L + index);
+	}
+
+	private void buildNeighbour ( TargetSpec targetSpec, String neighbourPrefix, CorpusSpec neighbourSpec,
+			LongConsumer progress ) {
+		TargetSpec provisioning = new TargetSpec(targetSpec.backend(), targetSpec.server(), targetSpec.image(),
+				TargetSpec.MetricsMode.OFF, neighbourSpec.requiresShredding(), targetSpec.resultLimit(),
+				TargetSpec.SchemaMode.ENSURE, targetSpec.notificationStartupTimeout(),
+				targetSpec.appendPlanning());
+
+		try ( BenchmarkTarget neighbour = TargetFactory.open(provisioning, neighbourPrefix) ) {
+			CorpusGenerator generator = new CorpusGenerator(neighbourSpec);
+			// The facts a neighbour produces are discarded: nothing queries a neighbour, it is there to
+			// take up shared buffers, WAL and autovacuum attention.
+			generator.generateInto(neighbour.storage(), progress);
+		}
 	}
 
 	/**

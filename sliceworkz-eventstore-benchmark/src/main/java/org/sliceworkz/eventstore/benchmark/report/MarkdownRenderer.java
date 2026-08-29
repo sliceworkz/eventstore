@@ -366,10 +366,15 @@ final class MarkdownRenderer {
 		}
 
 		out.append(heading("What a round trip costs", target));
+		// through operationsPerSecond(), never the raw score: the runner measures in ops/ms, so the
+		// score printed under a "/s" header as-is is off by a factor of a thousand
 		out.append("| events per call | calls/s | events/s |\n|---|---|---|\n");
-		out.append("| 1 | %.3f | %.0f |\n".formatted(one.get().score(), one.get().score()));
-		ten.ifPresent(row -> out.append("| 10 | %.3f | %.0f |\n".formatted(row.score(), row.score() * 10)));
-		hundred.ifPresent(row -> out.append("| 100 | %.3f | %.0f |\n".formatted(row.score(), row.score() * 100)));
+		out.append("| 1 | %s | %s |\n".formatted(
+				rate(one.get().operationsPerSecond()), rate(one.get().operationsPerSecond())));
+		ten.ifPresent(row -> out.append("| 10 | %s | %s |\n".formatted(
+				rate(row.operationsPerSecond()), rate(row.operationsPerSecond() * 10))));
+		hundred.ifPresent(row -> out.append("| 100 | %s | %s |\n".formatted(
+				rate(row.operationsPerSecond()), rate(row.operationsPerSecond() * 100))));
 		out.append("\nThe events-per-second column laid against the single-event row is the per-call "
 				+ "overhead made visible.\n\n");
 	}

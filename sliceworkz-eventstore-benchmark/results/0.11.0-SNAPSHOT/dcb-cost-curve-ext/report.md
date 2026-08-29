@@ -5,8 +5,8 @@ What the DCB consistency check costs over an unconditional append, and how that 
 | | |
 |---|---|
 | suite version | 0.11.0-SNAPSHOT |
-| started | 2026-08-29T13:30:15.118647924Z |
-| finished | 2026-08-29T13:30:15.174183296Z |
+| started | 2026-08-29T14:03:56.980773038Z |
+| finished | 2026-08-29T14:46:05.274655864Z |
 | targets | inmem/metrics=off, postgres:external/metrics=off |
 | corpus restore | restored before every iteration |
 
@@ -89,17 +89,17 @@ These are the settings the numbers below depend on. Two runs whose environments 
 
 | workload | threads | inmem/metrics=off | postgres:external/metrics=off |
 |---|---|---|---|
-| append-none | 1 | 36.712 ± 0.278 ops/ms | 3.540 ± 0.052 ops/ms (0.10x) |
-| append-types | 1 | 1.161 ± 0.041 ops/ms | 3.114 ± 0.039 ops/ms (2.68x) |
-| append-type-and-tag | 1 | 0.333 ± 0.021 ops/ms | 0.933 ± 0.023 ops/ms (2.80x) |
-| append-multi-tag | 1 | 0.165 ± 0.004 ops/ms | 0.904 ± 0.016 ops/ms (5.48x) |
-| append-or-groups-2 | 1 | 0.448 ± 0.012 ops/ms | 0.156 ± 0.162 ops/ms (0.35x) |
-| append-or-groups-3 | 1 | 0.438 ± 0.012 ops/ms | 0.067 ± 0.005 ops/ms (0.15x) |
-| append-or-groups-4 | 1 | 0.434 ± 0.009 ops/ms | 0.583 ± 0.052 ops/ms (1.34x) |
-| append-or-groups-5 | 1 | 0.426 ± 0.010 ops/ms | 0.623 ± 0.017 ops/ms (1.46x) |
-| append-or-groups-10 | 1 | 0.421 ± 0.008 ops/ms | 0.534 ± 0.006 ops/ms (1.27x) |
-| append-empty-boundary | 1 | 0.097 ± 0.003 ops/ms | 1.592 ± 0.018 ops/ms (16.35x) |
-| decide-then-append | 1 | 0.080 ± 0.003 ops/ms | 0.823 ± 0.011 ops/ms (10.25x) |
+| append-none | 1 | 36.704 ± 0.348 ops/ms | 3.669 ± 0.048 ops/ms (0.10x) |
+| append-types | 1 | 1.169 ± 0.037 ops/ms | 3.244 ± 0.076 ops/ms (2.78x) |
+| append-type-and-tag | 1 | 0.348 ± 0.018 ops/ms | 0.967 ± 0.010 ops/ms (2.78x) |
+| append-multi-tag | 1 | 0.175 ± 0.002 ops/ms | 0.906 ± 0.015 ops/ms (5.16x) |
+| append-or-groups-2 | 1 | 0.475 ± 0.010 ops/ms | 0.073 ± 0.002 ops/ms (0.15x) |
+| append-or-groups-3 | 1 | 0.460 ± 0.010 ops/ms | 0.070 ± 0.002 ops/ms (0.15x) |
+| append-or-groups-4 | 1 | 0.456 ± 0.008 ops/ms | 0.065 ± 0.003 ops/ms (0.14x) |
+| append-or-groups-5 | 1 | 0.449 ± 0.009 ops/ms | 0.064 ± 0.002 ops/ms (0.14x) |
+| append-or-groups-10 | 1 | 0.439 ± 0.010 ops/ms | 0.064 ± 0.002 ops/ms (0.14x) |
+| append-empty-boundary | 1 | 0.110 ± 0.004 ops/ms | 1.565 ± 0.037 ops/ms (14.24x) |
+| decide-then-append | 1 | 0.089 ± 0.002 ops/ms | 0.832 ± 0.016 ops/ms (9.30x) |
 
 Relative to **inmem/metrics=off**, higher is better. A ratio is only about the setting these targets differ in if it is larger than both error bars and survives running the profile with the targets in the opposite order: the first target is measured against a server the later ones then inherit warm, which is worth a few percent on its own.
 
@@ -107,8 +107,8 @@ Relative to **inmem/metrics=off**, higher is better. A ratio is only about the s
 
 | append | throughput | relative |
 |---|---|---|
-| no criteria | 36.712 ± 0.278 ops/ms | 1.00x |
-| one type set and one tag | 0.333 ± 0.021 ops/ms | 110.35x slower |
+| no criteria | 36.704 ± 0.348 ops/ms | 1.00x |
+| one type set and one tag | 0.348 ± 0.018 ops/ms | 105.50x slower |
 
 On PostgreSQL the unconditional append is also the only one that takes no advisory lock, so this gap is the whole DCB mechanism rather than just the extra predicate.
 
@@ -116,12 +116,12 @@ On PostgreSQL the unconditional append is also the only one that takes no adviso
 
 | OR-ed filter items | throughput | relative to one |
 |---|---|---|
-| 1 | 0.333 ± 0.021 ops/ms | 1.00x |
-| 2 | 0.448 ± 0.012 ops/ms | 0.74x |
-| 3 | 0.438 ± 0.012 ops/ms | 0.76x |
-| 4 | 0.434 ± 0.009 ops/ms | 0.77x |
-| 5 | 0.426 ± 0.010 ops/ms | 0.78x |
-| 10 | 0.421 ± 0.008 ops/ms | 0.79x |
+| 1 | 0.348 ± 0.018 ops/ms | 1.00x |
+| 2 | 0.475 ± 0.010 ops/ms | 0.73x |
+| 3 | 0.460 ± 0.010 ops/ms | 0.76x |
+| 4 | 0.456 ± 0.008 ops/ms | 0.76x |
+| 5 | 0.449 ± 0.009 ops/ms | 0.77x |
+| 10 | 0.439 ± 0.010 ops/ms | 0.79x |
 
 The generated SQL gains a disjunct per item, so this is whether a decision resting on ten facts costs ten times one or barely more than it.
 
@@ -129,8 +129,8 @@ The generated SQL gains a disjunct per item, so this is whether a decision resti
 
 | append | throughput | relative |
 |---|---|---|
-| no criteria | 3.540 ± 0.052 ops/ms | 1.00x |
-| one type set and one tag | 0.933 ± 0.023 ops/ms | 3.80x slower |
+| no criteria | 3.669 ± 0.048 ops/ms | 1.00x |
+| one type set and one tag | 0.967 ± 0.010 ops/ms | 3.79x slower |
 
 On PostgreSQL the unconditional append is also the only one that takes no advisory lock, so this gap is the whole DCB mechanism rather than just the extra predicate.
 
@@ -138,12 +138,12 @@ On PostgreSQL the unconditional append is also the only one that takes no adviso
 
 | OR-ed filter items | throughput | relative to one |
 |---|---|---|
-| 1 | 0.933 ± 0.023 ops/ms | 1.00x |
-| 2 | 0.156 ± 0.162 ops/ms | 5.99x |
-| 3 | 0.067 ± 0.005 ops/ms | 13.95x |
-| 4 | 0.583 ± 0.052 ops/ms | 1.60x |
-| 5 | 0.623 ± 0.017 ops/ms | 1.50x |
-| 10 | 0.534 ± 0.006 ops/ms | 1.75x |
+| 1 | 0.967 ± 0.010 ops/ms | 1.00x |
+| 2 | 0.073 ± 0.002 ops/ms | 13.23x |
+| 3 | 0.070 ± 0.002 ops/ms | 13.82x |
+| 4 | 0.065 ± 0.003 ops/ms | 14.83x |
+| 5 | 0.064 ± 0.002 ops/ms | 15.22x |
+| 10 | 0.064 ± 0.002 ops/ms | 15.20x |
 
 The generated SQL gains a disjunct per item, so this is whether a decision resting on ten facts costs ten times one or barely more than it.
 
@@ -156,92 +156,92 @@ The reconstructed statements below describe the run's first PostgreSQL target. T
 ### stream page (unfiltered, limit 500)
 
 ```
-Limit  (cost=0.42..108.99 rows=500 width=314) (actual time=0.039..0.273 rows=500.00 loops=1)
-  Buffers: shared hit=26
-  ->  Index Scan using bm_628labzk3k7h_idx_events_stream_position on bm_628labzk3k7h_events  (cost=0.42..11902.58 rows=54817 width=314) (actual time=0.038..0.221 rows=500.00 loops=1)
+Limit  (cost=0.42..179.46 rows=500 width=313) (actual time=0.022..0.170 rows=500.00 loops=1)
+  Buffers: shared hit=37
+  ->  Index Scan using bm_628labzk3k7h_idx_events_stream_position on bm_628labzk3k7h_events  (cost=0.42..19693.41 rows=54997 width=313) (actual time=0.021..0.144 rows=500.00 loops=1)
         Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))
         Index Searches: 1
-        Buffers: shared hit=26
+        Buffers: shared hit=37
 Planning:
-  Buffers: shared hit=74
-Planning Time: 0.455 ms
-Execution Time: 0.329 ms
+  Buffers: shared hit=72
+Planning Time: 0.332 ms
+Execution Time: 0.198 ms
 ```
 
 ### tag needle (~10 matches)
 
 ```
-Sort  (cost=57.71..57.72 rows=7 width=314) (actual time=0.455..0.456 rows=10.00 loops=1)
+Sort  (cost=57.71..57.72 rows=7 width=313) (actual time=0.267..0.267 rows=10.00 loops=1)
   Sort Key: event_tx, event_position
   Sort Method: quicksort  Memory: 27kB
-  Buffers: shared hit=55
-  ->  Bitmap Heap Scan on bm_628labzk3k7h_events  (cost=30.24..57.61 rows=7 width=314) (actual time=0.398..0.435 rows=10.00 loops=1)
+  Buffers: shared hit=59
+  ->  Bitmap Heap Scan on bm_628labzk3k7h_events  (cost=30.24..57.61 rows=7 width=313) (actual time=0.233..0.254 rows=10.00 loops=1)
         Recheck Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{campaign:needle}'::text[]))
         Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))
         Heap Blocks: exact=10
-        Buffers: shared hit=47
-        ->  Bitmap Index Scan on bm_628labzk3k7h_idx_events_stream_tags  (cost=0.00..30.24 rows=7 width=0) (actual time=0.384..0.384 rows=10.00 loops=1)
+        Buffers: shared hit=51
+        ->  Bitmap Index Scan on bm_628labzk3k7h_idx_events_stream_tags  (cost=0.00..30.24 rows=7 width=0) (actual time=0.224..0.224 rows=10.00 loops=1)
               Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{campaign:needle}'::text[]))
               Index Searches: 1
-              Buffers: shared hit=37
+              Buffers: shared hit=41
 Planning:
   Buffers: shared hit=12
-Planning Time: 0.167 ms
-Execution Time: 0.517 ms
+Planning Time: 0.096 ms
+Execution Time: 0.302 ms
 ```
 
 ### tag swathe (~1% of the store)
 
 ```
-Limit  (cost=1482.96..1484.20 rows=495 width=314) (actual time=3.772..3.840 rows=500.00 loops=1)
-  Buffers: shared hit=1037
-  ->  Sort  (cost=1482.96..1484.20 rows=495 width=314) (actual time=3.770..3.795 rows=500.00 loops=1)
+Limit  (cost=1604.31..1605.56 rows=500 width=313) (actual time=1.887..1.920 rows=500.00 loops=1)
+  Buffers: shared hit=1041
+  ->  Sort  (cost=1604.31..1605.68 rows=548 width=313) (actual time=1.886..1.898 rows=500.00 loops=1)
         Sort Key: event_tx, event_position
         Sort Method: quicksort  Memory: 442kB
-        Buffers: shared hit=1037
-        ->  Bitmap Heap Scan on bm_628labzk3k7h_events  (cost=32.80..1460.81 rows=495 width=314) (actual time=0.988..3.419 rows=1000.00 loops=1)
+        Buffers: shared hit=1041
+        ->  Bitmap Heap Scan on bm_628labzk3k7h_events  (cost=33.08..1579.38 rows=548 width=313) (actual time=0.484..1.650 rows=1000.00 loops=1)
               Recheck Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{campaign:swathe}'::text[]))
               Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))
               Heap Blocks: exact=1000
-              Buffers: shared hit=1037
-              ->  Bitmap Index Scan on bm_628labzk3k7h_idx_events_stream_tags  (cost=0.00..32.68 rows=495 width=0) (actual time=0.837..0.837 rows=1000.00 loops=1)
+              Buffers: shared hit=1041
+              ->  Bitmap Index Scan on bm_628labzk3k7h_idx_events_stream_tags  (cost=0.00..32.94 rows=548 width=0) (actual time=0.416..0.416 rows=1000.00 loops=1)
                     Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{campaign:swathe}'::text[]))
                     Index Searches: 1
-                    Buffers: shared hit=37
+                    Buffers: shared hit=41
 Planning:
   Buffers: shared hit=3
-Planning Time: 0.120 ms
-Execution Time: 3.900 ms
+Planning Time: 0.069 ms
+Execution Time: 1.950 ms
 ```
 
 ### one entity's whole history (hot)
 
 ```
-Sort  (cost=4771.68..4781.16 rows=3793 width=314) (actual time=6.344..6.525 rows=6876.00 loops=1)
+Sort  (cost=4756.79..4766.16 rows=3749 width=313) (actual time=5.373..5.538 rows=6876.00 loops=1)
   Sort Key: event_tx, event_position
   Sort Method: quicksort  Memory: 1910kB
-  Buffers: shared hit=2029
-  ->  Bitmap Heap Scan on bm_628labzk3k7h_events  (cost=54.24..4546.20 rows=3793 width=314) (actual time=2.190..4.701 rows=6876.00 loops=1)
+  Buffers: shared hit=2026
+  ->  Bitmap Heap Scan on bm_628labzk3k7h_events  (cost=54.01..4534.24 rows=3749 width=313) (actual time=1.287..3.465 rows=6876.00 loops=1)
         Recheck Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-000000}'::text[]))
         Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))
-        Heap Blocks: exact=1993
-        Buffers: shared hit=2029
-        ->  Bitmap Index Scan on bm_628labzk3k7h_idx_events_stream_tags  (cost=0.00..53.29 rows=3793 width=0) (actual time=2.027..2.027 rows=6876.00 loops=1)
+        Heap Blocks: exact=1982
+        Buffers: shared hit=2026
+        ->  Bitmap Index Scan on bm_628labzk3k7h_idx_events_stream_tags  (cost=0.00..53.07 rows=3749 width=0) (actual time=1.151..1.151 rows=6876.00 loops=1)
               Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-000000}'::text[]))
               Index Searches: 1
-              Buffers: shared hit=36
+              Buffers: shared hit=44
 Planning:
   Buffers: shared hit=3
-Planning Time: 0.185 ms
-Execution Time: 6.867 ms
+Planning Time: 0.083 ms
+Execution Time: 5.825 ms
 ```
 
 ### most recent event, backwards limit 1
 
 ```
-Limit  (cost=0.42..3.53 rows=1 width=314) (actual time=0.024..0.024 rows=1.00 loops=1)
+Limit  (cost=0.42..5.64 rows=1 width=313) (actual time=0.021..0.021 rows=1.00 loops=1)
   Buffers: shared hit=5
-  ->  Index Scan Backward using bm_628labzk3k7h_idx_events_stream_position on bm_628labzk3k7h_events  (cost=0.42..11784.50 rows=3793 width=314) (actual time=0.023..0.023 rows=1.00 loops=1)
+  ->  Index Scan Backward using bm_628labzk3k7h_idx_events_stream_position on bm_628labzk3k7h_events  (cost=0.42..19574.66 rows=3749 width=313) (actual time=0.020..0.020 rows=1.00 loops=1)
         Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))
         Filter: (event_tags @> '{sku:SKU-000000}'::text[])
         Rows Removed by Filter: 20
@@ -249,23 +249,23 @@ Limit  (cost=0.42..3.53 rows=1 width=314) (actual time=0.024..0.024 rows=1.00 lo
         Buffers: shared hit=5
 Planning:
   Buffers: shared hit=11
-Planning Time: 0.175 ms
-Execution Time: 0.038 ms
+Planning Time: 0.138 ms
+Execution Time: 0.030 ms
 ```
 
 ### cursor page from the midpoint (limit 500)
 
 ```
-Limit  (cost=0.42..137.14 rows=500 width=314) (actual time=0.016..0.148 rows=500.00 loops=1)
-  Buffers: shared hit=27
-  ->  Index Scan using bm_628labzk3k7h_idx_events_stream_position on bm_628labzk3k7h_events  (cost=0.42..10793.15 rows=39470 width=314) (actual time=0.015..0.123 rows=500.00 loops=1)
+Limit  (cost=0.42..235.89 rows=500 width=313) (actual time=0.011..0.141 rows=500.00 loops=1)
+  Buffers: shared hit=34
+  ->  Index Scan using bm_628labzk3k7h_idx_events_stream_position on bm_628labzk3k7h_events  (cost=0.42..18724.22 rows=39759 width=313) (actual time=0.010..0.118 rows=500.00 loops=1)
         Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())) AND (ROW(event_tx, event_position) > ROW('786'::xid8, '27500'::bigint)))
         Index Searches: 1
-        Buffers: shared hit=27
+        Buffers: shared hit=34
 Planning:
   Buffers: shared hit=14
-Planning Time: 0.129 ms
-Execution Time: 0.183 ms
+Planning Time: 0.097 ms
+Execution Time: 0.171 ms
 ```
 
 > **The plans below do not describe the store's own execution.** They inline the tag arrays 
@@ -280,119 +280,125 @@ Execution Time: 0.183 ms
 ### DCB check: event types only, no tag (append-types) -- boundary 2,000 events back
 
 ```
-Limit  (cost=0.42..0.49 rows=1 width=4) (actual time=0.025..0.025 rows=1.00 loops=1)
+Limit  (cost=0.42..0.50 rows=1 width=4) (actual time=0.040..0.041 rows=1.00 loops=1)
   Buffers: shared hit=4
-  ->  Index Only Scan using bm_628labzk3k7h_idx_events_stream_type_position on bm_628labzk3k7h_events  (cost=0.42..729.27 rows=9937 width=4) (actual time=0.024..0.024 rows=1.00 loops=1)
+  ->  Index Only Scan using bm_628labzk3k7h_idx_events_stream_type_position on bm_628labzk3k7h_events  (cost=0.42..803.92 rows=10043 width=4) (actual time=0.039..0.039 rows=1.00 loops=1)
         Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_type = ANY ('{StockReserved,StockPicked}'::text[])) AND (ROW(event_tx, event_position) > ROW('799'::xid8, '53000'::bigint)))
         Heap Fetches: 0
         Index Searches: 1
         Buffers: shared hit=4
 Planning:
   Buffers: shared hit=2
-Planning Time: 0.122 ms
-Execution Time: 0.038 ms
+Planning Time: 0.167 ms
+Execution Time: 0.059 ms
 ```
 
 ### DCB check: four types scoped to one SKU (append-type-and-tag) -- boundary 2,000 events back — **sequential scan**
 
 ```
-Limit  (cost=0.00..7.60 rows=1 width=4) (actual time=9.617..9.620 rows=1.00 loops=1)
-  Buffers: shared hit=1978
-  ->  Seq Scan on bm_628labzk3k7h_events  (cost=0.00..7084.00 rows=932 width=4) (actual time=9.616..9.618 rows=1.00 loops=1)
+Limit  (cost=0.00..7.71 rows=1 width=4) (actual time=0.088..0.088 rows=1.00 loops=1)
+  Buffers: shared hit=10
+  ->  Seq Scan on bm_628labzk3k7h_events  (cost=0.00..7084.00 rows=919 width=4) (actual time=0.088..0.088 rows=1.00 loops=1)
         Filter: ((event_tags @> '{sku:SKU-000000}'::text[]) AND (stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_type = ANY ('{StockReceived,StockReserved,StockReleased,StockPicked}'::text[])) AND (ROW(event_tx, event_position) > ROW('799'::xid8, '53000'::bigint)))
-        Rows Removed by Filter: 53007
-        Buffers: shared hit=1978
+        Rows Removed by Filter: 241
+        Buffers: shared hit=10
 Planning:
   Buffers: shared hit=3
-Planning Time: 0.092 ms
-Execution Time: 9.632 ms
+Planning Time: 0.118 ms
+Execution Time: 0.098 ms
 ```
 
-### DCB check: one item carrying three AND-ed tags (append-multi-tag) -- boundary 2,000 events back — **sequential scan**
+### DCB check: one item carrying three AND-ed tags (append-multi-tag) -- boundary 2,000 events back
 
 ```
-Limit  (cost=0.00..68.78 rows=1 width=4) (actual time=0.042..0.042 rows=1.00 loops=1)
-  Buffers: shared hit=11
-  ->  Seq Scan on bm_628labzk3k7h_events  (cost=0.00..7084.00 rows=103 width=4) (actual time=0.041..0.041 rows=1.00 loops=1)
-        Filter: ((event_tags @> '{sku:SKU-000000,channel:web,warehouse:WH-1}'::text[]) AND (stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_type = ANY ('{StockReceived,StockReserved,StockReleased,StockPicked}'::text[])) AND (ROW(event_tx, event_position) > ROW('799'::xid8, '53000'::bigint)))
-        Rows Removed by Filter: 248
-        Buffers: shared hit=11
+Limit  (cost=49.67..61.83 rows=1 width=4) (actual time=1.933..1.933 rows=1.00 loops=1)
+  Buffers: shared hit=72
+  ->  Bitmap Heap Scan on bm_628labzk3k7h_events  (cost=49.67..1277.94 rows=101 width=4) (actual time=1.932..1.932 rows=1.00 loops=1)
+        Recheck Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-000000,channel:web,warehouse:WH-1}'::text[]))
+        Filter: ((event_type = ANY ('{StockReceived,StockReserved,StockReleased,StockPicked}'::text[])) AND (ROW(event_tx, event_position) > ROW('799'::xid8, '53000'::bigint)))
+        Rows Removed by Filter: 2
+        Heap Blocks: exact=3
+        Buffers: shared hit=72
+        ->  Bitmap Index Scan on bm_628labzk3k7h_idx_events_stream_tags  (cost=0.00..49.64 rows=411 width=0) (actual time=1.885..1.885 rows=705.00 loops=1)
+              Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-000000,channel:web,warehouse:WH-1}'::text[]))
+              Index Searches: 1
+              Buffers: shared hit=68
 Planning:
   Buffers: shared hit=3
-Planning Time: 0.133 ms
-Execution Time: 0.052 ms
+Planning Time: 0.135 ms
+Execution Time: 1.950 ms
 ```
 
 ### DCB check: 2 OR-ed filter items (append-or-groups-2) -- boundary 2,000 events back — **sequential scan**
 
 ```
-Limit  (cost=0.00..7.85 rows=1 width=4) (actual time=0.060..0.061 rows=1.00 loops=1)
+Limit  (cost=0.00..7.96 rows=1 width=4) (actual time=0.091..0.092 rows=1.00 loops=1)
   Buffers: shared hit=10
-  ->  Seq Scan on bm_628labzk3k7h_events  (cost=0.00..7334.00 rows=934 width=4) (actual time=0.060..0.060 rows=1.00 loops=1)
+  ->  Seq Scan on bm_628labzk3k7h_events  (cost=0.00..7334.00 rows=921 width=4) (actual time=0.091..0.091 rows=1.00 loops=1)
         Filter: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_type = ANY ('{StockReceived,StockReserved,StockReleased,StockPicked}'::text[])) AND ((event_tags @> '{sku:SKU-000000}'::text[]) OR (event_tags @> '{sku:SKU-000251}'::text[])) AND (ROW(event_tx, event_position) > ROW('799'::xid8, '53000'::bigint)))
         Rows Removed by Filter: 241
         Buffers: shared hit=10
 Planning:
   Buffers: shared hit=6
-Planning Time: 0.112 ms
-Execution Time: 0.068 ms
+Planning Time: 0.115 ms
+Execution Time: 0.100 ms
 ```
 
 ### DCB check: 5 OR-ed filter items (append-or-groups-5) -- boundary 2,000 events back — **sequential scan**
 
 ```
-Limit  (cost=0.00..8.58 rows=1 width=4) (actual time=0.029..0.029 rows=1.00 loops=1)
+Limit  (cost=0.00..8.71 rows=1 width=4) (actual time=0.028..0.028 rows=1.00 loops=1)
   Buffers: shared hit=10
-  ->  Seq Scan on bm_628labzk3k7h_events  (cost=0.00..8084.00 rows=942 width=4) (actual time=0.029..0.029 rows=1.00 loops=1)
+  ->  Seq Scan on bm_628labzk3k7h_events  (cost=0.00..8084.00 rows=928 width=4) (actual time=0.028..0.028 rows=1.00 loops=1)
         Filter: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_type = ANY ('{StockReceived,StockReserved,StockReleased,StockPicked}'::text[])) AND (ROW(event_tx, event_position) > ROW('799'::xid8, '53000'::bigint)) AND ((event_tags @> '{sku:SKU-000000}'::text[]) OR (event_tags @> '{sku:SKU-000251}'::text[]) OR (event_tags @> '{sku:SKU-000252}'::text[]) OR (event_tags @> '{sku:SKU-000253}'::text[]) OR (event_tags @> '{sku:SKU-000254}'::text[])))
         Rows Removed by Filter: 241
         Buffers: shared hit=10
 Planning:
   Buffers: shared hit=12
-Planning Time: 0.096 ms
-Execution Time: 0.035 ms
+Planning Time: 0.091 ms
+Execution Time: 0.033 ms
 ```
 
 ### DCB check: 10 OR-ed filter items (append-or-groups-10) -- boundary 2,000 events back — **sequential scan**
 
 ```
-Limit  (cost=0.00..9.73 rows=1 width=4) (actual time=0.032..0.032 rows=1.00 loops=1)
+Limit  (cost=0.00..9.94 rows=1 width=4) (actual time=0.027..0.028 rows=1.00 loops=1)
   Buffers: shared hit=10
-  ->  Seq Scan on bm_628labzk3k7h_events  (cost=0.00..9334.00 rows=959 width=4) (actual time=0.032..0.032 rows=1.00 loops=1)
+  ->  Seq Scan on bm_628labzk3k7h_events  (cost=0.00..9334.00 rows=939 width=4) (actual time=0.027..0.027 rows=1.00 loops=1)
         Filter: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_type = ANY ('{StockReceived,StockReserved,StockReleased,StockPicked}'::text[])) AND (ROW(event_tx, event_position) > ROW('799'::xid8, '53000'::bigint)) AND ((event_tags @> '{sku:SKU-000000}'::text[]) OR (event_tags @> '{sku:SKU-000251}'::text[]) OR (event_tags @> '{sku:SKU-000252}'::text[]) OR (event_tags @> '{sku:SKU-000253}'::text[]) OR (event_tags @> '{sku:SKU-000254}'::text[]) OR (event_tags @> '{sku:SKU-000255}'::text[]) OR (event_tags @> '{sku:SKU-000256}'::text[]) OR (event_tags @> '{sku:SKU-000257}'::text[]) OR (event_tags @> '{sku:SKU-000258}'::text[]) OR (event_tags @> '{sku:SKU-000259}'::text[])))
         Rows Removed by Filter: 241
         Buffers: shared hit=10
 Planning:
   Buffers: shared hit=22
-Planning Time: 0.146 ms
-Execution Time: 0.040 ms
+Planning Time: 0.113 ms
+Execution Time: 0.031 ms
 ```
 
 ## Every measurement
 
 | target | workload | mode | threads | score | unit | error | useful ops/s | ok | conflicts |
 |---|---|---|---|---|---|---|---|---|---|
-| inmem/metrics=off | append-empty-boundary | thrpt | 1 | 0.097 | ops/ms | 2.8% | 97 | 3,905 | 0 |
-| inmem/metrics=off | append-multi-tag | thrpt | 1 | 0.165 | ops/ms | 2.5% | 165 | 6,619 | 0 |
-| inmem/metrics=off | append-none | thrpt | 1 | 36.712 | ops/ms | 0.8% | 36,712 | 1,469,090 | 0 |
-| inmem/metrics=off | append-or-groups-10 | thrpt | 1 | 0.421 | ops/ms | 1.8% | 421 | 16,864 | 0 |
-| inmem/metrics=off | append-or-groups-2 | thrpt | 1 | 0.448 | ops/ms | 2.7% | 448 | 17,917 | 0 |
-| inmem/metrics=off | append-or-groups-3 | thrpt | 1 | 0.438 | ops/ms | 2.7% | 438 | 17,516 | 0 |
-| inmem/metrics=off | append-or-groups-4 | thrpt | 1 | 0.434 | ops/ms | 2.2% | 434 | 17,364 | 0 |
-| inmem/metrics=off | append-or-groups-5 | thrpt | 1 | 0.426 | ops/ms | 2.3% | 426 | 17,066 | 0 |
-| inmem/metrics=off | append-type-and-tag | thrpt | 1 | 0.333 | ops/ms | 6.2% | 333 | 13,322 | 0 |
-| inmem/metrics=off | append-types | thrpt | 1 | 1.161 | ops/ms | 3.5% | 1,161 | 46,445 | 0 |
-| inmem/metrics=off | decide-then-append | thrpt | 1 | 0.080 | ops/ms | 3.4% | 80 | 3,221 | 0 |
-| postgres:external/metrics=off | append-empty-boundary | thrpt | 1 | 1.592 | ops/ms | 1.1% | 1,592 | 63,682 | 0 |
-| postgres:external/metrics=off | append-multi-tag | thrpt | 1 | 0.904 | ops/ms | 1.8% | 904 | 36,190 | 0 |
-| postgres:external/metrics=off | append-none | thrpt | 1 | 3.540 | ops/ms | 1.5% | 3,540 | 141,618 | 0 |
-| postgres:external/metrics=off | append-or-groups-10 | thrpt | 1 | 0.534 | ops/ms | 1.1% | 534 | 21,394 | 0 |
-| postgres:external/metrics=off | append-or-groups-2 | thrpt | 1 | 0.156 | ops/ms | 104.3% | 156 | 6,242 | 0 |
-| postgres:external/metrics=off | append-or-groups-3 | thrpt | 1 | 0.067 | ops/ms | 7.3% | 67 | 2,688 | 0 |
-| postgres:external/metrics=off | append-or-groups-4 | thrpt | 1 | 0.583 | ops/ms | 8.9% | 583 | 23,341 | 0 |
-| postgres:external/metrics=off | append-or-groups-5 | thrpt | 1 | 0.623 | ops/ms | 2.7% | 623 | 24,956 | 0 |
-| postgres:external/metrics=off | append-type-and-tag | thrpt | 1 | 0.933 | ops/ms | 2.5% | 933 | 37,341 | 0 |
-| postgres:external/metrics=off | append-types | thrpt | 1 | 3.114 | ops/ms | 1.3% | 3,114 | 124,583 | 0 |
-| postgres:external/metrics=off | decide-then-append | thrpt | 1 | 0.823 | ops/ms | 1.3% | 823 | 33,000 | 0 |
+| inmem/metrics=off | append-empty-boundary | thrpt | 1 | 0.110 | ops/ms | 3.4% | 110 | 4,408 | 0 |
+| inmem/metrics=off | append-multi-tag | thrpt | 1 | 0.175 | ops/ms | 1.4% | 175 | 7,048 | 0 |
+| inmem/metrics=off | append-none | thrpt | 1 | 36.704 | ops/ms | 0.9% | 36,704 | 1,468,344 | 0 |
+| inmem/metrics=off | append-or-groups-10 | thrpt | 1 | 0.439 | ops/ms | 2.3% | 439 | 17,570 | 0 |
+| inmem/metrics=off | append-or-groups-2 | thrpt | 1 | 0.475 | ops/ms | 2.1% | 475 | 19,015 | 0 |
+| inmem/metrics=off | append-or-groups-3 | thrpt | 1 | 0.460 | ops/ms | 2.1% | 460 | 18,423 | 0 |
+| inmem/metrics=off | append-or-groups-4 | thrpt | 1 | 0.456 | ops/ms | 1.8% | 456 | 18,262 | 0 |
+| inmem/metrics=off | append-or-groups-5 | thrpt | 1 | 0.449 | ops/ms | 2.0% | 449 | 17,990 | 0 |
+| inmem/metrics=off | append-type-and-tag | thrpt | 1 | 0.348 | ops/ms | 5.2% | 348 | 13,933 | 0 |
+| inmem/metrics=off | append-types | thrpt | 1 | 1.169 | ops/ms | 3.1% | 1,169 | 46,756 | 0 |
+| inmem/metrics=off | decide-then-append | thrpt | 1 | 0.089 | ops/ms | 2.2% | 89 | 3,590 | 0 |
+| postgres:external/metrics=off | append-empty-boundary | thrpt | 1 | 1.565 | ops/ms | 2.4% | 1,565 | 62,601 | 0 |
+| postgres:external/metrics=off | append-multi-tag | thrpt | 1 | 0.906 | ops/ms | 1.7% | 906 | 36,269 | 0 |
+| postgres:external/metrics=off | append-none | thrpt | 1 | 3.669 | ops/ms | 1.3% | 3,669 | 146,786 | 0 |
+| postgres:external/metrics=off | append-or-groups-10 | thrpt | 1 | 0.064 | ops/ms | 3.5% | 64 | 2,554 | 0 |
+| postgres:external/metrics=off | append-or-groups-2 | thrpt | 1 | 0.073 | ops/ms | 2.2% | 73 | 2,933 | 0 |
+| postgres:external/metrics=off | append-or-groups-3 | thrpt | 1 | 0.070 | ops/ms | 2.4% | 70 | 2,813 | 0 |
+| postgres:external/metrics=off | append-or-groups-4 | thrpt | 1 | 0.065 | ops/ms | 5.1% | 65 | 2,619 | 0 |
+| postgres:external/metrics=off | append-or-groups-5 | thrpt | 1 | 0.064 | ops/ms | 3.0% | 64 | 2,553 | 0 |
+| postgres:external/metrics=off | append-type-and-tag | thrpt | 1 | 0.967 | ops/ms | 1.0% | 967 | 38,827 | 0 |
+| postgres:external/metrics=off | append-types | thrpt | 1 | 3.244 | ops/ms | 2.4% | 3,244 | 129,786 | 0 |
+| postgres:external/metrics=off | decide-then-append | thrpt | 1 | 0.832 | ops/ms | 1.9% | 832 | 33,359 | 0 |
 
 A relative error above about 10% means the measurement is too noisy to compare against anything; raise the iteration count or quieten the machine.

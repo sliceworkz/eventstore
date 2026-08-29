@@ -55,7 +55,7 @@ mvn clean install -DskipTests
 
 **EventStream:**
 - Identified by `EventStreamId` which consists of a context and optional purpose
-- Purpose is optional: `EventStreamId.forContext("x")` defaults purpose to `"default"`, so a context that needs only one stream can ignore purpose entirely. Set a purpose only to distinguish multiple streams within a context (e.g. per-instance, or separating event kinds). Whether to make the purpose an *entity id* — a stream per SKU rather than a stream per context — is the one layout decision with measured consequences on both reads and write contention; see "Choosing a stream design" under Benchmarking
+- Purpose is optional: `EventStreamId.forContext("x")` defaults purpose to `"default"`, so a context that needs only one stream can ignore purpose entirely. Set a purpose only to distinguish multiple streams within a context (e.g. per-instance, or separating event kinds). Whether to make the purpose an *entity id* — a stream per SKU rather than a stream per context — is the one layout decision with measured consequences on both reads and write contention; see the Benchmarking digest below, and "Choosing a stream design" in `sliceworkz-eventstore-benchmark/CLAUDE.md` for the figures
 - Supports both reading (via `query()`) and writing (via `append()`)
 - Type-safe through generic parameter `<DOMAIN_EVENT_TYPE>`
 - Combines `EventSource` (reading) and `EventSink` (writing) interfaces
@@ -243,7 +243,8 @@ mvn clean install -DskipTests
 
 Correctness-equivalent to Postgres and *not* performance-equivalent: it is an unindexed linear scan,
 so a selective tag query costs it a walk of the whole log where Postgres does an index lookup. Do not
-size an application from it — see "What a read costs" under Benchmarking.
+size an application from it — see the Benchmarking digest below, and "What a read costs" in
+`sliceworkz-eventstore-benchmark/CLAUDE.md`.
 
 ```java
 EventStorage storage = InMemoryEventStorage.newBuilder().build();
@@ -1110,326 +1111,44 @@ not bind `event_timestamp` on append at all and lets the DDL default (`CURRENT_T
 clock) apply. There is no `Clock` seam anywhere. Assert on timestamps only with a tolerance window, as
 `EventTimestampUtcTest` does. The one path that writes a chosen timestamp is `importEvents`, which
 bypasses `append()`.
-
 ## Benchmarking
 
-Measurement lives in **`sliceworkz-eventstore-benchmark`** and never runs during a build: the module
-is `src/main` only, so `mvn package` compiles and shades it and runs nothing. It is a
-*capacity-characterisation* harness — JMH for operation-level numbers, a separate runner for
-sustained load and live latency, both driving one shared `Workload` catalogue over corpora that are
-provisioned once and reused. See that module's README for the full picture; what matters from here:
+Measurement lives in **`sliceworkz-eventstore-benchmark`** and never runs during a build: JMH for
+operation-level numbers and a load runner for sustained load and live latency, both driving one
+shared workload catalogue over content-addressed corpora. Every number is published with a manifest,
+the comparators refuse cross-environment diffs, and curated runs are committed under
+`results/<version>/<profile>/`. **The mechanics, the profiles, and every measured figure with its
+caveats live in `sliceworkz-eventstore-benchmark/CLAUDE.md`** (loaded when working in that module)
+and in that module's README. The digest of the conclusions that matter outside the module — treat
+each figure as Testcontainers-on-a-developer-machine unless the module file says otherwise:
 
-- **Every number is published with a manifest**, and the comparators refuse rather than guess. A
-  percentage between two runs on different machines is not a statement about the store, and nothing
-  about the two numbers says so. `report --baseline` diffs the same configuration over time and
-  refuses when the corpus, targets or environment differ; `compare --a --b` diffs two configurations
-  measured here and refuses when the *environment* differs.
-- **Curated runs are committed** to `sliceworkz-eventstore-benchmark/results/<version>/<profile>/`,
-  so a figure quoted here or in a README has something behind it that a pull request can review.
-  Publishing refuses a Testcontainers run, a run whose store drifted over 2%, and — under any flag —
-  a run that failed a correctness check.
-- **The profiles are mostly pairs.** `stream-design-tagged` against `stream-design-per-entity`,
-  `read-shapes` against `crowded-store` and `crowded-database`, the three `write-contention-*`
-  collision modes. Each pair differs in one property, which is what makes the difference between them
-  attributable.
-
-**The figures quoted in this document are not yet reproduced by that suite.** They were measured ad
-hoc while the behaviour they describe was being fixed, and the code that produced them is gone — which
-is the reason the suite exists. Treat each as a recorded observation rather than a current
-measurement, and where one matters, run the profile that would replace it:
-
-| figure in this document | profile that would re-derive it |
-|---|---|
-| `~5%` for the append advisory lock | not covered — that is the lock's *uncontended* overhead, which needs a build without it. What the suite measures is the sentence after it, the hot-stream ceiling: see "What a shared append lock costs" below |
-| `~175µs / 139KB` vs `~36µs / 69KB` for a fresh vs shared serde | not covered — the suite always shares, since that is what the store does now |
-| `15 meters / ~5.5 KB` per distinct purpose | the heap figure has no workload and stays a recorded observation; the *throughput* half is now measured — see the metrics section, and it is nil |
-| `1230ms → 460ms` for the statement-level append trigger | `ingest-saturation`, and only as a total — the trigger is not timed separately |
-
-Two of those four have no profile behind them, deliberately: a per-meter heap figure and a per-trigger
-time are properties of a snapshot rather than of a throughput, and inventing a workload to produce a
-number that shape would produce a worse one. They stay as recorded observations, and are marked as
-such rather than quietly dropped.
-
-### What a read costs, and how much of it is the library rather than the database
-
-`read-shapes` is the profile that asks what each query shape costs against a store holding nothing but
-the context under test, on the in-memory backend and PostgreSQL side by side. Two things came out of
-it that are worth carrying here.
-
-**Deserialisation is roughly 2µs per event, and on an ordinary page it is most of the wait.**
-Subtracting the server's own execution time from the measured operation, on PG18 over the
-100.000-event `TAGGED` corpus:
-
-| workload | events returned | server | measured | per event |
-|---|---|---|---|---|
-| `query-by-entity-hot` | 6,876 | 5.68 ms | 21.32 ms | **2.27 µs** |
-| `query-stream-page` | 500 | 0.42 ms | 1.05 ms | **1.25 µs** (lower bound) |
-
-So a 500-event page spends **60–83%** of its time in JDBC and the serde rather than in PostgreSQL —
-the range being how much of the server's *reported* time is the `auto_explain` instrumentation that
-reported it, which inflates a fast statement and so deflates the remainder. The 6.876-event read is
-the trustworthy row, because there the server's own work dwarfs the observer. Two consequences either
-way: bounding a read with `EventQuery.limit(n)` is worth more than it looks, because the cost being
-bounded is mostly per-event and downstream of the query; and tuning the database is the wrong first
-move for a read that returns thousands of events, because the database is not where the time is going.
-(Testcontainers on a developer machine — the magnitude, not the third digit.)
-
-**Two read shapes do not use the index you would assume, and the captured plans say so.**
-
-- **A wildcard read scans the whole table, whatever its limit.** `EventStreamId.anyContext()` binds no
-  stream column, so `ORDER BY event_tx, event_position` has no index to walk: PG18 answers
-  `query-wildcard`'s `limit(500)` with a **parallel sequential scan over all 100.000 rows** feeding a
-  top-N heapsort — 4.428 buffers and ~20ms for 500 events. Its cost is the size of the store and not
-  the size of the page, which matters for the paths that legitimately use a wildcard stream: the raw
-  import check, an export, a store-wide projection.
-- **An OR-of-facts read does not use the tag index at all.** `query-by-or-groups` (five items, each a
-  type set plus a `sku:` tag) plans as an ordered index scan on `idx_events_stream_position` with the
-  whole disjunction as a `Filter` — 2.196 rows discarded to return 500. The tag index serves a single
-  containment predicate, not a disjunction of them, which is the read-side counterpart of the
-  or-groups cliff on the append side.
-- **The savepoint probe's two plans are 30× apart, and the server currently picks the right one.**
-  `query-last-event` (`.backwards().limit(1)`, type + tag) has a custom plan that is an index scan
-  backward over `idx_events_stream_type_position` — 6 buffers, 0.03ms — and a generic plan that is a
-  `BitmapAnd` of the tag and stream-type indexes, 231 buffers and 1.0ms. The custom plan's estimate is
-  16× cheaper, so PostgreSQL keeps it; the measurement (0.074 ms/op) agrees. Worth knowing that the
-  most common read in a DCB application has a 30× worse plan one statistics change away.
-
-**The in-memory backends are an unindexed linear scan, so they are not a "fast store" the database
-should beat.** `InMemoryEventStorageImpl` holds a `List` and matches in Java, with `Stream.limit` on
-top: its cost is *how far into the log the scan walks*, not how many events come back. At 100.000
-events that makes it **31× slower than PostgreSQL on a needle tag query** (0.155 against 4.886 ops/ms)
-and **78× slower reading one long-tail entity's history** (0.104 against 8.064), while still being
-3–90× *faster* on the shapes where a limit fills immediately — a page, a wildcard read, `getEventById`.
-The rule that fits every row is that a limit only helps when the matches are dense enough to fill it
-early.
-
-- **What this means in practice**: an application prototyped against the in-memory store learns
-  nothing about what its tag queries will cost in production, and learns it backwards. Selective tag
-  queries are the case Postgres's GIN index exists for, and the case the in-memory store is worst at.
-- It also means the two backends converge on any read returning thousands of events —
-  `query-by-entity-hot` is 0.054 against 0.046 — because at that size both are paying the same ~2µs
-  per event and the storage difference washes out. That is the same figure arrived at from the other
-  side.
-- The in-memory backends stay the right thing for tests and for the TCK. They are a correctness
-  substitute, never a performance one.
-
-### What five other domains in the same table cost
-
-`crowded-store` is `read-shapes` over a store holding five further bounded contexts at five times
-the volume — 100.000 events under test inside a 600.000-event table. **Ten of the twelve read
-shapes do not move at all** (0.93–1.18× against the control, inside the run-to-run band). Two
-collapse, and the captured plans say why in a way the throughputs alone would not.
-
-**A tag's selectivity is a property of the table, not of your context.** `idx_events_tags` is not
-stream-scoped, so a bitmap scan on it returns every context's events carrying that tag and the
-stream scoping only prunes afterwards. `sku:SKU-000000` identifies **6.876** events in `inventory`
-and **40.227** in the crowded table, because catalog, payments and shipping tag their events with
-`sku:` too — realistically, since those events really are about a SKU.
-
-**That flips `query-by-or-groups` from a limit-bounded plan to a full-materialisation one**, which
-is the whole 5.4× (0.347 → 0.064 ops/ms):
-
-| | `read-shapes` | `crowded-store` |
-|---|---|---|
-| plan | ordered index scan on `idx_events_stream_position`, OR as a `Filter` | `BitmapOr` of five `BitmapAnd`s over `idx_events_tags` + `idx_events_stream_type_position` |
-| rows touched to return 500 | 2.196 discarded | **11.122 materialised** |
-| buffers | 129 | **4.139** |
-| server time | 1.7 ms | 15.4 ms |
-
-The first plan walks the stream in order and stops when the limit fills; the second computes the
-whole bitmap union and then top-N sorts it. **`EventQuery.limit(n)` only bounds work while the plan
-is one the limit can stop early**, and which plan that is depends on what else is in the table.
-
-**The savepoint probe survived, and its bad plan got much worse.** `query-last-event`'s custom plan
-is unchanged — index scan backward, 6 buffers, 0.029ms — and the server still keeps it, so the
-measurement is unharmed (14.819 against the control's 13.489). But its *generic* plan now pulls
-those same 40.227 rows through the bare tag index: 239 buffers and 4.43ms, against 231 buffers and
-1.007ms uncrowded. The gap between the plan PostgreSQL picks and the one it might pick widens from
-**30× to 153×** — so crowding a table does not slow the most common DCB read down, it enlarges the
-blast radius of a statistics change that would.
-
-**A wildcard read costs the size of the table, confirmed.** 0.051 → 0.013 ops/ms (19.6 → 76.9
-ms/op) for a 6× bigger table: parallel sequential scan over all 600.000 rows, 23.731 buffers, and
-JIT compilation on top. Sub-linear only because two parallel workers absorb some of it.
-
-**The caveat that keeps this honest: the noise is written as contiguous blocks after the context
-under test** (`CorpusGenerator` generates inventory, then sales, then each noise context in turn),
-so `inventory`'s heap pages and its range of every stream-scoped index are untouched — the hot
-entity reads 1.998 heap blocks in both corpora, identically. A real store accumulating six domains
-over time would interleave them, adding heap scatter and index bloat *within* the range this
-corpus leaves pristine. So read the ten unchanged workloads as "sharing a table costs nothing that
-a stream-scoped index can prune", not as "sharing a table is free".
-
-### What three million-event stores in the same database cost
-
-`crowded-database` is the other half of that pair, and it isolates the mechanism `crowded-store`
-cannot: the context under test is the *same* 100.000-event `CLEAN` corpus as `read-shapes`, in its
-own tables, with three further stores of 1.000.000 events each under their own prefixes in the same
-database. Nothing is shared but the cluster — shared buffers, WAL, autovacuum, the notification
-queue, `pg_snapshot_xmin`.
-
-**The answer is nothing measurable.** All twelve read shapes land inside the run-to-run band against
-the `read-shapes` control (0.94–1.18×, and the two ends of that are the needle tag query and
-`query-by-id`, both of which move that much between two runs of the *same* profile). The wildcard
-read — the one shape whose cost is the size of the table — is 0.051 against 0.051, which is the row
-that says the neighbours really are in different tables: it scans the store under test and never
-touches them.
-
-**The captured plans confirm it behaves as the control rather than merely scoring like it.**
-`query-by-or-groups` gets the ordered `idx_events_stream_position` scan with the disjunction as a
-`Filter`, 2.196 rows discarded and 129 buffers — the `read-shapes` plan, not the `BitmapOr` that
-`crowded-store` flips to. `query-last-event`'s *generic* plan pulls 6.876 rows through
-`idx_events_tags` (231 buffers), against 40.227 in `crowded-store`. So the or-groups collapse and
-the widened savepoint blast radius in the previous section are attributable to **events of other
-domains in the same table**, and not to table size, index size, or the presence of other stores.
-
-**The caveat is the important part: the neighbours are idle.** They are written once during
-provisioning and never read or written again, so none of the mechanisms this profile names is
-actually exercised — nothing of theirs competes for shared buffers, nothing dirties pages, autovacuum
-has nothing to do, and no transaction of theirs holds an xid. What is established is that a store
-does not pay for *coexisting* with large neighbours. A busy neighbour is a different question, and
-the one to keep in mind is the `pg_snapshot_xmin` stall documented under the PostgreSQL notes: a
-long-running **writing** transaction in a neighbouring store — or in another database of the same
-cluster — freezes what this store can read, and no amount of table separation prevents it.
-
-### Choosing a stream design: one stream per context, or one per entity
-
-The question every application author has to answer first — a stream per bounded context with
-entities told apart by tags (`inventory/default`, every event tagged `sku:`), or a stream per entity
-with the id as the purpose (`inventory/WIDGET-42`). Both are ordinary uses of `EventStreamId`, and
-until now the answer here was a guess. `stream-design-tagged` and `stream-design-per-entity` are the
-same corpus in every property but that one — 100.000 events, `CLEAN`, `REALISTIC`, 2000 entities,
-one seed — so the difference between them is attributable.
-
-**Per-entity wins or ties everything except reading a context in order.** Measured per-entity ÷
-tagged, PG18, 0.00% store drift on both sides, with `append-none` as the control that must not move
-(1.04× at one thread, 0.98× at eight):
-
-| workload | 1 thread | 8 threads |
-|---|---|---|
-| `append-type-and-tag` (the canonical DCB check) | 4.2× | **16.8×** |
-| `decide-then-append` | 1.4× | 2.3× |
-| `query-by-stream-cold` | 2.4× | 2.2× |
-| `query-by-tag-needle` | 1.5× | 1.4× |
-| `query-by-stream-hot` | 1.2× | 1.2× |
-| `query-last-event-by-stream` | 1.1× | 1.2× |
-| `query-by-tag-swathe` | 1.1× | 1.0× |
-| **`query-stream-page`** (matchAll, 500 events, in order) | **0.074** | **0.066** |
-
-- **The 16.8× on conditional appends is the advisory lock, not the index.** Appends are serialized
-  per stream by `pg_advisory_xact_lock` keyed on `(prefix, context, purpose)` — so under `tagged`
-  every conditional append in a context takes the *same* lock and eight writers take turns, while
-  under `per-entity` writers to different entities take different locks and do not meet. The gap is
-  4.2× single-threaded and grows with writers, which is the signature of contention rather than of a
-  cheaper plan.
-- **The one real cost is paging a context in order: 13–15× slower.** That is not an artefact and
-  there is no addressing trick that recovers it — under `per-entity`, reading a whole context *is* a
-  cross-entity read, so `stream_purpose` is unbound, and it is the second column of both
-  `idx_events_stream_position` and `idx_events_stream_tags`. An ordered read loses its start
-  condition and the `LIMIT` cannot be pushed into the scan. Anything shaped like `query-stream-page`
-  is expected to pay it — a whole-context replay, a `Projector` over a context, an export — though
-  only the page is measured: `replay-batches` is not in these two profiles, so the replay cost is
-  inferred from the shape it shares rather than observed. Weigh the trade against how often the
-  application reads a whole context versus how often it reads or writes one entity.
-- **Read one entity through its own stream, or the design buys you nothing.** This is the trap, and
-  it is entirely in the calling code: `EventStreamId.forContext("inventory")` with a wildcard purpose
-  addresses a per-entity corpus *the tagged way* and lands in exactly the unbound-column-2 case
-  above. Measured on the same per-entity corpus, the savepoint probe (`.backwards().limit(1)`) is
-  **0.562 ops/ms addressed by tag against 16.183 addressed by stream** at one thread, and 2.938
-  against 67.448 at eight — 23–29×. Read by tag it looks like a 24× regression against `tagged`; read
-  by stream it is ahead. Choosing `per-entity` and then querying by tag is the worst of both.
-- **The suite guards that distinction rather than trusting it.** Each `query-by-entity-*` /
-  `query-by-stream-*` pair is the *same* query asked two ways, so on the `tagged` corpus the two must
-  report the same number — a gap there is a harness fault, not a finding. They do agree (0.046/0.047,
-  8.062/8.517, 13.915/14.387 at one thread), which is what licenses reading the per-entity gap as the
-  cost of addressing.
-- **Not measured here, and it is the real bill for `per-entity`:** 2000 distinct purposes is past the
-  default `MeterOptions.maxPurposeTagValues()` cap of 1000, so a store with metrics on pools the tail
-  under `_other`. Both profiles run with metrics **off** deliberately, so this comparison says nothing
-  about that cost — `metrics-cost` is where it is measured rather than assumed. See the metrics
-  section above for what a distinct purpose costs.
-
-**Caveats, in the suite's own terms.** These are Testcontainers runs on a developer machine:
-direction and rough magnitude, deliberately not published under `results/` — the publisher refuses a
-Testcontainers run for exactly this reason. Several per-entity figures carry 29–36% relative error
-(`append-type-and-tag` at one thread is 7.069 ± 2.042; `query-by-stream-cold` at eight is 76.944 ±
-28.053), so read those as "clearly faster" rather than as ratios to two digits. The `append-*`
-workloads grow the store 165–172% within an iteration on **both** sides, which is why the pair is
-compared and neither figure is quoted alone. The entity count at which the answer flips is not
-established: 2000 is one point on that curve, and the corpus knob to move is `entityCount`.
-
-### What a shared append lock costs, and what a shared boundary costs
-
-The three `write-contention-*` profiles are one corpus (100.000 events, `PER_ENTITY`, 2000
-entities) driven three ways, so the difference between them is where the writers meet: `spread`
-gives each thread its own entity, hence its own stream and its own advisory lock; `one-stream`
-draws the *same* rotation of entities and writes every append into the hot entity's stream, so the
-lock is shared and no two appends conflict; `one-boundary` puts every thread on the hot entity, so
-they share the lock and the boundary. PG18, metrics off, `append-none` as the control that must not
-move (11.3 / 11.6 / 10.9 at one thread; 33.5 / 34.2 / 33.6 at eight — it does not).
-
-`append-type-and-tag`, the canonical DCB check, in ops/ms:
-
-| threads | `spread` | `one-stream` | `one-boundary` | `one-boundary` useful |
-|---|---|---|---|---|
-| 1 | 5.450 | 1.303 | 8.150 | 8.150 |
-| 4 | 16.982 | 1.358 | 6.399 | 6.09 |
-| 8 | 24.058 | 1.394 | 4.657 | 4.02 |
-| 16 | 23.587 | 1.335 | 1.241 | 0.22 |
-
-- **A shared lock does not slow an append down; it stops throughput scaling at all.** Spread
-  writers go 5.45 → 24.06 from one to eight threads (4.4×, saturating at sixteen); writers sharing
-  one stream's lock go 1.30 → 1.39 (1.07×) across the same sixteen-fold increase. That flatness is
-  the ceiling the advisory-lock note above warns about, and it is the half of that note the suite
-  can now put a number on. The `~5%` in it is a different quantity — what the lock costs when
-  nothing contends for it — and measuring that needs a build with the lock removed, which is why it
-  stays a recorded observation.
-- **Read the one-thread ordering as the arrangement, not the lock** — with one writer nothing
-  contends, so what separates 1.30 from 5.45 from 8.15 ops/ms is *where each profile addresses its
-  append*, and the captured plans now say so directly rather than by elimination. Each profile
-  explains the append it actually issues (the capture used to be hardwired to `spread`, so all three
-  came back byte-identical while their throughputs differed fourfold — a harness fault, now fixed;
-  a plan heading names the mode it was captured under):
-  - **`spread`** — stream and tag are the same entity, and the cursor is that entity's own last
-    event. The `NOT EXISTS` starts at the cursor and stops: no rows removed, 3 buffers, **0.017ms**.
-  - **`one-stream`** — the artificial one, and it shows: the append is addressed at the hot entity's
-    stream while the tag and the cursor come from the *rotated* entity, so the scan starts at a
-    cursor belonging to a different entity and walks the hot stream's rows to reach the tag —
-    `Rows Removed by Filter: 13`, 9 buffers, **0.059ms** (70 rows and 24 buffers on
-    `decide-then-append`). That is the cost of a boundary check hunting one SKU inside a stream every
-    thread is growing, and it is the whole of the one-thread gap. Its *custom* plan even changes
-    shape — a bitmap index scan on `idx_events_stream_tags`, cost 52.03 against the generic plan's
-    15.57 — so this is the one arrangement where the two plans disagree.
-  - **`one-boundary`** — stream, tag and cursor are all the hot entity, and the cursor is the
-    boundary the writer itself just wrote, so it sits at the head of the index (`7349218/100008`, not
-    the corpus midpoint). Nothing to walk, nothing removed, **0.027ms**. That is why it is *faster*
-    than `spread` at one thread despite dumping into one stream, and it is what the earlier write-up
-    called unestablished.
-  - **`decide-then-append` is a read cost, not an append cost.** On `one-boundary` at one thread,
-    where nothing conflicts, it measures **22.30 ms/op** against an append statement the server
-    executes in **0.223ms** — so ~99% of it is the decide read. That is what "it re-reads the
-    boundary every writer is growing" costs when the writer growing it is you.
-- **The trio was re-run against the fixed capture and reproduces**: `append-type-and-tag` at
-  1/4/8/16 threads came back 5.77 / 16.91 / 23.91 / 23.44 (`spread`), 1.36 / 1.37 / 1.42 / 1.34
-  (`one-stream`) and 8.85 / 6.30 / 4.76 / 1.23 (`one-boundary`), with the control flat and the
-  one-boundary conflict rate again 0% → 5.0% → 13.4% → 82%. The table above is the first run; the
-  second agrees within its error bars.
-- **At one shared boundary, adding writers makes the system strictly worse.** Not slower per
-  operation — worse in work done: useful appends fall 8.15 → 0.22 ops/ms from one writer to
-  sixteen, a 37× collapse, while the conflict rate climbs 0% → 4.9% → 13.6% → **82%**. Throughput
-  alone hides it (1.241 ops/ms at sixteen threads still looks like work), which is exactly why the
-  report carries a useful/s column beside the score. `decide-then-append` is worse still —
-  0.042 → 0.222 ops/ms at 93% conflicts, so 0.042 → 0.016 useful — because it re-reads the whole
-  boundary each time and that boundary is the thing every writer is growing.
-- **What an application does with this**: a coupon redeemed at most N times, a counter, a single
-  aggregate everyone touches — a boundary that hot has a one-writer ceiling, and more instances
-  behind it buy nothing. Widening the boundary (one per basket rather than one per coupon) is the
-  fix; the lock, by contrast, is bought off by the stream layout, which is what `PER_ENTITY` above
-  is for.
-- **Same caveats as the stream-design pair**: Testcontainers on a developer machine, so direction
-  and magnitude rather than publishable figures, and both profiles grow the store 68–69% within an
-  iteration. The relative errors here are tighter than in that pair (2–10%), and the comparator
-  reports the `spread` → `one-stream` gap as outside both error bars at every thread count.
+- **Deserialization is ~2µs per event, and on an ordinary page it is most of the wait**: a 500-event
+  page spends 60–83% of its time in JDBC and the serde rather than in PostgreSQL. Bounding a read
+  with `EventQuery.limit(n)` is worth more than it looks, and tuning the database is the wrong first
+  move for a read returning thousands of events.
+- **The in-memory backends are unindexed linear scans** — a correctness substitute, never a
+  performance one. They lose selective tag queries by 30–90× (exactly the case the GIN index exists
+  for) and win only where a limit fills before the scan gets far; prototyping tag-query cost against
+  them points backwards.
+- **Stream design** (`stream-design-*` pair): **`PER_ENTITY` wins or ties everything except reading a
+  context in order** (13–15× worse — a whole-context replay or export pays it). The canonical DCB
+  check is 4.2× better single-threaded and 16.8× at eight writers, because distinct purposes take
+  distinct advisory locks. **But read an entity through its own stream, or the design buys nothing**:
+  addressing a per-entity corpus by tag through a wildcard purpose costs 23–29× over its own stream.
+- **A shared append lock stops throughput scaling flat** (~1.4 ops/ms at any writer count, against
+  5.5 → 24 for writers spread over entities), and **a shared boundary makes added writers strictly
+  worse**: useful appends fall 8.15 → 0.22 ops/ms from one to sixteen writers at 82% conflicts.
+  Widen hot boundaries; the lock is bought off by stream layout.
+- **Sharing a table with other domains costs nothing a stream-scoped index prunes** (ten of twelve
+  read shapes unmoved at 6× table volume), but a tag's selectivity is a property of the *table*,
+  which flips OR-of-facts reads to full materialisation (5.4×). Sharing only a *database* with idle
+  neighbour stores costs nothing measurable; a busy neighbour is the `pg_snapshot_xmin` hazard in
+  the postgres notes.
+- **The library's own meters cost nothing measurable in throughput** — capped, uncapped and absent
+  land within ~1% — so their cost is the heap and scrape size described in the metrics section above.
+- The DCB check's plan-cache cliff and its remedy are summarised under PostgreSQL below; the
+  `dcb-cost-curve` profile measures the curve, reproduced on a real server in
+  `results/0.11.0-SNAPSHOT/dcb-cost-curve-ext/`.
 
 ## Naming Conventions
 
@@ -1560,382 +1279,38 @@ one boundary from a common start signal, and exactly one must win while the rest
 `OptimisticLockingException`. Note that the rest of `OptimisticLockingTest` is single-threaded, so it
 proves the check *reads* correctly and says nothing about whether it is atomic — which is why a backend
 can pass all of it and still violate the boundary in production.
-
 ## PostgreSQL Specific Notes
 
-- Table schema can be prefixed (useful for multi-tenancy or isolation)
-- Database initialization performed via `.initializeDatabase()` on builder
-- Uses HikariCP for connection pooling
-- Separate DataSource for monitoring queries (optional, defaults to main DataSource)
-- Tests use Testcontainers for isolated PostgreSQL instances
-- Requires the `btree_gin` extension (a standard contrib extension, available on the major managed Postgres offerings). Schema initialization installs it and schema validation requires `idx_events_stream_tags`, a combined stream+tags GIN index that serves DCB reads scoping by stream *and* filtering by tags in one index. The B-tree indexes are retained for ordered stream replay (GIN cannot serve `ORDER BY`)
-- **Installing that extension needs `CREATE` on the *database*, which is not `CREATE` on the schema.**
-  `btree_gin` is *trusted* (PG13+), so no superuser is involved — but a role granted `CREATE` on its
-  schema and nothing on the database, the ordinary locked-down deployment, creates every table, index,
-  function and trigger here and then cannot create the extension. Because the schema scripts are one
-  transaction, that is not a missing index: the whole schema rolls back and the store does not start.
-  See "Database privileges" in the postgres module's README for the table of what each
-  `DatabaseInitMode` needs.
-  - **The DBA-installs-it-once split is the recommended answer, and it costs the application role
-    nothing afterwards.** `ensure-schema.sql` pre-checks `pg_extension` and skips the statement
-    entirely when the extension is present, so an unprivileged role starts against it indefinitely —
-    not even a `NOTICE`. (A bare `CREATE EXTENSION IF NOT EXISTS` would also have worked, since
-    PostgreSQL's `IF NOT EXISTS` short-circuit precedes its privilege check, but it puts a `NOTICE` in
-    every startup log and issues DDL a `VALIDATE`-style deployment has no business issuing.)
-  - **The remaining failure names its remedies.** A `RAISE` in the `insufficient_privilege` handler
-    reports the extension, the privilege distinction, and both ways out (`CREATE EXTENSION btree_gin`
-    once, or `GRANT CREATE ON DATABASE`), instead of a bare `permission denied to create extension`
-    wrapped in `Failed to execute database script`.
-  - **The schema advisory lock does not cover this statement**, because it is keyed on the table prefix
-    while an extension is database-scoped. Two stores with *different* prefixes starting together on a
-    database without `btree_gin` therefore raced on `pg_extension_name_index` exactly as the tables
-    used to race on `pg_type_typname_nsp_index` — the loser rolling its whole schema back. The block
-    swallows `duplicate_object` and `unique_violation`: by the time either surfaces the winner has
-    committed (a conflicting catalog insert blocks until it does), so the opclasses the index needs are
-    visible to the loser's transaction, and it goes on to create its index.
-  - **Where the extension lives is not a constraint.** `CREATE EXTENSION btree_gin SCHEMA extensions`,
-    the convention on several managed offerings, serves the index with no `search_path` change and no
-    `USAGE` grant on that schema — default operator class resolution is not `search_path`-filtered.
-  - `PostgresBtreeGinPrivilegeTest` pins all four down per backend (16, 17, 18).
-- **Ordering is the `(event_tx, event_position)` tuple everywhere — reads, the `until` boundary, and the
-  optimistic-locking check.** `event_position` is a `bigserial` taken at insert time and `event_tx` is
-  `pg_current_xact_id()`, assigned independently, so the two orders genuinely disagree: a transaction can
-  carry a lower position and a higher tx than one that committed before it. The read path's
-  `pg_snapshot_xmin` barrier makes that ordinary rather than exotic — it withholds an event whose
-  transaction is still in flight, so a reader takes a reference and the event surfaces afterwards, sorting
-  later on a lower position. Any predicate over the log's order goes through `addCursorBoundary` or
-  `addUntilBoundary`; comparing `event_position` alone is a different order and silently drops events.
-  Writers that do not hold the append lock (unconditional appends, `importEvents`, raw SQL) are where the
-  inversion actually comes from, which is why the advisory lock below does not subsume this
-- **That tuple comparison is written as a SQL row constructor — `(event_tx, event_position) > (?, ?)` —
-  and the lexicographic expansion it is equivalent to is several times slower.** SQL defines the two as
-  the same predicate, so nothing about what a boundary *means* depends on the spelling. What depends on
-  it is whether PostgreSQL can use it: a boundary is nearly always conjoined with `stream_context = ?
-  AND stream_purpose = ?`, and `idx_events_stream_position` is `(stream_context, stream_purpose,
-  event_tx, event_position)`, so with the leading two pinned by equality a row comparison over the
-  trailing two becomes an index **start condition** — descend once to the cursor, walk the leaves in
-  order — and a page costs what the page returns. A disjunction is not a start condition and lands in a
-  `Filter`.
-  - **Measured** (PG18, 100.000-event `TAGGED` corpus, cursor at the midpoint, one page of 500). The
-    expansion still used the index, but only for the stream columns, and then discarded every event
-    before the cursor to reach page one: `Rows Removed by Filter: 27500`, 1295 buffers, 3.344ms. The row
-    comparison starts the scan at the cursor: nothing filtered, 27 buffers, 0.165ms. End to end that was
-    **2.9× on a five-page cursor walk and 2.0× on a projector run**, with `query-stream-page` and
-    `append-none` — the shapes carrying no boundary — unmoved, which is what says the difference is the
-    boundary and not the machine.
-  - **The cost of the expansion grows with how deep the cursor already sits**, not with the page size.
-    That is the wrong shape for the way `Projector` pages, and it grows silently: every result is
-    correct, so only a plan shows it.
-  - **It also improves the plans the server *caches* for the DCB check**, which was not what it was for.
-    A conditional append's `NOT EXISTS` carries the same boundary, and under the expansion the *generic*
-    plan for the canonical `type + tag` check was a whole-table sequential scan (19.5ms, 100.008 rows
-    discarded for a row that is not there); with the row comparison it is an index scan (0.23ms). An
-    or-groups cliff remains at two and three facts — that one is the tag disjunction, not the cursor —
-    but it no longer extends past it; see the plan-cache section below for the measured curve.
-  - **There is no setting for this, deliberately.** The two spellings are semantically identical, so no
-    deployment can want the slower one, and a knob whose right value is the same everywhere is an
-    unmade decision left in the code. `PostgresCursorBoundaryTest` guards it per backend (16, 17, 18):
-    the boundary must reach the `Index Cond`, with no `BitmapOr` and no `Sort` above the scan. That test
-    exists because the expansion is what anyone rewriting this would naturally reach for, and nothing
-    else would notice.
-  - **A related trap in the same statement**: the read path's `ORDER BY event_tx::xid8, event_position`
-    looks redundantly cast and is not. The select list projects `event_tx::text`, which PostgreSQL names
-    `event_tx`, and SQL resolves a bare name in `ORDER BY` to an **output** column before it looks at the
-    table — so `ORDER BY event_tx` sorts by the *text* rendering of a transaction id (`'9'` after `'10'`)
-    on an expression no index can supply, putting a `Sort` above every ordered read. Written as an
-    expression the name cannot be captured. Do not "simplify" that cast away
-- **A long-running *writing* transaction anywhere in the cluster freezes what this store can read.** The
-  barrier above is `event_tx < pg_snapshot_xmin(pg_current_snapshot())`, and `pg_snapshot_xmin` is the
-  oldest transaction id still running — a property of the whole PostgreSQL cluster, not of this store.
-  Every event appended since the oldest open transaction took its id is invisible here until that
-  transaction ends. **Nothing fails and nothing is logged**: reads just stop advancing, projections go
-  quiet, bookmarks stop moving, `SELECT count(*)` in psql shows the events are there, and when the
-  blocker finally ends everything appears at once. `PostgresVisibilityStallTest` demonstrates it end to
-  end.
-  - **Only transactions that have *written* count** — this is what makes the hazard narrow rather than
-    severe, and it is worth being precise about. PostgreSQL assigns a transaction id lazily, at the
-    first write, and only assigned ids enter a snapshot's xmin. A read-only transaction pins nothing,
-    however long it runs, at **any** isolation level including SERIALIZABLE, and so does an `idle in
-    transaction` connection that only ever read. So `pg_dump`, reporting queries, analytics reads and a
-    replica feed are all harmless. What is not harmless: a batch job, an ETL run, a migration, or an
-    `idle in transaction` connection that wrote before going idle. `SELECT … FOR UPDATE` and an explicit
-    `pg_current_xact_id()` also assign an id without writing a row.
-  - **The blocker does not have to touch the events table, or even this database.** Transaction ids are
-    cluster-wide, so a writer in a *different database of the same cluster* pins this store's barrier
-    just as effectively. Verified on PG17 and PG18. The operational rule is therefore "do not share a
-    cluster with long-running write transactions", not "do not share a table".
-  - **Read-your-own-writes does not hold** while a blocker is open: a caller can append successfully and
-    not read the event back. Under DCB that surfaces as an optimistic-locking conflict a retry loop
-    **cannot clear**. The append-side `NOT EXISTS` check deliberately carries no `xmin` filter, so it
-    sees committed events the reader cannot; a decider re-reads its boundary, gets the same stale
-    reference, appends, and conflicts again — for as long as the stall lasts. Not spurious, exactly:
-    there really is a new relevant fact, it is just being withheld from the one party that needs it.
-  - **The append advisory lock does not compound this.** A transaction that has only taken
-    `pg_advisory_xact_lock` holds no transaction id, so neither the lock holder before its INSERT nor
-    any appender blocked behind it pins the barrier. Only the INSERT itself does, for its own duration.
-  - **Diagnosing it.** `backend_xid IS NOT NULL` is the whole predicate — filtering on `state <> 'idle'`
-    or on `xact_start` age reports harmless read-only sessions as suspects:
-    ```sql
-    SELECT pg_snapshot_xmin(pg_current_snapshot());          -- the barrier
-    SELECT pid, datname, usename, application_name, state,
-           now() - xact_start AS held_for, backend_xid, query
-    FROM   pg_stat_activity
-    WHERE  backend_xid IS NOT NULL                            -- only these can stall the store
-    ORDER  BY xact_start;                                     -- the oldest is the culprit
-    ```
-    Deliberately unfiltered by `datname`: the culprit may be in another database of the cluster. Run it
-    as a superuser or as a member of `pg_read_all_stats` — `xact_start`, `query` and `state` come back
-    NULL for other roles' sessions otherwise, and you get a row identifying the blocker with no way to
-    tell how old it is or what it is doing. (`backend_xid` is readable regardless, so the `WHERE` clause
-    still selects the right rows for any role.)
-  - **The library does not meter this**, and there is nothing in the `sliceworkz.eventstore.*` meters
-    that reveals it — they count and time the calls the store makes, all of which keep succeeding
-    throughout a stall. Detection is therefore external, on the database, using the query above.
-    Two notes for whoever wires that up:
-    - **Watch `pg_snapshot_xmin` standing still *while* something holds a transaction id**, not either
-      alone. xmin also stops moving on a completely idle database, so "xmin has not advanced" on its own
-      fires on every quiet store; "a transaction holds an xid" on its own fires on every append in
-      flight. It is the combination that means events are being withheld.
-    - **`now() - xact_start` reads zero for an ordinary application role.** `pg_stat_activity` blanks
-      the columns describing another role's session for anyone who is not a superuser or a member of
-      `pg_read_all_stats`, and blanks them to NULL rather than refusing — so the natural "age of the
-      oldest blocking transaction" check reports a confident all-clear right through a stall another
-      role is causing. `backend_xid` is *not* blanked, so a count of blocking transactions does survive
-      on ordinary privileges; the age does not. Either grant `pg_read_all_stats`, or time the staleness
-      of `pg_snapshot_xmin` from outside instead of asking the server how old the blocker is.
-    - Do **not** measure the effect by counting withheld events: `count(*) … WHERE event_tx >=
-      pg_snapshot_xmin(…)` has no index to use (there is none on `event_tx`), so it is a sequential scan
-      of the whole events table every time it is sampled.
-  - **The store is a mild instance of its own hazard**, which is why this is normal rather than exotic:
-    an append in flight holds a transaction id, so a second append that starts later and commits first
-    cannot read its own event back until the first one finishes. That window is one INSERT long and
-    self-clearing, and `ConcurrentAppendVisibilityTest` is written to tolerate it (it re-polls). The
-    same mechanism, with a blocker that lasts minutes instead of milliseconds, is the hazard above.
-  - **A consequence for anything that would hold the store's *own* connections in a transaction.**
-    Reads currently run on autocommit, which is what keeps the store out of its own blast radius. Moving
-    `query()` to a cursor-based, autocommit-off streaming read would make a long-running read a
-    long-running transaction — and while a purely read-only one still assigns no transaction id and so
-    still pins nothing, that safety rests entirely on the streaming connection never writing. Any design
-    that opens a transaction and reads for minutes needs to hold that property deliberately, or the
-    store becomes its own worst blocker.
-  - **Do not "fix" this by bounding the barrier** — falling back to reading everything committed once
-    xmin has been pinned for a while trades a visible, self-healing stall for silent event loss in
-    exactly the scenario the barrier exists to prevent. `ConcurrentAppendVisibilityTest` is what fails
-    when you try.
-- **Conditional appends are serialized per stream by a `pg_advisory_xact_lock`.** The optimistic-locking
-  check is an `INSERT … WHERE NOT EXISTS (…)`, and under PostgreSQL's default READ COMMITTED isolation each
-  statement fixes its snapshot when it starts, so two concurrent appends at the same consistency boundary
-  both find it empty, both insert, and both commit — a silent DCB violation. The conflicting row is a
-  *phantom* at the moment of the check, so no row lock can cover it. `append` therefore takes a
-  transaction-scoped advisory lock, keyed on a SHA-256 of the table prefix plus `(stream_context,
-  stream_purpose)`, before running the INSERT. Consequences worth knowing:
-  - **The lock is taken as its own statement, before the INSERT** — this is load-bearing, not stylistic.
-    Folded into the INSERT's `WHERE`, the statement would block with its stale snapshot already taken and
-    the check would still miss the other appender's row: the same race with a lock in front of it.
-  - **Only conditional appends take it.** `AppendCriteria.none()` reads nothing and so cannot observe a
-    stale boundary; a conditional append that misses one is still equivalent to the two having run in the
-    order conditional-then-unconditional, which is a legitimate history. Bulk ingestion stays fully parallel.
-  - **The key is the stream, not the filter.** Hashing the filter would be finer grained and unsound: two
-    overlapping-but-unequal filters (tag `A` vs tags `A + B`) hash differently and would not exclude each
-    other. An append not confined to one fully specified stream falls back to a storage-wide key.
-  - **Cost**: measured at ~5% against 8 concurrent writers spread over 1000 streams. Conditional appends to
-    *one* stream serialize for the duration of a single INSERT, so a hot stream (remember a stream is
-    usually a bounded context, not one aggregate) is the ceiling to watch. Key collisions only make two
-    unrelated streams take turns; they can never let a real conflict through.
-  - **Why not `SERIALIZABLE`**: it is correct, but a poor fit. A DCB boundary check is always
-    `event_position > <recent reference>`, i.e. a scan of the log's tail, which is exactly where every
-    writer writes — so SSI predicate locks collide constantly. Measured on the same workload: 86%
-    serialization failures and a third of the throughput, with disjoint boundaries falsely conflicting
-    because the planner's choice (seq scan → relation-level `SIRead` lock) decides the granularity.
-  - No DDL change, so no migration: the lock is entirely in the write path.
-- **The DCB check is a re-used prepared statement, and PostgreSQL's choice of plan for it can fall off a
-  cliff.** The server holds two plans for such a statement — a *custom* one re-planned from the actual
-  parameter values, and a *generic* one planned once against default selectivity — and from the tenth
-  execution it adopts the generic plan if its **estimated** cost looks no worse. A DCB check is the shape
-  that misleads that comparison: its expected result is *no rows*, while a `NOT EXISTS` is priced by how
-  soon a row is expected to turn up. Every OR-ed fact a decision rests on makes the generic plan expect a
-  match sooner, so its estimate *falls* while the custom plan's — built from real tag statistics — rises.
-  - **`conditionalAppendPlanning(PER_APPEND)` takes the choice away**, planning every conditional append
-    from its own values. Implemented as `setPrepareThreshold(0)` on that one statement through pgjdbc —
-    no extra round trip, no effect on any other statement sharing the connection, and unlike
-    `SET plan_cache_mode` it cannot leak. It is best effort against a `DataSource` that will not unwrap
-    to pgjdbc, which is a single WARN rather than a failed append.
-  - **The default stays `SERVER_DEFAULT`, and that is a measurement rather than a reservation.**
-    `sliceworkz-eventstore-benchmark`'s `dcb-plan-cache` profile runs both modes over one corpus in one
-    run, with `append-none` as the control that must not move; `dcb-plan-cache-small` is the same
-    profile against a 5.000-event corpus, so the pair isolates the one property that decides whether
-    planning per append pays for itself — the size of the table being planned against. On a
-    100.000-event `TAGGED` corpus (PG18, Testcontainers, 0.00% store drift, control 10.960 → 11.145
-    ops/ms = 1.02×, so the two targets are comparable):
+The deep operational notes — schema and trigger repair, migrations, advisory-lock keying, the
+LISTEN/NOTIFY machinery, diagnosis SQL, measured plan behaviour — live in
+**`sliceworkz-eventstore-infra-postgres/CLAUDE.md`**, loaded when working in that module. The facts
+that bind everywhere:
 
-    | conditional append | server's choice | planned per append | ratio |
-    |---|---|---|---|
-    | `append-types` | **8.096** | 3.329 | **0.41** |
-    | `append-type-and-tag` (the canonical check) | 1.069 | 1.102 | 1.03 |
-    | `append-multi-tag` | 0.969 | 0.923 | 0.95 |
-    | `append-or-groups-2` | 0.067 | **0.733** | **10.9** |
-    | `append-or-groups-3` | 0.066 | **0.568** | **8.6** |
-    | `append-or-groups-5` | 0.626 | 0.425 | 0.68 |
-    | `append-or-groups-10` | 0.529 | 0.590 | 1.12 |
-    | `append-empty-boundary` | 1.826 | 1.881 | 1.03 |
-    | `decide-then-append` | 0.866 | 0.855 | 0.99 |
-
-    ops/ms, higher is better. What that says:
-
-    - **The cliff is a narrow band at two and three OR-ed facts, not a threshold.** There the server
-      adopts a generic plan that sequential-scans the whole events table — `Rows Removed by Filter:
-      100044`, for a row that is not there — and a conditional append costs ~15ms instead of ~1.4ms.
-      Nothing is logged and no meter moves. This is the case `PER_APPEND` exists for, and it is worth
-      9–11× where it applies.
-    - **The curve then recovers, which is why "three or more" would be the wrong rule.** At five and
-      ten facts the generic plan is no longer a sequential scan but a cursor-driven index scan, so the
-      default is already an order of magnitude faster than at three and `PER_APPEND` has nothing left
-      to rescue — it costs 0.68× at five and buys nothing at ten. A wider filter is not a worse plan.
-    - **A types-only filter is now *harmed* by it, 2.4×.** That reverses what the small corpus says
-      (1.49× in `PER_APPEND`'s favour there) and it is the row-comparison cursor boundary that did it:
-      the generic plan for that shape became an index-only scan, so per-append planning pays
-      parse+analyze to arrive at the plan the server already had. The single-item shapes went the same
-      way — `append-type-and-tag` and `decide-then-append` were measured against 20–28ms generic
-      sequential scans while the boundary was still a disjunction, and their generic plan is now an
-      index scan at 0.23ms.
-    - **Everywhere else it is flat.** 1.03, 0.95, 1.03 and 0.99 on the canonical check, multi-tag, the
-      empty boundary and `decide-then-append` are "no difference", not small effects — several of these
-      carry 10–17% relative error, which is enough to hide an effect of that size and nowhere near
-      enough to manufacture a 9×.
-    - **Small stores never need it.** At 5.000 events the server keeps the custom plan on every shape
-      unaided, and the captured plan is identical at one, two, three, five and ten facts (a `BitmapOr`
-      over `idx_events_stream_position`, cost 12.62 → 12.65). The 42% decline across that width is
-      statement handling — 17 bound parameters against 62 — and not data access, so nothing about it is
-      a planning problem. What `PER_APPEND` costs there, where it changes no plan, is 0.70–0.95×.
-
-    So `PER_APPEND` is a remedy for a store observed to have flipped, not a setting to turn on
-    generally: reach for it when appends on one shape jump by an order of magnitude with no change in
-    the data, and leave it alone otherwise. Turning it on blind is as likely to cost 2.4× on a
-    types-only filter as to buy 10× on a two-fact one. These are Testcontainers runs on a developer
-    machine, which is enough to establish the direction and the rough magnitude and is deliberately not
-    published under `results/` — the publisher refuses a Testcontainers run for exactly this reason.
-
-    `PostgresConditionalAppendPlanningTest` pins the mechanism per backend — that the statement does reach
-    the plan cache by default and does not under `PER_APPEND` — and that neither mode changes what a
-    consistency boundary means.
-- **Oldest supported PostgreSQL is 16** (`Builder.OLDEST_SUPPORTED_MAJOR_VERSION`). The schema itself only
-  needs 13 — `xid8`, `pg_current_xact_id()` — but 16 is both the oldest version with a support life worth
-  committing to (13 went end-of-life in November 2025, 14 follows in November 2026, 15 in November 2027)
-  and the oldest this library has ever actually worked on. The docs previously promised 13+ while the
-  compliance run covered 17 and 18 only, and adding a floor backend showed the claim had never held: the
-  conditional append's `SELECT * FROM ( VALUES … )` carried no alias, which PostgreSQL only made optional
-  for FROM-clause subqueries in 16, so **every** conditional append — every DCB consistency check — failed
-  on 15 and older with `VALUES in FROM must have an alias`. The alias (`AS new_events`) is there now and is
-  kept even though 16 does not need it. An older server is **warned about, not rejected**: a hard failure
-  would turn a library upgrade into an outage, and the warning names the version. `Postgres16Backend` is in
-  the TCK service file so the floor is actually exercised — that is what an untested support claim is worth,
-  and why the floor backend earns its CI minute
-- **`ENSURE` brings functions and triggers up to date; tables, columns and indexes are only ever created.**
-  The functions are `CREATE OR REPLACE`d and each trigger is compared against the shape this release wants
-  (`tgtype` plus target function, in a `DO $$` block) and recreated only when it differs — so wrong timing,
-  wrong orientation or a trigger pointing at the wrong function self-heal, while the ordinary startup, where
-  the trigger is already correct, is a catalog read that takes no lock on the events table. `CREATE OR
-  REPLACE TRIGGER` would be simpler but is PG14+ *and* rewrites unconditionally, taking `ACCESS EXCLUSIVE`
-  on every start of every instance. `drop-schema.sql` drops the two functions as well as the tables, which
-  is what makes `INITIALIZE` mean what it says: the triggers go with the tables via `CASCADE`, the functions
-  do not, so before this a stale body survived the "drop and recreate from scratch" mode and the freshly
-  created trigger was wired straight back to it — the store then reported a validated schema with its
-  notifications dead
-- **Schema scripts run as one transaction under a per-prefix advisory lock** (`executeSqlScripts`, keyed on
-  a SHA-256 of the prefix and a scope no stream can produce, sharing `advisoryLockKey` with the append lock).
-  `CREATE TABLE / INDEX / EXTENSION IF NOT EXISTS` is not atomic against a concurrent creator, so before this
-  several instances starting together on a database without the schema raced on the system catalogs and 64 of
-  80 failed to start, on PG17 and PG18 alike. One transaction across *all* scripts also makes `INITIALIZE`'s
-  drop-then-ensure indivisible, so a second instance cannot drop what the first has just recreated
-- **What is still missing: a version marker, and validation of an object's shape.** `checkDatabase()` checks
-  that named tables, columns (type + nullability), functions and indexes *exist*, and that each trigger
-  exists with the expected `action_orientation`; it does not check
-  an index's method, columns or uniqueness, a column default, or a function body. So an index rebuilt as the
-  wrong kind, or the idempotency index silently made non-unique, passes validation — and a `VALIDATE`/`NONE`
-  deployment, where a DBA applies DDL, never gets the function repair either. A change needing `ALTER TABLE`
-  still has to be applied by hand (see the manual migrations below). `PostgresSchemaDriftTest` pins down both
-  halves per backend: what `ENSURE` now repairs, and what it still does not. See
-  `sliceworkz-eventstore-infra-postgres/SCHEMA-MIGRATION.md` for the measurements and the recommended
-  version-table design
-- **Append notifications are emitted once per stream per statement, not once per row.** The trigger on
-  `<prefix>events` is `AFTER INSERT ... REFERENCING NEW TABLE AS inserted FOR EACH STATEMENT`, and the
-  function emits one `pg_notify` per distinct `(stream_context, stream_purpose)` in the transition table,
-  carrying that stream's maximum over the total `(event_tx, event_position)` order. It was `FOR EACH ROW`,
-  which meant a 1000-event append queued 1000 notifications and an import chunk queued 5000 — all but one
-  per stream discarded by `OptimizingAppendListenerDecorator` after being built as JSON, written to the
-  cluster-wide async queue, sent over the wire, parsed by Jackson and fanned out to every listener.
-  Measured on the PG16 floor, a 100k-row insert: the notification count falls from 100.000 to exactly 1,
-  and trigger time roughly halves — 1230ms to 460ms on one run, 808ms to 369ms on another (the absolute
-  numbers move a lot between runs; the ratio is the stable part). The remaining cost is the transition
-  table, which is materialised as a tuplestore and then sorted, so this is not free — just far cheaper
-  than a plpgsql invocation and a queued notification per row. This also matches the in-memory backends,
-  which have always notified once per stream per append. Things to keep in mind when touching this:
-  - **The aggregation is `DISTINCT ON (stream_context, stream_purpose) ... ORDER BY event_tx DESC,
-    event_position DESC`, not `max(event_position)`.** The two orders genuinely disagree (see the
-    `(tx, position)` note above), and `DISTINCT ON` returns the whole winning row, so `event_id` belongs
-    to the reference being reported instead of being aggregated independently of it. A notification naming
-    a reference the reader has already passed is dropped by the optimizing decorator, so getting this
-    wrong strands subscriptions silently rather than loudly.
-  - **One notification per *distinct stream*, never a single collapsed "something happened".**
-    `AppendsToEventStoreNotification.isRelevantFor` matches through `EventStreamId.canRead`, so the
-    notification has to name a concrete stream or no concrete subscriber matches it.
-  - The payload shape is unchanged — `eventTx` is still rendered as a JSON *string* by
-    `jsonb_build_object` — so the Java side needed no change.
-  - **The trigger's expected `tgtype` is 4** (`INSERT` with the `ROW` bit clear), where the row-level
-    version was 5. That is what makes an un-migrated database fail the shape compare and get repaired by
-    `ENSURE`. `tgnewtable = 'inserted'` is compared too: the function reads the transition table, so a
-    statement-level trigger declared without `REFERENCING` would fail at runtime rather than at startup.
-  - The bookmark trigger is deliberately still `FOR EACH ROW`: `bookmark()` is a single-row upsert, so
-    per-row and per-statement are the same count there.
-  - `EventAppendNotificationGranularityTest` in the TCK pins the granularity and the reference down for
-    every backend.
-- **`checkTrigger` validates `action_orientation`, not just the trigger's name.** A `VALIDATE`/`NONE`
-  deployment never gets the `ENSURE` repair, so without this an un-migrated database would start and
-  misbehave. The failure it prevents is not loud: a statement-level trigger bound to a stale row-level
-  function body does *not* raise in PostgreSQL — `NEW` is unassigned, so it emits a notification with
-  every field null, which becomes a wildcard stream with a zero reference that every concrete
-  subscriber's `canRead` rejects. Live updates would stop with nothing thrown and nothing logged.
-- **The async notification queue was never the binding constraint.** Measured on PG16, 100.000 pending
-  notifications occupy 0.217% of it, so it holds ~46 million and a single transaction would need that many
-  events to hit `NOTIFY queue is full` (SQLSTATE 53200) — far past where the in-memory `List<EventToImport>`
-  would OOM first. `EventStoreImporter` also commits one transaction per `batchSize` (default 1000), so a
-  million-event migration is a thousand commits, not one. The queue is cluster-wide and only recycled once
-  every listener has consumed, so a stalled listener does make usage accumulate monotonically across
-  transactions — but from a base low enough that the amplification was a throughput and latency problem,
-  not a correctness-of-operation one.
-- `stream_purpose` defaults to `'default'` in the DDL, matching `EventStreamId.DEFAULT_PURPOSE` — a public
-  constant, so an interop layer can bind the same value the library does rather than copy the literal out
-  of this file. On a database created before this alignment (default was `''`), operators doing raw SQL inserts should run `ALTER TABLE <prefix>events ALTER COLUMN stream_purpose SET DEFAULT 'default';` — no data migration is needed since all events written through the library bind the purpose explicitly
-- **Idempotency keys are scoped per event stream (context + purpose), not per storage/table.** Uniqueness is enforced by the partial unique index `idx_events_stream_idempotency` on `(stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL` (schema validation requires it), so the same key used on two unrelated streams does not collide and dedup behaviour does not depend on how storage instances / prefixes are wired at runtime. The `idempotency_key` is persisted and surfaced on `StoredEvent` when reading (it is not exposed on the public `Event` record). A duplicate append is still silently ignored (returns an empty result). On a database created before this change (when `idempotency_key` had a table-wide `UNIQUE`), migrate with: `ALTER TABLE <prefix>events DROP CONSTRAINT <prefix>events_idempotency_key_key; CREATE UNIQUE INDEX <prefix>idx_events_stream_idempotency ON <prefix>events (stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL;` — no data migration is needed
-  - **The duplicate is recognised by the index the server names, never by the message text.** Both the
-    append and the import path go through `isIdempotencyKeyViolation`, which pairs SQLSTATE 23505 with
-    `PSQLException.getServerErrorMessage().getConstraint()` — populated with the *index* name for a bare
-    `CREATE UNIQUE INDEX`, and compared case-insensitively against `<prefix>idx_events_stream_idempotency`
-    because PostgreSQL folds the unquoted identifier in the DDL. Two things make the message text unusable
-    here, and only one of them is obvious. The subtle one is the table prefix: it is caller-supplied and
-    validated only as `[a-zA-Z0-9_]+_`, so a prefix containing the word "idempotency" puts that word into
-    `<prefix>events_pkey` and `<prefix>events_event_id_key` as well, and a substring match then swallows
-    *every* unique violation the table can raise — reporting a successful de-duplication for an append that
-    wrote nothing. (The other, message translation under a non-English `lc_messages`, turns out **not** to
-    bite: an index name is an identifier, so it appears verbatim in the French and Japanese messages too.
-    Verified, not assumed.) `EventStreamIdempotencyTest` builds its store with exactly such a prefix and
-    pins a generated `event_id` with a `BEFORE INSERT` trigger, so the misrouting fails the build rather
-    than passing silently
-  - **Identifier length is a coupling to keep in mind.** PostgreSQL truncates identifiers at 63 bytes, which
-    would break an exact-name comparison; `MAX_PREFIX_LENGTH` (32) keeps the longest generated index name at
-    61 characters, so it cannot happen. Raising that cap needs this comparison revisited — and, more
-    urgently, would let two of the schema's index names truncate to the same string, at which point
-    `CREATE UNIQUE INDEX IF NOT EXISTS` silently does nothing and idempotency uniqueness stops existing
-- **Importing needed no DDL change**: `event_id` is already a plain `UUID NOT NULL UNIQUE` and `event_timestamp` is nullable with a `CURRENT_TIMESTAMP` default, so both can be supplied explicitly. `importEvents` binds them per row, chunks statements at 5000 rows (9 params/row against the 65535-parameter wire ceiling) inside a single transaction, and matches `RETURNING` rows **by event_id** rather than by row order — with `ON CONFLICT` the returned rows are a subset of the input, so position in the result set means nothing. Conflicts are routed by constraint name from `PSQLException.getServerErrorMessage().getConstraint()`, not by matching message text
-- **Imported event ids must be UUIDs** (the `::uuid` cast); `importEvents` validates this up front to give a clear error rather than an opaque cast failure
-- **`timestamptz` keeps microseconds and rounds anything finer**, so a nanosecond-precision timestamp (as an in-memory store produces) lands up to half a microsecond away from where it started. This is the only lossy part of an inmem → Postgres → inmem round trip; `EventImportRoundTripTest` pins it down
-- **A `db.properties` *value* never reaches an error message or a log line — only the key does.** Every
-  non-`datasource.` key goes through `HikariConfigurationUtil.setHikariProperty`, and
-  `db.<name>.password` is one of them, so a value interpolated into a message is a database password in
-  every log, stack trace and error reporter downstream. The failure message names the property and the
-  type the setter expected (`Error setting property 'maximumPoolSize' (expected int)`) and stops there;
-  the detail is left to the cause, which for the realistic throwers — a numeric property fed a
-  non-numeric value, a Hikari setter rejecting one — concerns a property that is never a secret. An
-  empty property name (a stray `db.pooled.=x` line) is rejected with that explanation rather than
-  reaching `charAt(0)`. `HikariConfigurationUtilTest` asserts the value is absent from the whole
-  exception chain, not just its top frame
+- **Ordering is the `(event_tx, event_position)` tuple everywhere** — reads, the `until` boundary,
+  and the optimistic-locking check. The two columns are assigned independently and genuinely
+  disagree, so comparing positions alone is a different order that silently drops events. The cursor
+  boundary is written as a SQL **row constructor** and the read path's `ORDER BY event_tx::xid8`
+  cast is load-bearing (a bare name resolves to the text output column) — do not "simplify" either;
+  `PostgresCursorBoundaryTest` guards it, and the expansion costs 2–3× on cursor walks.
+- **Conditional appends serialize per stream via `pg_advisory_xact_lock`** keyed on the prefix and
+  `(stream_context, stream_purpose)`; unconditional appends take no lock. A hot stream is therefore
+  a ceiling, and stream layout the fix — see the write-contention findings under Benchmarking.
+- **A long-running *writing* transaction anywhere in the cluster silently freezes what this store
+  can read** (the `pg_snapshot_xmin` barrier): reads stop advancing, projections go quiet, nothing
+  fails or logs, and read-your-own-writes breaks in a way a DCB retry loop cannot clear. Only
+  transactions holding a transaction id count — read-only ones never do, at any isolation level.
+  The diagnosis query and monitoring guidance are in the module file; do not "fix" this by bounding
+  the barrier.
+- **The DCB check is a re-used prepared statement, and PostgreSQL's generic-plan choice can fall off
+  a cliff at two-to-three OR-ed facts** (~10× there, recovering at wider filters, absent on small
+  stores). `conditionalAppendPlanning(PER_APPEND)` is the remedy for a store *observed* to have
+  flipped — it costs 2.4× on a types-only filter, so never turn it on blind.
+- **Oldest supported PostgreSQL is 16**, and the `btree_gin` extension is required — creating it
+  needs `CREATE` on the *database*, not the schema; a DBA installing it once is the recommended
+  split, and an unprivileged role then starts against it silently.
+- **Idempotency keys are scoped per stream** (partial unique index `idx_events_stream_idempotency`);
+  a duplicate is recognised by the constraint name the server reports, never by message text, and a
+  swallowed duplicate returns an empty result.
+- Append notifications are emitted once per stream per statement, not per row; `timestamptz` keeps
+  microseconds (the one lossy step of an inmem → Postgres → inmem round trip); and a `db.properties`
+  *value* never reaches an error message or log line — only the key does.

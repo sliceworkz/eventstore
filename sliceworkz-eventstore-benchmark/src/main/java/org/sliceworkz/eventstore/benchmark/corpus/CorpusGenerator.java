@@ -277,7 +277,7 @@ public final class CorpusGenerator {
 			writer.add(streamIdFor(context, entityId), payloadFor(context, entityId, random),
 					tagsFor(context, entityId, random, needle, swathe));
 
-			counters.record(context, entityId, needle, swathe, sequence, isUnderTest(context));
+			counters.record(context, entityId, needle, swathe, isUnderTest(context));
 			sequence++;
 
 			if ( writer.pendingCount() >= APPEND_BATCH_SIZE ) {
@@ -416,7 +416,11 @@ public final class CorpusGenerator {
 					ids.timestampOf(sequence),
 					null));
 
-			counters.record(context, entityId, needle, swathe, sequence, isUnderTest(context));
+			// on this path the generator chooses the ids, so the id in the batch is the id stored
+			if ( counters.firstIdUnderTest == null && context == WebshopContext.INVENTORY ) {
+				counters.firstIdUnderTest = ids.idOf(sequence);
+			}
+			counters.record(context, entityId, needle, swathe, isUnderTest(context));
 			sequence++;
 
 			if ( batch.size() >= BATCH_SIZE ) {
@@ -685,7 +689,7 @@ public final class CorpusGenerator {
 		final java.util.SequencedSet<String> purposes = new java.util.LinkedHashSet<>();
 
 		void record ( WebshopContext context, String entityId, boolean needleTagged, boolean swatheTagged,
-				long sequence, boolean underTest ) {
+				boolean underTest ) {
 			total++;
 			if ( underTest ) {
 				markable++;
@@ -699,10 +703,13 @@ public final class CorpusGenerator {
 			if ( context == WebshopContext.INVENTORY ) {
 				// the hot and cold facts describe the contended boundary, which is inventory's
 				perEntity.merge(entityId, 1L, Long::sum);
-				if ( firstIdUnderTest == null ) {
-					firstIdUnderTest = ids.idOf(sequence);
-				}
 			}
+			// firstIdUnderTest is deliberately NOT taken here. Which id an event actually got depends
+			// on the path: the import path chooses ids itself and records the fact where it builds the
+			// event, while on the append path the store assigns them and drain() reads the id off what
+			// came back. Taking ids.idOf(sequence) unconditionally -- as this used to -- filled the
+			// fact with an id the append path never used, so a SHREDDED corpus sent query-by-id
+			// looking for an event that does not exist: fast, successful, and measuring nothing.
 			if ( spec.streamDesign() == StreamDesign.PER_ENTITY && purposes.size() < 1_000 ) {
 				// capped: a per-entity corpus can have a hundred thousand purposes and the facts are
 				// meant to be a handful of values, not a copy of the data

@@ -57,7 +57,7 @@ public final class CorpusFingerprint {
 	 * the old data. Changing this invalidates every corpus in every database, which is the intended
 	 * cost of changing what a corpus contains.
 	 */
-	public static final int GENERATOR_VERSION = 1;
+	public static final int GENERATOR_VERSION = 2;   // 2: knownEventId no longer fabricated on the append path
 
 	private CorpusFingerprint ( ) { }
 

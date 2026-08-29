@@ -150,8 +150,20 @@ public final class WorkloadContext {
 	/** Rotates through this thread's slice, so successive invocations do not hit one cached row. */
 	private int rotation;
 
-	/** Hands out ids nothing has ever used; see {@link #freshEntity()}. */
-	private long freshCounter;
+	/**
+	 * Hands out ids nothing has ever used; see {@link #freshEntity()}.
+	 *
+	 * <p><b>Static -- one sequence per JVM, so per JMH fork -- rather than a field.</b> A
+	 * {@code WorkloadContext} is rebuilt before every iteration, and a per-context counter therefore
+	 * restarted at zero each time, handing out the same "fresh" ids again. Two things survive an
+	 * iteration boundary and made that reuse wrong: under a per-trial restore policy the previous
+	 * iteration's events are still in the store, so {@code append-empty-boundary}'s empty boundary is
+	 * not empty; and on Postgres the shredding key store is not restored between iterations at all, so
+	 * {@code append-crm-new-subject}'s "customer nobody has seen" already held a key -- probably a
+	 * cached one -- and the workload silently measured the known-subject path from the second
+	 * iteration on, converging the very pair the shredding profile exists to separate.
+	 */
+	private static final java.util.concurrent.atomic.AtomicLong FRESH_IDS = new java.util.concurrent.atomic.AtomicLong();
 
 	/**
 	 * How many entities are reserved as read-only companions, at most.
@@ -432,17 +444,19 @@ public final class WorkloadContext {
 	 * exactly what it is designed to do -- raise, because the stream it decided was empty is not. That
 	 * killed the fork rather than being counted, so the profile died part-way through.
 	 *
-	 * <p>Deterministic on purpose. Restarting at zero in each fork is safe because the corpus is put
-	 * back to its baseline between them, and if that ever stops being true the drift guard is the thing
-	 * that should say so -- not a nondeterministic id quietly papering over it.
+	 * <p>Deterministic on purpose, and monotonic for the life of the fork rather than of this context
+	 * -- see {@link #FRESH_IDS} for why restarting per iteration quietly reused ids that were not
+	 * fresh. Restarting at zero in each <em>fork</em> is safe because the corpus, its keys included,
+	 * is put back to its baseline between them, and if that ever stops being true the drift guard is
+	 * the thing that should say so -- not a nondeterministic id quietly papering over it.
 	 */
 	public String freshEntity ( ) {
-		return "SKU-N%d-%d".formatted(threadIndex, freshCounter++);
+		return "SKU-N%d-%d".formatted(threadIndex, FRESH_IDS.getAndIncrement());
 	}
 
 	/** The same guarantee for a data subject: a customer nobody, including this run, has seen. */
 	public String freshCustomer ( ) {
-		return "CUST-N%d-%d".formatted(threadIndex, freshCounter++);
+		return "CUST-N%d-%d".formatted(threadIndex, FRESH_IDS.getAndIncrement());
 	}
 
 	public int threadIndex ( ) {

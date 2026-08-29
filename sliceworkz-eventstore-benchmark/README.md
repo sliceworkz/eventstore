@@ -411,8 +411,11 @@ tier, and the drift is reported rather than hidden:
 | 10³, 10⁵ | restored from a template table before every iteration |
 | 10⁷ | restored once per trial; intra-trial drift measured, and a run above 2% is not publishable |
 
-Restore truncates and refills from a template, resets the position sequence, clears bookmarks and
-re-`ANALYZE`s — without that last step the planner holds statistics for a table that no longer exists.
+Restore truncates and refills from a template, resets the position sequence, clears bookmarks,
+puts the shredding key store back where one exists — keys minted by a benchmark
+(`append-crm-new-subject`) are growth like any other, and leaving them behind made later
+"new subject" appends measure the known-subject path — and re-`ANALYZE`s — without that last step
+the planner holds statistics for a table that no longer exists.
 Deleting only the appended rows would be cheaper and leaves dead tuples for autovacuum to reclaim
 *during the next measurement*, which is noise exactly where it does most damage.
 

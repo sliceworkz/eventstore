@@ -223,9 +223,26 @@ public final class CorpusRestore {
 			// might have been taken from a corpus this run has since rebuilt
 			statement.execute("DROP TABLE IF EXISTS %sevents_template".formatted(prefix));
 			statement.execute("CREATE TABLE %sevents_template AS SELECT * FROM %sevents".formatted(prefix, prefix));
+			statement.execute("DROP TABLE IF EXISTS %sshredding_keys_template".formatted(prefix));
+			if ( tableExists(statement, prefix + "shredding_keys") ) {
+				// The key store is part of the corpus: its rows are what make the corpus's sealed values
+				// readable, and rows a benchmark mints (append-crm-new-subject) are growth like any other.
+				// Restoring events without keys left those minted rows behind, so a "customer nobody has
+				// seen" in a later iteration or fork was already known to the key store -- and the
+				// workload measured the cheap known-subject path under the new-subject name.
+				statement.execute("CREATE TABLE %sshredding_keys_template AS SELECT * FROM %sshredding_keys"
+						.formatted(prefix, prefix));
+			}
 			LOGGER.info("took a restore template of {}events", prefix);
 		} catch ( SQLException e ) {
 			throw new IllegalStateException("could not take a restore template of %sevents".formatted(prefix), e);
+		}
+	}
+
+	/** Whether a table exists in the search path, by name -- {@code to_regclass} returns null if not. */
+	private static boolean tableExists ( Statement statement, String table ) throws SQLException {
+		try ( ResultSet row = statement.executeQuery("SELECT to_regclass('%s')".formatted(table)) ) {
+			return row.next() && row.getString(1) != null;
 		}
 	}
 
@@ -240,6 +257,14 @@ public final class CorpusRestore {
 					"SELECT setval(pg_get_serial_sequence('%sevents', 'event_position'), COALESCE((SELECT max(event_position) FROM %sevents), 1))"
 							.formatted(prefix, prefix));
 			statement.execute("DELETE FROM %sbookmarks".formatted(prefix));
+			if ( tableExists(statement, prefix + "shredding_keys_template") ) {
+				// put the key store back too, or keys minted during the iteration outlive it -- see
+				// createTemplate. Restored rows carry the same key ids and material, so nothing a key
+				// store instance has cached about the corpus's own subjects goes stale.
+				statement.execute("TRUNCATE TABLE %sshredding_keys".formatted(prefix));
+				statement.execute("INSERT INTO %sshredding_keys SELECT * FROM %sshredding_keys_template"
+						.formatted(prefix, prefix));
+			}
 
 			// VACUUM, not just ANALYZE, and the difference is not cosmetic. The tags column carries a GIN
 			// index, GIN defaults to fastupdate, and a hundred thousand row inserts leave a large pending
@@ -289,12 +314,13 @@ public final class CorpusRestore {
 		restore();
 	}
 
-	/** Removes the template, so a corpus is not left with a stale copy of itself beside it. */
+	/** Removes the templates, so a corpus is not left with a stale copy of itself beside it. */
 	public void cleanUp ( ) {
 		target.dataSource().ifPresent(dataSource -> {
 			try ( Connection connection = dataSource.getConnection();
 					Statement statement = connection.createStatement() ) {
 				statement.execute("DROP TABLE IF EXISTS %sevents_template".formatted(prefix));
+				statement.execute("DROP TABLE IF EXISTS %sshredding_keys_template".formatted(prefix));
 			} catch ( SQLException e ) {
 				LOGGER.warn("could not drop the restore template {}events_template", prefix, e);
 			}

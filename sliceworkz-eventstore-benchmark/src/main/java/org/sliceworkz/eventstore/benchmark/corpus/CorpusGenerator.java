@@ -185,15 +185,16 @@ public final class CorpusGenerator {
 		long inventoryEvents = Math.round(underTest * SHARE_INVENTORY);
 		long salesEvents = underTest - inventoryEvents;
 
-		// Markers are placed across the *whole* volume under test rather than restarted per context:
-		// counting from zero again in sales would put a second full set of needles in the store and
-		// make the recorded counts wrong.
-		MarkerPlacement markers = MarkerPlacement.over(underTest);
+		// Markers go to the inventory context only, because that is the stream the marker workloads
+		// query -- spread across sales too, the recorded counts described the store while the reads
+		// saw only inventory's share of them. Sized against the whole under-test volume, so the
+		// swathe stays one percent of the *store*; see MarkerPlacement.
+		MarkerPlacement markers = MarkerPlacement.over(inventoryEvents, underTest);
 
 		sequence = generateContext(storage, WebshopContext.INVENTORY, inventoryEvents, sequence, batch,
 				counters, markers, progress);
 		sequence = generateContext(storage, WebshopContext.SALES, salesEvents, sequence, batch,
-				counters, markers, progress);
+				counters, MarkerPlacement.none(), progress);
 
 		if ( spec.hasNoiseContexts() ) {
 			long noise = underTest * CorpusSpec.NOISE_MULTIPLIER;
@@ -232,16 +233,17 @@ public final class CorpusGenerator {
 		long inventoryEvents = Math.round(underTest * SHREDDED_SHARE_INVENTORY);
 		long crmEvents = Math.round(underTest * SHREDDED_SHARE_CRM);
 		long salesEvents = underTest - inventoryEvents - crmEvents;
-		MarkerPlacement markers = MarkerPlacement.over(underTest);
+		// inventory-only, as on the import path -- see the comment there and on MarkerPlacement
+		MarkerPlacement markers = MarkerPlacement.over(inventoryEvents, underTest);
 
 		Map<WebshopContext, ContextWriter<?>> writers = new LinkedHashMap<>();
 		long sequence = 0;
 		sequence = appendContext(store, writers, WebshopContext.INVENTORY, inventoryEvents, sequence,
 				counters, markers, progress);
 		sequence = appendContext(store, writers, WebshopContext.SALES, salesEvents, sequence,
-				counters, markers, progress);
+				counters, MarkerPlacement.none(), progress);
 		sequence = appendContext(store, writers, WebshopContext.CRM, crmEvents, sequence,
-				counters, markers, progress);
+				counters, MarkerPlacement.none(), progress);
 
 		if ( spec.hasNoiseContexts() ) {
 			long noise = underTest * CorpusSpec.NOISE_MULTIPLIER;

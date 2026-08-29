@@ -71,13 +71,21 @@ public record RunManifest (
 		targets = targets == null ? List.of() : List.copyOf(targets);
 	}
 
-	/** A manifest for a run about to start; {@link #finishedAt} is filled in when it ends. */
-	public static RunManifest starting ( String profileName, String profileDescription, String profileJson,
-			CorpusSpec corpus, CorpusFacts facts, List<String> targets, EnvironmentReport environment,
-			String restorePolicy ) {
+	/**
+	 * A manifest for a run; {@link #finishedAt} is filled in when it ends.
+	 *
+	 * <p>The caller supplies {@code startedAt} rather than this reading the clock, because the
+	 * manifest is assembled <em>after</em> the measurement -- the environment is captured and the
+	 * plans reconstructed once the numbers are in, so "now" here is when the report was written, not
+	 * when the run began. A fifteen-minute run used to get a twenty-millisecond manifest that way,
+	 * which answered "when was this measured, and for how long" with neither.
+	 */
+	public static RunManifest starting ( Instant startedAt, String profileName, String profileDescription,
+			String profileJson, CorpusSpec corpus, CorpusFacts facts, List<String> targets,
+			EnvironmentReport environment, String restorePolicy ) {
 		return new RunManifest(detectSuiteVersion(), profileName, profileDescription, profileJson,
 				CorpusFingerprint.prefixFor(corpus), corpus, facts, targets, environment,
-				restorePolicy, 0, Instant.now(), null);
+				restorePolicy, 0, startedAt == null ? Instant.now() : startedAt, null);
 	}
 
 	public RunManifest finished ( double drift ) {

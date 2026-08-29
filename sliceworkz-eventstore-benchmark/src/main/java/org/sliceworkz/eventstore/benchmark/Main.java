@@ -243,6 +243,8 @@ public final class Main {
 		System.out.println("output    : %s".formatted(output.toAbsolutePath()));
 		System.out.println();
 
+		// taken before the run, because the manifest is only assembled after it -- see writeReport
+		java.time.Instant startedAt = java.time.Instant.now();
 		try {
 			JmhRunner.RunOutcome outcome = JmhRunner.run(profileName, profile, output, options.containsKey("yes"));
 			System.out.println();
@@ -252,7 +254,8 @@ public final class Main {
 
 			// A run without its manifest is a number nobody can attribute, which is how this project's
 			// existing documented figures came to be unreproducible.  Writing it is not optional.
-			RunReport written = writeReport(profile, output, JmhResults.readAll(outcome.resultFiles()), List.of(),
+			RunReport written = writeReport(profile, output, startedAt,
+					JmhResults.readAll(outcome.resultFiles()), List.of(),
 					outcome.worstDrift().orElse(0));
 			outcome.worstDrift().ifPresent(drift -> System.out.println(
 					"  drift    %.2f%% (worst of any trial)".formatted(drift * 100)));
@@ -301,6 +304,8 @@ public final class Main {
 		int unsound = 0;
 		List<LoadResult> results = new ArrayList<>();
 
+		// taken before the scenarios run, because the manifest is only assembled after them
+		java.time.Instant startedAt = java.time.Instant.now();
 		for ( TargetSpec target : profile.targets() ) {
 			for ( BenchmarkProfile.LoadSettings scenario : profile.load() ) {
 				System.out.println();
@@ -321,7 +326,7 @@ public final class Main {
 		// A load run measures a store that is deliberately growing, so "drift" as the benchmark layer
 		// means it -- a store that moved away from the corpus it names -- does not apply. The growth is
 		// reported per scenario instead, as storeGrewBy.
-		writeReport(profile, output, List.of(), results, 0);
+		writeReport(profile, output, startedAt, List.of(), results, 0);
 		System.out.println();
 		System.out.println("report    %s".formatted(output.resolve("report.md")));
 		if ( unsound > 0 ) {
@@ -372,12 +377,12 @@ public final class Main {
 	 * publish guard's "the PostgreSQL settings could not be read" reads as an unreachable server rather
 	 * than as the report having asked the wrong store.
 	 */
-	private static RunReport writeReport ( BenchmarkProfile profile, Path output, List<BenchmarkRow> benchmarks,
-			List<LoadResult> loadResults, double drift ) {
+	private static RunReport writeReport ( BenchmarkProfile profile, Path output, java.time.Instant startedAt,
+			List<BenchmarkRow> benchmarks, List<LoadResult> loadResults, double drift ) {
 		CorpusProvisioner provisioner = new CorpusProvisioner(profile.corpus());
 
 		try ( CorpusProvisioner.Prepared prepared = provisioner.open(targetToDescribe(profile), false, null) ) {
-			RunManifest manifest = RunManifest.starting(
+			RunManifest manifest = RunManifest.starting(startedAt,
 					profile.name(), profile.description(), Profiles.toJson(profile),
 					profile.corpus(), prepared.outcome().facts(),
 					profile.targets().stream().map(TargetSpec::describe).toList(),

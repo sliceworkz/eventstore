@@ -450,6 +450,16 @@ genuinely is a cross-entity read under `PER_ENTITY`, so the wildcard is the ques
 artefact of how it is asked — and a per-entity page would return one entity's fifty events against
 five hundred, which is a different measurement rather than the same one addressed differently.
 
+**The write side has no such pair, and `decide-then-append` reads its boundary the tagged way on
+every corpus.** Its decide half — and the once-per-boundary read a conditional append does on first
+touch — queries by tag through the wildcard-purpose stream, which under `PER_ENTITY` is exactly the
+unbound-column-two addressing described above; an application that chose per-entity streams would
+read the entity's own stream instead. The append half is addressed correctly, but the read half
+dominates `decide-then-append` (~99% of it on an uncontended boundary), so on the stream-design pair
+that workload charges `PER_ENTITY` for an addressing its users would not write and **understates its
+advantage**. Read its cross-profile ratio as a floor, not a measurement of the design; the
+addressing pairs above are where the read-side difference is measured honestly.
+
 ## How a conditional append avoids conflicting with itself
 
 An append that succeeds moves the boundary it was checked against, so a workload holding one reference
@@ -473,6 +483,18 @@ does anyway. Two details make that actually work, and both were wrong first:
   nothing ever appends to them. The disjuncts are still real over tag values that really match, so the
   selectivity the planner sees is unchanged; what changed is that only the entity being appended to can
   move the boundary.
+
+**The first invocation for a boundary reads it, and how often that happens depends on the entity
+count.** The cache starts empty each iteration, so an entity's first conditional append in an
+iteration includes a backwards-limit-1 boundary probe and every later one is append-only. At the
+medium tier that read amortizes to a few percent of invocations — two thousand entities against tens
+of thousands of invocations per iteration. At the large tier it does not: a hundred thousand
+entities against ten thousand invocations means the rotation almost never revisits an entity within
+an iteration, so nearly **every** measured conditional append is probe-plus-append. Both are
+legitimate measurements — the second is simply a different operation mix — so do not read
+`append-type-and-tag` at ten million events against the same workload at a hundred thousand as the
+cost of volume alone; `decide-then-append`, which always includes its read, is the cross-tier
+comparable one.
 
 `append-empty-boundary` has a related requirement: its entity has to be genuinely unused, or the
 boundary it declares empty is not, and the append correctly raises. Drawing at random from a

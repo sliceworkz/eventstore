@@ -9,6 +9,12 @@ description: >
   store is a hundred times larger. If it scales with volume the query is not using the index, and the
   report's captured plan is where to look.
 
+  One append caveat for that cross-tier reading: at a hundred thousand entities the per-iteration
+  boundary cache almost never gets a hit, so nearly every append-type-and-tag invocation here is a
+  boundary probe plus the append, where the medium tier amortizes the probe over a whole iteration.
+  Compare decide-then-append across tiers -- it always includes its read -- and treat this tier's
+  append-type-and-tag as a different operation mix rather than the same workload at more volume.
+
   Deliberately external rather than containerised. A Testcontainers PostgreSQL runs stock defaults --
   128 MB of shared_buffers, untuned WAL -- and at this size those defaults are most of what would be
   measured. The publish step refuses a containerised run as a baseline for exactly that reason.

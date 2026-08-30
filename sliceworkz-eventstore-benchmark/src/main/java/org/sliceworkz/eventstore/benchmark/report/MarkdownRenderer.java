@@ -71,7 +71,11 @@ final class MarkdownRenderer {
 		out.append("| targets | %s |\n".formatted(String.join(", ", manifest.targets())));
 		out.append("| corpus restore | %s |\n".formatted(manifest.restorePolicy()));
 		if ( manifest.driftFraction() > 0 ) {
-			out.append("| store drift | %.2f%% during the run |\n".formatted(manifest.driftFraction() * 100));
+			// The cap is stated beside the drift, never only when it is breached: a profile that declared
+			// it would tolerate ten percent has made a judgement, and a reader comparing this run against
+			// one measured under the default two is entitled to see that it was made.
+			out.append("| store drift | %.2f%% during the run, against the %.0f%% this profile allows |\n"
+					.formatted(manifest.driftFraction() * 100, manifest.driftCap() * 100));
 		}
 		out.append('\n');
 

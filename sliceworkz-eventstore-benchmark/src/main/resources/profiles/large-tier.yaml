@@ -1,19 +1,21 @@
 name: large-tier
 description: >
-  Ten million events, against an external server. The tier the whole corpus-reuse machinery exists
-  for: provisioning costs minutes and is then measured against for days, so run `provision` first and
-  let the measurement runs find it already there.
+  The read shapes at ten million events, against an external server. The tier the whole corpus-reuse
+  machinery exists for: provisioning costs minutes and is then measured against for days, so run
+  `provision` first and let the measurement runs find it already there.
 
   What to look for is not the absolute numbers but their ratio to read-shapes at a hundred thousand.
   A needle tag query should cost about the same at both volumes -- the index does the work, and the
   store is a hundred times larger. If it scales with volume the query is not using the index, and the
-  report's captured plan is where to look.
+  report's captured plan is where to look. The two shapes that legitimately do scale are the swathe
+  (which returns ~1% of the store, so a hundred times the store is a hundred times the events) and the
+  hot entity (a hundred thousand entities hold more history each); read those as returning more rows,
+  not as losing an index.
 
-  One append caveat for that cross-tier reading: at a hundred thousand entities the per-iteration
-  boundary cache almost never gets a hit, so nearly every append-type-and-tag invocation here is a
-  boundary probe plus the append, where the medium tier amortizes the probe over a whole iteration.
-  Compare decide-then-append across tiers -- it always includes its read -- and treat this tier's
-  append-type-and-tag as a different operation mix rather than the same workload at more volume.
+  Reads only, and its cadence is read-shapes' exactly -- the profile it is a ratio against, and a
+  control measured differently is not one. Appends at this tier are large-tier-writes, which is a
+  separate profile because it cannot share these settings: an append workload here grows the store for
+  a whole trial, so its measurement budget is a fixed number of events rather than a length of time.
 
   Deliberately external rather than containerised. A Testcontainers PostgreSQL runs stock defaults --
   128 MB of shared_buffers, untuned WAL -- and at this size those defaults are most of what would be
@@ -39,19 +41,26 @@ targets:
 
 jmh:
   workloads:
+    - query-stream-page
+    - query-by-type
     - query-by-tag-needle
     - query-by-tag-swathe
     - query-by-entity-hot
     - query-by-entity-cold
+    - query-by-multi-tag
+    - query-by-or-groups
     - query-last-event
     - query-cursor-walk
     - query-by-id
-    - query-stream-page
-    - append-none
-    - append-type-and-tag
-    - decide-then-append
-  threads: [ 1, 8 ]
+    # query-wildcard is read-shapes' twelfth shape and is deliberately absent here. Its cost is the
+    # size of the table -- a parallel sequential scan, ~20ms over a hundred thousand rows -- so at ten
+    # million it is seconds per operation, and a five-second iteration would measure two of them. The
+    # figure would carry an error bar wider than the finding, and the finding is already established:
+    # crowded-store showed the cost tracking table size across a sixfold difference.
+  threads: [ 1 ]
+  # read-shapes' settings, to the number. The fork is the sampling unit here for the reason spelled
+  # out in that profile, and this one exists to be divided by it.
   forks: 3
-  warmupIterations: 3
-  measurementIterations: 5
-  iterationSeconds: 10
+  warmupIterations: 2
+  measurementIterations: 4
+  iterationSeconds: 5

@@ -67,12 +67,9 @@ public final class CorpusRestore {
 	/** Above this volume, restoring between iterations costs more than the drift it prevents. */
 	private static final long PER_TRIAL_THRESHOLD = 1_000_000L;
 
-	/** Growth beyond this fraction of the corpus makes a trial's numbers not about that corpus. */
-	private static final double DEFAULT_MAX_DRIFT = 0.02d;
-
 	/**
-	 * Growth within a single iteration worth mentioning. Far looser than {@link #DEFAULT_MAX_DRIFT},
-	 * because this one is a remark rather than a verdict -- see {@code warnIfIterationGrowthIsLarge}.
+	 * Growth within a single iteration worth mentioning. Far looser than the drift cap, because this
+	 * one is a remark rather than a verdict -- see {@code warnIfIterationGrowthIsLarge}.
 	 */
 	private static final double ITERATION_GROWTH_WARN = 0.25d;
 
@@ -98,12 +95,13 @@ public final class CorpusRestore {
 	private double lastMeasuredDrift;
 	private double worstIterationGrowth;
 
-	public CorpusRestore ( BenchmarkTarget target, CorpusSpec spec, String prefix, boolean mutating ) {
+	public CorpusRestore ( BenchmarkTarget target, CorpusSpec spec, String prefix, boolean mutating,
+			double maxDrift ) {
 		this.target = target;
 		this.spec = spec;
 		this.prefix = prefix;
 		this.policy = policyFor(spec, mutating);
-		this.maxDrift = DEFAULT_MAX_DRIFT;
+		this.maxDrift = maxDrift;
 	}
 
 	private static Policy policyFor ( CorpusSpec spec, boolean mutating ) {
@@ -140,8 +138,14 @@ public final class CorpusRestore {
 	/**
 	 * Called at the end of a trial. Returns how far the store drifted, as a fraction of the corpus.
 	 *
-	 * @throws IllegalStateException if the drift exceeded the threshold, because a number measured
-	 *         against a store that grew by more than a few percent is not a number about that corpus
+	 * <p><b>A breach is loud and is not fatal</b>, which is a correction rather than a softening. It
+	 * used to throw, and with JMH's fail-on-error that ended the whole run from a {@code @TearDown} --
+	 * so a `large-tier` run whose twelfth trial drifted 2.5% discarded the eleven read workloads that
+	 * had already measured cleanly, forty minutes of an external server's time, and wrote no JSON at
+	 * all, because JMH emits its results only at the end. The breach belongs to one workload and now
+	 * invalidates one workload: it is recorded, logged at ERROR naming the cap it passed, and reaches
+	 * the report as the run's drift -- where {@code RunManifest.reasonsNotPublishable} refuses it as a
+	 * baseline, which is where refusing was always going to happen anyway.
 	 */
 	public double endTrial ( ) {
 		if ( policy == Policy.NONE || baselineCount <= 0 ) {
@@ -165,9 +169,11 @@ public final class CorpusRestore {
 
 		lastMeasuredDrift = drift;
 		if ( drift > maxDrift ) {
-			throw new IllegalStateException(
-					"the store grew by %.1f%% during this trial (%d events to %d), past the %.0f%% allowed: these numbers describe a store that changed while they were being taken"
-							.formatted(drift * 100, baselineCount, now, maxDrift * 100));
+			LOGGER.error("the store grew by {}% during this trial ({} events to {}), past the {}% this profile"
+					+ " allows: this workload's figure is not about the corpus it names, and the run cannot"
+					+ " be published", "%.1f".formatted(drift * 100), baselineCount, now,
+					"%.0f".formatted(maxDrift * 100));
+			return drift;
 		}
 		if ( drift > 0 ) {
 			LOGGER.info("store drifted {}% during the trial ({} to {} events)",

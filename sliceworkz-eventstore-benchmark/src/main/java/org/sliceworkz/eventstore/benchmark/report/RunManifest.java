@@ -20,6 +20,7 @@ package org.sliceworkz.eventstore.benchmark.report;
 import java.time.Instant;
 import java.util.List;
 
+import org.sliceworkz.eventstore.benchmark.config.BenchmarkProfile;
 import org.sliceworkz.eventstore.benchmark.corpus.CorpusFacts;
 import org.sliceworkz.eventstore.benchmark.corpus.CorpusFingerprint;
 import org.sliceworkz.eventstore.benchmark.corpus.CorpusSpec;
@@ -49,6 +50,7 @@ import org.sliceworkz.eventstore.benchmark.env.EnvironmentReport;
  * @param environment the JVM, the host and the PostgreSQL settings that decide the numbers
  * @param restorePolicy how the corpus was kept steady, and whether it was
  * @param driftFraction how far the store grew during the run, as a fraction of the corpus
+ * @param driftCap how much growth the profile declared it would tolerate, as a fraction of the corpus
  * @param startedAt when the run began
  * @param finishedAt when it ended
  */
@@ -64,11 +66,15 @@ public record RunManifest (
 		EnvironmentReport environment,
 		String restorePolicy,
 		double driftFraction,
+		double driftCap,
 		Instant startedAt,
 		Instant finishedAt ) {
 
 	public RunManifest {
 		targets = targets == null ? List.of() : List.copyOf(targets);
+		// A manifest read back from an older report carries no cap, and reading that as "zero tolerated"
+		// would retroactively make every published run unpublishable.
+		driftCap = driftCap <= 0 ? BenchmarkProfile.JmhSettings.DEFAULT_MAX_DRIFT : driftCap;
 	}
 
 	/**
@@ -82,15 +88,15 @@ public record RunManifest (
 	 */
 	public static RunManifest starting ( Instant startedAt, String profileName, String profileDescription,
 			String profileJson, CorpusSpec corpus, CorpusFacts facts, List<String> targets,
-			EnvironmentReport environment, String restorePolicy ) {
+			EnvironmentReport environment, String restorePolicy, double driftCap ) {
 		return new RunManifest(detectSuiteVersion(), profileName, profileDescription, profileJson,
 				CorpusFingerprint.prefixFor(corpus), corpus, facts, targets, environment,
-				restorePolicy, 0, startedAt == null ? Instant.now() : startedAt, null);
+				restorePolicy, 0, driftCap, startedAt == null ? Instant.now() : startedAt, null);
 	}
 
 	public RunManifest finished ( double drift ) {
 		return new RunManifest(suiteVersion, profileName, profileDescription, profileJson, corpusFingerprint,
-				corpus, facts, targets, environment, restorePolicy, drift, startedAt, Instant.now());
+				corpus, facts, targets, environment, restorePolicy, drift, driftCap, startedAt, Instant.now());
 	}
 
 	/**
@@ -162,9 +168,10 @@ public record RunManifest (
 			reasons.add("measured against a Testcontainers PostgreSQL running stock defaults; publish from an "
 					+ "external server whose configuration is deliberate");
 		}
-		if ( driftFraction > 0.02 ) {
-			reasons.add("the store grew by %.1f%% during the run, so these numbers are not about the corpus they name"
-					.formatted(driftFraction * 100));
+		if ( driftFraction > driftCap ) {
+			reasons.add(("the store grew by %.1f%% during the run, past the %.0f%% this profile declared,"
+					+ " so these numbers are not about the corpus they name")
+					.formatted(driftFraction * 100, driftCap * 100));
 		}
 		if ( "unknown".equals(suiteVersion) ) {
 			reasons.add("the suite version is unknown, so this baseline could not be attributed to a release");

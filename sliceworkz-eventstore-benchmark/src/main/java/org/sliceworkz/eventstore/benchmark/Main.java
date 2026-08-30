@@ -387,7 +387,7 @@ public final class Main {
 					profile.corpus(), prepared.outcome().facts(),
 					profile.targets().stream().map(TargetSpec::describe).toList(),
 					EnvironmentReport.capture(prepared.target()),
-					describeRestorePolicy(profile));
+					describeRestorePolicy(profile), profile.jmh().maxDrift());
 
 			List<QueryPlans.Plan> plans = new ArrayList<>(QueryPlans.capture(
 					prepared.target(), provisioner.prefix(), profile.corpus(), prepared.outcome().facts(),

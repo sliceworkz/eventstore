@@ -86,7 +86,7 @@ public class CorpusState {
 
 		restore = new CorpusRestore(prepared.target(), config.profile().corpus(),
 				new CorpusProvisioner(config.profile().corpus()).prefix(),
-				resolved.requirement().mutatesStore());
+				resolved.requirement().mutatesStore(), config.profile().jmh().maxDrift());
 		restore.beginTrial();
 
 		LOGGER.info("trial: workload={} target={} corpus={} events, restore={}",

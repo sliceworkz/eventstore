@@ -69,6 +69,8 @@ public record BenchmarkProfile (
 	 *        {@code one-boundary}. Only meaningful above one thread, and the whole measurement when
 	 *        sweeping thread counts: the same append at eight threads is three different experiments
 	 *        depending on whether those threads share a stream, share a DCB boundary, or neither
+	 * @param maxDrift how far the store may grow during one trial, as a fraction of the corpus, before
+	 *        the run stops being a measurement of the corpus it names. See {@link #DEFAULT_MAX_DRIFT}
 	 */
 	public record JmhSettings (
 			List<String> workloads,
@@ -77,9 +79,32 @@ public record BenchmarkProfile (
 			int warmupIterations,
 			int measurementIterations,
 			int iterationSeconds,
-			String collision ) {
+			String collision,
+			double maxDrift ) {
+
+		/**
+		 * The drift a profile that says nothing accepts: 2% of the corpus.
+		 *
+		 * <p><b>A fraction is the right shape at the small tiers and much too tight at the large one</b>,
+		 * which is why this is a knob rather than a constant. Above a million events the corpus is
+		 * restored once per <em>trial</em> -- a template restore of ten million rows between iterations
+		 * would cost more than the drift it prevents -- so an append workload accumulates for a whole
+		 * fork, and the budget is a fixed number of events while the fraction it represents shrinks with
+		 * every tier. At 10.000.000 events, 2% is 200.000 appends: eighty seconds at one thread, and
+		 * under ten at eight. No cadence fits that, so a profile measuring appends at the large tier has
+		 * to declare what it will tolerate and say why.
+		 *
+		 * <p>What the cap protects is the <em>label</em>, not the measurement -- a B-tree's depth and a
+		 * GIN index's shape do not change over a few percent of growth. It is there so that "measured
+		 * over ten million events" stays true.
+		 */
+		public static final double DEFAULT_MAX_DRIFT = 0.02d;
 
 		public JmhSettings {
+			if ( maxDrift < 0 || maxDrift > 1 ) {
+				throw new IllegalArgumentException("maxDrift is a fraction of the corpus: " + maxDrift);
+			}
+			maxDrift = maxDrift <= 0 ? DEFAULT_MAX_DRIFT : maxDrift;
 			workloads = workloads == null ? List.of() : List.copyOf(workloads);
 			threads = threads == null || threads.isEmpty() ? List.of(1) : List.copyOf(threads);
 			if ( threads.stream().anyMatch(t -> t == null || t <= 0) ) {

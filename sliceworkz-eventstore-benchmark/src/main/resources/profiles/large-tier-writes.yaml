@@ -1,0 +1,66 @@
+name: large-tier-writes
+description: >
+  What an append costs at ten million events, against the same corpus large-tier reads. Split out from
+  that profile rather than sharing it, because the two cannot be measured the same way: a read leaves
+  the store alone and can be given as long as it needs, while an append grows it, and above a million
+  events the corpus is restored once per trial rather than once per iteration -- a template copy of ten
+  million rows between iterations would cost far more than the drift it prevents.
+
+  So an append workload here has a budget denominated in events, not seconds, and the budget does not
+  grow with the tier. That is the whole reason this profile declares a drift cap of its own. At two
+  percent, the suite-wide default, ten million events allow 200.000 appends per trial: about eighty
+  seconds at one writer, and under ten at eight -- less than a single JMH iteration. No cadence fits
+  that, and the run that discovered it died at 72% having thrown away forty minutes of clean reads.
+
+  Ten percent is a judgement, and it is about the label rather than the measurement. What a fraction
+  of growth threatens is the claim "measured over ten million events"; it does not change a B-tree's
+  depth or a GIN index's shape, so an append measured while the store went from 10.0M to 10.9M is
+  measuring the same operation throughout. The cap is recorded in the manifest and printed in the
+  report beside the drift, so a reader comparing this against a run measured under the default two
+  percent can see that the allowance was widened deliberately.
+
+  If a fast enough server breaches ten percent anyway, shorten the iterations -- do not widen the cap
+  further. Past roughly a tenth the corpus stops being the one the manifest names.
+
+  One caveat before reading any of these against the medium tier: at a hundred thousand entities the
+  per-iteration boundary cache almost never gets a hit, so nearly every append-type-and-tag invocation
+  here is a boundary probe plus the append, where the medium tier amortizes the probe over a whole
+  iteration. Compare decide-then-append across tiers -- it always includes its read -- and treat this
+  tier's append-type-and-tag as a different operation mix rather than the same workload at more volume.
+
+  Budget more wall clock than the estimate promises. The estimator counts iteration time only, and at
+  this tier the restore dominates it: taking the template costs seconds, but handing the store back at
+  the end of each trial is a truncate-and-copy of ten million rows, about two and a half minutes, once
+  per trial. Eighteen trials of that is most of the run.
+
+corpus:
+  volume: 10000000
+  streamDesign: TAGGED
+  composition: CLEAN
+  payload: REALISTIC
+  entityCount: 100000
+  seed: 20260823
+
+targets:
+  - backend: POSTGRES
+    server: EXTERNAL
+    metrics: OFF
+    schemaMode: ENSURE
+
+jmh:
+  workloads:
+    - append-none
+    - append-type-and-tag
+    - decide-then-append
+  # append-none is the control that must not move between thread counts for reasons of contention: it
+  # takes no advisory lock and reads no boundary, so what it measures is the insert and the round trip.
+  threads: [ 1, 8 ]
+  # Shorter than the read profiles', and the length is set by the drift budget rather than by what the
+  # statistics would like: six iterations of four seconds is 24s of appending per trial, which at the
+  # eight-thread rate an external server should manage lands around 6% -- inside the 10% below, with
+  # room for a server faster than the one this was sized against.
+  forks: 3
+  warmupIterations: 2
+  measurementIterations: 4
+  iterationSeconds: 4
+  maxDrift: 0.10

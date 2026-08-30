@@ -85,7 +85,8 @@ profile, and the result lives in `CLAUDE.md` and in `PostgresCursorBoundaryTest`
 | `replay-throughput` | what a read-model rebuild costs | ~10 min |
 | `live-latency` | append → subscriber, and append → committed read-model row | ~5 min |
 | `ingest-saturation` | sustained appends against a store that is growing | ~10 min |
-| `large-tier` | the same reads at ten million events, on an external server | ~1.5 h + provisioning |
+| `large-tier` ⇄ `read-shapes` | the same reads at ten million events, on an external server | ~17 min + provisioning |
+| `large-tier-writes` | what an append costs at ten million events | ~50 min + provisioning |
 
 There is deliberately **no `full` profile**. A profile names one corpus, and a corpus has one volume,
 so nothing can span the three tiers. The recommended sequence for an overnight run is the table above
@@ -121,7 +122,8 @@ java -jar target/*.jar report --run=target/benchmark/read-shapes --publish
 ```
 
 Publishing refuses a run that was measured against a Testcontainers PostgreSQL (stock defaults on
-whatever the host happened to be), whose store drifted more than 2% during the run, or whose suite
+whatever the host happened to be), whose store drifted past the profile's `maxDrift` (2% unless the
+profile declares otherwise — see *How mutation is handled*), or whose suite
 version is unknown. `--force` overrides those, and the reasons stay recorded in the report, so a
 caveated baseline stays caveated rather than becoming an unqualified number. A run that **failed a
 correctness check** is never publishable under any flag: its numbers describe work that did not
@@ -162,6 +164,7 @@ jmh:
   warmupIterations: 3
   measurementIterations: 5
   iterationSeconds: 10
+  maxDrift: 0.02                # how much an append workload may grow the store; see below
 
 load:                           # optional, and a list: the pair is the measurement
   - scenario: notify-latency    # write-saturation | mixed | notify-latency | end-to-end-latency
@@ -417,7 +420,26 @@ tier, and the drift is reported rather than hidden:
 | tier | policy |
 |---|---|
 | 10³, 10⁵ | restored from a template table before every iteration |
-| 10⁷ | restored once per trial; intra-trial drift measured, and a run above 2% is not publishable |
+| 10⁷ | restored once per trial; intra-trial drift measured, and a run above the profile's cap is not publishable |
+
+**The cap is a fraction, and a fraction is the wrong shape at the largest tier** — which is why
+`maxDrift` is a profile setting rather than a constant, defaulting to `0.02`. Above a million events
+the corpus is restored once per *trial*, so an append workload accumulates for a whole fork and its
+budget is a fixed number of events while the fraction that number represents shrinks with every tier.
+At ten million, 2% is 200.000 appends: roughly eighty seconds at one writer and under ten at eight,
+which is less than a single JMH iteration. No cadence fits that, so `large-tier-writes` declares 10%
+and says why — and the report prints the cap beside the drift, always, so a run measured under a
+widened allowance cannot be mistaken for one that was not.
+
+What a cap protects is the *label*, not the measurement: a few percent of growth does not change a
+B-tree's depth or a GIN index's shape, but it does decide whether "measured over ten million events"
+is still true.
+
+**A breach invalidates its workload, not the run.** It used to throw from the trial teardown, and with
+JMH's fail-on-error that ended everything — one `large-tier` run lost eleven clean read workloads and
+forty minutes of an external server to a twelfth that drifted 2.5%, and wrote no JSON at all, because
+JMH emits results only at the end. The breach is now logged at ERROR and carried into the manifest,
+where `--publish` refuses it, which is where the refusal was always going to happen.
 
 Restore truncates and refills from a template, resets the position sequence, clears bookmarks,
 puts the shredding key store back where one exists — keys minted by a benchmark

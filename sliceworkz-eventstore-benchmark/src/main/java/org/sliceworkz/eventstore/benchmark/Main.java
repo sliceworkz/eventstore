@@ -269,7 +269,7 @@ public final class Main {
 							"  growth   %.0f%% within one iteration (worst): these numbers describe a store larger than the corpus"
 									.formatted(growth * 100)));
 			System.out.println("  report   %s".formatted(output.resolve("report.md")));
-			written.manifest().reasonsNotPublishable().forEach(
+			written.reasonsNotPublishable().forEach(
 					reason -> System.out.println("  note     not publishable: %s".formatted(reason)));
 			return 0;
 		} catch ( RunnerException e ) {

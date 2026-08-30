@@ -75,7 +75,7 @@ public final class Reports {
 	 */
 	public static Path publish ( Path runDirectory, boolean force ) {
 		RunReport report = RunReport.read(runDirectory);
-		List<String> reasons = report.manifest().reasonsNotPublishable();
+		List<String> reasons = report.reasonsNotPublishable();
 
 		if ( !reasons.isEmpty() && !force ) {
 			throw new IllegalStateException(

@@ -186,6 +186,68 @@ the one to keep in mind is the `pg_snapshot_xmin` stall documented in the postgr
 long-running **writing** transaction in a neighbouring store — or in another database of the same
 cluster — freezes what this store can read, and no amount of table separation prevents it.
 
+### Reading at ten million events, and what the writes run got wrong
+
+`large-tier` is the first profile whose numbers are publishable — an external, deliberately
+configured PG18 rather than a container — and it is compared against `read-shapes-ext` on the same
+machine and the same server, so the ratio is attributable to volume and nothing else.
+
+**Eight of eleven read shapes do not move at a hundred times the volume**, all at 2–6% relative
+error: `query-stream-page` 1.00×, `query-by-id` 0.98×, `query-by-type` 0.98×, `query-by-entity-cold`
+0.97×, `query-cursor-walk` 0.97×, `query-last-event` 0.94×, `query-by-tag-needle` **0.88×**,
+`query-by-or-groups` 1.08×. The needle query is the one this tier exists to check, and the index
+holds.
+
+**The ~2µs per event holds across two orders of magnitude.** `query-by-entity-hot` returns 6.876
+events at 100.000 and **455.092** at 10.000.000 — 66× the rows for 79× the time, so **3.07 µs/event
+against 3.66 µs/event**. The hot-entity read is linear in rows returned, not in store size, which is
+the same conclusion the medium tier reached from the other side and is now measured on real hardware.
+
+The three shapes that do scale each have a cause, and two are in the plans:
+
+- **`query-by-entity-hot` falls off three `work_mem` and `jit` cliffs at once**, not off the index:
+  the bitmap goes **lossy** (`exact=19090 lossy=43315`, `Rows Removed by Index Recheck: 1070109`)
+  against a 4 MB `work_mem`, the sort spills to disk (`external merge Disk: 38112kB`), and JIT adds
+  **205 ms of the 580 ms**. The per-event arithmetic above is what says the index is fine.
+- **`query-by-tag-swathe` (0.38×) changed plan, correctly.** At 100.000 the swathe is 1.000 matches
+  and PostgreSQL bitmaps all of them off `idx_events_stream_tags` — 1.037 buffers, every one a cache
+  **hit**. At 10.000.000 it is 100.000 matches, so the planner walks `idx_events_stream_position` and
+  filters instead, discarding 26.973 rows to return 500, with 1.199 of 1.279 buffers **read** rather
+  than hit. The right plan on a table far past 160 MB of `shared_buffers`.
+- **`query-by-multi-tag` (0.18×) is unexplained**, and no plan in the report covers it.
+
+**No external run has a captured plan.** Both `ReadPlanCapture` and `AppendPlanCapture` read a
+Testcontainers log, so they are inert on `EXTERNAL` — which is the only target the publisher accepts.
+Every plan in every publishable baseline is therefore a *reconstruction*, which is exactly the thing
+those captures exist because they cannot be trusted (the needle reconstruction that reported more
+execution time than the whole measured operation). Reading them through `auto_explain`'s table output
+would fix it.
+
+**`large-tier-writes` as published is not a measurement, for two independent reasons**, and needs
+re-running before any figure from it is quoted:
+
+- Three of its six rows sit past the 10% the report calls uncomparable — `append-type-and-tag` at
+  **121%** and 55%, `decide-then-append` at 24%. Publishing now refuses this; it did not then.
+- **Its one-thread against eight-thread comparison was measuring the entity distribution, not
+  concurrency.** `WorkloadContext.rotation` was a field on a context JMH rebuilds per iteration, so
+  the entity walk restarted at the head of a steeply skewed corpus twelve times a trial. At one
+  thread `decide-then-append` completed **39 operations across twelve iterations** — three each, so
+  entities 0, 1 and 2 nearly every time, and entity 0 holds 455.092 events at ~1.6 s a read. At eight
+  threads the same budget covered entities 0–7 and beyond, diluting the hot entity from about a third
+  of operations to about 1/185th. That ratio *is* the 71× the report shows between one thread and
+  eight; eight threads cannot make one operation seventy times faster. The counter now has the
+  lifetime of the trial (`ThreadContext`), so a slow workload samples the distribution instead of
+  re-drawing its head. The defect only bites where a trial completes tens of operations rather than
+  tens of thousands, which is why the medium tier never showed it.
+
+What does survive from that run: **drift came in at 1.14%**, under even the default 2%, so the 10%
+cap the profile declares was never needed — it was sized against an assumed ~25 ops/ms at eight
+writers where the real figure is 4.7. And `append-none` scales only 3.13 → 4.69 ops/ms from one
+writer to eight (1.5×) against 11.3 → 33.5 (3×) at 100.000 on a container. An unconditional append
+takes no advisory lock, so that ceiling is GIN maintenance and WAL at ten million rows — the most
+interesting thing in the writes profile, and it deserves measuring on purpose rather than as a
+control.
+
 ### Choosing a stream design: one stream per context, or one per entity
 
 The question every application author has to answer first — a stream per bounded context with

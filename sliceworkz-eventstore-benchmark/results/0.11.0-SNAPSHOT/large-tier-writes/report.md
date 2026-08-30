@@ -16,6 +16,10 @@ Budget more wall clock than the estimate promises. The estimator counts iteratio
 | corpus restore | restored once per trial; intra-trial drift measured |
 | store drift | 1.14% during the run, against the 10% this profile allows |
 
+> **Not suitable as a published baseline.**
+>
+> - 3 measurements are too noisy to compare against anything, past the 10% this report calls uncomparable: append-type-and-tag (postgres:external/metrics=off, 1 thread) at 121%, append-type-and-tag (postgres:external/metrics=off, 8 threads) at 55%, decide-then-append (postgres:external/metrics=off, 8 threads) at 24%
+
 ## Environment
 
 These are the settings the numbers below depend on. Two runs whose environments differ are not comparable, and the comparator refuses rather than reporting a difference in hardware as a change in the store.

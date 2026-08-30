@@ -18,6 +18,7 @@
 package org.sliceworkz.eventstore.benchmark.workload;
 
 import java.util.HashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.Map;
 import java.util.Optional;
 import java.util.SplittableRandom;
@@ -147,8 +148,31 @@ public final class WorkloadContext {
 	/** Identifies a consistency boundary by what actually defines it: the workload and its filter. */
 	public record BoundaryKey ( String workload, EventFilter filter ) { }
 
-	/** Rotates through this thread's slice, so successive invocations do not hit one cached row. */
-	private int rotation;
+	/**
+	 * Rotates through this thread's slice, so successive invocations do not hit one cached row.
+	 *
+	 * <p><b>Owned by the caller and shared across iterations</b>, because a {@code WorkloadContext} is
+	 * rebuilt before every iteration and a field here would restart the walk at zero each time -- the
+	 * same defect {@code FRESH_IDS} above documents, in the counter that decides <em>which entity</em>
+	 * every append and every decide touches.
+	 *
+	 * <p>What it cost is worth stating, because it is invisible until the operation is slow. The walk
+	 * is {@code rotation * threadCount + threadIndex} over a corpus whose entity sizes are steeply
+	 * skewed, so restarting it means re-drawing the <b>head</b> of that distribution every iteration.
+	 * At the medium tier a trial runs tens of thousands of operations, the rotation covers the whole
+	 * entity set, and nothing is visible. At ten million events {@code decide-then-append} completed
+	 * <b>39 operations across twelve measurement iterations</b> -- about three each, so entities 0, 1
+	 * and 2 nearly every time, and entity 0 is the hot one holding 455.092 events at roughly 1.6
+	 * seconds a read. At eight threads the same budget spread over entities 0-7 and beyond, so the hot
+	 * entity carried about 1/185th of the operations instead of a third. That dilution, not
+	 * concurrency, is the 71x the published report shows between one thread and eight: eight threads
+	 * cannot make one operation seventy times faster, and the comparison was never about threads.
+	 *
+	 * <p>Carried across iterations the walk continues where it left off, so a slow workload samples the
+	 * distribution instead of re-drawing its head, and the thread stride still gives each thread a
+	 * disjoint slice.
+	 */
+	private final AtomicInteger rotation;
 
 	/**
 	 * Hands out ids nothing has ever used; see {@link #freshEntity()}.
@@ -176,8 +200,28 @@ public final class WorkloadContext {
 	 */
 	private static final int MAX_COMPANION_ENTITIES = 16;
 
+	/**
+	 * A context whose entity walk starts fresh.
+	 *
+	 * <p>Right wherever one context is built and then used -- the load runner, the plan captures, the
+	 * dry run. The JMH path must use the overload below instead, because there a context is rebuilt per
+	 * iteration and starting fresh is exactly the defect documented on {@link #rotation}.
+	 */
 	public WorkloadContext ( BenchmarkTarget target, CorpusSpec spec, CorpusFacts facts, Collision collision,
 			int threadIndex, int threadCount, long seed ) {
+		this(target, spec, facts, collision, threadIndex, threadCount, seed, new AtomicInteger());
+	}
+
+	/**
+	 * A context whose entity walk continues from where the caller's last one stopped.
+	 *
+	 * @param rotation a counter with the lifetime of the measurement rather than of this context; it
+	 *        must not be shared between threads, because the walk strides by thread index and two
+	 *        threads sharing one counter would interleave into each other's slices
+	 */
+	public WorkloadContext ( BenchmarkTarget target, CorpusSpec spec, CorpusFacts facts, Collision collision,
+			int threadIndex, int threadCount, long seed, AtomicInteger rotation ) {
+		this.rotation = rotation;
 		this.target = target;
 		this.spec = spec;
 		this.facts = facts;
@@ -344,7 +388,7 @@ public final class WorkloadContext {
 			case SPREAD, ONE_STREAM -> {
 				// stride by thread count so the slices interleave rather than sitting in disjoint
 				// position ranges, which would give each thread a different part of the index
-				int raw = ( rotation++ * threadCount + threadIndex ) % writableEntityCount();
+				int raw = ( rotation.getAndIncrement() * threadCount + threadIndex ) % writableEntityCount();
 				// step over the reserved band rather than round it, so the writable entities stay a
 				// contiguous walk of the distribution with a hole in the middle
 				int entity = raw >= companionStart() ? raw + companionCount() : raw;

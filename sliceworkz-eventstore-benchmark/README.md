@@ -123,7 +123,8 @@ java -jar target/*.jar report --run=target/benchmark/read-shapes --publish
 
 Publishing refuses a run that was measured against a Testcontainers PostgreSQL (stock defaults on
 whatever the host happened to be), whose store drifted past the profile's `maxDrift` (2% unless the
-profile declares otherwise — see *How mutation is handled*), or whose suite
+profile declares otherwise — see *How mutation is handled*), **that carries a measurement whose
+relative error is above 10%**, or whose suite
 version is unknown. `--force` overrides those, and the reasons stay recorded in the report, so a
 caveated baseline stays caveated rather than becoming an unqualified number. A run that **failed a
 correctness check** is never publishable under any flag: its numbers describe work that did not
@@ -223,7 +224,11 @@ Each run writes `report.json` (the record) and `report.md` (a rendering of it) b
   operations per second while lowering the work done; only the conflict rate beside the throughput
   says which happened.
 - **A relative error above about 10%** means the measurement is too noisy to compare against
-  anything.
+  anything, and publishing now refuses a run carrying one, naming each offending row. The sentence
+  had been in this report since the first render and nothing enforced it, because the publish gate
+  lived on the manifest and a manifest has never seen a row: `large-tier-writes` was published with
+  `append-type-and-tag` at **121%** — an error bar wider than the figure it qualifies — two lines
+  above this rule. `--force` still publishes, and the reasons stay in the report.
 - **The reads' plans are real too, and the reconstructions are kept beside them.** Every read
   workload is re-run under the same `auto_explain` window as the appends and the plan the server
   logged for the store's own `SELECT` is captured; the hand-written statements matching each shape

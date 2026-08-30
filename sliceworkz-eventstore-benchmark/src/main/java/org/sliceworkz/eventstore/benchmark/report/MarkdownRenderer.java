@@ -79,7 +79,7 @@ final class MarkdownRenderer {
 		}
 		out.append('\n');
 
-		List<String> notPublishable = manifest.reasonsNotPublishable();
+		List<String> notPublishable = report.reasonsNotPublishable();
 		if ( !notPublishable.isEmpty() ) {
 			out.append("> **Not suitable as a published baseline.**\n>\n");
 			notPublishable.forEach(reason -> out.append("> - %s\n".formatted(reason)));

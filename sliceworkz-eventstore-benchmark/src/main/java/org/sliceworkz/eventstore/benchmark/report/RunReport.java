@@ -113,4 +113,42 @@ public record RunReport (
 	public boolean isSound ( ) {
 		return load.stream().allMatch(LoadResult::isSound);
 	}
+
+	/**
+	 * A measurement whose confidence interval is wider than this fraction of its own score is not a
+	 * measurement. The report has always said so in the sentence under its results table; this is the
+	 * same number, applied.
+	 */
+	private static final double MAX_RELATIVE_ERROR = 0.10d;
+
+	/**
+	 * Why this run is not fit to be committed as a baseline, or empty.
+	 *
+	 * <p>The manifest answers everything decidable from the circumstances -- the server, the drift, the
+	 * suite version -- and this adds the one condition only the rows can answer: whether the numbers
+	 * are precise enough to mean anything. {@code large-tier-writes} published with
+	 * {@code append-type-and-tag} at <b>120.6% relative error</b>, a figure whose error bar is wider
+	 * than the figure, two lines above the report's own sentence saying that above about ten percent a
+	 * measurement is too noisy to compare against anything. Nothing checked it, because the gate lived
+	 * on the manifest and the manifest has never seen a row.
+	 *
+	 * <p>Noisy rows are listed rather than counted, because <em>which</em> workload is unusable decides
+	 * whether the run is worth keeping: a baseline whose control is solid and whose one contended
+	 * workload is noisy may well be worth {@code --force}, and one whose headline number is the noisy
+	 * one is not.
+	 */
+	public List<String> reasonsNotPublishable ( ) {
+		List<String> reasons = new java.util.ArrayList<>(manifest.reasonsNotPublishable());
+		List<String> noisy = benchmarks.stream()
+				.filter(row -> !Double.isNaN(row.relativeError()) && row.relativeError() > MAX_RELATIVE_ERROR)
+				.map(row -> "%s (%s, %d thread%s) at %.0f%%".formatted(row.workload(), row.target(),
+						row.threads(), row.threads() == 1 ? "" : "s", row.relativeError() * 100))
+				.toList();
+		if ( !noisy.isEmpty() ) {
+			reasons.add("%d measurement%s too noisy to compare against anything, past the %.0f%% this report"
+					.formatted(noisy.size(), noisy.size() == 1 ? " is" : "s are", MAX_RELATIVE_ERROR * 100)
+					+ " calls uncomparable: " + String.join(", ", noisy));
+		}
+		return reasons;
+	}
 }

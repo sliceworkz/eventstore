@@ -17,6 +17,8 @@
  */
 package org.sliceworkz.eventstore.benchmark.jmh;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 import org.openjdk.jmh.annotations.Level;
 import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
@@ -42,6 +44,22 @@ public class ThreadContext {
 
 	private WorkloadContext context;
 
+	/**
+	 * Where in its slice of entities this thread has got to, kept across iterations.
+	 *
+	 * <p>A field initializer rather than anything set up per iteration, and that is the whole point: a
+	 * {@code @State(Scope.Thread)} object is constructed once per thread per <em>trial</em>, while
+	 * {@code @Setup(Level.Iteration)} re-runs on that same instance. So this counter outlives the
+	 * context it is handed to, and the entity walk continues instead of restarting at the head of a
+	 * skewed distribution twelve times a trial. {@link WorkloadContext#rotation} records what the
+	 * restart cost, and it is not small: it is what the published {@code large-tier-writes} report
+	 * shows as a 71x gain from eight threads.
+	 *
+	 * <p>Per thread, never shared. The walk strides by thread index so that each thread gets a disjoint
+	 * slice, and one counter behind several threads would interleave them into each other's.
+	 */
+	private final AtomicInteger rotation = new AtomicInteger();
+
 	@Setup(Level.Iteration)
 	public void setUp ( CorpusState corpus, ThreadParams threads ) {
 		context = new WorkloadContext(
@@ -51,7 +69,8 @@ public class ThreadContext {
 				corpus.collision(),
 				threads.getThreadIndex(),
 				threads.getThreadCount(),
-				corpus.spec().seed());
+				corpus.spec().seed(),
+				rotation);
 
 		// Any one-off setup a workload needs happens here rather than inside the first measured
 		// invocation, where it would show up as an outlier and get explained away as noise.

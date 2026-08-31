@@ -54,12 +54,22 @@ import org.sliceworkz.eventstore.testing.backend.PostgresContainer;
  *       over the wire.</li>
  * </ul>
  *
- * <p><b>What the second one needs, and why it is worth asking for.</b> {@code logging_collector} must
- * be on (otherwise the server has no file of its own to name, and {@code pg_current_logfile()}
- * answers null), and the benchmark's role needs {@code pg_read_server_files} -- or superuser, which
- * amounts to the same thing and is more than this needs. {@code GRANT pg_read_server_files TO
- * <role>} on a benchmark host is a fair price for turning the suite's headline finding from an
- * inference into a fact, and {@code doctor} now says up front whether the grant is there.
+ * <p><b>What the second one needs.</b> Three things, and they are three different fixes -- which is
+ * why {@link Resolution} reports which one is missing rather than listing all of them:
+ *
+ * <ul>
+ *   <li>{@code logging_collector = on}, or the server writes to stderr and keeps no file of its own
+ *       to name. Not reloadable; it wants a restart.</li>
+ *   <li>{@code GRANT pg_monitor TO <role>}, for {@code pg_current_logfile()} -- its execute privilege
+ *       is revoked from public and held by that role.</li>
+ *   <li>{@code GRANT pg_read_server_files TO <role>}, for {@code pg_stat_file} and
+ *       {@code pg_read_binary_file} -- a <em>different</em> role from the one above, which is exactly
+ *       the confusion the first version of this message caused.</li>
+ * </ul>
+ *
+ * <p>That is a fair price on a benchmark host for turning the suite's headline finding from an
+ * inference into a fact, and {@code doctor} says which piece is missing before a run rather than
+ * after one.
  *
  * <p>Every failure here is reported as "no plans", never as a failed run: this is evidence the report
  * would like to carry, not something a measurement depends on.
@@ -84,10 +94,42 @@ public interface ServerLog {
 	 *        not start
 	 */
 	static Optional<ServerLog> of ( String image, DataSource dataSource ) {
-		if ( image != null ) {
-			return Optional.of(new ContainerLog(image));
+		return resolve(image, dataSource).log();
+	}
+
+	/**
+	 * Whether a log could be opened and, when it could not, precisely what is missing.
+	 *
+	 * @param log the readable log, or empty
+	 * @param detail one line fit to print, naming the remedy where there is one
+	 */
+	record Resolution ( Optional<ServerLog> log, String detail ) {
+
+		static Resolution available ( ServerLog log ) {
+			return new Resolution(Optional.of(log), "captured from " + log.describe());
 		}
-		return dataSource == null ? Optional.empty() : ReadableServerFile.open(dataSource);
+
+		static Resolution unavailable ( String reason ) {
+			return new Resolution(Optional.empty(), "reconstructions only -- " + reason);
+		}
+	}
+
+	/**
+	 * Opens the log, or explains itself.
+	 *
+	 * <p>Separate from {@link #of} because {@code doctor} has to be able to <em>print</em> the reason:
+	 * the three ways this fails need three different fixes -- one setting and two grants, on different
+	 * roles -- and a message naming the wrong one sends whoever reads it to the wrong place. It has
+	 * already done exactly that once, blaming {@code pg_read_server_files} for a
+	 * {@code pg_current_logfile} the role could not call.
+	 */
+	static Resolution resolve ( String image, DataSource dataSource ) {
+		if ( image != null ) {
+			return Resolution.available(new ContainerLog(image));
+		}
+		return dataSource == null
+				? Resolution.unavailable("there is no database here")
+				: ReadableServerFile.open(dataSource);
 	}
 
 	/** The log of a container this process started, which it can read without asking the server. */
@@ -142,31 +184,38 @@ public interface ServerLog {
 		 * missing grant is discovered here -- once, with a message naming which -- rather than as an
 		 * empty plan section at the end of an hour-long run.
 		 */
-		static Optional<ServerLog> open ( DataSource dataSource ) {
+		static Resolution open ( DataSource dataSource ) {
 			try ( Connection connection = dataSource.getConnection();
 					Statement statement = connection.createStatement();
 					ResultSet row = statement.executeQuery("SELECT pg_current_logfile()") ) {
 				if ( !row.next() || row.getString(1) == null ) {
-					LOGGER.info("this server collects no log file of its own (logging_collector is off),"
-							+ " so the report will carry no plans captured from the store's own statements");
-					return Optional.empty();
+					// The grant is there and the server still names no file: it logs to stderr and keeps
+					// nothing of its own. Only a restart fixes that, which is worth saying out loud.
+					return Resolution.unavailable("this server keeps no log file of its own"
+							+ " (ALTER SYSTEM SET logging_collector = on, then restart)");
 				}
 			} catch ( SQLException e ) {
-				LOGGER.info("could not ask this server for its log file, so the report will carry no"
-						+ " captured plans: {}", e.getMessage());
-				return Optional.empty();
+				// pg_current_logfile() is granted to pg_monitor, never to public -- a different role from
+				// the one that reads the file, and the mistake this message exists to stop making.
+				return Resolution.unavailable("this role may not call pg_current_logfile()"
+						+ " (GRANT pg_monitor TO <role>): " + firstLineOf(e));
 			}
 
 			ReadableServerFile log = new ReadableServerFile(dataSource);
 			try {
 				log.readSlice(log.currentFile(), 0, 1);
 			} catch ( SQLException e ) {
-				LOGGER.info("this role may not read the server's log file, so the report will carry no"
-						+ " captured plans -- GRANT pg_read_server_files TO <role> enables them: {}",
-						e.getMessage());
-				return Optional.empty();
+				return Resolution.unavailable("this role may not read the server's log file"
+						+ " (GRANT pg_read_server_files TO <role>): " + firstLineOf(e));
 			}
-			return Optional.of(log);
+			return Resolution.available(log);
+		}
+
+		/** A driver message is often several lines; only the first says what went wrong. */
+		private static String firstLineOf ( SQLException e ) {
+			String message = e.getMessage() == null ? "" : e.getMessage();
+			int newline = message.indexOf('\n');
+			return newline < 0 ? message : message.substring(0, newline);
 		}
 
 		@Override

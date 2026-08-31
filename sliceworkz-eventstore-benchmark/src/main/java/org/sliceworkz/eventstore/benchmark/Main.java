@@ -856,11 +856,8 @@ public final class Main {
 		if ( !canCapturePlansOn(spec) || target.dataSource().isEmpty() ) {
 			return;
 		}
-		Optional<ServerLog> log = ServerLog.of(spec.image(), target.dataSource().get());
 		System.out.println("         %-32s %s".formatted("query plans",
-				log.map(readable -> "captured from " + readable.describe())
-						.orElse("reconstructions only -- the server's log cannot be read from here"
-								+ " (needs logging_collector = on and GRANT pg_read_server_files)")));
+				ServerLog.resolve(spec.image(), target.dataSource().get()).detail()));
 	}
 
 	private static int doctor ( String profileName ) {

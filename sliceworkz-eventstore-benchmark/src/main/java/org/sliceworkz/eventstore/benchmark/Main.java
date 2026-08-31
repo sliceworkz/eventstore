@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import javax.sql.DataSource;
 
@@ -49,6 +50,7 @@ import org.sliceworkz.eventstore.benchmark.report.QueryPlans;
 import org.sliceworkz.eventstore.benchmark.report.ReadPlanCapture;
 import org.sliceworkz.eventstore.benchmark.report.Reports;
 import org.sliceworkz.eventstore.benchmark.report.RunManifest;
+import org.sliceworkz.eventstore.benchmark.report.ServerLog;
 import org.sliceworkz.eventstore.benchmark.report.RunReport;
 import org.sliceworkz.eventstore.benchmark.workload.Workload;
 import org.sliceworkz.eventstore.benchmark.workload.WorkloadDryRun;
@@ -418,9 +420,11 @@ public final class Main {
 	 * retired, so the store the rest of the report was built from starts explaining without being
 	 * rebuilt -- see {@link AutoExplain} for why opening a second store would not have helped.
 	 *
-	 * <p>Only for a Testcontainers PostgreSQL, because the plans come back through the container's log
-	 * and this process has no way to read an external server's. Everything else about the report is
-	 * unchanged on such a target; it simply carries the hand-written plans alone.
+	 * <p>Any PostgreSQL whose log can be read -- a container's output, or an external server's own log
+	 * file through {@code pg_read_file}; see {@link ServerLog}. It used to be containers only, which
+	 * meant every <em>published</em> baseline carried reconstructions alone, since a container run is
+	 * the one thing the publisher refuses. Where neither works the report is unchanged but for
+	 * carrying the hand-written plans by themselves, and says so.
 	 *
 	 * <p>Both halves run inside the one {@code auto_explain} window rather than each opening its own:
 	 * enabling it retires the pool's connections, and doing that twice would cost the second capture a
@@ -454,10 +458,14 @@ public final class Main {
 		return plans;
 	}
 
-	/** Whether this process can read back the plans a target's server logs. */
+	/**
+	 * Whether a target is one whose plans could be captured at all.
+	 *
+	 * <p>Only the backend, now: whether the log is actually readable is decided per target by
+	 * {@link ServerLog#of}, which has to ask the server and says why when the answer is no.
+	 */
 	private static boolean canCapturePlansOn ( TargetSpec spec ) {
-		return spec.backend() == TargetSpec.Backend.POSTGRES
-				&& spec.server() == TargetSpec.PostgresServer.TESTCONTAINERS;
+		return spec.backend() == TargetSpec.Backend.POSTGRES;
 	}
 
 	private static List<QueryPlans.Plan> captureIssuedPlansOn ( CorpusProvisioner.Prepared prepared,
@@ -467,17 +475,18 @@ public final class Main {
 			return List.of();
 		}
 		DataSource dataSource = prepared.target().dataSource().get();
-		if ( !AutoExplain.enable(dataSource) ) {
+		Optional<ServerLog> log = ServerLog.of(spec.image(), dataSource);
+		if ( log.isEmpty() || !AutoExplain.enable(dataSource) ) {
 			return List.of();
 		}
 		try {
 			// Appends first, then reads, because the renderer introduces the captured plans once at the
 			// first of them and the introduction it writes depends on an append being among them.
 			List<QueryPlans.Plan> plans = new ArrayList<>(
-					AppendPlanCapture.capture(prepared.target(), spec.image(), provisioner.prefix(),
+					AppendPlanCapture.capture(prepared.target(), log.get(), provisioner.prefix(),
 							profile.corpus(), prepared.outcome().facts(), workloads, spec.describe(),
 							profile.collision()));
-			plans.addAll(ReadPlanCapture.capture(prepared.target(), spec.image(), provisioner.prefix(),
+			plans.addAll(ReadPlanCapture.capture(prepared.target(), log.get(), provisioner.prefix(),
 					profile.corpus(), prepared.outcome().facts(), workloads, spec.describe()));
 			return plans;
 		} finally {
@@ -835,6 +844,25 @@ public final class Main {
 	 * pooler so LISTEN/NOTIFY never registers -- and every one of those failures is far cheaper to see
 	 * here than after a corpus has been built.
 	 */
+	/**
+	 * Says whether this target's plans could be read back, and what is missing when they cannot.
+	 *
+	 * <p>Worth a line in {@code doctor} because the alternative is finding out at the end of an
+	 * hour-long run: the capture happens after the last measurement, so a missing grant costs the whole
+	 * run's evidence and nothing before that point hints at it. It also names the remedy, since
+	 * {@code pg_read_server_files} is not a grant anyone has by accident.
+	 */
+	private static void reportPlanCapture ( TargetSpec spec, BenchmarkTarget target ) {
+		if ( !canCapturePlansOn(spec) || target.dataSource().isEmpty() ) {
+			return;
+		}
+		Optional<ServerLog> log = ServerLog.of(spec.image(), target.dataSource().get());
+		System.out.println("         %-32s %s".formatted("query plans",
+				log.map(readable -> "captured from " + readable.describe())
+						.orElse("reconstructions only -- the server's log cannot be read from here"
+								+ " (needs logging_collector = on and GRANT pg_read_server_files)")));
+	}
+
 	private static int doctor ( String profileName ) {
 		System.out.println("java     : %s (%s)".formatted(
 				System.getProperty("java.version"), System.getProperty("java.vm.name")));
@@ -870,6 +898,7 @@ public final class Main {
 						System.out.println("         %-32s %s".formatted(key, value));
 					}
 				});
+				reportPlanCapture(spec, target);
 			} catch ( RuntimeException e ) {
 				failures++;
 				System.out.println("  FAIL %-40s %s".formatted(spec.describe(), rootCauseOf(e)));

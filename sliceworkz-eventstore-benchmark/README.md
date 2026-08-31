@@ -86,7 +86,7 @@ profile, and the result lives in `CLAUDE.md` and in `PostgresCursorBoundaryTest`
 | `live-latency` | append → subscriber, and append → committed read-model row | ~5 min |
 | `ingest-saturation` | sustained appends against a store that is growing | ~10 min |
 | `large-tier` ⇄ `read-shapes` | the same reads at ten million events, on an external server | ~17 min + provisioning |
-| `large-tier-writes` | what an append costs at ten million events | ~50 min + provisioning |
+| `large-tier-writes` | what an append costs at ten million events, default planning against `PER_APPEND` | ~90 min + provisioning |
 
 There is deliberately **no `full` profile**. A profile names one corpus, and a corpus has one volume,
 so nothing can span the three tiers. The recommended sequence for an overnight run is the table above
@@ -229,6 +229,21 @@ Each run writes `report.json` (the record) and `report.md` (a rendering of it) b
   lived on the manifest and a manifest has never seen a row: `large-tier-writes` was published with
   `append-type-and-tag` at **121%** — an error bar wider than the figure it qualifies — two lines
   above this rule. `--force` still publishes, and the reasons stay in the report.
+- **Plans are captured on any server whose log can be read, external ones included.** A container's
+  output needs nothing; an external server needs `logging_collector = on` and
+  `GRANT pg_read_server_files TO <role>`, after which the suite reads the plans back through
+  `pg_read_file`. `doctor` says which of the two you will get before you spend an hour finding out.
+
+  This used to be containers only, which had it exactly backwards: a container run is the one thing
+  the publisher *refuses*, so every published baseline carried reconstructions alone — and it is a
+  reconstruction that currently holds the suite's largest finding, a DCB check appearing to read ten
+  million rows from the beginning. Evidence that load-bearing should not be the weaker kind.
+- **Each plan carries a verdict.** A sequential scan, a bitmap that outgrew `work_mem`, a sort that
+  spilled to disk, JIT charged to a query that did not need it — all four are recognisable by pattern,
+  all four were present in this suite's own published plans, and all four went unremarked until
+  somebody read forty lines of `EXPLAIN` by hand. The report now names them in the heading and says
+  underneath what each means. They are observations about the plan, never guesses about why the
+  planner chose it.
 - **The reads' plans are real too, and the reconstructions are kept beside them.** Every read
   workload is re-run under the same `auto_explain` window as the appends and the plan the server
   logged for the store's own `SELECT` is captured; the hand-written statements matching each shape

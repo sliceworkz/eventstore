@@ -210,12 +210,11 @@ public final class AutoExplain {
 	 * <p>A block runs from the {@code plan:} marker to the first line that is not indented under it,
 	 * which is how the server delimits them and needs no understanding of the plan's own grammar.
 	 *
-	 * @param log the whole server log
-	 * @param from the length the log had before the statements of interest ran
+	 * @param tail whatever the server logged since the capture marked its position -- see
+	 *        {@link ServerLog#since}, which is what slices it
 	 */
-	public static List<String> plansIn ( String log, int from ) {
+	public static List<String> plansIn ( String tail ) {
 		List<String> plans = new ArrayList<>();
-		String tail = from >= log.length() ? "" : log.substring(from);
 		String[] lines = tail.split("\n", -1);
 
 		for ( int i = 0; i < lines.length; i++ ) {

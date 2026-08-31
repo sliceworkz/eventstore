@@ -476,8 +476,16 @@ final class MarkdownRenderer {
 				out.append(hasCapturedAppends ? CAPTURED_PLAN_POINTER : NO_CAPTURED_PLAN_NOTE);
 				warned = true;
 			}
-			out.append("### %s%s%s\n\n".formatted(plan.shape(), measured(plan),
-					QueryPlans.isSequentialScan(plan) ? " — **sequential scan**" : ""));
+			List<QueryPlans.Verdict> verdicts = QueryPlans.verdictsOn(plan);
+			String badges = verdicts.stream().map(QueryPlans.Verdict::badge).filter(java.util.Objects::nonNull)
+					.map("**%s**"::formatted).reduce(( a, b ) -> a + ", " + b).map(" — "::concat).orElse("");
+			out.append("### %s%s%s\n\n".formatted(plan.shape(), measured(plan), badges));
+			// The judgement before the plan, not after: a reader who skims the notation still gets the
+			// answer, and one who reads it knows what to look for.
+			verdicts.forEach(verdict -> out.append("> %s\n".formatted(verdict.note())));
+			if ( !verdicts.isEmpty() ) {
+				out.append('\n');
+			}
 			out.append("```\n").append(plan.explain()).append("\n```\n\n");
 		}
 	}

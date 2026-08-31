@@ -33,7 +33,6 @@ import org.sliceworkz.eventstore.benchmark.env.BenchmarkTarget;
 import org.sliceworkz.eventstore.benchmark.workload.Workload;
 import org.sliceworkz.eventstore.benchmark.workload.WorkloadContext;
 import org.sliceworkz.eventstore.benchmark.workload.WorkloadContext.Collision;
-import org.sliceworkz.eventstore.testing.backend.PostgresContainer;
 
 /**
  * Runs each read workload once with {@code auto_explain} on, and keeps the plan the server logged for
@@ -97,12 +96,12 @@ public final class ReadPlanCapture {
 	 *
 	 * @param target a store opened <em>after</em> {@link AutoExplain#enable}, so its pooled connections
 	 *        carry the setting
-	 * @param image the container image tag whose log carries the plans, or null for a server whose log
-	 *        this process cannot read -- in which case nothing is captured
+	 * @param log where the server writes its plans -- a container's output or the server's own log
+	 *        file; null when neither can be read here, in which case nothing is captured
 	 */
-	public static List<QueryPlans.Plan> capture ( BenchmarkTarget target, String image, String prefix,
+	public static List<QueryPlans.Plan> capture ( BenchmarkTarget target, ServerLog log, String prefix,
 			CorpusSpec spec, CorpusFacts facts, List<Workload> workloads, String targetLabel ) {
-		if ( image == null || target.dataSource().isEmpty() ) {
+		if ( log == null || target.dataSource().isEmpty() ) {
 			return List.of();
 		}
 		DataSource dataSource = target.dataSource().get();
@@ -118,9 +117,9 @@ public final class ReadPlanCapture {
 			// rather than one, and unlike the append capture there is nothing for it to get wrong.
 			WorkloadContext context = new WorkloadContext(target, spec, facts, Collision.SPREAD, 0, 1,
 					spec.seed());
-			Map<String, String> generic = captureAll(reads, context, image, prefix, dataSource,
+			Map<String, String> generic = captureAll(reads, context, log, prefix, dataSource,
 					AutoExplain.PlanCacheMode.GENERIC);
-			Map<String, String> custom = captureAll(reads, context, image, prefix, dataSource,
+			Map<String, String> custom = captureAll(reads, context, log, prefix, dataSource,
 					AutoExplain.PlanCacheMode.CUSTOM);
 
 			for ( Workload workload : reads ) {
@@ -146,13 +145,13 @@ public final class ReadPlanCapture {
 	}
 
 	private static Map<String, String> captureAll ( List<Workload> workloads, WorkloadContext context,
-			String image, String prefix, DataSource dataSource, AutoExplain.PlanCacheMode mode ) {
+			ServerLog log, String prefix, DataSource dataSource, AutoExplain.PlanCacheMode mode ) {
 		if ( !AutoExplain.planCacheMode(dataSource, mode) ) {
 			return Map.of();
 		}
 		Map<String, String> plans = new LinkedHashMap<>();
 		for ( Workload workload : workloads ) {
-			captureOne(workload, context, image, prefix)
+			captureOne(workload, context, log, prefix)
 					.ifPresent(explain -> plans.put(workload.name(), explain));
 		}
 		return plans;
@@ -171,16 +170,16 @@ public final class ReadPlanCapture {
 	}
 
 	private static Optional<String> captureOne ( Workload workload, WorkloadContext context,
-			String image, String prefix ) {
+			ServerLog log, String prefix ) {
 		for ( int i = 0; i < WARMUP_INVOCATIONS; i++ ) {
 			invokeQuietly(workload, context);
 		}
-		int mark = PostgresContainer.logs(image).length();
+		long mark = log.mark();
 		invokeQuietly(workload, context);
 
 		for ( int attempt = 0; attempt < LOG_ATTEMPTS; attempt++ ) {
 			Optional<String> plan = AutoExplain.matching(
-					AutoExplain.plansIn(PostgresContainer.logs(image), mark),
+					AutoExplain.plansIn(log.since(mark)),
 					SELECT_LIST, "FROM %sevents".formatted(prefix));
 			if ( plan.isPresent() ) {
 				return plan;

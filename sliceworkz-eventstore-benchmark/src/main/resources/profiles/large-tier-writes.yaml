@@ -31,7 +31,14 @@ description: >
   Budget more wall clock than the estimate promises. The estimator counts iteration time only, and at
   this tier the restore dominates it: taking the template costs seconds, but handing the store back at
   the end of each trial is a truncate-and-copy of ten million rows, about two and a half minutes, once
-  per trial. Eighteen trials of that is most of the run.
+  per trial. With two targets that is thirty-six trials, so expect around an hour and a half against
+  an estimate of a quarter of that.
+
+  What to read first: the captured plans, not the throughputs. This profile is currently the suite's
+  best evidence that a DCB check carrying a tag falls off a cliff at this volume -- the reconstructed
+  plans show the same check at 0.045 ms without a tag and 583 ms with one, the second having read the
+  table from the beginning. The throughputs agree in magnitude but cannot say why, and until this run
+  captures the store's own statements the cliff is an inference rather than a fact.
 
 corpus:
   volume: 10000000
@@ -42,10 +49,26 @@ corpus:
   seed: 20260823
 
 targets:
+  # Two stores over one corpus, differing in one setting, so the run answers the question rather than
+  # needing a second run and a `compare`. The first is what an application gets by default.
   - backend: POSTGRES
     server: EXTERNAL
     metrics: OFF
     schemaMode: ENSURE
+  # The remedy, measured rather than recommended. By default PostgreSQL plans the DCB check once and
+  # re-uses that plan against every later set of parameters; PER_APPEND makes it plan each time, from
+  # the values actually being bound. The captured plans say why that might matter here: at a hundred
+  # thousand events the check is an index scan, and at ten million the same check carrying one sku:
+  # tag comes back as a sequential scan reading the table from the beginning. A re-planned statement
+  # can pick differently for the SKU in front of it; a cached one cannot.
+  #
+  # It is not free -- CLAUDE.md records 2.4x on a types-only filter -- which is exactly why it is
+  # measured beside the default instead of being switched on for everyone.
+  - backend: POSTGRES
+    server: EXTERNAL
+    metrics: OFF
+    schemaMode: ENSURE
+    appendPlanning: PER_APPEND
 
 jmh:
   workloads:

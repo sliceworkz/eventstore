@@ -474,4 +474,98 @@ public final class QueryPlans {
 	public static boolean isSequentialScan ( Plan plan ) {
 		return plan.explain().contains("Seq Scan");
 	}
+
+	/**
+	 * One thing worth saying about a plan: a short badge for the heading and a sentence under it.
+	 *
+	 * @param badge what to put beside the shape, or null for a finding that only deserves the sentence
+	 * @param note what it means and, where there is one, what to do about it
+	 */
+	public record Verdict ( String badge, String note ) { }
+
+	/**
+	 * What is worth saying about a plan without reading it line by line.
+	 *
+	 * <p><b>Why the report should judge rather than only display.</b> A plan is forty lines of a
+	 * notation most readers skim, and the things that matter in it are recognisable by pattern: a
+	 * sequential scan where an index was available, a bitmap that went lossy because {@code work_mem}
+	 * was too small, a sort that spilled to disk, JIT compilation charged to a query that did not need
+	 * it. All four are in this suite's own published plans and all four went unremarked until somebody
+	 * read them by hand. Naming them costs nothing and is what turns the section from evidence into an
+	 * answer.
+	 *
+	 * <p>These are observations about the plan in front of them, never inferences about why the planner
+	 * chose it -- that reasoning belongs in prose a person writes, and has already been wrong once here.
+	 */
+	public static List<Verdict> verdictsOn ( Plan plan ) {
+		String explain = plan.explain();
+		List<Verdict> verdicts = new java.util.ArrayList<>();
+
+		if ( explain.contains("Seq Scan") ) {
+			long discarded = sumOf(explain, "Rows Removed by Filter: ");
+			verdicts.add(new Verdict("sequential scan",
+					discarded > 0
+							? ("no index served this, so it read the table from the beginning and discarded "
+									+ "%,d rows on the way. A predicate the index can start from -- the cursor "
+									+ "boundary alone does this -- turns the same question into a seek.")
+									.formatted(discarded)
+							: "no index served this, so it read the table from the beginning."));
+		}
+		if ( explain.contains("lossy=") ) {
+			verdicts.add(new Verdict("lossy bitmap",
+					"the bitmap outgrew work_mem, so whole pages were marked instead of rows and every "
+							+ "row on them had to be re-checked. Raising work_mem for this statement removes "
+							+ "the recheck entirely."));
+		}
+		if ( explain.contains("external merge") || explain.contains("external sort") ) {
+			verdicts.add(new Verdict("sorts on disk",
+					"the sort did not fit in work_mem and spilled to disk. Either the read returns more "
+							+ "rows than it needs -- a limit or a savepoint -- or work_mem is too small for "
+							+ "the size of result this query is meant to produce."));
+		}
+		jitCost(explain).ifPresent(millis -> verdicts.add(new Verdict("JIT " + millis + "ms",
+				"PostgreSQL compiled this query before running it, which it does when the estimated cost "
+						+ "is high. On a query that turns out to be short the compilation is most of the "
+						+ "wait, and jit_above_cost is the knob.")));
+		// Named because it is the counter-example the section needs: the same DCB check without a tag
+		// gets exactly this, and the contrast is the finding rather than either plan alone.
+		if ( explain.contains("Index Cond") && explain.contains("ROW(event_tx") ) {
+			verdicts.add(new Verdict(null,
+					"the cursor boundary is an Index Cond here, so the scan starts at the boundary rather "
+							+ "than filtering its way to it."));
+		}
+		return verdicts;
+	}
+
+	/** Adds up every occurrence of a counter the plan may report once per node. */
+	private static long sumOf ( String explain, String label ) {
+		long total = 0;
+		int at = explain.indexOf(label);
+		while ( at >= 0 ) {
+			int from = at + label.length();
+			int to = from;
+			while ( to < explain.length() && Character.isDigit(explain.charAt(to)) ) {
+				to++;
+			}
+			if ( to > from ) {
+				total += Long.parseLong(explain.substring(from, to));
+			}
+			at = explain.indexOf(label, to);
+		}
+		return total;
+	}
+
+	/** What JIT compilation cost this query, in whole milliseconds, when it happened at all. */
+	private static java.util.Optional<String> jitCost ( String explain ) {
+		int jit = explain.indexOf("JIT:");
+		if ( jit < 0 ) {
+			return java.util.Optional.empty();
+		}
+		java.util.regex.Matcher matcher = // the Timing line writes "Total 204.927 ms", with no colon, unlike every other label in it
+		java.util.regex.Pattern.compile("Total:? ([0-9.]+) ms")
+				.matcher(explain.substring(jit));
+		return matcher.find()
+				? java.util.Optional.of("%.0f".formatted(Double.parseDouble(matcher.group(1))))
+				: java.util.Optional.empty();
+	}
 }

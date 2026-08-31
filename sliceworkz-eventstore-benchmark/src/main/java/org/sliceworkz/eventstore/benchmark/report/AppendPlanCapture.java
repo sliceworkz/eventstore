@@ -38,7 +38,6 @@ import org.sliceworkz.eventstore.benchmark.env.BenchmarkTarget;
 import org.sliceworkz.eventstore.benchmark.workload.WorkloadContext.Collision;
 import org.sliceworkz.eventstore.benchmark.workload.Workload;
 import org.sliceworkz.eventstore.benchmark.workload.WorkloadContext;
-import org.sliceworkz.eventstore.testing.backend.PostgresContainer;
 
 /**
  * Runs each conditional-append workload once with {@code auto_explain} on, and keeps the plan the
@@ -110,18 +109,18 @@ public final class AppendPlanCapture {
 	 *
 	 * @param target a store opened <em>after</em> {@link AutoExplain#enable}, so its pooled connections
 	 *        carry the setting
-	 * @param image the container image tag whose log carries the plans, or null for a server whose log
-	 *        this process cannot read -- in which case nothing is captured
+	 * @param log where the server writes its plans -- a container's output or the server's own log
+	 *        file; null when neither can be read here, in which case nothing is captured
 	 * @param collision the profile's collision mode, so the captured statement is addressed the way the
 	 *        measured ones were. This used to be hardwired to {@link Collision#SPREAD}, which made a
 	 *        contention profile's captured plan describe a statement it never issued: the three
 	 *        write-contention profiles came back with byte-identical plans -- same parameters, same
 	 *        cursor, same cost -- while their measured throughputs differed fourfold
 	 */
-	public static List<QueryPlans.Plan> capture ( BenchmarkTarget target, String image, String prefix,
+	public static List<QueryPlans.Plan> capture ( BenchmarkTarget target, ServerLog log, String prefix,
 			CorpusSpec spec, CorpusFacts facts, List<Workload> workloads, String targetLabel,
 			Collision collision ) {
-		if ( image == null || target.dataSource().isEmpty() ) {
+		if ( log == null || target.dataSource().isEmpty() ) {
 			return List.of();
 		}
 		DataSource dataSource = target.dataSource().get();
@@ -139,9 +138,9 @@ public final class AppendPlanCapture {
 			// not attribute anyway. An OptimisticLockingException under ONE_BOUNDARY is expected and still
 			// leaves a plan in the log, so a losing append is explained like a winning one.
 			WorkloadContext context = new WorkloadContext(target, spec, facts, collision, 0, 1, spec.seed());
-			Map<String, String> generic = captureAll(conditional, context, image, prefix, dataSource,
+			Map<String, String> generic = captureAll(conditional, context, log, prefix, dataSource,
 					AutoExplain.PlanCacheMode.GENERIC);
-			Map<String, String> custom = captureAll(conditional, context, image, prefix, dataSource,
+			Map<String, String> custom = captureAll(conditional, context, log, prefix, dataSource,
 					AutoExplain.PlanCacheMode.CUSTOM);
 
 			for ( Workload workload : conditional ) {
@@ -177,13 +176,13 @@ public final class AppendPlanCapture {
 	 * stop being reported as fact.
 	 */
 	private static Map<String, String> captureAll ( List<Workload> workloads, WorkloadContext context,
-			String image, String prefix, DataSource dataSource, AutoExplain.PlanCacheMode mode ) {
+			ServerLog log, String prefix, DataSource dataSource, AutoExplain.PlanCacheMode mode ) {
 		if ( !AutoExplain.planCacheMode(dataSource, mode) ) {
 			return Map.of();
 		}
 		Map<String, String> plans = new LinkedHashMap<>();
 		for ( Workload workload : workloads ) {
-			captureOne(workload, context, image, prefix)
+			captureOne(workload, context, log, prefix)
 					.ifPresent(explain -> plans.put(workload.name(), explain));
 		}
 		return plans;
@@ -205,19 +204,19 @@ public final class AppendPlanCapture {
 	}
 
 	private static Optional<String> captureOne ( Workload workload, WorkloadContext context,
-			String image, String prefix ) {
+			ServerLog log, String prefix ) {
 		// Warm before marking the log, so what is captured is a statement the server has seen before and
 		// whose pages are in shared buffers, as they are throughout a measured trial.
 		for ( int i = 0; i < WARMUP_INVOCATIONS; i++ ) {
 			invokeQuietly(workload, context);
 		}
-		int mark = PostgresContainer.logs(image).length();
+		long mark = log.mark();
 		invokeQuietly(workload, context);
 
 		String wanted = "INSERT INTO %sevents".formatted(prefix);
 		for ( int attempt = 0; attempt < LOG_ATTEMPTS; attempt++ ) {
 			Optional<String> plan = AutoExplain.matching(
-					AutoExplain.plansIn(PostgresContainer.logs(image), mark), wanted);
+					AutoExplain.plansIn(log.since(mark)), wanted);
 			if ( plan.isPresent() ) {
 				return plan;
 			}

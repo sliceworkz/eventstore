@@ -62,9 +62,13 @@ import org.sliceworkz.eventstore.testing.backend.PostgresContainer;
  *       to name. Not reloadable; it wants a restart.</li>
  *   <li>{@code GRANT pg_monitor TO <role>}, for {@code pg_current_logfile()} -- its execute privilege
  *       is revoked from public and held by that role.</li>
- *   <li>{@code GRANT pg_read_server_files TO <role>}, for {@code pg_stat_file} and
- *       {@code pg_read_binary_file} -- a <em>different</em> role from the one above, which is exactly
- *       the confusion the first version of this message caused.</li>
+ *   <li><b>{@code EXECUTE} on {@code pg_stat_file} and {@code pg_read_binary_file}</b>, granted to the
+ *       role by name. This is the one that misleads, and it misled this class twice: the obvious
+ *       remedy looks like {@code GRANT pg_read_server_files}, and that role governs <em>which paths</em>
+ *       may be read rather than whether the functions may be called at all. A role holding it still
+ *       gets {@code permission denied for function pg_read_binary_file}. Both are wanted where
+ *       {@code log_directory} is outside the data directory -- Debian and Ubuntu put it in
+ *       {@code /var/log/postgresql} -- and only the {@code EXECUTE} grants where it is not.</li>
  * </ul>
  *
  * <p>That is a fair price on a benchmark host for turning the suite's headline finding from an
@@ -206,7 +210,10 @@ public interface ServerLog {
 				log.readSlice(log.currentFile(), 0, 1);
 			} catch ( SQLException e ) {
 				return Resolution.unavailable("this role may not read the server's log file"
-						+ " (GRANT pg_read_server_files TO <role>): " + firstLineOf(e));
+						+ " (GRANT EXECUTE ON FUNCTION pg_stat_file(text, boolean),"
+						+ " pg_read_binary_file(text, bigint, bigint, boolean) TO <role>; plus"
+						+ " GRANT pg_read_server_files TO <role> where log_directory is outside the data"
+						+ " directory, as it is on Debian and Ubuntu): " + firstLineOf(e));
 			}
 			return Resolution.available(log);
 		}

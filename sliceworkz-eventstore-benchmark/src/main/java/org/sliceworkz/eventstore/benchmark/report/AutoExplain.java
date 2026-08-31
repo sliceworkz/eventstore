@@ -79,6 +79,34 @@ public final class AutoExplain {
 	 *         no plans, which callers report rather than fail on
 	 */
 	public static boolean enable ( DataSource dataSource ) {
+		return enableWithReason(dataSource).enabled();
+	}
+
+	/**
+	 * Whether the server would explain its statements, and what stopped it when it would not.
+	 *
+	 * @param enabled whether every following connection will be explained
+	 * @param detail one line fit to print, naming the remedy where there is one
+	 */
+	public record Enablement ( boolean enabled, String detail ) { }
+
+	/**
+	 * Turns the explaining on and says why it could not, for {@code doctor} to print.
+	 *
+	 * <p>Separate from {@link #enable} because a run treats this as best effort and a pre-flight check
+	 * must not: reading the log back and being allowed to write plans into it are two different
+	 * privileges, held by different roles, and a check that only proves the first still lets an
+	 * hour-long run end with an empty plan section.
+	 */
+	public static Enablement enableWithReason ( DataSource dataSource ) {
+		String failure = enableSettings(dataSource);
+		return failure == null
+				? new Enablement(true, "on")
+				: new Enablement(false, "cannot be turned on here -- this needs to own the database and"
+						+ " GRANT SET ON PARAMETER session_preload_libraries TO <role>: " + failure);
+	}
+
+	private static String enableSettings ( DataSource dataSource ) {
 		return configure(dataSource, "auto_explain", List.of(
 				"SET session_preload_libraries = 'auto_explain'",
 				// every statement, since the capture runs a handful deliberately rather than sampling
@@ -144,7 +172,7 @@ public final class AutoExplain {
 	 */
 	public static boolean planCacheMode ( DataSource dataSource, PlanCacheMode mode ) {
 		return configure(dataSource, "plan_cache_mode",
-				List.of("SET plan_cache_mode = '%s'".formatted(mode.setting)));
+				List.of("SET plan_cache_mode = '%s'".formatted(mode.setting))) == null;
 	}
 
 	/** Hands plan choice back to the server. */
@@ -152,7 +180,12 @@ public final class AutoExplain {
 		configure(dataSource, "plan_cache_mode", List.of("RESET plan_cache_mode"));
 	}
 
-	private static boolean configure ( DataSource dataSource, String what, List<String> settings ) {
+	/**
+	 * Applies the settings to the database.
+	 *
+	 * @return null when it worked, and the server's first line of complaint when it did not
+	 */
+	private static String configure ( DataSource dataSource, String what, List<String> settings ) {
 		try ( Connection connection = dataSource.getConnection();
 				Statement statement = connection.createStatement() ) {
 			String database = currentDatabase(connection);
@@ -160,11 +193,13 @@ public final class AutoExplain {
 				statement.execute("ALTER DATABASE %s %s".formatted(quoteIdentifier(database), setting));
 			}
 			retireIdleConnections(dataSource);
-			return true;
+			return null;
 		} catch ( SQLException e ) {
 			LOGGER.info("{} could not be configured here, so the report will carry no plans"
 					+ " captured from the store's own statements: {}", what, e.getMessage());
-			return false;
+			String message = e.getMessage() == null ? e.toString() : e.getMessage();
+			int newline = message.indexOf('\n');
+			return newline < 0 ? message : message.substring(0, newline);
 		}
 	}
 

@@ -18,6 +18,9 @@
 package org.sliceworkz.eventstore.benchmark;
 
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -857,7 +860,65 @@ public final class Main {
 			return;
 		}
 		System.out.println("         %-32s %s".formatted("query plans",
-				ServerLog.resolve(spec.image(), target.dataSource().get()).detail()));
+				planCaptureVerdict(spec, target.dataSource().get())));
+	}
+
+	/**
+	 * Whether a plan really would come back, established by fetching one.
+	 *
+	 * <p>Checking the links one at a time is what made this useless twice over. Reading the log and
+	 * being allowed to make the server write plans into it are separate privileges held by different
+	 * roles, so a check that proved only the first still let a run end with an empty plan section --
+	 * and each missing piece cost a round trip to find, because the check stopped at the first one it
+	 * could see. So this does the whole thing: turns the explaining on, issues a statement, and goes
+	 * looking for its plan. "captured" here means a plan was captured, not that the pieces look right.
+	 *
+	 * <p>The database is put back as it was afterwards, which matters more here than in a run: the
+	 * settings live on the database rather than on a connection, so leaving {@code doctor}'s behind
+	 * would have every later session explain every statement it issues.
+	 */
+	private static String planCaptureVerdict ( TargetSpec spec, DataSource dataSource ) {
+		ServerLog.Resolution resolution = ServerLog.resolve(spec.image(), dataSource);
+		if ( resolution.log().isEmpty() ) {
+			return resolution.detail();
+		}
+		AutoExplain.Enablement enablement = AutoExplain.enableWithReason(dataSource);
+		if ( !enablement.enabled() ) {
+			return "reconstructions only -- auto_explain " + enablement.detail();
+		}
+		try {
+			ServerLog log = resolution.log().get();
+			long mark = log.mark();
+			try ( Connection connection = dataSource.getConnection();
+					Statement statement = connection.createStatement() ) {
+				statement.execute("SELECT 1");
+			} catch ( SQLException e ) {
+				return "reconstructions only -- the probe statement failed: " + e.getMessage();
+			}
+			return awaitPlan(log, mark)
+					? "captured from " + log.describe()
+					: "reconstructions only -- " + log.describe() + " is readable and auto_explain is on,"
+							+ " but no plan appeared in it (is the auto_explain module installed on this"
+							+ " server?)";
+		} finally {
+			AutoExplain.disable(dataSource);
+		}
+	}
+
+	/** A server buffers what it writes, so the probe's plan is waited for rather than expected. */
+	private static boolean awaitPlan ( ServerLog log, long mark ) {
+		for ( int attempt = 0; attempt < 8; attempt++ ) {
+			if ( !AutoExplain.plansIn(log.since(mark)).isEmpty() ) {
+				return true;
+			}
+			try {
+				Thread.sleep(250);
+			} catch ( InterruptedException e ) {
+				Thread.currentThread().interrupt();
+				return false;
+			}
+		}
+		return false;
 	}
 
 	private static int doctor ( String profileName ) {

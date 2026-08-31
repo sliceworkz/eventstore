@@ -99,24 +99,44 @@ public final class AutoExplain {
 	 * hour-long run end with an empty plan section.
 	 */
 	public static Enablement enableWithReason ( DataSource dataSource ) {
-		String failure = enableSettings(dataSource);
-		return failure == null
-				? new Enablement(true, "on")
-				: new Enablement(false, "cannot be turned on here -- this needs to own the database and"
-						+ " GRANT SET ON PARAMETER session_preload_libraries TO <role>: " + failure);
+		List<String> refused = configure(dataSource, "auto_explain", ENABLE);
+		if ( refused.isEmpty() ) {
+			return new Enablement(true, "on");
+		}
+		return new Enablement(false, "cannot be turned on here -- the server refused %s: %s. The role"
+				+ " must own the database, and needs: GRANT SET ON PARAMETER %s TO <role>;"
+				.formatted(refused.size() == 1 ? "one setting" : refused.size() + " settings",
+						String.join("; ", refused), String.join(", ", parametersOf(ENABLE))));
 	}
 
-	private static String enableSettings ( DataSource dataSource ) {
-		return configure(dataSource, "auto_explain", List.of(
-				"SET session_preload_libraries = 'auto_explain'",
-				// every statement, since the capture runs a handful deliberately rather than sampling
-				"SET auto_explain.log_min_duration = 0",
-				"SET auto_explain.log_analyze = on",
-				"SET auto_explain.log_buffers = on",
-				"SET auto_explain.log_timing = on",
-				"SET auto_explain.log_format = 'text'",
-				// the append's NOT EXISTS is a subplan of the INSERT, and the INSERT is what is issued
-				"SET auto_explain.log_nested_statements = on"));
+	/**
+	 * The settings that make the server explain what it runs.
+	 *
+	 * <p>A constant rather than a literal in the call, so the remedy printed when one is refused is
+	 * derived from the list actually applied. A hand-written remedy is a second place to keep the names
+	 * right, and it has already been wrong twice -- naming the role that widens which files may be read
+	 * rather than the grant to call the functions, and then naming
+	 * {@code session_preload_libraries} for a refusal that was about the {@code auto_explain.*}
+	 * parameters. Those are a different privilege again: until the module is loaded they are
+	 * <em>placeholders</em>, and PostgreSQL cannot know what setting one will turn out to be, so
+	 * {@code ALTER DATABASE} on a placeholder wants superuser or a grant naming that parameter.
+	 */
+	private static final List<String> ENABLE = List.of(
+			"SET session_preload_libraries = 'auto_explain'",
+			// every statement, since the capture runs a handful deliberately rather than sampling
+			"SET auto_explain.log_min_duration = 0",
+			"SET auto_explain.log_analyze = on",
+			"SET auto_explain.log_buffers = on",
+			"SET auto_explain.log_timing = on",
+			"SET auto_explain.log_format = 'text'",
+			// the append's NOT EXISTS is a subplan of the INSERT, and the INSERT is what is issued
+			"SET auto_explain.log_nested_statements = on");
+
+	/** The parameter names out of {@link #ENABLE}, so a remedy can name every one of them. */
+	private static List<String> parametersOf ( List<String> settings ) {
+		return settings.stream()
+				.map(setting -> setting.substring("SET ".length(), setting.indexOf(" =")))
+				.toList();
 	}
 
 	/** Puts the database back as it was; safe to call whether or not {@link #enable} succeeded. */
@@ -172,7 +192,7 @@ public final class AutoExplain {
 	 */
 	public static boolean planCacheMode ( DataSource dataSource, PlanCacheMode mode ) {
 		return configure(dataSource, "plan_cache_mode",
-				List.of("SET plan_cache_mode = '%s'".formatted(mode.setting))) == null;
+				List.of("SET plan_cache_mode = '%s'".formatted(mode.setting))).isEmpty();
 	}
 
 	/** Hands plan choice back to the server. */
@@ -183,24 +203,41 @@ public final class AutoExplain {
 	/**
 	 * Applies the settings to the database.
 	 *
-	 * @return null when it worked, and the server's first line of complaint when it did not
+	 * <p><b>Every setting is attempted, not just the ones before the first refusal.</b> They are
+	 * independent {@code ALTER DATABASE} statements against independent privileges, so stopping at the
+	 * first one costs a round trip per missing grant to discover -- which is exactly what turning plan
+	 * capture on against an external server has cost so far, one privilege at a time.
+	 *
+	 * @return the settings the server refused, each with its complaint; empty when all of them applied
 	 */
-	private static String configure ( DataSource dataSource, String what, List<String> settings ) {
+	private static List<String> configure ( DataSource dataSource, String what, List<String> settings ) {
+		List<String> refused = new ArrayList<>();
 		try ( Connection connection = dataSource.getConnection();
 				Statement statement = connection.createStatement() ) {
 			String database = currentDatabase(connection);
 			for ( String setting : settings ) {
-				statement.execute("ALTER DATABASE %s %s".formatted(quoteIdentifier(database), setting));
+				try {
+					statement.execute("ALTER DATABASE %s %s".formatted(quoteIdentifier(database), setting));
+				} catch ( SQLException e ) {
+					refused.add("`%s` (%s)".formatted(setting, firstLineOf(e)));
+				}
 			}
 			retireIdleConnections(dataSource);
-			return null;
 		} catch ( SQLException e ) {
-			LOGGER.info("{} could not be configured here, so the report will carry no plans"
-					+ " captured from the store's own statements: {}", what, e.getMessage());
-			String message = e.getMessage() == null ? e.toString() : e.getMessage();
-			int newline = message.indexOf('\n');
-			return newline < 0 ? message : message.substring(0, newline);
+			refused.add("all of them (%s)".formatted(firstLineOf(e)));
 		}
+		if ( !refused.isEmpty() ) {
+			LOGGER.info("{} could not be configured here, so the report will carry no plans"
+					+ " captured from the store's own statements: {}", what, String.join("; ", refused));
+		}
+		return refused;
+	}
+
+	/** A driver message is often several lines; only the first says what went wrong. */
+	private static String firstLineOf ( SQLException e ) {
+		String message = e.getMessage() == null ? e.toString() : e.getMessage();
+		int newline = message.indexOf('\n');
+		return newline < 0 ? message : message.substring(0, newline);
 	}
 
 	/**

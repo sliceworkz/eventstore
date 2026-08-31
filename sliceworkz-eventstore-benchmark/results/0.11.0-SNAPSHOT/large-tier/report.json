@@ -20,11 +20,11 @@
       "needleTagValue" : "needle",
       "swatheTagValue" : "swathe",
       "matchCounts" : {
+        "needle" : 10,
+        "coldEntity" : 1,
         "swathe" : 100000,
         "total" : 10000000,
-        "hotEntity" : 455092,
-        "needle" : 10,
-        "coldEntity" : 1
+        "hotEntity" : 455092
       },
       "midCursorRef" : "018cc8e0-6b58-7d95-bb4e-50866fd3ba08:1504560:2750000",
       "replayUntilRef" : "018cc255-0118-7209-8190-b356ea15a1ae:1503184:5000",
@@ -82,178 +82,178 @@
     "restorePolicy" : "no restore needed: every workload in this run is read-only",
     "driftFraction" : 0.0,
     "driftCap" : 0.02,
-    "startedAt" : "2026-08-30T17:45:42.983501094Z",
-    "finishedAt" : "2026-08-30T18:03:15.968755977Z"
+    "startedAt" : "2026-08-31T08:11:29.441049345Z",
+    "finishedAt" : "2026-08-31T08:28:55.980890982Z"
   },
   "benchmarks" : [ {
     "target" : "postgres:external/metrics=off",
     "workload" : "query-stream-page",
     "threads" : 1,
     "mode" : "thrpt",
-    "score" : 0.9670080383566214,
-    "error" : 0.02098335831612476,
+    "score" : 0.9286247891532661,
+    "error" : 0.027377047641849485,
     "unit" : "ops/ms",
     "secondary" : {
+      "ok" : 55724.0,
       "deduplicated" : 0.0,
-      "conflicts" : 0.0,
-      "ok" : 58032.0
+      "conflicts" : 0.0
     }
   }, {
     "target" : "postgres:external/metrics=off",
     "workload" : "query-by-type",
     "threads" : 1,
     "mode" : "thrpt",
-    "score" : 0.9786312228232598,
-    "error" : 0.03462187807295955,
+    "score" : 0.9621655277166777,
+    "error" : 0.02699138901950655,
     "unit" : "ops/ms",
     "secondary" : {
+      "ok" : 57739.0,
       "deduplicated" : 0.0,
-      "conflicts" : 0.0,
-      "ok" : 58727.0
+      "conflicts" : 0.0
     }
   }, {
     "target" : "postgres:external/metrics=off",
     "workload" : "query-by-tag-needle",
     "threads" : 1,
     "mode" : "thrpt",
-    "score" : 3.60937471077359,
-    "error" : 0.07324498175577832,
+    "score" : 3.438877300547615,
+    "error" : 0.04972565777411146,
     "unit" : "ops/ms",
     "secondary" : {
+      "ok" : 206343.0,
       "deduplicated" : 0.0,
-      "conflicts" : 0.0,
-      "ok" : 216575.0
+      "conflicts" : 0.0
     }
   }, {
     "target" : "postgres:external/metrics=off",
     "workload" : "query-by-tag-swathe",
     "threads" : 1,
     "mode" : "thrpt",
-    "score" : 0.1930619173375252,
-    "error" : 0.004953141448107831,
+    "score" : 0.18197795418531726,
+    "error" : 0.0044632619732055115,
     "unit" : "ops/ms",
     "secondary" : {
+      "ok" : 10925.0,
       "deduplicated" : 0.0,
-      "conflicts" : 0.0,
-      "ok" : 11592.0
+      "conflicts" : 0.0
     }
   }, {
     "target" : "postgres:external/metrics=off",
     "workload" : "query-by-entity-hot",
     "threads" : 1,
     "mode" : "thrpt",
-    "score" : 6.082729617136624E-4,
-    "error" : 3.8450162457749394E-5,
+    "score" : 5.786955161295098E-4,
+    "error" : 2.708269152584909E-5,
     "unit" : "ops/ms",
     "secondary" : {
+      "ok" : 37.0,
       "deduplicated" : 0.0,
-      "conflicts" : 0.0,
-      "ok" : 44.0
+      "conflicts" : 0.0
     }
   }, {
     "target" : "postgres:external/metrics=off",
     "workload" : "query-by-entity-cold",
     "threads" : 1,
     "mode" : "thrpt",
-    "score" : 10.539970022669772,
-    "error" : 0.3596443292794366,
+    "score" : 10.07640251248352,
+    "error" : 0.298088285075384,
     "unit" : "ops/ms",
     "secondary" : {
+      "ok" : 604609.0,
       "deduplicated" : 0.0,
-      "conflicts" : 0.0,
-      "ok" : 632418.0
+      "conflicts" : 0.0
     }
   }, {
     "target" : "postgres:external/metrics=off",
     "workload" : "query-by-multi-tag",
     "threads" : 1,
     "mode" : "thrpt",
-    "score" : 0.06825732382455109,
-    "error" : 0.002862312279760424,
+    "score" : 0.06328502985083617,
+    "error" : 0.001728410932525006,
     "unit" : "ops/ms",
     "secondary" : {
+      "ok" : 3804.0,
       "deduplicated" : 0.0,
-      "conflicts" : 0.0,
-      "ok" : 4103.0
+      "conflicts" : 0.0
     }
   }, {
     "target" : "postgres:external/metrics=off",
     "workload" : "query-by-or-groups",
     "threads" : 1,
     "mode" : "thrpt",
-    "score" : 0.42248121744059014,
-    "error" : 0.01593192653893252,
+    "score" : 0.4153399845423836,
+    "error" : 0.015223022540293705,
     "unit" : "ops/ms",
     "secondary" : {
+      "ok" : 24925.0,
       "deduplicated" : 0.0,
-      "conflicts" : 0.0,
-      "ok" : 25356.0
+      "conflicts" : 0.0
     }
   }, {
     "target" : "postgres:external/metrics=off",
     "workload" : "query-last-event",
     "threads" : 1,
     "mode" : "thrpt",
-    "score" : 16.11687009828729,
-    "error" : 0.8111525608790958,
+    "score" : 16.349834710198337,
+    "error" : 0.9179539548781473,
     "unit" : "ops/ms",
     "secondary" : {
+      "ok" : 981019.0,
       "deduplicated" : 0.0,
-      "conflicts" : 0.0,
-      "ok" : 967042.0
+      "conflicts" : 0.0
     }
   }, {
     "target" : "postgres:external/metrics=off",
     "workload" : "query-cursor-walk",
     "threads" : 1,
     "mode" : "thrpt",
-    "score" : 0.18169373987667634,
-    "error" : 0.00548265832715054,
+    "score" : 0.17611714405177795,
+    "error" : 0.006769391514563941,
     "unit" : "ops/ms",
     "secondary" : {
+      "ok" : 10573.0,
       "deduplicated" : 0.0,
-      "conflicts" : 0.0,
-      "ok" : 10908.0
+      "conflicts" : 0.0
     }
   }, {
     "target" : "postgres:external/metrics=off",
     "workload" : "query-by-id",
     "threads" : 1,
     "mode" : "thrpt",
-    "score" : 57.074684597210485,
-    "error" : 2.268306662254556,
+    "score" : 55.61998297188183,
+    "error" : 1.3241721415354153,
     "unit" : "ops/ms",
     "secondary" : {
+      "ok" : 3337283.0,
       "deduplicated" : 0.0,
-      "conflicts" : 0.0,
-      "ok" : 3424552.0
+      "conflicts" : 0.0
     }
   } ],
   "load" : [ ],
   "plans" : [ {
     "shape" : "stream page (unfiltered, limit 500)",
     "sql" : "SELECT event_position, event_tx::text, event_id, event_type, event_data, event_tags\nFROM bm_n3tx9gechuj9_events\nWHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())\n  AND stream_context = ? AND stream_purpose = ?\nORDER BY event_tx::xid8, event_position\nLIMIT 500",
-    "explain" : "Limit  (cost=0.56..111.27 rows=500 width=313) (actual time=0.028..0.179 rows=500.00 loops=1)\n  Buffers: shared hit=2 read=25\n  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..1217405.89 rows=5498323 width=313) (actual time=0.027..0.156 rows=500.00 loops=1)\n        Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))\n        Index Searches: 1\n        Buffers: shared hit=2 read=25\nPlanning:\n  Buffers: shared hit=58 read=13\nPlanning Time: 0.319 ms\nExecution Time: 0.206 ms"
+    "explain" : "Limit  (cost=0.56..230.62 rows=500 width=314) (actual time=0.026..0.182 rows=500.00 loops=1)\n  Buffers: shared hit=4 read=33\n  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..2509560.35 rows=5454321 width=314) (actual time=0.025..0.158 rows=500.00 loops=1)\n        Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))\n        Index Searches: 1\n        Buffers: shared hit=4 read=33\nPlanning:\n  Buffers: shared hit=58 read=13\nPlanning Time: 0.299 ms\nExecution Time: 0.208 ms"
   }, {
     "shape" : "tag needle (~10 matches)",
     "sql" : "SELECT event_position, event_tx::text, event_id, event_type, event_data, event_tags\nFROM bm_n3tx9gechuj9_events\nWHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())\n  AND stream_context = ? AND stream_purpose = ?\n  AND ((event_tags @> ARRAY[?]::text[]))\nORDER BY event_tx::xid8, event_position",
-    "explain" : "Sort  (cost=2958.07..2959.90 rows=733 width=313) (actual time=0.434..0.435 rows=10.00 loops=1)\n  Sort Key: event_tx, event_position\n  Sort Method: quicksort  Memory: 27kB\n  Buffers: shared hit=42 read=36\n  ->  Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=59.64..2923.19 rows=733 width=313) (actual time=0.328..0.422 rows=10.00 loops=1)\n        Recheck Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{campaign:needle}'::text[]))\n        Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))\n        Heap Blocks: exact=10\n        Buffers: shared hit=34 read=36\n        ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..59.46 rows=733 width=0) (actual time=0.306..0.306 rows=10.00 loops=1)\n              Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{campaign:needle}'::text[]))\n              Index Searches: 1\n              Buffers: shared hit=33 read=27\nPlanning:\n  Buffers: shared hit=11 read=1\nPlanning Time: 0.077 ms\nExecution Time: 0.467 ms"
+    "explain" : "Sort  (cost=2934.64..2936.45 rows=727 width=314) (actual time=0.443..0.444 rows=10.00 loops=1)\n  Sort Key: event_tx, event_position\n  Sort Method: quicksort  Memory: 27kB\n  Buffers: shared hit=44 read=39\n  ->  Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=59.61..2900.08 rows=727 width=314) (actual time=0.329..0.431 rows=10.00 loops=1)\n        Recheck Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{campaign:needle}'::text[]))\n        Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))\n        Heap Blocks: exact=10\n        Buffers: shared hit=36 read=39\n        ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..59.43 rows=727 width=0) (actual time=0.312..0.312 rows=10.00 loops=1)\n              Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{campaign:needle}'::text[]))\n              Index Searches: 1\n              Buffers: shared hit=35 read=30\nPlanning:\n  Buffers: shared hit=11 read=1\nPlanning Time: 0.085 ms\nExecution Time: 0.479 ms"
   }, {
     "shape" : "tag swathe (~1% of the store)",
     "sql" : "SELECT event_position, event_tx::text, event_id, event_type, event_data, event_tags\nFROM bm_n3tx9gechuj9_events\nWHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())\n  AND stream_context = ? AND stream_purpose = ?\n  AND ((event_tags @> ARRAY[?]::text[]))\nORDER BY event_tx::xid8, event_position\nLIMIT 500",
-    "explain" : "Limit  (cost=0.56..11287.23 rows=500 width=313) (actual time=0.018..6.290 rows=500.00 loops=1)\n  Buffers: shared hit=80 read=1199\n  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..1203926.75 rows=53334 width=313) (actual time=0.018..6.266 rows=500.00 loops=1)\n        Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))\n        Filter: (event_tags @> '{campaign:swathe}'::text[])\n        Rows Removed by Filter: 26973\n        Index Searches: 1\n        Buffers: shared hit=80 read=1199\nPlanning:\n  Buffers: shared hit=3\nPlanning Time: 0.055 ms\nExecution Time: 6.313 ms"
+    "explain" : "Limit  (cost=0.56..25425.50 rows=500 width=314) (actual time=0.017..6.486 rows=500.00 loops=1)\n  Buffers: shared hit=179 read=1352 written=1\n  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..2496169.99 rows=49089 width=314) (actual time=0.017..6.460 rows=500.00 loops=1)\n        Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))\n        Filter: (event_tags @> '{campaign:swathe}'::text[])\n        Rows Removed by Filter: 26973\n        Index Searches: 1\n        Buffers: shared hit=179 read=1352 written=1\nPlanning:\n  Buffers: shared hit=3\nPlanning Time: 0.059 ms\nExecution Time: 6.515 ms"
   }, {
     "shape" : "one entity's whole history (hot)",
     "sql" : "SELECT event_position, event_tx::text, event_id, event_type, event_data, event_tags\nFROM bm_n3tx9gechuj9_events\nWHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())\n  AND stream_context = ? AND stream_purpose = ?\n  AND ((event_tags @> ARRAY[?]::text[]))\nORDER BY event_tx::xid8, event_position",
-    "explain" : "Gather Merge  (cost=499657.44..528580.72 rows=248340 width=313) (actual time=507.000..566.235 rows=455092.00 loops=1)\n  Workers Planned: 2\n  Workers Launched: 2\n  Buffers: shared hit=3093 read=185287 written=4, temp read=14106 written=14136\n  ->  Sort  (cost=498657.41..498916.10 rows=103475 width=313) (actual time=497.902..511.853 rows=151697.33 loops=3)\n        Sort Key: event_tx, event_position\n        Sort Method: external merge  Disk: 38112kB\n        Buffers: shared hit=3093 read=185287 written=4, temp read=14106 written=14136\n        Worker 0:  Sort Method: external merge  Disk: 35904kB\n        Worker 1:  Sort Method: external merge  Disk: 38832kB\n        ->  Parallel Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=1730.95..474827.50 rows=103475 width=313) (actual time=173.166..443.502 rows=151697.33 loops=3)\n              Recheck Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-000000}'::text[]))\n              Rows Removed by Index Recheck: 1070109\n              Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))\n              Heap Blocks: exact=19090 lossy=43315\n              Buffers: shared hit=3059 read=185287 written=4\n              Worker 0:  Heap Blocks: exact=14416 lossy=44226\n              Worker 1:  Heap Blocks: exact=19298 lossy=44246\n              ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..1668.86 rows=248364 width=0) (actual time=107.152..107.153 rows=455092.00 loops=1)\n                    Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-000000}'::text[]))\n                    Index Searches: 1\n                    Buffers: shared hit=2005 read=1618\nPlanning:\n  Buffers: shared hit=3\nPlanning Time: 0.072 ms\nJIT:\n  Functions: 18\n  Options: Inlining true, Optimization true, Expressions true, Deforming true\n  Timing: Generation 0.787 ms (Deform 0.376 ms), Inlining 84.302 ms, Optimization 69.522 ms, Emission 50.316 ms, Total 204.927 ms\nExecution Time: 579.688 ms"
+    "explain" : "Gather Merge  (cost=500565.94..529660.20 rows=249808 width=314) (actual time=529.798..595.087 rows=455092.00 loops=1)\n  Workers Planned: 2\n  Workers Launched: 2\n  Buffers: shared hit=3044 read=185284, temp read=14120 written=14150\n  ->  Sort  (cost=499565.92..499826.13 rows=104087 width=314) (actual time=521.433..538.421 rows=151697.33 loops=3)\n        Sort Key: event_tx, event_position\n        Sort Method: external merge  Disk: 38464kB\n        Buffers: shared hit=3044 read=185284, temp read=14120 written=14150\n        Worker 0:  Sort Method: external merge  Disk: 36504kB\n        Worker 1:  Sort Method: external merge  Disk: 37992kB\n        ->  Parallel Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=1742.78..475593.10 rows=104087 width=314) (actual time=179.372..460.322 rows=151697.33 loops=3)\n              Recheck Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-000000}'::text[]))\n              Rows Removed by Index Recheck: 1070133\n              Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))\n              Heap Blocks: exact=18309 lossy=44537\n              Buffers: shared hit=3010 read=185284\n              Worker 0:  Heap Blocks: exact=16986 lossy=42652\n              Worker 1:  Heap Blocks: exact=17481 lossy=44600\n              ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..1680.33 rows=249832 width=0) (actual time=109.569..109.569 rows=455092.00 loops=1)\n                    Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-000000}'::text[]))\n                    Index Searches: 1\n                    Buffers: shared hit=1981 read=1616\nPlanning:\n  Buffers: shared hit=3\nPlanning Time: 0.135 ms\nJIT:\n  Functions: 18\n  Options: Inlining true, Optimization true, Expressions true, Deforming true\n  Timing: Generation 0.800 ms (Deform 0.389 ms), Inlining 93.854 ms, Optimization 73.081 ms, Emission 46.382 ms, Total 214.117 ms\nExecution Time: 609.735 ms"
   }, {
     "shape" : "most recent event, backwards limit 1",
     "sql" : "SELECT event_position, event_tx::text, event_id, event_type, event_data, event_tags\nFROM bm_n3tx9gechuj9_events\nWHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())\n  AND stream_context = ? AND stream_purpose = ?\n  AND ((event_tags @> ARRAY[?]::text[]))\nORDER BY event_tx::xid8 DESC, event_position DESC\nLIMIT 1",
-    "explain" : "Limit  (cost=0.56..5.42 rows=1 width=313) (actual time=0.033..0.034 rows=1.00 loops=1)\n  Buffers: shared hit=1 read=5\n  ->  Index Scan Backward using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..1204901.78 rows=248341 width=313) (actual time=0.032..0.033 rows=1.00 loops=1)\n        Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))\n        Filter: (event_tags @> '{sku:SKU-000000}'::text[])\n        Rows Removed by Filter: 17\n        Index Searches: 1\n        Buffers: shared hit=1 read=5\nPlanning:\n  Buffers: shared hit=2 read=9\nPlanning Time: 0.209 ms\nExecution Time: 0.048 ms"
+    "explain" : "Limit  (cost=0.56..10.56 rows=1 width=314) (actual time=0.031..0.031 rows=1.00 loops=1)\n  Buffers: shared read=6\n  ->  Index Scan Backward using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..2497173.58 rows=249808 width=314) (actual time=0.030..0.030 rows=1.00 loops=1)\n        Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))\n        Filter: (event_tags @> '{sku:SKU-000000}'::text[])\n        Rows Removed by Filter: 17\n        Index Searches: 1\n        Buffers: shared read=6\nPlanning:\n  Buffers: shared hit=2 read=9\nPlanning Time: 0.207 ms\nExecution Time: 0.046 ms"
   }, {
     "shape" : "cursor page from the midpoint (limit 500)",
     "sql" : "SELECT event_position, event_tx::text, event_id, event_type, event_data, event_tags\nFROM bm_n3tx9gechuj9_events\nWHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())\n  AND (event_tx, event_position) > (?::xid8, ?::bigint)\n  AND stream_context = ? AND stream_purpose = ?\nORDER BY event_tx::xid8, event_position\nLIMIT 500",
-    "explain" : "Limit  (cost=0.56..138.08 rows=500 width=313) (actual time=0.019..0.159 rows=500.00 loops=1)\n  Buffers: shared hit=3 read=26\n  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..1103300.89 rows=4011694 width=313) (actual time=0.019..0.136 rows=500.00 loops=1)\n        Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())) AND (ROW(event_tx, event_position) > ROW('1504560'::xid8, '2750000'::bigint)))\n        Index Searches: 1\n        Buffers: shared hit=3 read=26\nPlanning:\n  Buffers: shared hit=7 read=7\nPlanning Time: 0.138 ms\nExecution Time: 0.194 ms"
+    "explain" : "Limit  (cost=0.56..280.33 rows=500 width=314) (actual time=0.017..0.165 rows=500.00 loops=1)\n  Buffers: shared hit=3 read=29\n  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..2203976.99 rows=3939029 width=314) (actual time=0.016..0.142 rows=500.00 loops=1)\n        Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())) AND (ROW(event_tx, event_position) > ROW('1504560'::xid8, '2750000'::bigint)))\n        Index Searches: 1\n        Buffers: shared hit=3 read=29\nPlanning:\n  Buffers: shared hit=7 read=7\nPlanning Time: 0.094 ms\nExecution Time: 0.196 ms"
   } ],
   "sound" : true
 }

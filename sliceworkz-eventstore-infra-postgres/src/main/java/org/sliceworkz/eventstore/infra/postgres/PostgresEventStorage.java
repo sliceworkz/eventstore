@@ -223,6 +223,8 @@ public interface PostgresEventStorage {
 		private boolean shreddingOnOwnDataSource;
 		private PostgresEventStorageImpl.ConditionalAppendPlanning conditionalAppendPlanning =
 				PostgresEventStorageImpl.ConditionalAppendPlanning.SERVER_DEFAULT;
+		private PostgresEventStorageImpl.ConditionalAppendCheck conditionalAppendCheck =
+				PostgresEventStorageImpl.ConditionalAppendCheck.NOT_EXISTS;
 
 		private Builder ( ) {
 
@@ -460,6 +462,23 @@ public interface PostgresEventStorage {
 		}
 
 		/**
+		 * Chooses which SQL shape the DCB consistency check is stated in. <b>Experimental</b> — this
+		 * setting exists to be measured and may be removed; see
+		 * {@link PostgresEventStorageImpl.ConditionalAppendCheck} for the two shapes and what each
+		 * costs. The meaning of a consistency boundary is identical under both.
+		 *
+		 * @param check the shape; {@code null} restores the default ({@code NOT_EXISTS})
+		 * @return this Builder for method chaining
+		 */
+		public Builder conditionalAppendCheck (
+				PostgresEventStorageImpl.ConditionalAppendCheck check ) {
+			this.conditionalAppendCheck = check == null
+					? PostgresEventStorageImpl.ConditionalAppendCheck.NOT_EXISTS
+					: check;
+			return this;
+		}
+
+		/**
 		 * Sets the database initialization mode to {@link DatabaseInitMode#VALIDATE}.
 		 * <p>
 		 * Validates that all required database objects exist and are correctly defined.
@@ -681,6 +700,7 @@ public interface PostgresEventStorage {
 					: new PostgresLegacyEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, createdDataSources, meterRegistry);
 
 				result.setConditionalAppendPlanning(conditionalAppendPlanning);
+				result.setConditionalAppendCheck(conditionalAppendCheck);
 
 				switch ( databaseInitMode ) {
 					case NONE       -> { }

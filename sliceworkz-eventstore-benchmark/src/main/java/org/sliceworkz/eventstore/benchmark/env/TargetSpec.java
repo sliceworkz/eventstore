@@ -36,6 +36,7 @@ import java.time.Duration;
  * @param schemaMode what the store is allowed to do to the schema when it opens
  * @param notificationStartupTimeout how long {@code build()} waits for LISTEN/NOTIFY to register
  * @param appendPlanning how PostgreSQL may plan the DCB check; ignored for {@link Backend#INMEM}
+ * @param appendCheck which SQL shape the DCB check is stated in; ignored for {@link Backend#INMEM}
  */
 public record TargetSpec (
 		Backend backend,
@@ -46,7 +47,8 @@ public record TargetSpec (
 		Integer resultLimit,
 		SchemaMode schemaMode,
 		Duration notificationStartupTimeout,
-		AppendPlanning appendPlanning ) {
+		AppendPlanning appendPlanning,
+		AppendCheck appendCheck ) {
 
 	/** Which storage implementation is under measurement. */
 	public enum Backend {
@@ -147,6 +149,31 @@ public record TargetSpec (
 		PER_APPEND
 	}
 
+	/**
+	 * Which SQL shape the DCB check is stated in — a dimension for the same reason
+	 * {@link AppendPlanning} is: the two shapes bill in different currencies (the entity's whole
+	 * history against the stream's traffic since the cursor), and which is cheaper is a property of
+	 * the boundary, not of the store. Running both against one corpus is what turns that argument
+	 * into a measurement. See {@code PostgresEventStorageImpl.ConditionalAppendCheck}.
+	 *
+	 * <p>The prediction to hold the run against, written before it: {@code SCAN_FROM_CURSOR} should
+	 * be drastically faster on the corpus's fat entities (whose last event sits near the stream head,
+	 * so almost nothing follows the cursor) and drastically slower on its thin ones (whose last event
+	 * is old, so proving absence walks a large tail of the stream) — with the expected walk length
+	 * about {@code streamSize / entityHistory}. Over a Zipf entity walk that puts the mean in the
+	 * tail's hands, so the headline number may well get <em>worse</em> while the fat-entity case
+	 * collapses. If that is what comes back, neither shape is a default and the store should choose
+	 * per append from cursor freshness.
+	 */
+	public enum AppendCheck {
+
+		/** The library's default: {@code WHERE NOT EXISTS}, index choice left to the planner. */
+		NOT_EXISTS,
+
+		/** The check as an ordered probe walking the position index forward from the cursor. */
+		SCAN_FROM_CURSOR
+	}
+
 	/** The default LISTEN/NOTIFY startup deadline: generous, because a cold pool is not a failure. */
 	public static final Duration DEFAULT_NOTIFICATION_STARTUP_TIMEOUT = Duration.ofSeconds(30);
 
@@ -166,6 +193,9 @@ public record TargetSpec (
 		if ( appendPlanning == null ) {
 			appendPlanning = AppendPlanning.SERVER_DEFAULT;
 		}
+		if ( appendCheck == null ) {
+			appendCheck = AppendCheck.NOT_EXISTS;
+		}
 		if ( backend == Backend.POSTGRES ) {
 			if ( server == null ) {
 				server = PostgresServer.TESTCONTAINERS;
@@ -182,13 +212,13 @@ public record TargetSpec (
 	/** The in-memory baseline, with no instrumentation and no shredding. */
 	public static TargetSpec inmem ( ) {
 		return new TargetSpec(Backend.INMEM, null, null, MetricsMode.OFF, false, null, SchemaMode.ENSURE,
-				null, null);
+				null, null, null);
 	}
 
 	/** A containerised PostgreSQL of the given image, with no instrumentation and no shredding. */
 	public static TargetSpec postgres ( String image ) {
 		return new TargetSpec(Backend.POSTGRES, PostgresServer.TESTCONTAINERS, image,
-				MetricsMode.OFF, false, null, SchemaMode.ENSURE, null, null);
+				MetricsMode.OFF, false, null, SchemaMode.ENSURE, null, null, null);
 	}
 
 	/** Whether measuring this target needs a Docker daemon. */
@@ -216,6 +246,10 @@ public record TargetSpec (
 		switch ( appendPlanning ) {
 			case PER_APPEND -> description.append("/plan=per-append");
 			case SERVER_DEFAULT -> { }
+		}
+		switch ( appendCheck ) {
+			case SCAN_FROM_CURSOR -> description.append("/check=scan-from-cursor");
+			case NOT_EXISTS -> { }
 		}
 		return description.toString();
 	}

@@ -90,19 +90,31 @@ targets:
     server: EXTERNAL
     metrics: OFF
     schemaMode: ENSURE
-  # Forces the custom plan -- re-planned from the values actually being bound. This is the remedy for
-  # the cliff the dcb-cost-curve profile measures, where several OR-ed facts make the generic plan look
-  # cheaper than it is. It is not free (CLAUDE.md records 2.4x on a types-only filter), which is why it
-  # is measured beside the default rather than switched on for everyone.
+  # EXPERIMENT (this branch): the check stated as an ordered probe instead of NOT EXISTS, inviting the
+  # planner to walk the position index forward from the cursor and stop at the first match, rather than
+  # collecting the entity's whole history through the tag index and filtering the cursor afterwards.
+  # The two shapes bill in different currencies -- entity history against stream-traffic-since-cursor,
+  # expected walk about streamSize/entityHistory -- so the prediction, written before the run:
   #
-  # Kept in this profile even though it changes nothing here: that null result is the evidence that the
-  # default already picks custom at this volume, and dropping the target would leave the claim resting
-  # on the plans alone.
+  #   - append-type-and-tag on FAT entities collapses (the head entity's last event sits ~a dozen
+  #     stream events from the head, so the walk is nearly empty where the tag path reads 455k rows)
+  #   - THIN entities invert catastrophically (a 45-event entity's last event is ~120k stream events
+  #     back; a 1-event entity's, millions -- and proving absence walks all of it)
+  #   - over the Zipf entity walk each rank contributes P(r) x cost(r) ~ 1/r x r = constant, so the
+  #     MEAN is owned by the tail and may come back worse than the default's 66 ms/op even while the
+  #     head-entity case drops three orders of magnitude
+  #
+  # If that is the shape of the result, neither form is a default and the store should choose per
+  # append from cursor freshness (head - cursor against entity history). If scan-from-cursor instead
+  # wins or loses across the board, the model above is wrong somewhere worth finding.
+  #
+  # PER_APPEND is dropped from this run: its null result at this tier is established and committed,
+  # and a third target is another ~80 minutes of restores.
   - backend: POSTGRES
     server: EXTERNAL
     metrics: OFF
     schemaMode: ENSURE
-    appendPlanning: PER_APPEND
+    appendCheck: SCAN_FROM_CURSOR
 
 jmh:
   workloads:

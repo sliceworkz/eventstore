@@ -189,6 +189,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private volatile ConditionalAppendPlanning conditionalAppendPlanning =
 			ConditionalAppendPlanning.SERVER_DEFAULT;
 
+	/** See {@link ConditionalAppendCheck}; set by the builder before the storage is started. */
+	private volatile ConditionalAppendCheck conditionalAppendCheck =
+			ConditionalAppendCheck.NOT_EXISTS;
+
 	/**
 	 * Whether the warning about being unable to apply {@link #conditionalAppendPlanning} has been
 	 * logged. Once, not per append: it is a property of the driver under this storage, so it cannot
@@ -1427,6 +1431,69 @@ public class PostgresEventStorageImpl implements EventStorage {
 	}
 
 	/**
+	 * Which SQL shape the conditional append states its consistency check in. <b>Experimental</b> —
+	 * this setting exists to be measured, and may be removed if the measurement says no; do not build
+	 * on it.
+	 *
+	 * <p>Both shapes ask the same question — is there any event matching the boundary's filter after
+	 * the expected reference — and mean exactly the same thing: same predicates, same snapshot, same
+	 * advisory lock, same {@code (event_tx, event_position)} tuple comparison. What differs is which
+	 * access path they invite PostgreSQL to take, and the two paths bill in different currencies:
+	 *
+	 * <ul>
+	 *   <li>{@link #NOT_EXISTS} leaves the choice to the planner, which on a selective tag filter
+	 *       reaches for the tag index — so the check collects <em>every event the boundary's entity
+	 *       ever had</em> and discards what is before the cursor. Cost follows the entity's whole
+	 *       history, however fresh the cursor is: measured at ten million events, ~44 ms against an
+	 *       entity holding 17.000 events.</li>
+	 *   <li>{@link #SCAN_FROM_CURSOR} phrases the check as an {@code ORDER BY … LIMIT 1} probe in
+	 *       cursor order, which invites the planner to walk the stream's position index <em>forward
+	 *       from the cursor</em>, testing the filter on each event as it passes and stopping at the
+	 *       first match. Cost follows <em>the stream's traffic since the cursor</em>: nearly free for
+	 *       a cursor read moments ago — the ordinary decide-then-append — and unbounded for a stale
+	 *       one, where proving absence walks everything the whole stream appended since. A wildcard
+	 *       stream has no equality prefix for the position index, so there this shape buys nothing and
+	 *       may sort.</li>
+	 * </ul>
+	 *
+	 * <p>Neither dominates: the first is O(entity history), the second O(stream events after the
+	 * cursor), and which is smaller depends on the boundary. This setting applies one shape to every
+	 * conditional append of the storage, which is what makes it measurable — an adaptive per-append
+	 * choice would be the production design if the measurement justifies one.
+	 */
+	public enum ConditionalAppendCheck {
+
+		/**
+		 * The historical shape and the default: {@code WHERE NOT EXISTS (SELECT 1 … )}, index choice
+		 * left to the planner.
+		 */
+		NOT_EXISTS,
+
+		/**
+		 * The check as an ordered probe: {@code WHERE (SELECT event_position … ORDER BY event_tx,
+		 * event_position LIMIT 1) IS NULL}. {@code ORDER BY … LIMIT 1} is the strongest steer the
+		 * planner knows towards the index that yields rows already in that order — the stream's
+		 * {@code (context, purpose, event_tx, event_position)} btree, entered at the cursor.
+		 */
+		SCAN_FROM_CURSOR
+	}
+
+	/** How this storage states its conditional appends' consistency check. */
+	public ConditionalAppendCheck getConditionalAppendCheck ( ) {
+		return conditionalAppendCheck;
+	}
+
+	/**
+	 * Sets the SQL shape of the conditional append's consistency check; see
+	 * {@link ConditionalAppendCheck}.
+	 *
+	 * @param check the shape; {@code null} restores {@link ConditionalAppendCheck#NOT_EXISTS}
+	 */
+	public void setConditionalAppendCheck ( ConditionalAppendCheck check ) {
+		this.conditionalAppendCheck = check == null ? ConditionalAppendCheck.NOT_EXISTS : check;
+	}
+
+	/**
 	 * Tells the driver how eagerly to server-prepare the conditional append, which is what decides
 	 * whether the server has a plan to cache at all.
 	 *
@@ -1587,7 +1654,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * Appends events, pairing each {@code RETURNING} row with the input event at the same index.
 	 * <p>
 	 * Nothing promises that order — {@code RETURNING} is not in the SQL standard, and PostgreSQL
-	 * documents only "a row per row actually inserted". It holds because the {@code NOT EXISTS} below
+	 * documents only "a row per row actually inserted". It holds because the consistency check below
+	 * (whichever {@link ConditionalAppendCheck} shape states it)
 	 * is <em>uncorrelated</em>: it references the events table and bound parameters, never a column of
 	 * {@code new_events}. PostgreSQL therefore evaluates it once as an InitPlan and applies it as a
 	 * One-Time Filter over the VALUES list, and every node in that plan preserves order. Being
@@ -1649,14 +1717,24 @@ public class PostgresEventStorageImpl implements EventStorage {
 				parameters.add(tagsArray);
 			}
 
+			// Both shapes carry identical predicates between these two fragments; they differ only in
+			// how they invite the planner to answer them. The subquery stays uncorrelated with
+			// new_events either way, which is what the RETURNING-order argument above rests on.
+			ConditionalAppendCheck checkShape = conditionalAppendCheck;
+
 			if ( ! appendCriteria.isNone() ) {
 
 				// Now add the optimistic locking conditions
-				sqlBuilder.append(
-						"""
-					WHERE NOT EXISTS (
-						SELECT 1 FROM %sevents
-						WHERE 1=1 """.formatted(prefix));
+				sqlBuilder.append(switch ( checkShape ) {
+					case NOT_EXISTS -> """
+						WHERE NOT EXISTS (
+							SELECT 1 FROM %sevents
+							WHERE 1=1 """.formatted(prefix);
+					case SCAN_FROM_CURSOR -> """
+						WHERE (
+							SELECT event_position FROM %sevents
+							WHERE 1=1 """.formatted(prefix);
+				});
 
 
 				// Add stream filtering
@@ -1694,7 +1772,14 @@ public class PostgresEventStorageImpl implements EventStorage {
 					addEventFilterFiltering(sqlBuilder, parameters, lockingFilter);
 				}
 
-				sqlBuilder.append(") ");
+				sqlBuilder.append(switch ( checkShape ) {
+					case NOT_EXISTS -> ") ";
+					// The ORDER BY is the (event_tx, event_position) tuple order every read and the
+					// cursor comparison already use -- see ConditionalAppendCheck.SCAN_FROM_CURSOR. A
+					// bare event_tx resolves to the xid8 column here: unlike the read path, this select
+					// list carries no text output column shadowing the name.
+					case SCAN_FROM_CURSOR -> " ORDER BY event_tx, event_position LIMIT 1) IS NULL ";
+				});
 			}
 
 			sqlBuilder.append("RETURNING event_position, event_timestamp, event_tx::text, event_id::text");

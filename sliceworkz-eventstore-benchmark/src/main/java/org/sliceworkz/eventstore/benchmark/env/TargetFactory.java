@@ -154,6 +154,10 @@ public final class TargetFactory {
 					.conditionalAppendPlanning(switch ( spec.appendPlanning() ) {
 						case PER_APPEND -> PostgresEventStorageImpl.ConditionalAppendPlanning.PER_APPEND;
 						case SERVER_DEFAULT -> PostgresEventStorageImpl.ConditionalAppendPlanning.SERVER_DEFAULT;
+					})
+					.conditionalAppendCheck(switch ( spec.appendCheck() ) {
+						case SCAN_FROM_CURSOR -> PostgresEventStorageImpl.ConditionalAppendCheck.SCAN_FROM_CURSOR;
+						case NOT_EXISTS -> PostgresEventStorageImpl.ConditionalAppendCheck.NOT_EXISTS;
 					});
 			if ( spec.resultLimit() != null ) {
 				builder.resultLimit(spec.resultLimit());

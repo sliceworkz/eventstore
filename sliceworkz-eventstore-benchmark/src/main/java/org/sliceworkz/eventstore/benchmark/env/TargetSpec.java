@@ -131,13 +131,12 @@ public record TargetSpec (
 	 * added fact makes the generic plan look cheaper and the custom one dearer, and past the crossing
 	 * every append scans the whole table for a row that is not there.
 	 *
-	 * <p><b>The large tier found the same comparison failing the other way round</b>, which is why
-	 * there are three values and not two. On a ten-million-event store with one type plus one tag, the
-	 * captured plans show the <em>custom</em> plan bitmapping the entity's whole history (19.939
-	 * buffers, 46.851 ms) where the generic plan walks the stream index from the cursor (53 buffers,
-	 * 0.242 ms) — and the planner prices the custom one at half the generic, so the server keeps the
-	 * 194× worse plan and {@code PER_APPEND}, which forces custom, cannot help. Running all three
-	 * against one corpus is what turns that reading of a plan into a measurement.
+	 * <p><b>A third value pinning the generic plan was tried and is gone.</b> The large tier appeared to
+	 * show the comparison failing the other way round, on a capture that had been read off the wrong
+	 * workload; measured against the same corpus it was 20× worse than the default, because at ten
+	 * million events the generic plan for one type plus one tag is a sequential scan of the whole table.
+	 * That is what the third target bought — a plan reading turned into a measurement, and the
+	 * measurement said no.
 	 */
 	public enum AppendPlanning {
 
@@ -145,10 +144,7 @@ public record TargetSpec (
 		SERVER_DEFAULT,
 
 		/** Every conditional append planned from its own values, at the cost of planning per append. */
-		PER_APPEND,
-
-		/** Every conditional append on the plan built against default selectivity. */
-		FORCE_GENERIC
+		PER_APPEND
 	}
 
 	/** The default LISTEN/NOTIFY startup deadline: generous, because a cold pool is not a failure. */
@@ -219,7 +215,6 @@ public record TargetSpec (
 		// distinguishable targets rather than two rows the report would silently collapse into one.
 		switch ( appendPlanning ) {
 			case PER_APPEND -> description.append("/plan=per-append");
-			case FORCE_GENERIC -> description.append("/plan=force-generic");
 			case SERVER_DEFAULT -> { }
 		}
 		return description.toString();

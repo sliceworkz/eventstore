@@ -1302,15 +1302,17 @@ that bind everywhere:
   transactions holding a transaction id count — read-only ones never do, at any isolation level.
   The diagnosis query and monitoring guidance are in the module file; do not "fix" this by bounding
   the barrier.
-- **The DCB check is a re-used prepared statement, and PostgreSQL can settle on the wrong one of its
-  two plans — in either direction.** From two OR-ed facts up the *generic* plan falls off a cliff
-  (~10–15×, absent on small stores), robust at two and three facts and *bistable across runs* at
-  wider ones; `conditionalAppendPlanning(PER_APPEND)` is the remedy. At ten million events the
-  canonical one-type-one-tag check fails the other way: the *custom* plan bitmaps the entity's whole
-  history (46.851 ms) where the generic one starts at the cursor (0.242 ms), and the planner prices
-  the custom at half — so `FORCE_GENERIC` is the remedy and `PER_APPEND` does nothing. **The two are
-  opposite remedies**, each a pessimisation in the other's regime, so neither goes on blind
-  (`PER_APPEND` costs 2.4× on a types-only filter).
+- **The DCB check is a re-used prepared statement, and the plan PostgreSQL can settle on wrongly is
+  always the *generic* one.** From two OR-ed facts up it falls off a cliff (~10–15×, absent on small
+  stores), robust at two and three facts and *bistable across runs* at wider ones;
+  `conditionalAppendPlanning(PER_APPEND)` is the remedy, and does not go on blind (it costs 2.4× on a
+  types-only filter where it changes no plan). At ten million events the canonical one-type-one-tag
+  check has the server choosing *correctly* — custom at cost 130 against generic at 250 — and the
+  custom plan is still ~190× an unconditional append, because it materialises the entity's whole
+  history and filters the cursor afterwards. `PER_APPEND` therefore does nothing there, and the fix
+  is stream layout rather than a planning mode. A `FORCE_GENERIC` mode built on a misread capture was
+  measured at **20× worse** on that corpus and has been removed; the generic plan for that check is a
+  sequential scan of the whole table (1251 ms against 44 ms).
 - **Oldest supported PostgreSQL is 16**, and the `btree_gin` extension is required — creating it
   needs `CREATE` on the *database*, not the schema; a DBA installing it once is the recommended
   split, and an unprivileged role then starts against it silently.

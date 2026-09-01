@@ -1368,23 +1368,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private static final String ACQUIRE_APPEND_LOCK = "SELECT pg_advisory_xact_lock(?)";
 
 	/**
-	 * The same lock, with {@code plan_cache_mode} forced generic for the rest of this transaction; see
-	 * {@link ConditionalAppendPlanning#FORCE_GENERIC}.
-	 *
-	 * <p>Folded into the lock statement rather than issued as a {@code SET LOCAL} of its own, so the
-	 * mode costs <em>no extra round trip</em> on the write path — a conditional append already issues
-	 * this statement, and it gains a function call. {@code set_config}'s third argument is what
-	 * {@code SET LOCAL} spells in DDL, so the setting is undone when this transaction ends and cannot
-	 * leak onto a read sharing the same pooled connection afterwards — which matters, because the reads
-	 * this store issues are not all better off generic: the savepoint probe's generic plan is 30× worse
-	 * than its custom one.
-	 *
-	 * <p>The lock key stays parameter 1, so the binding is the same either way.
-	 */
-	private static final String ACQUIRE_APPEND_LOCK_FORCING_GENERIC_PLAN =
-			"SELECT set_config('plan_cache_mode', 'force_generic_plan', true), pg_advisory_xact_lock(?)";
-
-	/**
 	 * How PostgreSQL is allowed to plan the conditional append's {@code NOT EXISTS}.
 	 *
 	 * <p><b>Why this is a setting at all.</b> The consistency check is a re-used prepared statement, so
@@ -1394,28 +1377,22 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 *
 	 * <p><b>A DCB check is the shape that defeats that comparison</b>, because its expected result is
 	 * <em>no rows</em> while the planner prices a {@code NOT EXISTS} by how soon it expects to find one.
-	 * <b>Which of the two plans that mistake favours depends on the check</b>, and both directions have
-	 * been measured, which is why this setting has three values rather than a boolean:
+	 * Every OR-ed fact a decision rests on makes the generic plan expect a match sooner, so its estimate
+	 * <em>falls</em> while the custom plan's — built from real tag statistics — rises. Past the crossing
+	 * the server adopts a plan that scans the events table for a row that is not there, and never
+	 * reconsiders. {@link #PER_APPEND} is the remedy.
 	 *
-	 * <ul>
-	 *   <li><b>Wide filters: the generic plan is the bad one.</b> Every OR-ed fact a decision rests on
-	 *       makes the generic plan expect a match sooner, so its estimate <em>falls</em> while the custom
-	 *       plan's — built from real tag statistics — rises. Past the crossing the server adopts a plan
-	 *       that scans the events table for a row that is not there, and never reconsiders.
-	 *       {@link #PER_APPEND} is the answer.</li>
-	 *   <li><b>One fact on a large store: the custom plan is the bad one.</b> Knowing the tag value lets
-	 *       the planner reach for the tag index, so the custom plan bitmaps <em>the entity's whole
-	 *       history</em> and filters the cursor afterwards, while the generic plan walks
-	 *       {@code idx_events_stream_type_position} with the cursor as its <em>start condition</em> and
-	 *       exhausts only the events after it. Captured on a ten-million-event store, one type plus one
-	 *       tag: generic 53 buffers and 0.242 ms, custom 19.939 buffers and 46.851 ms — and the planner
-	 *       prices the custom plan at <em>half</em> the generic one, so it keeps the 194× worse plan.
-	 *       {@link #FORCE_GENERIC} is the answer, and {@code PER_APPEND} makes it slightly worse.</li>
-	 * </ul>
+	 * <p><b>The failure only ever runs in that direction, and that has been measured in both regimes
+	 * it was looked for in.</b> Forcing the <em>generic</em> plan instead was tried on the strength of a
+	 * plan capture that turned out to have been read off the wrong workload, and measured on a
+	 * ten-million-event store it was 20× <em>worse</em>: for one type plus one tag the generic plan is a
+	 * sequential scan of the whole table (~1250 ms) where the custom plan bitmaps the entity's history
+	 * (~44 ms), and the planner correctly prices the custom at half the generic and keeps it. So there
+	 * is no mode here for pinning the generic plan — no store has been observed to want one.
 	 *
-	 * <p><b>So neither non-default value is a "make appends faster" switch.</b> They are opposite
-	 * remedies for opposite failures, and each is a pessimisation in the other's regime. Turn one on
-	 * against a store whose plans have been <em>looked at</em>, never on the strength of this javadoc.
+	 * <p><b>{@link #PER_APPEND} is still not a "make appends faster" switch.</b> Where it changes no
+	 * plan it costs up to 2.4× on a types-only filter. Turn it on against a store whose plans have been
+	 * <em>looked at</em>, never on the strength of this javadoc.
 	 */
 	public enum ConditionalAppendPlanning {
 
@@ -1427,21 +1404,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 		 * so it needs no extra round trip and touches no other statement.
 		 */
 		PER_APPEND,
-
-		/**
-		 * Plan the conditional append once, against default selectivity, and re-use that plan.
-		 *
-		 * <p>The remedy for the second case above: a check whose custom plan reaches for the tag index
-		 * and materialises an entity's whole history where the generic plan would have started at the
-		 * cursor. Issued as {@code set_config('plan_cache_mode', 'force_generic_plan', true)} folded into
-		 * the advisory-lock statement the append already takes, so it costs no round trip and — being
-		 * transaction-local — cannot reach a read on the same pooled connection.
-		 *
-		 * <p>Unlike {@link #PER_APPEND}, this one needs the statement to be server-prepared for the GUC
-		 * to have anything to apply to, so the driver is asked to prepare it on first use rather than
-		 * after its default five executions.
-		 */
-		FORCE_GENERIC,
 
 		/**
 		 * Let PostgreSQL choose between its custom and generic plans, as it does for any other
@@ -1469,18 +1431,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * whether the server has a plan to cache at all.
 	 *
 	 * <p>pgjdbc only makes a statement server-prepared after {@code prepareThreshold} executions
-	 * (five by default), and {@code plan_cache_mode} applies to nothing else — so the threshold is the
-	 * lever underneath both non-default modes:
-	 *
-	 * <ul>
-	 *   <li>{@link ConditionalAppendPlanning#PER_APPEND} — threshold <b>0</b>, which keeps the statement
-	 *       unnamed forever, so PostgreSQL plans every execution from the values bound to it. Done here
-	 *       rather than with {@code SET LOCAL plan_cache_mode} because it costs no round trip and —
-	 *       unlike the GUC — cannot reach any other statement sharing the connection.</li>
-	 *   <li>{@link ConditionalAppendPlanning#FORCE_GENERIC} — threshold <b>1</b>, so the statement is
-	 *       prepared on first use and the transaction-local GUC set alongside the advisory lock has
-	 *       something to apply to from the first append rather than from the sixth.</li>
-	 * </ul>
+	 * (five by default), and a statement that never becomes server-prepared has no cached plan to be
+	 * chosen for it. {@link ConditionalAppendPlanning#PER_APPEND} therefore sets the threshold to
+	 * <b>0</b>, which keeps the statement unnamed forever, so PostgreSQL plans every execution from the
+	 * values bound to it. Done here rather than with {@code SET LOCAL plan_cache_mode} because it costs
+	 * no round trip and — unlike the GUC — cannot reach any other statement sharing the connection.
 	 *
 	 * <p><b>Best effort, and loud once if it fails.</b> A {@code DataSource} that is not pgjdbc, or a
 	 * proxy that will not unwrap to it, leaves the store running exactly as it did before with a
@@ -1489,8 +1444,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 */
 	private void applyConditionalAppendPlanning ( PreparedStatement statement ) {
 		int threshold = switch ( conditionalAppendPlanning ) {
-			case PER_APPEND    -> 0;
-			case FORCE_GENERIC -> 1;
+			case PER_APPEND     -> 0;
 			case SERVER_DEFAULT -> -1;
 		};
 		if ( threshold < 0 ) {
@@ -1505,13 +1459,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 						+ " choosing between its custom and generic plans", conditionalAppendPlanning, e);
 			}
 		}
-	}
-
-	/** The lock statement to take before a conditional append; see {@link ConditionalAppendPlanning}. */
-	private String acquireAppendLockSql ( ) {
-		return conditionalAppendPlanning == ConditionalAppendPlanning.FORCE_GENERIC
-				? ACQUIRE_APPEND_LOCK_FORCING_GENERIC_PLAN
-				: ACQUIRE_APPEND_LOCK;
 	}
 
 	/**
@@ -1765,7 +1712,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 						// check, which READ COMMITTED does not protect. Held until this transaction ends,
 						// and taken as its own statement so the INSERT's snapshot is taken after the
 						// previous holder committed. See appendLockKey.
-						try ( PreparedStatement lock = writeConnection.prepareStatement(acquireAppendLockSql()) ) {
+						try ( PreparedStatement lock = writeConnection.prepareStatement(ACQUIRE_APPEND_LOCK) ) {
 							lock.setLong(1, appendLockKey(streamId));
 							lock.execute();
 						}

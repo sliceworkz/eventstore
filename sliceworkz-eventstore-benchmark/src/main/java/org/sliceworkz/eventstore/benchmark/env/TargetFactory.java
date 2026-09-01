@@ -153,7 +153,6 @@ public final class TargetFactory {
 					.notificationStartupTimeout(spec.notificationStartupTimeout())
 					.conditionalAppendPlanning(switch ( spec.appendPlanning() ) {
 						case PER_APPEND -> PostgresEventStorageImpl.ConditionalAppendPlanning.PER_APPEND;
-						case FORCE_GENERIC -> PostgresEventStorageImpl.ConditionalAppendPlanning.FORCE_GENERIC;
 						case SERVER_DEFAULT -> PostgresEventStorageImpl.ConditionalAppendPlanning.SERVER_DEFAULT;
 					});
 			if ( spec.resultLimit() != null ) {

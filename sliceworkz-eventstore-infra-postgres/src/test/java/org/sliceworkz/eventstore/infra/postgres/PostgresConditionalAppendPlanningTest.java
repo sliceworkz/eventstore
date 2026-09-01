@@ -58,10 +58,9 @@ import org.sliceworkz.eventstore.stream.OptimisticLockingException;
  * custom plan built from the actual parameter values and a generic one built against default
  * selectivity, and from the tenth execution it adopts the generic plan if its estimate looks no worse.
  * A DCB check is the shape that misleads that comparison — it expects <em>no rows</em>, while a
- * {@code NOT EXISTS} is priced by how soon a row is expected to turn up — so the server can settle on
- * the wrong one of the two. Which one that is depends on the check, which is why there are two remedies
- * pointing in opposite directions: {@code PER_APPEND} keeps the statement off the plan cache entirely,
- * and {@code FORCE_GENERIC} pins it to the cached plan.
+ * {@code NOT EXISTS} is priced by how soon a row is expected to turn up — so the server can settle on a
+ * generic plan that scans the table for a row that is not there. {@code PER_APPEND} is the remedy, and
+ * it works by keeping the statement off the plan cache entirely.
  * <p>
  * <b>Why the assertions are about {@code pg_prepared_statements} and {@code plan_cache_mode} rather
  * than about a plan.</b> The setting is
@@ -96,68 +95,26 @@ public class PostgresConditionalAppendPlanningTest {
 
 		@Test
 		public void testServerDefaultLetsTheStatementBecomeServerPrepared ( ) throws Exception {
-			assertTrue(probe("planserverdefault_", ConditionalAppendPlanning.SERVER_DEFAULT, APPENDS)
-					.preparedChecks() > 0,
+			assertTrue(probe("planserverdefault_", ConditionalAppendPlanning.SERVER_DEFAULT, APPENDS) > 0,
 					"with the server left to choose, the DCB check must reach its plan cache -- if it no"
 							+ " longer does, PER_APPEND is a no-op and this test is what says so");
 		}
 
 		@Test
 		public void testPerAppendKeepsTheStatementOffThePlanCache ( ) throws Exception {
-			assertEquals(0, probe("planperappend_", ConditionalAppendPlanning.PER_APPEND, APPENDS)
-					.preparedChecks(),
+			assertEquals(0, probe("planperappend_", ConditionalAppendPlanning.PER_APPEND, APPENDS),
 					"PER_APPEND must keep the DCB check unnamed, so PostgreSQL plans every append from"
 							+ " the values bound to it");
 		}
 
 		/**
-		 * The mechanism {@code FORCE_GENERIC} rests on: {@code plan_cache_mode} applies to server-prepared
-		 * statements and to nothing else, so a store that only prepares on the sixth execution spends its
-		 * first five appends on a custom plan it was configured not to use.
-		 * <p>
-		 * Asserted as a pair against the default, over too few appends to reach pgjdbc's threshold of
-		 * five: same statement, same count, and the only difference is the mode. A single assertion that
-		 * the statement is prepared would pass just as well if the driver's default threshold changed.
-		 */
-		@Test
-		public void testForceGenericPreparesTheStatementFromItsFirstExecution ( ) throws Exception {
-			assertEquals(0, probe("planbelowthreshold_", ConditionalAppendPlanning.SERVER_DEFAULT, 1)
-					.preparedChecks(),
-					"three executions must be under the driver's default threshold -- if this ever counts"
-							+ " something, the test below is no longer comparing two different things");
-			assertTrue(probe("planforcegeneric_", ConditionalAppendPlanning.FORCE_GENERIC, 1)
-					.preparedChecks() > 0,
-					"FORCE_GENERIC must have the check server-prepared straight away, or the plan_cache_mode"
-							+ " it sets has nothing to apply to");
-		}
-
-		/**
-		 * {@code plan_cache_mode} is set transaction-locally, so it must be gone by the time the append's
-		 * connection is back in the pool.
-		 * <p>
-		 * This is the load-bearing half of the mode rather than a tidiness check. The reads this store
-		 * issues are not all better off generic — the savepoint probe's generic plan is 30x worse than its
-		 * custom one — so a setting that leaked would pessimise every query sharing the connection, and
-		 * would do it silently.
-		 */
-		@Test
-		public void testForceGenericDoesNotOutliveItsTransaction ( ) throws Exception {
-			assertEquals("auto", probe("planforcegenericleak_", ConditionalAppendPlanning.FORCE_GENERIC, APPENDS)
-					.planCacheMode(),
-					"the append's plan_cache_mode must not still be set on the connection it borrowed");
-		}
-
-		/** What one run of {@link #probe} could observe about the session the appends ran on. */
-		record Probe ( int preparedChecks, String planCacheMode ) { }
-
-		/**
 		 * Runs conditional appends through a store in the given mode, checks that the boundary still
-		 * behaves, and reports what the server says about the session they ran on.
+		 * behaves, and reports how many of the session's prepared statements are the DCB check.
 		 *
 		 * @param appends how many appends to thread through the boundary before the two that check it;
-		 *        {@link #APPENDS} to pass pgjdbc's prepare threshold, 1 to stay under it
+		 *        {@link #APPENDS} to pass pgjdbc's prepare threshold
 		 */
-		private Probe probe ( String prefix, ConditionalAppendPlanning planning, int appends )
+		private int probe ( String prefix, ConditionalAppendPlanning planning, int appends )
 				throws Exception {
 			// One connection, so the session the appends ran on is the session this can ask about. The
 			// monitors get a pool of their own: they hold a connection each for the storage's lifetime
@@ -202,20 +159,10 @@ public class PostgresConditionalAppendPlanningTest {
 							Optional.of(stream), List.of(event(stream, "StockReserved", tags)));
 					assertEquals(1, last.size(), "appending against the current reference must succeed");
 
-					return new Probe(countPreparedChecks(writePool, prefix), planCacheMode(writePool));
+					return countPreparedChecks(writePool, prefix);
 				} finally {
 					storage.close();
 				}
-			}
-		}
-
-		/** What {@code plan_cache_mode} the session is left in; {@code auto} is PostgreSQL's default. */
-		private String planCacheMode ( DataSource dataSource ) throws SQLException {
-			try ( Connection connection = dataSource.getConnection();
-					Statement statement = connection.createStatement();
-					ResultSet rows = statement.executeQuery("SHOW plan_cache_mode") ) {
-				assertTrue(rows.next(), "expected a setting");
-				return rows.getString(1);
 			}
 		}
 

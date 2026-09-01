@@ -34,28 +34,45 @@ description: >
   Budget more wall clock than the estimate promises. The estimator counts iteration time only, and at
   this tier the restore dominates it: taking the template costs seconds, but handing the store back at
   the end of each trial is a truncate-and-copy of ten million rows, about two and a half minutes, once
-  per trial. With three targets that is fifty-four trials, so expect something over two hours against
-  an estimate of a quarter of that.
+  per trial. With two targets that is thirty-six trials, so expect something over an hour and a half
+  against an estimate of a quarter of that. The run that carried a third target took just under four.
 
-  What to read first: the captured plans, not the throughputs. The first run with capture working
-  settled what the reconstructions had got wrong and posed the question this profile now exists to
-  answer. A DCB check carrying one type and one tag really does cost about 190x an unconditional
-  append at this volume -- but not because it scans the table, which is what the reconstructed plans
-  said and the write-up repeated. The store's own statements show an index scan:
+  What to read first: the captured plans, not the throughputs. A DCB check carrying one type and one
+  tag really does cost about 190x an unconditional append at this volume, and the store's own
+  statements say where that goes:
 
-    generic  Index Scan on idx_events_stream_type_position, cursor in the Index Cond,
-             166 rows discarded, 53 buffers, 0.242 ms
     custom   Bitmap Heap Scan via idx_events_stream_tags, cursor in the Filter,
-             16.806 rows discarded, exact=16.125 heap blocks, 19.939 buffers, 46.851 ms
+             16.806 rows discarded, exact=16.125 heap blocks, 19.965 buffers, 44.4 ms
+    generic  Seq Scan, every predicate in the Filter, 10.000.008 rows discarded,
+             433.299 buffers, 1251 ms
 
-  Both plans are for the same statement. Knowing the tag value is what makes the planner choose worse:
-  the generic plan exhausts the events after the cursor, the custom plan exhausts the entity's whole
-  history and filters the cursor afterwards. And PostgreSQL prices the custom plan at roughly half the
-  generic one (122.66 against 226.56), so it keeps the 194x slower plan -- which is also why the
-  PER_APPEND target, which forces custom, moved nothing.
+  Both plans are for the same statement. The custom plan is the expensive one to look at and the
+  cheap one to run: knowing the tag value sends it to the tag index, so it materialises the entity's
+  whole history and applies the cursor afterwards as a filter rather than as a start condition. That
+  materialisation is the 190x. The generic plan, with no value to be selective on, does not fall back
+  to the stream index -- it scans the table.
 
-  Hence the third target. Reading a 194x off two plans is not the same as measuring it, and the whole
-  argument for the suite is that the second is worth having.
+  PostgreSQL prices custom at 130.35 against generic at 250.21 and keeps the custom one, which is the
+  right choice. So neither planning mode is a remedy here: PER_APPEND forces the plan already in
+  effect and moves nothing, and pinning the generic plan is a 20x pessimisation.
+
+  This profile carried a third target that did exactly that, and its job is done. An earlier capture
+  had been read as showing the generic plan doing an index scan at 0.242 ms -- that plan belongs to
+  append-types, the types-only check, which has no tag value to distract the planner -- and the
+  conclusion drawn from it, that forcing generic was the remedy at this tier, was wrong. Measuring it
+  cost one target and settled it: 1248.50 ms/op against the default's 66.03, and 48 useful appends in
+  a trial against 731. Reading a ratio off two plans is not the same as measuring it, and this is the
+  run where the difference mattered.
+
+  One thing the throughputs say that the plans do not, and it is unresolved. Every conditional-append
+  row on a target running the custom plan came back at 47-147% relative error, which is a refusal to
+  publish rather than a number. Two things could produce it and this run cannot separate them: the
+  Zipf entity walk, whose per-operation cost ramps from ~35 ms/op mid-tail to ~1000 ms/op on the head
+  entity, and the plan cache occasionally serving the 1.25-second generic plan -- about 2% of appends
+  would account for the gap between the 44 ms custom plan and the 66 ms/op measured. The removed
+  force-generic target's tight error bars look like evidence for the second and are not: a sequential
+  scan costs the same whatever entity it is asked about, so pinning it flattens the entity ramp too.
+  Permuting the entity walk removes the first cause and is what would settle it.
 
 corpus:
   volume: 10000000
@@ -78,29 +95,14 @@ targets:
   # cheaper than it is. It is not free (CLAUDE.md records 2.4x on a types-only filter), which is why it
   # is measured beside the default rather than switched on for everyone.
   #
-  # Kept in this profile even though the first captured run showed it changing nothing here: that null
-  # result is the evidence that the default already picks custom at this volume, and dropping the target
-  # would leave the claim resting on the plans alone.
+  # Kept in this profile even though it changes nothing here: that null result is the evidence that the
+  # default already picks custom at this volume, and dropping the target would leave the claim resting
+  # on the plans alone.
   - backend: POSTGRES
     server: EXTERNAL
     metrics: OFF
     schemaMode: ENSURE
     appendPlanning: PER_APPEND
-  # Forces the generic plan -- the one the captured plans say is 194x faster here and the planner values
-  # at twice the cost. If the plans are being read correctly this target's append-type-and-tag should
-  # land near append-none's ~0.33 ms/op instead of ~62.7, and its decide-then-append should barely move,
-  # since that workload is ~99% its read.
-  #
-  # Two ways this could come back and still be informative. If it lands in between, the plan difference
-  # is real but something else is paying for it -- most likely the statement being server-prepared from
-  # its first execution rather than its sixth, which is what FORCE_GENERIC needs to have anything to
-  # apply to. If it lands nowhere near, the read of the plans was wrong and the 190x is somewhere else
-  # entirely, which is worth knowing before any of it is written up as advice.
-  - backend: POSTGRES
-    server: EXTERNAL
-    metrics: OFF
-    schemaMode: ENSURE
-    appendPlanning: FORCE_GENERIC
 
 jmh:
   workloads:

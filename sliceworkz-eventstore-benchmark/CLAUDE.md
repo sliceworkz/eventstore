@@ -265,49 +265,56 @@ And `append-none` scales only 3.01 → 4.69 ops/ms from one writer to eight (1.5
 maintenance and WAL at ten million rows — the most interesting thing in the writes profile, and it
 deserves measuring on purpose rather than as a control.
 
-#### What the re-run found: a 190× DCB check, and the plan that explains it
+#### What the three-target run found: a 190× DCB check, and a remedy that was not one
 
-**A conditional append carrying one type and one tag costs ~190× an unconditional one at this volume**
-— ~62.7 ms/op against ~0.33 ms/op at one writer. That is the headline, and the captured plans say why
-in a way that contradicts what the reconstructions said:
+**A conditional append carrying one type and one tag costs ~200× an unconditional one at this volume**
+— 66.03 ms/op against 0.328 ms/op at one writer. That is the headline. The captured plans say why, and
+they also retire two earlier readings of them:
 
-| | generic | custom |
+| | custom | generic |
 |---|---|---|
-| access path | Index Scan on `idx_events_stream_type_position` | Bitmap Heap Scan via `idx_events_stream_tags` |
-| cursor `ROW(event_tx, event_position) >` | in the **Index Cond** | in the **Filter** |
-| tag | in the Filter | in the Recheck Cond |
-| rows discarded | 166 | 16.806 |
-| buffers | 53 | 19.939 (`exact=16125` heap blocks) |
-| actual time | **0.242 ms** | **46.851 ms** |
-| planner's estimate | cost 226.56 | cost **122.66** |
+| access path | Bitmap Heap Scan via `idx_events_stream_tags` | **Seq Scan** |
+| cursor `ROW(event_tx, event_position) >` | in the **Filter** | in the Filter |
+| tag | in the Recheck Cond | in the Filter |
+| rows discarded | 16.806 | **10.000.008** |
+| buffers | 19.965 (`exact=16125` heap blocks) | 433.299 |
+| actual time | **44.4 ms** | **1251 ms** |
+| planner's estimate | cost **130.35** | cost 250.21 |
 
-- **The DCB check does not fall back to a sequential scan.** The earlier write-up said it did, on the
-  strength of a *reconstructed* plan reporting 583 ms having read the table from the beginning. The
-  store's own statement is an index scan either way. The reconstruction was wrong in kind, not only in
-  magnitude, and this is the clearest argument the suite has produced for capturing rather than
-  imitating.
-- **The generic plan is 194× faster and the planner prices it at twice the cost**, so PostgreSQL keeps
-  the custom plan. Binding the tag value is what does it: with a value in hand the planner reaches for
-  `idx_events_stream_tags`, and the cursor demotes from a start condition to a filter — so the check
-  exhausts *the entity's whole history* instead of the events after the cursor. On the head entity that
-  history is 455.092 events.
-- **`PER_APPEND` therefore changed nothing** (both targets agree to within their error bars on all
-  twelve rows, control flat at 3.010 → 3.043 and 4.690 → 4.697). It forces the custom plan, which is
-  the plan already in effect. That null result is what prompted `FORCE_GENERIC` in the backend and the
-  third target in this profile: reading a 194× off two plans is not measuring it.
-- **`decide-then-append` at 590.92 ms/op is 94–99% its decide read**, not its append. The read returns
-  455.092 rows and falls off three cliffs at once — lossy bitmap (`exact=19090 lossy=43315`), an
-  `external merge Disk: 38112kB` sort, and 194.6 ms of JIT. Forcing a plan will not help there;
+- **The custom plan is the one in effect, and PostgreSQL is right to keep it.** Binding the tag value
+  sends the planner to `idx_events_stream_tags`, and the cursor demotes from a start condition to a
+  filter — so the check exhausts *the entity's whole history* instead of the events after the cursor.
+  On the head entity that history is 455.092 events. That materialisation is the 190×.
+- **The generic plan is not a faster alternative — it is a sequential scan.** An earlier capture was
+  read as showing it doing an index scan on `idx_events_stream_type_position` at 0.242 ms with the
+  cursor in the Index Cond, and a `FORCE_GENERIC` mode was built on that reading. **That plan belongs
+  to `append-types`**, the types-only check, which carries no tag value to send the planner elsewhere.
+  The generic plan for *this* check discards ten million rows.
+- **So the third target settled it by being wrong: 1248.50 ms/op, 20× worse than the default**, 48
+  useful appends in a trial against 731, and matching its captured Seq Scan (1251 ms) almost exactly.
+  The backend setting has been removed and so has the target. This is the suite's clearest result to
+  date, and it is a negative one: reading a ratio off two plans is not measuring it, and the reading
+  was wrong twice — first that the check fell back to a sequential scan (a *reconstructed* plan), then
+  that its generic plan was an index scan (a captured plan, from another workload).
+- **`PER_APPEND` changed nothing**, on both runs. It forces the custom plan, which is the plan already
+  in effect. Keep the target: the null result is the evidence that the default picks correctly here.
+- **`decide-then-append` at 602.87 ms/op is 94–99% its decide read**, not its append. The read returns
+  455.092 rows and falls off three cliffs at once — lossy bitmap (`exact=17849 lossy=44563`), an
+  `external merge Disk: 38120kB` sort, and 190.7 ms of JIT. Forcing a plan will not help there;
   bounding the read will.
+- **Eight of the eighteen rows were refused publication at 47–147% relative error** — every
+  conditional-append row on the two targets running the custom plan. That refusal is correct, and the
+  scatter has **two candidate causes this run cannot separate**: the Zipf entity walk, whose
+  per-operation cost ramps from ~35 ms/op mid-tail to ~1000 ms/op on the head entity, and the plan
+  cache occasionally serving the 1.25 s generic plan (~2% of appends would account for the gap between
+  a 44 ms plan and 66 ms/op measured). The `FORCE_GENERIC` target's tight error bars (0.8–8.6%) look
+  like evidence for the second and are not: a sequential scan costs the same whatever entity it is
+  asked about, so pinning it flattens the entity ramp too. Separating them needs the permuted entity
+  walk below, which removes one of the two.
 - **The 1-thread against 8-thread gaps here are entity coverage, not concurrency**, the same effect the
-  `ThreadContext` fix addressed — at a hundred thousand Zipf-distributed entities a slow workload
-  completing tens of operations per trial samples a different part of the distribution at each thread
-  count. The per-iteration ramp makes the shape visible: ~1000 ms/op on the head entity against ~35
-  ms/op mid-tail.
-- **Eight of the twelve rows were refused publication at 48–137% relative error**, and that refusal is
-  correct: a workload whose per-operation cost ramps across a Zipf distribution has no mean worth
-  reporting. The fix is not more iterations but permuting the entity walk so each trial samples the
-  distribution rather than re-drawing its head — outstanding.
+  `ThreadContext` fix addressed. The fix is not more iterations but permuting the entity walk so each
+  trial samples the distribution rather than re-drawing its head — outstanding, and now also the way to
+  tell the two causes above apart.
 
 ### Choosing a stream design: one stream per context, or one per entity
 

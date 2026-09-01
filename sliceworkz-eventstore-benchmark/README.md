@@ -86,7 +86,7 @@ profile, and the result lives in `CLAUDE.md` and in `PostgresCursorBoundaryTest`
 | `live-latency` | append → subscriber, and append → committed read-model row | ~5 min |
 | `ingest-saturation` | sustained appends against a store that is growing | ~10 min |
 | `large-tier` ⇄ `read-shapes` | the same reads at ten million events, on an external server | ~17 min + provisioning |
-| `large-tier-writes` | what an append costs at ten million events, over three plan-cache modes | ~2¼ h + provisioning |
+| `large-tier-writes` | what an append costs at ten million events, with and without per-append planning | ~1¾ h + provisioning |
 
 There is deliberately **no `full` profile**. A profile names one corpus, and a corpus has one volume,
 so nothing can span the three tiers. The recommended sequence for an overnight run is the table above
@@ -252,11 +252,12 @@ Each run writes `report.json` (the record) and `report.md` (a rendering of it) b
   `GRANT SET ON PARAMETER`; granting `session_preload_libraries` alone gets you to the next refusal.
 
   This used to be containers only, which had it exactly backwards: a container run is the one thing
-  the publisher *refuses*, so every published baseline carried reconstructions alone. The first
-  external run with capture working overturned the suite's largest finding — a DCB check that
-  reconstructed as reading ten million rows from the beginning is an index scan in the store's own
-  statement, and the real 190× is the *custom* plan bitmapping an entity's whole history. Evidence
-  that load-bearing should not be the weaker kind.
+  the publisher *refuses*, so every published baseline carried reconstructions alone. Capture then
+  overturned the suite's largest finding: the real 190× a DCB check costs at ten million events is
+  the *custom* plan bitmapping an entity's whole history, not the table scan the reconstruction
+  showed. Evidence that load-bearing should not be the weaker kind — though capture is only as good
+  as the workload it is attributed to, and reading one workload's plan as another's cost a whole
+  storage setting before a third target caught it (see `large-tier-writes`).
 - **Each plan carries a verdict.** A sequential scan, a bitmap that outgrew `work_mem`, a sort that
   spilled to disk, JIT charged to a query that did not need it — all four are recognisable by pattern,
   all four were present in this suite's own published plans, and all four went unremarked until

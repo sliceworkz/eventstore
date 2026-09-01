@@ -86,7 +86,7 @@ profile, and the result lives in `CLAUDE.md` and in `PostgresCursorBoundaryTest`
 | `live-latency` | append → subscriber, and append → committed read-model row | ~5 min |
 | `ingest-saturation` | sustained appends against a store that is growing | ~10 min |
 | `large-tier` ⇄ `read-shapes` | the same reads at ten million events, on an external server | ~17 min + provisioning |
-| `large-tier-writes` | what an append costs at ten million events, default planning against `PER_APPEND` | ~90 min + provisioning |
+| `large-tier-writes` | what an append costs at ten million events, over three plan-cache modes | ~2¼ h + provisioning |
 
 There is deliberately **no `full` profile**. A profile names one corpus, and a corpus has one volume,
 so nothing can span the three tiers. The recommended sequence for an overnight run is the table above
@@ -230,14 +230,33 @@ Each run writes `report.json` (the record) and `report.md` (a rendering of it) b
   `append-type-and-tag` at **121%** — an error bar wider than the figure it qualifies — two lines
   above this rule. `--force` still publishes, and the reasons stay in the report.
 - **Plans are captured on any server whose log can be read, external ones included.** A container's
-  output needs nothing; an external server needs `logging_collector = on` and
-  `GRANT pg_read_server_files TO <role>`, after which the suite reads the plans back through
-  `pg_read_file`. `doctor` says which of the two you will get before you spend an hour finding out.
+  output needs nothing; an external server needs `logging_collector = on` plus the grants below,
+  after which the suite reads the plans back through `pg_read_binary_file`. `doctor` runs the whole
+  chain — resolve the log, enable `auto_explain`, issue a statement, read its plan back — so it says
+  which of the two you will get, and names the missing piece, before you spend an hour finding out.
+
+  ```sql
+  GRANT pg_monitor TO <role>;                                    -- pg_current_logfile()
+  GRANT EXECUTE ON FUNCTION pg_stat_file(text, boolean) TO <role>;
+  GRANT EXECUTE ON FUNCTION pg_read_binary_file(text, bigint, bigint, boolean) TO <role>;
+  GRANT pg_read_server_files TO <role>;   -- Debian/Ubuntu: log_directory is outside PGDATA
+  GRANT SET ON PARAMETER session_preload_libraries, auto_explain.log_min_duration,
+        auto_explain.log_analyze, auto_explain.log_buffers, auto_explain.log_timing,
+        auto_explain.log_format, auto_explain.log_nested_statements TO <role>;
+  ```
+
+  Two of those mislead and are worth stating plainly. `pg_read_server_files` governs *which paths*
+  may be read and not whether the functions may be called, so a role holding it still gets
+  `permission denied for function pg_read_binary_file` without the `EXECUTE` grants. And
+  `auto_explain.*` are placeholder settings until the module loads, so each wants its own
+  `GRANT SET ON PARAMETER`; granting `session_preload_libraries` alone gets you to the next refusal.
 
   This used to be containers only, which had it exactly backwards: a container run is the one thing
-  the publisher *refuses*, so every published baseline carried reconstructions alone — and it is a
-  reconstruction that currently holds the suite's largest finding, a DCB check appearing to read ten
-  million rows from the beginning. Evidence that load-bearing should not be the weaker kind.
+  the publisher *refuses*, so every published baseline carried reconstructions alone. The first
+  external run with capture working overturned the suite's largest finding — a DCB check that
+  reconstructed as reading ten million rows from the beginning is an index scan in the store's own
+  statement, and the real 190× is the *custom* plan bitmapping an entity's whole history. Evidence
+  that load-bearing should not be the weaker kind.
 - **Each plan carries a verdict.** A sequential scan, a bitmap that outgrew `work_mem`, a sort that
   spilled to disk, JIT charged to a query that did not need it — all four are recognisable by pattern,
   all four were present in this suite's own published plans, and all four went unremarked until
@@ -263,7 +282,7 @@ Each run writes `report.json` (the record) and `report.md` (a rendering of it) b
 - **The DCB check's plans are real.** After the last measurement, the report turns on `auto_explain`,
   runs each conditional-append workload, and reads the plan the server logged for the statement the
   store itself issued — then deletes the events that capture appended, so the corpus stays the size
-  its manifest records. Only on a Testcontainers target, whose log this process can read.
+  its manifest records. On any target whose log can be read, per the grants above.
 
   **It runs the workload the way the profile does, collision mode included, on one thread.** That is
   what makes a contention profile's captured plan describe a statement that profile actually issues:

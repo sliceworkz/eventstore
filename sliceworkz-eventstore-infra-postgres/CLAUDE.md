@@ -273,9 +273,43 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     machine, which is enough to establish the direction and the rough magnitude and is deliberately not
     published under `results/` — the publisher refuses a Testcontainers run for exactly this reason.
 
+  - **At ten million events the same comparison fails the other way round, and `PER_APPEND` is then the
+    wrong lever.** `large-tier-writes` on an external PG18 captured both plans for the canonical
+    `append-type-and-tag` check — one type, one `sku:` tag, and a cursor:
+
+    | | generic | custom |
+    |---|---|---|
+    | access path | Index Scan on `idx_events_stream_type_position` | Bitmap Heap Scan via `idx_events_stream_tags` |
+    | cursor `ROW(event_tx, event_position) >` | in the **Index Cond** | in the **Filter** |
+    | rows discarded | 166 | 16.806 |
+    | buffers | 53 | 19.939 (`exact=16125` heap blocks) |
+    | actual time | **0.242 ms** | **46.851 ms** |
+    | planner's estimate | cost 226.56 | cost **122.66** |
+
+    **Knowing the tag value is what makes the planner choose worse.** With the value bound it reaches for
+    the tag index, and the cursor demotes from a start condition to a filter — so the custom plan
+    materialises *the entity's whole history* and discards it, where the generic plan starts at the cursor
+    and exhausts only what follows. The estimate has it backwards by roughly 2×, so the server keeps the
+    194× slower plan and never reconsiders. This is the mirror image of the or-groups cliff and it is why
+    `PER_APPEND`, which forces custom, moved nothing on that run (it is the mode already in effect).
+  - **`conditionalAppendPlanning(FORCE_GENERIC)` is the remedy for that half**, issued as
+    `set_config('plan_cache_mode', 'force_generic_plan', true)` folded into the advisory-lock statement a
+    conditional append already takes — so it costs no round trip, and being transaction-local it cannot
+    reach a read on the same pooled connection. That last part is load-bearing rather than tidy: the
+    savepoint probe's generic plan is 30× worse than its custom one, so a leaked setting would pessimise
+    the most common read in a DCB application. It also lowers pgjdbc's prepare threshold to 1, because
+    `plan_cache_mode` applies to server-prepared statements only and the driver's default would leave the
+    first five appends on the plan the mode exists to avoid.
+
+    **The two non-default modes are opposite remedies, not two strengths of one.** Each is a
+    pessimisation in the other's regime, so neither is a setting to turn on without having looked at the
+    plans for the check in question. `EXPLAIN` both — `SET plan_cache_mode` in a session and re-run the
+    check — before choosing.
+
     `PostgresConditionalAppendPlanningTest` pins the mechanism per backend — that the statement does reach
-    the plan cache by default and does not under `PER_APPEND` — and that neither mode changes what a
-    consistency boundary means.
+    the plan cache by default, does not under `PER_APPEND`, and is prepared from its first execution under
+    `FORCE_GENERIC` whose `plan_cache_mode` does not outlive the append's transaction — and that no mode
+    changes what a consistency boundary means.
 - **Oldest supported PostgreSQL is 16** (`Builder.OLDEST_SUPPORTED_MAJOR_VERSION`). The schema itself only
   needs 13 — `xid8`, `pg_current_xact_id()` — but 16 is both the oldest version with a support life worth
   committing to (13 went end-of-life in November 2025, 14 follows in November 2026, 15 in November 2027)

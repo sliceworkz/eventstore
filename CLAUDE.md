@@ -1302,12 +1302,15 @@ that bind everywhere:
   transactions holding a transaction id count — read-only ones never do, at any isolation level.
   The diagnosis query and monitoring guidance are in the module file; do not "fix" this by bounding
   the barrier.
-- **The DCB check is a re-used prepared statement, and PostgreSQL's generic-plan choice can fall off
-  a cliff from two OR-ed facts up** (~10–15×, absent on small stores). The flip is robust at two and
-  three facts and *bistable across runs* at wider ones — the two `dcb-cost-curve-ext` runs on one
-  server landed widths four-plus on opposite sides, the sampled statistics deciding which.
-  `conditionalAppendPlanning(PER_APPEND)` is the remedy for a store *observed* to have flipped — it
-  costs 2.4× on a types-only filter, so never turn it on blind.
+- **The DCB check is a re-used prepared statement, and PostgreSQL can settle on the wrong one of its
+  two plans — in either direction.** From two OR-ed facts up the *generic* plan falls off a cliff
+  (~10–15×, absent on small stores), robust at two and three facts and *bistable across runs* at
+  wider ones; `conditionalAppendPlanning(PER_APPEND)` is the remedy. At ten million events the
+  canonical one-type-one-tag check fails the other way: the *custom* plan bitmaps the entity's whole
+  history (46.851 ms) where the generic one starts at the cursor (0.242 ms), and the planner prices
+  the custom at half — so `FORCE_GENERIC` is the remedy and `PER_APPEND` does nothing. **The two are
+  opposite remedies**, each a pessimisation in the other's regime, so neither goes on blind
+  (`PER_APPEND` costs 2.4× on a types-only filter).
 - **Oldest supported PostgreSQL is 16**, and the `btree_gin` extension is required — creating it
   needs `CREATE` on the *database*, not the schema; a DBA installing it once is the recommended
   split, and an unprivileged role then starts against it silently.

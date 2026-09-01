@@ -216,15 +216,33 @@ The three shapes that do scale each have a cause, and two are in the plans:
   than hit. The right plan on a table far past 160 MB of `shared_buffers`.
 - **`query-by-multi-tag` (0.18×) is unexplained**, and no plan in the report covers it.
 
-**No external run has a captured plan.** Both `ReadPlanCapture` and `AppendPlanCapture` read a
-Testcontainers log, so they are inert on `EXTERNAL` — which is the only target the publisher accepts.
-Every plan in every publishable baseline is therefore a *reconstruction*, which is exactly the thing
-those captures exist because they cannot be trusted (the needle reconstruction that reported more
-execution time than the whole measured operation). Reading them through `auto_explain`'s table output
-would fix it.
+**External runs now capture plans, and the first one that did overturned a finding.** Both
+`ReadPlanCapture` and `AppendPlanCapture` used to read a Testcontainers log, so they were inert on
+`EXTERNAL` — the only target the publisher accepts — and every plan in every publishable baseline was
+a *reconstruction*. `ServerLog` reads the server's own log file through `pg_read_binary_file` instead,
+with `AutoExplain` turning the module on for the run, so an external target's plans are the store's own
+statements. What it costs is a privilege chain on the benchmark host, and `doctor` now fetches a plan
+end to end rather than checking the links, so a missing piece is named before an hour-long run rather
+than after one:
 
-**`large-tier-writes` as published is not a measurement, for two independent reasons**, and needs
-re-running before any figure from it is quoted:
+```sql
+GRANT pg_monitor TO <role>;                                    -- pg_current_logfile()
+GRANT EXECUTE ON FUNCTION pg_stat_file(text, boolean) TO <role>;
+GRANT EXECUTE ON FUNCTION pg_read_binary_file(text, bigint, bigint, boolean) TO <role>;
+GRANT pg_read_server_files TO <role>;                          -- Debian/Ubuntu: log_directory outside PGDATA
+GRANT SET ON PARAMETER session_preload_libraries, auto_explain.log_min_duration,
+      auto_explain.log_analyze, auto_explain.log_buffers, auto_explain.log_timing,
+      auto_explain.log_format, auto_explain.log_nested_statements TO <role>;
+```
+
+Two of those are worth remembering because they mislead. `pg_read_server_files` governs *which paths*
+may be read, not whether the functions may be called — a role holding it still gets `permission denied
+for function pg_read_binary_file` without the `EXECUTE` grants. And `auto_explain.*` are *placeholder*
+GUCs until the module loads, so each needs its own `GRANT SET ON PARAMETER`; granting
+`session_preload_libraries` alone gets you as far as the next refusal.
+
+**`large-tier-writes` as first published was not a measurement, for two independent reasons**, both
+since fixed — the figures below come from the re-run:
 
 - Three of its six rows sit past the 10% the report calls uncomparable — `append-type-and-tag` at
   **121%** and 55%, `decide-then-append` at 24%. Publishing now refuses this; it did not then.
@@ -240,13 +258,56 @@ re-running before any figure from it is quoted:
   re-drawing its head. The defect only bites where a trial completes tens of operations rather than
   tens of thousands, which is why the medium tier never showed it.
 
-What does survive from that run: **drift came in at 1.14%**, under even the default 2%, so the 10%
-cap the profile declares was never needed — it was sized against an assumed ~25 ops/ms at eight
-writers where the real figure is 4.7. And `append-none` scales only 3.13 → 4.69 ops/ms from one
-writer to eight (1.5×) against 11.3 → 33.5 (3×) at 100.000 on a container. An unconditional append
-takes no advisory lock, so that ceiling is GIN maintenance and WAL at ten million rows — the most
-interesting thing in the writes profile, and it deserves measuring on purpose rather than as a
-control.
+**Drift came in at 1.12%**, under even the default 2%, so the 10% cap the profile declares has never
+been needed — it was sized against an assumed ~25 ops/ms at eight writers where the real figure is 4.7.
+And `append-none` scales only 3.01 → 4.69 ops/ms from one writer to eight (1.56×) against 11.3 → 33.5
+(3×) at 100.000 on a container. An unconditional append takes no advisory lock, so that ceiling is GIN
+maintenance and WAL at ten million rows — the most interesting thing in the writes profile, and it
+deserves measuring on purpose rather than as a control.
+
+#### What the re-run found: a 190× DCB check, and the plan that explains it
+
+**A conditional append carrying one type and one tag costs ~190× an unconditional one at this volume**
+— ~62.7 ms/op against ~0.33 ms/op at one writer. That is the headline, and the captured plans say why
+in a way that contradicts what the reconstructions said:
+
+| | generic | custom |
+|---|---|---|
+| access path | Index Scan on `idx_events_stream_type_position` | Bitmap Heap Scan via `idx_events_stream_tags` |
+| cursor `ROW(event_tx, event_position) >` | in the **Index Cond** | in the **Filter** |
+| tag | in the Filter | in the Recheck Cond |
+| rows discarded | 166 | 16.806 |
+| buffers | 53 | 19.939 (`exact=16125` heap blocks) |
+| actual time | **0.242 ms** | **46.851 ms** |
+| planner's estimate | cost 226.56 | cost **122.66** |
+
+- **The DCB check does not fall back to a sequential scan.** The earlier write-up said it did, on the
+  strength of a *reconstructed* plan reporting 583 ms having read the table from the beginning. The
+  store's own statement is an index scan either way. The reconstruction was wrong in kind, not only in
+  magnitude, and this is the clearest argument the suite has produced for capturing rather than
+  imitating.
+- **The generic plan is 194× faster and the planner prices it at twice the cost**, so PostgreSQL keeps
+  the custom plan. Binding the tag value is what does it: with a value in hand the planner reaches for
+  `idx_events_stream_tags`, and the cursor demotes from a start condition to a filter — so the check
+  exhausts *the entity's whole history* instead of the events after the cursor. On the head entity that
+  history is 455.092 events.
+- **`PER_APPEND` therefore changed nothing** (both targets agree to within their error bars on all
+  twelve rows, control flat at 3.010 → 3.043 and 4.690 → 4.697). It forces the custom plan, which is
+  the plan already in effect. That null result is what prompted `FORCE_GENERIC` in the backend and the
+  third target in this profile: reading a 194× off two plans is not measuring it.
+- **`decide-then-append` at 590.92 ms/op is 94–99% its decide read**, not its append. The read returns
+  455.092 rows and falls off three cliffs at once — lossy bitmap (`exact=19090 lossy=43315`), an
+  `external merge Disk: 38112kB` sort, and 194.6 ms of JIT. Forcing a plan will not help there;
+  bounding the read will.
+- **The 1-thread against 8-thread gaps here are entity coverage, not concurrency**, the same effect the
+  `ThreadContext` fix addressed — at a hundred thousand Zipf-distributed entities a slow workload
+  completing tens of operations per trial samples a different part of the distribution at each thread
+  count. The per-iteration ramp makes the shape visible: ~1000 ms/op on the head entity against ~35
+  ms/op mid-tail.
+- **Eight of the twelve rows were refused publication at 48–137% relative error**, and that refusal is
+  correct: a workload whose per-operation cost ramps across a Zipf distribution has no mean worth
+  reporting. The fix is not more iterations but permuting the entity walk so each trial samples the
+  distribution rather than re-drawing its head — outstanding.
 
 ### Choosing a stream design: one stream per context, or one per entity
 

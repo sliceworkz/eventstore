@@ -430,14 +430,26 @@ public interface PostgresEventStorage {
 		 * the actual parameter values and a <em>generic</em> one built against default selectivity, and
 		 * from the tenth execution it adopts the generic plan if its estimate looks no worse. A DCB check
 		 * is the shape that misleads that comparison: its expected result is <em>no rows</em>, while a
-		 * {@code NOT EXISTS} is priced by how soon a row is expected to turn up, so each extra OR-ed fact
-		 * makes the generic plan look cheaper while the custom one — built from real tag statistics — looks
-		 * dearer. Past the crossing the server settles on a plan that scans the whole events table for a
-		 * row that is not there, and never reconsiders.
+		 * {@code NOT EXISTS} is priced by how soon a row is expected to turn up.
 		 * <p>
-		 * {@link PostgresEventStorageImpl.ConditionalAppendPlanning#PER_APPEND} takes the choice away and
-		 * plans every conditional append from its own values, at the cost of planning per append.
-		 * Unconditional appends and every read are unaffected either way.
+		 * <b>Which plan that mistake favours depends on the check</b>, so the two non-default modes are
+		 * opposite remedies rather than two strengths of the same one:
+		 * <ul>
+		 *   <li>{@link PostgresEventStorageImpl.ConditionalAppendPlanning#PER_APPEND} — for a filter of
+		 *       several OR-ed facts, where each extra fact makes the generic plan look cheaper while the
+		 *       custom one, built from real tag statistics, looks dearer. Past the crossing the server
+		 *       settles on a plan that scans the events table for a row that is not there and never
+		 *       reconsiders; this plans every append from its own values instead.</li>
+		 *   <li>{@link PostgresEventStorageImpl.ConditionalAppendPlanning#FORCE_GENERIC} — for one type
+		 *       plus one tag on a large store, where the opposite happens: knowing the tag value sends
+		 *       the custom plan to the tag index and it materialises the entity's whole history, where
+		 *       the generic plan walks the stream index from the cursor. Measured at ten million events:
+		 *       0.242 ms generic against 46.851 ms custom, with the planner pricing the custom plan at
+		 *       half the generic one — so it keeps the worse plan.</li>
+		 * </ul>
+		 * Unconditional appends and every read are unaffected either way. Neither mode is a general
+		 * speed-up — each is a pessimisation in the other's regime — so turn one on for a store whose
+		 * plans have been looked at, not on the strength of this javadoc.
 		 * <pre>{@code
 		 * EventStorage storage = PostgresEventStorage.newBuilder()
 		 *     .conditionalAppendPlanning(ConditionalAppendPlanning.PER_APPEND)

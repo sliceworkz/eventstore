@@ -15,6 +15,14 @@ description: >
   consistency check and so cannot be affected by the setting in either profile. Where it moves, the
   machine moved.
 
+  EXPERIMENT (this branch): the third target states the check as the ordered probe
+  (appendCheck: SCAN_FROM_CURSOR), same as in dcb-plan-cache; here it answers the small-store half
+  of the same question. On 5.000 events every path is cheap, so what this can catch is the probe
+  being a net LOSS where NOT EXISTS was already fine -- the analogue of what this profile exists to
+  say about PER_APPEND. The prediction: nothing measurable separates the three targets at this size,
+  or-groups included, and append-empty-boundary stays harmless because the whole stream is a few
+  hundred pages.
+
 corpus:
   # 5.000, not 1.000, and the reason is worth writing down because 1.000 was tried first and measured
   # something other than what it said. Two constraints bind from below, neither about the plan cache:
@@ -60,6 +68,12 @@ targets:
     image: "postgres:18"
     metrics: OFF
     appendPlanning: PER_APPEND
+  # The ordered probe, planning left to the server; see dcb-plan-cache for what this target is for.
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: OFF
+    appendCheck: SCAN_FROM_CURSOR
 
 jmh:
   workloads:

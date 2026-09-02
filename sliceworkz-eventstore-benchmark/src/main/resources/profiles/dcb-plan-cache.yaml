@@ -12,6 +12,18 @@ description: >
   If that is what happens, the per-append target should be flat where the default one falls off a
   cliff, and no worse anywhere else.
 
+  EXPERIMENT (this branch): a third target states the check as the ordered probe instead
+  (appendCheck: SCAN_FROM_CURSOR), and it is here to answer the one question left before the probe
+  can retire both modes: does the or-groups cliff exist under the probe at all? The cliff is a
+  NOT EXISTS artifact -- the generic plan degenerates as facts widen -- while the probe's plan is
+  the same position-index walk from the cursor whatever the filter says; extra OR-ed facts are just
+  a wider per-row test on that walk. The prediction, written before the run: the probe's or-groups
+  rows stay flat from 2 to 10 facts, near its append-type-and-tag, with no cliff and no bistability
+  -- and its append-empty-boundary row is expected to be its one BAD row (no cursor, so the walk
+  covers the whole stream), which is exactly why the production design derives the shape from the
+  criteria instead of configuring it. If the probe's or-groups rows are NOT flat, the plan is being
+  re-read wrong somewhere and PER_APPEND keeps its job.
+
 corpus:
   volume: 100000
   streamDesign: TAGGED
@@ -33,6 +45,13 @@ targets:
     image: "postgres:18"
     metrics: OFF
     appendPlanning: PER_APPEND
+  # The ordered probe, planning left to the server -- deliberately, because the claim under test is
+  # that its cached generic plan is already the good plan, with nothing for a mode to manage.
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+    metrics: OFF
+    appendCheck: SCAN_FROM_CURSOR
 
 jmh:
   workloads:

@@ -78,6 +78,7 @@ public final class AppendWorkloads {
 				orGroups(5),
 				orGroups(10),
 				emptyBoundary(),
+				staleBoundary(),
 				idempotentFresh(),
 				idempotentDuplicate(),
 				decideThenAppend(),
@@ -290,6 +291,44 @@ public final class AppendWorkloads {
 					// fork. The JMH layer counts it; it does not treat it as an error.
 					return -1;
 				}
+			}
+		};
+	}
+
+	/**
+	 * A DCB check against a <b>deliberately stale</b> cursor: the corpus midpoint, roughly half the
+	 * stream back. The other append workloads read their boundary at append time, so their cursors sit
+	 * wherever the entity's last event does -- fresh for the hot entities the Zipf walk favours. This
+	 * one pins the cursor's age instead, because cursor age is exactly the variable the two check
+	 * shapes disagree about: {@code NOT_EXISTS} through the tag index does not care how old the cursor
+	 * is, and {@code SCAN_FROM_CURSOR} pays for every stream event after it.
+	 *
+	 * <p><b>The filter matches nothing, on purpose, and the appended events do not match it.</b> The
+	 * check's expected result is "no new relevant facts", and proving that absence is the cost under
+	 * measurement -- a filter that found a match would let the forward walk stop early and measure the
+	 * cheap path. The probe tag names a SKU that does not exist and is never appended, so the walk runs
+	 * its full length every invocation, no invocation ever conflicts, and the appended reservation
+	 * (an ordinary one, for the walked entity) keeps the store growing like the other append workloads.
+	 *
+	 * <p>Read it beside {@code append-type-and-tag} (fresh-ish cursors) and
+	 * {@code append-empty-boundary} (no cursor at all, the walk's degenerate case): the three are the
+	 * staleness curve, and where {@code SCAN_FROM_CURSOR} crosses the tag path's flat ~44 ms is the
+	 * number an adaptive check-shape choice would be built on.
+	 */
+	private static Workload staleBoundary ( ) {
+		return new AbstractAppend("append-stale-boundary",
+				"the canonical DCB check against a cursor half the stream old, proving absence every time") {
+
+			@Override
+			Object append ( WorkloadContext context, String sku ) {
+				EventReference midCursor = context.facts().midCursor().orElseThrow(
+						() -> new IllegalStateException("this corpus's facts carry no midCursor;"
+								+ " re-provision it before measuring boundary staleness"));
+				AppendCriteria criteria = AppendCriteria.of(
+						EventFilter.forEvents(stockTypes(), Tags.of(TagKeys.SKU, "SKU-STALE-PROBE")),
+						midCursor);
+				return context.inventory().append(criteria, reservation(context, sku),
+						context.streamIdFor(WebshopContext.INVENTORY, sku)).size();
 			}
 		};
 	}

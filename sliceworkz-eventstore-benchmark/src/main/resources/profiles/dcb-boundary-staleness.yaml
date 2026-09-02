@@ -1,0 +1,68 @@
+name: dcb-boundary-staleness
+description: >
+  What cursor age does to the two DCB check shapes, over the large-tier corpus. The scan-from-cursor
+  run showed the ordered probe 5x better on the workload's own boundaries -- but those cursors sit
+  wherever each entity's last event does, which the Zipf walk keeps fresh for the entities it visits
+  most. Cursor age is exactly the variable the shapes disagree about: the tag path reads the entity's
+  whole history whatever the cursor says, and the forward walk pays for every stream event after it.
+  This profile pins the age instead of sampling it, at the three points that bracket the regime:
+
+    append-type-and-tag     the boundary read at append time -- fresh-ish, the ordinary decider
+    append-stale-boundary   a cursor half the stream old, filter matching nothing, so every
+                            invocation proves absence over the full walk -- the probe's bad case,
+                            and the tag path's best (a GIN lookup finding zero entries)
+    append-empty-boundary   no cursor at all -- under the probe the walk has nowhere to start and
+                            must cover the whole stream; under NOT EXISTS it is a cheap tag miss.
+                            The degenerate case that decides whether the probe can ever simply
+                            replace the old shape, or must be chosen per criteria
+
+  What the result decides, stated before the run. If the probe's stale and empty rows come back
+  bounded -- worse than the tag path but in the same decade -- the probe can become the only shape
+  and the modes go. If they come back where the model puts them (an index walk over ~2.75M and ~5.5M
+  stream events respectively, so hundreds of ms to seconds against the tag path's sub-ms), then no
+  single shape wins and the store should pick per append from what the criteria itself says: a
+  cursor present and recent favours the walk, a missing or ancient one favours the tag index. Either
+  way ConditionalAppendPlanning's future hangs on the or-groups cliff re-measured under the probe,
+  which is dcb-plan-cache's job, not this profile's.
+
+  Expect append-empty-boundary on the probe target to complete very few operations per iteration --
+  an op that walks the whole stream can outlive a four-second iteration, and JMH lets it finish. The
+  throughput is still a number; read it as one op's cost, not a rate with error bars worth quoting.
+
+  Same corpus as large-tier-writes, so nothing re-provisions; same drift reasoning, same warning
+  about the estimate: the per-trial restore of ten million rows dominates the wall clock, so expect
+  around an hour and a half for the twenty-four trials against an estimate of a fraction of that.
+
+corpus:
+  volume: 10000000
+  streamDesign: TAGGED
+  composition: CLEAN
+  payload: REALISTIC
+  entityCount: 100000
+  seed: 20260823
+
+targets:
+  - backend: POSTGRES
+    server: EXTERNAL
+    metrics: OFF
+    schemaMode: ENSURE
+  - backend: POSTGRES
+    server: EXTERNAL
+    metrics: OFF
+    schemaMode: ENSURE
+    appendCheck: SCAN_FROM_CURSOR
+
+jmh:
+  workloads:
+    - append-none
+    - append-type-and-tag
+    - append-stale-boundary
+    - append-empty-boundary
+  # One thread: staleness is a property of the cursor, not of contention, and the fresh/stale/empty
+  # comparison is cleanest with nothing else moving the stream head mid-walk.
+  threads: [ 1 ]
+  forks: 3
+  warmupIterations: 2
+  measurementIterations: 4
+  iterationSeconds: 4
+  maxDrift: 0.10

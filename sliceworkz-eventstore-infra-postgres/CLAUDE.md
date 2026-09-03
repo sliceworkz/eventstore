@@ -193,8 +193,9 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     because the planner's choice (seq scan → relation-level `SIRead` lock) decides the granularity.
   - No DDL change, so no migration: the lock is entirely in the write path.
 - **The DCB check's SQL shape is derived per append from the criteria — there is no mode, and that is
-  the conclusion of a measured campaign whose runs are committed under the benchmark module's
-  `results/`.** The check asks one question — any event matching the boundary's filter after the
+  the conclusion of a measured campaign recorded run by run in the benchmark module's `CLAUDE.md`,
+  with the two regimes' baselines under its `results/`.** The check asks one question — any event
+  matching the boundary's filter after the
   expected reference? — and PostgreSQL has two fundamentally different ways to answer it:
   - **A criteria carrying an expected reference runs as the ordered probe**:
     `WHERE (SELECT event_position … ORDER BY event_tx, event_position LIMIT 1) IS NULL`. The

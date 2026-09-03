@@ -1147,9 +1147,10 @@ each figure as Testcontainers-on-a-developer-machine unless the module file says
 - **The library's own meters cost nothing measurable in throughput** — capped, uncapped and absent
   land within ~1% — so their cost is the heap and scrape size described in the metrics section above.
 - The DCB check's criteria-derived shape — the probe for cursor-bearing criteria, the
-  custom-planned tag path for cursorless ones — is summarised under PostgreSQL below, and the runs
-  that settled it are committed under `results/`. The old `NOT EXISTS` shape's plan-cache cliff is
-  preserved there as history (`dcb-cost-curve-ext` shows the fully cliffed regime); it no longer
+  custom-planned tag path for cursorless ones — is summarised under PostgreSQL below;
+  `large-tier-writes` and `dcb-boundary-staleness` are the profiles that characterise it. The old
+  `NOT EXISTS` shape's regime is preserved under `results/` as history — the `-not-exists`-suffixed
+  baselines, `dcb-cost-curve-ext-not-exists` showing the fully cliffed plan cache — and no longer
   exists in the shipped check.
 
 ## Naming Conventions
@@ -1315,8 +1316,8 @@ that bind everywhere:
   the plan cache was measured serving that same statement a 1.16 s whole-table scan in steady
   state). The probe's one cost is a stale cursor — linear in the stream events since it, ~0.2 µs
   each — which the decide-then-append cycle avoids by construction. The former
-  `conditionalAppendPlanning`/`FORCE_GENERIC` modes are gone; the measured record is committed under
-  the benchmark module's `results/`.
+  `conditionalAppendPlanning`/`FORCE_GENERIC` modes are gone; the campaign that retired them is
+  recorded run by run in the benchmark module's `CLAUDE.md`.
 - **Oldest supported PostgreSQL is 16**, and the `btree_gin` extension is required — creating it
   needs `CREATE` on the *database*, not the schema; a DBA installing it once is the recommended
   split, and an unprivileged role then starts against it silently.

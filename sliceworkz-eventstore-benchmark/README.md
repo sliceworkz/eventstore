@@ -68,8 +68,9 @@ compared the two spellings of the cursor boundary, found the row comparison 2.9x
 walk, and was removed along with the losing spelling — a profile that cannot run is worse than no
 profile, and the result lives in `CLAUDE.md` and in `PostgresCursorBoundaryTest`. The
 `dcb-plan-cache` pair went the same way: it existed to decide how the DCB check should relate to
-the plan cache, the criteria-shaped check settled it (see `CLAUDE.md`), and its committed reports
-under `results/` are the record.
+the plan cache, and the criteria-shaped check settled it — `CLAUDE.md` records the figures, and
+the old shape's cliffed regime stays committed under `results/` as
+`dcb-cost-curve-ext-not-exists`.
 
 | profile | the question | runtime |
 |---|---|---|
@@ -322,7 +323,8 @@ Each run writes `report.json` (the record) and `report.md` (a rendering of it) b
   and stays there at four, five and ten. An eleven-fold cliff, from one more fact in the decision.
 
   Where the flip lands past three facts is not stable across runs, and the two published
-  `dcb-cost-curve-ext` runs prove it: same profile, corpus, server and settings, and widths four to
+  `dcb-cost-curve-ext` runs (committed as `dcb-cost-curve-ext-not-exists`, the shape they measured)
+  prove it: same profile, corpus, server and settings, and widths four to
   ten came out on opposite sides — one run recovered to an index-scan generic plan, the other sat
   flat on the sequential-scan floor from two facts up, each internally stable. The estimated-cost
   comparison at those widths is close enough to the crossover that the statistics `ANALYZE` happens

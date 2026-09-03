@@ -326,8 +326,12 @@ re-reading the boundary before appending, which the decide-then-append cycle doe
 boundary ~2.4 ms/op. **~37× an unconditional append on this corpus's boundaries, against the
 ~190-220× it replaced**, at error bars that finally describe the store. The or-groups cliff the
 plan-cache profiles measured under `NOT EXISTS` (14× at two facts) is absent under the probe (2.62×
-at ten facts), which is why those two profiles are gone: their question is closed, and their
-committed reports under `results/` are the record.
+at ten facts), which is why those two profiles are gone: their question is closed. Their scratch
+reports were never published and did not survive, so the figures in this section are the record of
+runs two and three; what is committed under `results/` is the old shape's regime (the
+`-not-exists`-suffixed baselines, kept under that name so a re-publish of the shipped check cannot
+overwrite the before half of the comparison) beside the shipped check's own `large-tier-writes` and
+`dcb-boundary-staleness` baselines.
 
 Two findings from run one that are about the workload rather than the check, still standing:
 

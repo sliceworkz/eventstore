@@ -134,8 +134,7 @@ public final class CorpusProvisioner {
 
 		TargetSpec provisioning = new TargetSpec(targetSpec.backend(), targetSpec.server(), targetSpec.image(),
 				targetSpec.metrics(), spec.requiresShredding() || targetSpec.shredding(), targetSpec.resultLimit(),
-				TargetSpec.SchemaMode.ENSURE, targetSpec.notificationStartupTimeout(),
-				targetSpec.appendPlanning());
+				TargetSpec.SchemaMode.ENSURE, targetSpec.notificationStartupTimeout());
 
 		BenchmarkTarget target = TargetFactory.open(provisioning, prefix);
 		try {
@@ -239,8 +238,7 @@ public final class CorpusProvisioner {
 			LongConsumer progress ) {
 		TargetSpec provisioning = new TargetSpec(targetSpec.backend(), targetSpec.server(), targetSpec.image(),
 				TargetSpec.MetricsMode.OFF, neighbourSpec.requiresShredding(), targetSpec.resultLimit(),
-				TargetSpec.SchemaMode.ENSURE, targetSpec.notificationStartupTimeout(),
-				targetSpec.appendPlanning());
+				TargetSpec.SchemaMode.ENSURE, targetSpec.notificationStartupTimeout());
 
 		try ( BenchmarkTarget neighbour = TargetFactory.open(provisioning, neighbourPrefix) ) {
 			CorpusGenerator generator = new CorpusGenerator(neighbourSpec);

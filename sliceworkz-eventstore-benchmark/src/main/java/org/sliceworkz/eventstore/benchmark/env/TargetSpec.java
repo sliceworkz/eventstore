@@ -35,7 +35,6 @@ import java.time.Duration;
  * @param resultLimit the storage-wide absolute result limit, or {@code null} for none
  * @param schemaMode what the store is allowed to do to the schema when it opens
  * @param notificationStartupTimeout how long {@code build()} waits for LISTEN/NOTIFY to register
- * @param appendPlanning how PostgreSQL may plan the DCB check; ignored for {@link Backend#INMEM}
  */
 public record TargetSpec (
 		Backend backend,
@@ -45,8 +44,7 @@ public record TargetSpec (
 		boolean shredding,
 		Integer resultLimit,
 		SchemaMode schemaMode,
-		Duration notificationStartupTimeout,
-		AppendPlanning appendPlanning ) {
+		Duration notificationStartupTimeout ) {
 
 	/** Which storage implementation is under measurement. */
 	public enum Backend {
@@ -119,38 +117,6 @@ public record TargetSpec (
 		NONE
 	}
 
-	/**
-	 * How PostgreSQL is allowed to plan the DCB consistency check — a dimension rather than a setting,
-	 * for the same reason {@link MetricsMode} is one: the suite exists to say what it costs, and that
-	 * question needs the same workload run both ways.
-	 *
-	 * <p>The check is a re-used prepared statement, so the server holds a custom plan built from the
-	 * actual values and a generic one built against default selectivity, and adopts the generic plan
-	 * once its estimate looks no worse. That comparison is the thing under measurement: a DCB check
-	 * expects <em>no rows</em> while a {@code NOT EXISTS} is priced by how soon a row turns up, so each
-	 * added fact makes the generic plan look cheaper and the custom one dearer, and past the crossing
-	 * every append scans the whole table for a row that is not there.
-	 *
-	 * <p><b>The large tier found the same comparison failing the other way round</b>, which is why
-	 * there are three values and not two. On a ten-million-event store with one type plus one tag, the
-	 * captured plans show the <em>custom</em> plan bitmapping the entity's whole history (19.939
-	 * buffers, 46.851 ms) where the generic plan walks the stream index from the cursor (53 buffers,
-	 * 0.242 ms) — and the planner prices the custom one at half the generic, so the server keeps the
-	 * 194× worse plan and {@code PER_APPEND}, which forces custom, cannot help. Running all three
-	 * against one corpus is what turns that reading of a plan into a measurement.
-	 */
-	public enum AppendPlanning {
-
-		/** What the library does unless told otherwise: PostgreSQL chooses. */
-		SERVER_DEFAULT,
-
-		/** Every conditional append planned from its own values, at the cost of planning per append. */
-		PER_APPEND,
-
-		/** Every conditional append on the plan built against default selectivity. */
-		FORCE_GENERIC
-	}
-
 	/** The default LISTEN/NOTIFY startup deadline: generous, because a cold pool is not a failure. */
 	public static final Duration DEFAULT_NOTIFICATION_STARTUP_TIMEOUT = Duration.ofSeconds(30);
 
@@ -166,9 +132,6 @@ public record TargetSpec (
 		}
 		if ( notificationStartupTimeout == null ) {
 			notificationStartupTimeout = DEFAULT_NOTIFICATION_STARTUP_TIMEOUT;
-		}
-		if ( appendPlanning == null ) {
-			appendPlanning = AppendPlanning.SERVER_DEFAULT;
 		}
 		if ( backend == Backend.POSTGRES ) {
 			if ( server == null ) {
@@ -186,13 +149,13 @@ public record TargetSpec (
 	/** The in-memory baseline, with no instrumentation and no shredding. */
 	public static TargetSpec inmem ( ) {
 		return new TargetSpec(Backend.INMEM, null, null, MetricsMode.OFF, false, null, SchemaMode.ENSURE,
-				null, null);
+				null);
 	}
 
 	/** A containerised PostgreSQL of the given image, with no instrumentation and no shredding. */
 	public static TargetSpec postgres ( String image ) {
 		return new TargetSpec(Backend.POSTGRES, PostgresServer.TESTCONTAINERS, image,
-				MetricsMode.OFF, false, null, SchemaMode.ENSURE, null, null);
+				MetricsMode.OFF, false, null, SchemaMode.ENSURE, null);
 	}
 
 	/** Whether measuring this target needs a Docker daemon. */
@@ -213,14 +176,6 @@ public record TargetSpec (
 		}
 		if ( resultLimit != null ) {
 			description.append("/limit=").append(resultLimit);
-		}
-		// Only when it is not the default, so every existing profile's target keeps the name its
-		// committed baselines were recorded under -- and so a profile measuring the pair gets two
-		// distinguishable targets rather than two rows the report would silently collapse into one.
-		switch ( appendPlanning ) {
-			case PER_APPEND -> description.append("/plan=per-append");
-			case FORCE_GENERIC -> description.append("/plan=force-generic");
-			case SERVER_DEFAULT -> { }
 		}
 		return description.toString();
 	}

@@ -61,21 +61,21 @@ java -jar target/*.jar compare --a=target/benchmark/tagged --b=target/benchmark/
 
 Paired profiles are listed together: run both, then `compare` them. They differ in one corpus
 property and are otherwise identical — same seed, workloads and targets — which is what makes the
-percentage between them mean something. Where the property under test *is* the volume, as in the
-plan-cache pair, the entity count moves with it so that events-per-entity stays fixed: a tag has to
-be as selective in the small corpus as in the large one, or the pair measures selectivity rather than
-size.
+percentage between them mean something.
 
 A profile that only ever existed to decide something is deleted once it has. `cursor-boundary-form`
 compared the two spellings of the cursor boundary, found the row comparison 2.9x faster on a cursor
 walk, and was removed along with the losing spelling — a profile that cannot run is worse than no
-profile, and the result lives in `CLAUDE.md` and in `PostgresCursorBoundaryTest`.
+profile, and the result lives in `CLAUDE.md` and in `PostgresCursorBoundaryTest`. The
+`dcb-plan-cache` pair went the same way: it existed to decide how the DCB check should relate to
+the plan cache, and the criteria-shaped check settled it — `CLAUDE.md` records the figures, and
+the rejected uniform-`NOT EXISTS` alternative keeps its committed baselines under `results/`
+(the `-not-exists`-suffixed directories) as the evidence behind the rejection.
 
 | profile | the question | runtime |
 |---|---|---|
 | `smoke`, `smoke-postgres` | does the harness work | seconds |
 | `dcb-cost-curve` | what the DCB check costs, and how it grows with OR-ed facts | ~15 min |
-| `dcb-plan-cache` ⇄ `dcb-plan-cache-small` | whether planning every conditional append pays for itself, and at what store size the answer flips | ~25 min / ~12 min |
 | `write-contention-spread` / `-one-stream` / `-one-boundary` | where throughput saturates, and how much is the advisory lock versus conflict-retry | ~20 min each |
 | `read-shapes` ⇄ `crowded-store` ⇄ `crowded-database` | what a store holding other domains costs, and separately what sharing a database costs | ~20 min each |
 | `stream-design-tagged` ⇄ `stream-design-per-entity` | which stream design to pick | ~40 min each |
@@ -86,7 +86,8 @@ profile, and the result lives in `CLAUDE.md` and in `PostgresCursorBoundaryTest`
 | `live-latency` | append → subscriber, and append → committed read-model row | ~5 min |
 | `ingest-saturation` | sustained appends against a store that is growing | ~10 min |
 | `large-tier` ⇄ `read-shapes` | the same reads at ten million events, on an external server | ~17 min + provisioning |
-| `large-tier-writes` | what an append costs at ten million events, over three plan-cache modes | ~2¼ h + provisioning |
+| `large-tier-writes` | what an append costs at ten million events | ~1¼ h + provisioning |
+| `dcb-boundary-staleness` | what cursor age does to the DCB check | ~35 min + provisioning |
 
 There is deliberately **no `full` profile**. A profile names one corpus, and a corpus has one volume,
 so nothing can span the three tiers. The recommended sequence for an overnight run is the table above
@@ -252,11 +253,12 @@ Each run writes `report.json` (the record) and `report.md` (a rendering of it) b
   `GRANT SET ON PARAMETER`; granting `session_preload_libraries` alone gets you to the next refusal.
 
   This used to be containers only, which had it exactly backwards: a container run is the one thing
-  the publisher *refuses*, so every published baseline carried reconstructions alone. The first
-  external run with capture working overturned the suite's largest finding — a DCB check that
-  reconstructed as reading ten million rows from the beginning is an index scan in the store's own
-  statement, and the real 190× is the *custom* plan bitmapping an entity's whole history. Evidence
-  that load-bearing should not be the weaker kind.
+  the publisher *refuses*, so every published baseline carried reconstructions alone. Capture then
+  overturned the suite's largest finding: the real 190× a DCB check costs at ten million events is
+  the *custom* plan bitmapping an entity's whole history, not the table scan the reconstruction
+  showed. Evidence that load-bearing should not be the weaker kind — though capture is only as good
+  as the workload it is attributed to, and reading one workload's plan as another's cost a whole
+  storage setting before a third target caught it (see `large-tier-writes`).
 - **Each plan carries a verdict.** A sequential scan, a bitmap that outgrew `work_mem`, a sort that
   spilled to disk, JIT charged to a query that did not need it — all four are recognisable by pattern,
   all four were present in this suite's own published plans, and all four went unremarked until
@@ -320,13 +322,19 @@ Each run writes `report.json` (the record) and `report.md` (a rendering of it) b
   a generic plan that sequentially scans all 100.000 rows for a row that is not there (17ms/op),
   and stays there at four, five and ten. An eleven-fold cliff, from one more fact in the decision.
 
-  Where the flip lands past three facts is not stable across runs, and the two published
-  `dcb-cost-curve-ext` runs prove it: same profile, corpus, server and settings, and widths four to
-  ten came out on opposite sides — one run recovered to an index-scan generic plan, the other sat
-  flat on the sequential-scan floor from two facts up, each internally stable. The estimated-cost
-  comparison at those widths is close enough to the crossover that the statistics `ANALYZE` happens
-  to sample decide the side. Treat any width past one fact as at risk rather than reading the band
-  as fixed; the postgres module's `CLAUDE.md` records both regimes.
+  Where the flip lands past three facts is not stable across runs, and the two committed
+  `dcb-cost-curve-ext-not-exists` runs prove it: same statement shape, corpus, server and settings,
+  and widths four to ten came out on opposite sides — one run recovered to an index-scan generic
+  plan, the other sat flat on the sequential-scan floor from two facts up, each internally stable.
+  The estimated-cost comparison at those widths is close enough to the crossover that the
+  statistics `ANALYZE` happens to sample decide the side.
+
+  That cliff is why the shipped check never meets the plan cache on this question: it derives its
+  shape from the criteria — an ordered probe from the cursor when one is present, and a
+  planned-per-execution tag path when not — so no conditional append leaves its plan to the
+  estimated-cost comparison above. The cliff belongs to the rejected alternative (one uniform
+  `NOT EXISTS` reusing a cached plan), whose committed `-not-exists` baselines under `results/` are
+  what these paragraphs describe; the postgres module's `CLAUDE.md` carries the full reasoning.
 - **Load results carry correctness checks**, and a run that fails one is reported as unsound. Events
   in must equal events out; nothing may be projected twice.
 

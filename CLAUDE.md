@@ -1146,10 +1146,12 @@ each figure as Testcontainers-on-a-developer-machine unless the module file says
   the postgres notes.
 - **The library's own meters cost nothing measurable in throughput** — capped, uncapped and absent
   land within ~1% — so their cost is the heap and scrape size described in the metrics section above.
-- The DCB check's plan-cache cliff and its remedy are summarised under PostgreSQL below; the
-  `dcb-cost-curve` profile measures the curve, reproduced on a real server in
-  `results/0.11.0-SNAPSHOT/dcb-cost-curve-ext/` — the committed run shows the fully cliffed regime,
-  every width past one fact on the floor; the postgres module's notes record both regimes.
+- The DCB check's criteria-derived shape — the probe for cursor-bearing criteria, the
+  custom-planned tag path for cursorless ones — is summarised under PostgreSQL below;
+  `large-tier-writes` and `dcb-boundary-staleness` are the profiles that characterise it. The
+  rejected alternative — one uniform `NOT EXISTS` check left to the plan cache — keeps its measured
+  baselines under `results/` as the reasoning (the `-not-exists`-suffixed directories,
+  `dcb-cost-curve-ext-not-exists` showing the fully cliffed plan cache).
 
 ## Naming Conventions
 
@@ -1245,6 +1247,20 @@ nothing enforces that from here on.
 6. **Service Loader Pattern**: `EventStoreFactory` uses Java ServiceLoader for implementation discovery
 7. **Builder Pattern**: Storage implementations use fluent builders for configuration
 
+## Documentation Conventions
+
+Documentation and javadoc describe the design as it is, not how it got here. Two rules:
+
+- **Never narrate fixed bugs or earlier implementations.** "This used to X" and "before this change"
+  are commit-message material; once merged they cost every future reader a detour through code that
+  no longer exists. The version history is the record of what changed and when.
+- **Do document rejected alternatives — as alternatives, with the reasoning.** Where a plausible
+  design was considered and turned down, say what it was and why it loses (measured, where the
+  benchmark suite can), so the next person reaching for the same idea finds the reasoning instead of
+  re-treading it. Phrase it as a standing design choice ("the alternative — X — loses because Y"),
+  never as a chronology ("we replaced X"). A rejected alternative's measured record may stay
+  committed (e.g. under the benchmark module's `results/`) as the evidence behind such a note.
+
 ## DCB Compliance
 
 This implementation is fully compliant with the [DCB Specification](https://dcb.events/specification/):
@@ -1302,15 +1318,22 @@ that bind everywhere:
   transactions holding a transaction id count — read-only ones never do, at any isolation level.
   The diagnosis query and monitoring guidance are in the module file; do not "fix" this by bounding
   the barrier.
-- **The DCB check is a re-used prepared statement, and PostgreSQL can settle on the wrong one of its
-  two plans — in either direction.** From two OR-ed facts up the *generic* plan falls off a cliff
-  (~10–15×, absent on small stores), robust at two and three facts and *bistable across runs* at
-  wider ones; `conditionalAppendPlanning(PER_APPEND)` is the remedy. At ten million events the
-  canonical one-type-one-tag check fails the other way: the *custom* plan bitmaps the entity's whole
-  history (46.851 ms) where the generic one starts at the cursor (0.242 ms), and the planner prices
-  the custom at half — so `FORCE_GENERIC` is the remedy and `PER_APPEND` does nothing. **The two are
-  opposite remedies**, each a pessimisation in the other's regime, so neither goes on blind
-  (`PER_APPEND` costs 2.4× on a types-only filter).
+- **The DCB check's SQL shape is derived from the criteria, not configured.** A criteria carrying an
+  expected reference runs as an ordered probe (`ORDER BY event_tx, event_position LIMIT 1`) that
+  walks the position index forward *from the cursor* and stops at the first match — its cached
+  generic plan is that walk, so the plan is stable, there is no or-groups cliff (2.6× at ten OR-ed
+  facts), and the canonical one-type-one-tag check measures ~37× an unconditional append at ten
+  million events. A criteria *without* a reference — the uniqueness pattern, "I decided on an empty
+  boundary" — runs as `NOT EXISTS` with server preparation disabled for that statement, so it is
+  planned from its bound values and answered by the tag index (~2.4 ms/op at ten million events).
+  The probe's one cost is a stale cursor — linear in the stream events since it, ~0.2 µs each —
+  which the decide-then-append cycle avoids by construction. The natural alternative — one uniform
+  `NOT EXISTS` statement for every criteria, left to the plan cache — was measured and rejected: a
+  `NOT EXISTS` is priced by how soon a row turns up while a DCB check expects no row, so the plan
+  cache settles on plans built for the wrong question (~190× with 50–150% error bars on the
+  canonical check, a 14× cliff at two OR-ed facts, and a steady-state 1.16 s whole-table scan on
+  the empty boundary). The measurements behind that rejection are recorded in the benchmark
+  module's `CLAUDE.md`.
 - **Oldest supported PostgreSQL is 16**, and the `btree_gin` extension is required — creating it
   needs `CREATE` on the *database*, not the schema; a DBA installing it once is the recommended
   split, and an unprivileged role then starts against it silently.

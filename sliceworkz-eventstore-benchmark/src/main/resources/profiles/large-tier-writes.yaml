@@ -17,13 +17,10 @@ description: >
   depth or a GIN index's shape, so an append measured while the store went from 10.0M to 10.9M is
   measuring the same operation throughout. The cap is recorded in the manifest and printed in the
   report beside the drift, so a reader comparing this against a run measured under the default two
-  percent can see that the allowance was widened deliberately.
-
-  If a fast enough server breaches ten percent anyway, shorten the iterations -- do not widen the cap
-  further. Past roughly a tenth the corpus stops being the one the manifest names. In the event the
-  first captured run came in at 1.12%, so the allowance has never been needed: it was sized against an
-  assumed ~25 ops/ms at eight writers where the real figure is 4.7. Left as it is rather than tightened
-  to the default, because a server faster than that one should not fail a two-hour run over a label.
+  percent can see that the allowance was widened deliberately. In the event the first captured run
+  came in at 1.12%, so the allowance has never been needed: it was sized against an assumed ~25 ops/ms
+  at eight writers where the real figure is 4.7. Left as it is rather than tightened to the default,
+  because a server faster than that one should not fail a two-hour run over a label.
 
   One caveat before reading any of these against the medium tier: at a hundred thousand entities the
   per-iteration boundary cache almost never gets a hit, so nearly every append-type-and-tag invocation
@@ -34,28 +31,17 @@ description: >
   Budget more wall clock than the estimate promises. The estimator counts iteration time only, and at
   this tier the restore dominates it: taking the template costs seconds, but handing the store back at
   the end of each trial is a truncate-and-copy of ten million rows, about two and a half minutes, once
-  per trial. With three targets that is fifty-four trials, so expect something over two hours against
-  an estimate of a quarter of that.
+  per trial.
 
-  What to read first: the captured plans, not the throughputs. The first run with capture working
-  settled what the reconstructions had got wrong and posed the question this profile now exists to
-  answer. A DCB check carrying one type and one tag really does cost about 190x an unconditional
-  append at this volume -- but not because it scans the table, which is what the reconstructed plans
-  said and the write-up repeated. The store's own statements show an index scan:
-
-    generic  Index Scan on idx_events_stream_type_position, cursor in the Index Cond,
-             166 rows discarded, 53 buffers, 0.242 ms
-    custom   Bitmap Heap Scan via idx_events_stream_tags, cursor in the Filter,
-             16.806 rows discarded, exact=16.125 heap blocks, 19.939 buffers, 46.851 ms
-
-  Both plans are for the same statement. Knowing the tag value is what makes the planner choose worse:
-  the generic plan exhausts the events after the cursor, the custom plan exhausts the entity's whole
-  history and filters the cursor afterwards. And PostgreSQL prices the custom plan at roughly half the
-  generic one (122.66 against 226.56), so it keeps the 194x slower plan -- which is also why the
-  PER_APPEND target, which forces custom, moved nothing.
-
-  Hence the third target. Reading a 194x off two plans is not the same as measuring it, and the whole
-  argument for the suite is that the second is worth having.
+  This profile is also where the DCB check's shape was settled against its alternatives, and the
+  figures stay quotable from here. One uniform NOT EXISTS check for every criteria -- the obvious
+  spelling -- measures ~190-220x an unconditional append at this tier, with 50-150% error bars
+  from the plan cache flipping between a 44ms custom plan and a 1.25s sequential scan; pinning the
+  generic plan makes it 20x worse still. The check the library ships derives its shape from the
+  criteria instead -- an ordered probe from the cursor when one is present, the custom-planned tag
+  path when not -- and measures ~37x an unconditional append on this corpus's boundaries, at error
+  bars that describe the store. This profile keeps characterising that check as the store and the
+  workloads evolve.
 
 corpus:
   volume: 10000000
@@ -66,41 +52,10 @@ corpus:
   seed: 20260823
 
 targets:
-  # Three stores over one corpus, differing in one setting, so the run answers the question rather than
-  # needing three runs and a `compare`. The first is what an application gets by default: PostgreSQL
-  # holds a custom and a generic plan for the DCB check and picks between them on estimated cost.
   - backend: POSTGRES
     server: EXTERNAL
     metrics: OFF
     schemaMode: ENSURE
-  # Forces the custom plan -- re-planned from the values actually being bound. This is the remedy for
-  # the cliff the dcb-cost-curve profile measures, where several OR-ed facts make the generic plan look
-  # cheaper than it is. It is not free (CLAUDE.md records 2.4x on a types-only filter), which is why it
-  # is measured beside the default rather than switched on for everyone.
-  #
-  # Kept in this profile even though the first captured run showed it changing nothing here: that null
-  # result is the evidence that the default already picks custom at this volume, and dropping the target
-  # would leave the claim resting on the plans alone.
-  - backend: POSTGRES
-    server: EXTERNAL
-    metrics: OFF
-    schemaMode: ENSURE
-    appendPlanning: PER_APPEND
-  # Forces the generic plan -- the one the captured plans say is 194x faster here and the planner values
-  # at twice the cost. If the plans are being read correctly this target's append-type-and-tag should
-  # land near append-none's ~0.33 ms/op instead of ~62.7, and its decide-then-append should barely move,
-  # since that workload is ~99% its read.
-  #
-  # Two ways this could come back and still be informative. If it lands in between, the plan difference
-  # is real but something else is paying for it -- most likely the statement being server-prepared from
-  # its first execution rather than its sixth, which is what FORCE_GENERIC needs to have anything to
-  # apply to. If it lands nowhere near, the read of the plans was wrong and the 190x is somewhere else
-  # entirely, which is worth knowing before any of it is written up as advice.
-  - backend: POSTGRES
-    server: EXTERNAL
-    metrics: OFF
-    schemaMode: ENSURE
-    appendPlanning: FORCE_GENERIC
 
 jmh:
   workloads:

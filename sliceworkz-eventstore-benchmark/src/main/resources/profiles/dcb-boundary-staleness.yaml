@@ -1,0 +1,60 @@
+name: dcb-boundary-staleness
+description: >
+  What cursor age does to the DCB check, over the large-tier corpus. The check's shape is derived from
+  the criteria -- the ordered probe walking the position index forward from the cursor when one is
+  present, the custom-planned tag path when not -- and cursor age is the one variable the probe pays
+  for: every stream event after the cursor is a row it walks past to prove absence. This profile pins
+  the age at the three points that bracket the regime:
+
+    append-type-and-tag     the boundary read at append time -- fresh-ish, the ordinary decider
+    append-stale-boundary   a cursor half the stream old, filter matching nothing, so every
+                            invocation proves absence over the full walk -- the probe's bad case
+    append-empty-boundary   no cursor at all -- routed to the tag path, so this row is what the
+                            uniqueness pattern ("this basket was never checked out") costs
+
+  What the validation runs of this profile established, and the report record holds: fresh ~12ms/op
+  (the probe finding ~170 rows after the cursor), stale ~605ms/op (2.75M rows walked at ~0.22us each
+  -- linear, predictable, error bars under 3%), empty ~2.4ms/op (a tag-index miss planned from its
+  bound values, plus per-execution planning and a fresh GIN key per insert). The rejected
+  alternative -- one uniform NOT EXISTS check left to the plan cache -- measures 66ms at 117%
+  error, 1164ms and 1164ms on the same three rows: the plan cache settles on a whole-table
+  sequential scan for the stale and empty boundaries while a 0.06ms custom plan sits unused, which
+  is the measurement behind deriving the check's shape from the criteria instead.
+
+  The stale row is the check's one accepted cost, and it is the caller's to avoid: a decider that
+  re-reads its boundary before appending -- the ordinary decide-then-append cycle -- has a fresh
+  cursor by construction. A process manager holding an hour-old reference on a busy stream pays the
+  walk; re-reading is both the fix and what a conflict-retry loop does anyway.
+
+  Same corpus as large-tier-writes, so nothing re-provisions; same drift reasoning, same warning
+  about the estimate: the per-trial restore of ten million rows dominates the wall clock, so expect
+  around triple the estimate for the twelve trials.
+
+corpus:
+  volume: 10000000
+  streamDesign: TAGGED
+  composition: CLEAN
+  payload: REALISTIC
+  entityCount: 100000
+  seed: 20260823
+
+targets:
+  - backend: POSTGRES
+    server: EXTERNAL
+    metrics: OFF
+    schemaMode: ENSURE
+
+jmh:
+  workloads:
+    - append-none
+    - append-type-and-tag
+    - append-stale-boundary
+    - append-empty-boundary
+  # One thread: staleness is a property of the cursor, not of contention, and the fresh/stale/empty
+  # comparison is cleanest with nothing else moving the stream head mid-walk.
+  threads: [ 1 ]
+  forks: 3
+  warmupIterations: 2
+  measurementIterations: 4
+  iterationSeconds: 4
+  maxDrift: 0.10

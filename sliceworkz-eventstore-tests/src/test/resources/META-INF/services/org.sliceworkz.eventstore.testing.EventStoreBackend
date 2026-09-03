@@ -5,7 +5,3 @@ org.sliceworkz.eventstore.testing.backend.InMemoryFsBackend
 org.sliceworkz.eventstore.testing.backend.Postgres16Backend
 org.sliceworkz.eventstore.testing.backend.Postgres17Backend
 org.sliceworkz.eventstore.testing.backend.Postgres18Backend
-# Experimental (this branch): PostgreSQL 18 with the DCB check stated as SCAN_FROM_CURSOR, so the
-# alternative SQL shape is held to the full boundary contract, not just measured.
-org.sliceworkz.eventstore.Postgres18ScanFromCursorBackend
-org.sliceworkz.eventstore.Postgres18ByCriteriaBackend

@@ -1146,10 +1146,11 @@ each figure as Testcontainers-on-a-developer-machine unless the module file says
   the postgres notes.
 - **The library's own meters cost nothing measurable in throughput** — capped, uncapped and absent
   land within ~1% — so their cost is the heap and scrape size described in the metrics section above.
-- The DCB check's plan-cache cliff and its remedy are summarised under PostgreSQL below; the
-  `dcb-cost-curve` profile measures the curve, reproduced on a real server in
-  `results/0.11.0-SNAPSHOT/dcb-cost-curve-ext/` — the committed run shows the fully cliffed regime,
-  every width past one fact on the floor; the postgres module's notes record both regimes.
+- The DCB check's criteria-derived shape — the probe for cursor-bearing criteria, the
+  custom-planned tag path for cursorless ones — is summarised under PostgreSQL below, and the runs
+  that settled it are committed under `results/`. The old `NOT EXISTS` shape's plan-cache cliff is
+  preserved there as history (`dcb-cost-curve-ext` shows the fully cliffed regime); it no longer
+  exists in the shipped check.
 
 ## Naming Conventions
 
@@ -1302,17 +1303,20 @@ that bind everywhere:
   transactions holding a transaction id count — read-only ones never do, at any isolation level.
   The diagnosis query and monitoring guidance are in the module file; do not "fix" this by bounding
   the barrier.
-- **The DCB check is a re-used prepared statement, and the plan PostgreSQL can settle on wrongly is
-  always the *generic* one.** From two OR-ed facts up it falls off a cliff (~10–15×, absent on small
-  stores), robust at two and three facts and *bistable across runs* at wider ones;
-  `conditionalAppendPlanning(PER_APPEND)` is the remedy, and does not go on blind (it costs 2.4× on a
-  types-only filter where it changes no plan). At ten million events the canonical one-type-one-tag
-  check has the server choosing *correctly* — custom at cost 130 against generic at 250 — and the
-  custom plan is still ~190× an unconditional append, because it materialises the entity's whole
-  history and filters the cursor afterwards. `PER_APPEND` therefore does nothing there, and the fix
-  is stream layout rather than a planning mode. A `FORCE_GENERIC` mode built on a misread capture was
-  measured at **20× worse** on that corpus and has been removed; the generic plan for that check is a
-  sequential scan of the whole table (1251 ms against 44 ms).
+- **The DCB check's SQL shape is derived from the criteria, not configured.** A criteria carrying an
+  expected reference runs as an ordered probe (`ORDER BY event_tx, event_position LIMIT 1`) that
+  walks the position index forward *from the cursor* and stops at the first match — its cached
+  generic plan is that walk, so the plan is stable, there is no or-groups cliff (2.6× at ten OR-ed
+  facts where the old `NOT EXISTS` hit 14× at two), and the canonical one-type-one-tag check
+  measures ~37× an unconditional append at ten million events instead of the old shape's ~190× with
+  50–150% error bars. A criteria *without* a reference — the uniqueness pattern, "I decided on an
+  empty boundary" — runs as `NOT EXISTS` with server preparation disabled for that statement, so it
+  is planned from its bound values and answered by the tag index (~2.4 ms/op at ten million events;
+  the plan cache was measured serving that same statement a 1.16 s whole-table scan in steady
+  state). The probe's one cost is a stale cursor — linear in the stream events since it, ~0.2 µs
+  each — which the decide-then-append cycle avoids by construction. The former
+  `conditionalAppendPlanning`/`FORCE_GENERIC` modes are gone; the measured record is committed under
+  the benchmark module's `results/`.
 - **Oldest supported PostgreSQL is 16**, and the `btree_gin` extension is required — creating it
   needs `CREATE` on the *database*, not the schema; a DBA installing it once is the recommended
   split, and an unprivileged role then starts against it silently.

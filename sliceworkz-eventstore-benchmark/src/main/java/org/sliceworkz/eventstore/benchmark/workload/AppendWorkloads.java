@@ -299,9 +299,9 @@ public final class AppendWorkloads {
 	 * A DCB check against a <b>deliberately stale</b> cursor: the corpus midpoint, roughly half the
 	 * stream back. The other append workloads read their boundary at append time, so their cursors sit
 	 * wherever the entity's last event does -- fresh for the hot entities the Zipf walk favours. This
-	 * one pins the cursor's age instead, because cursor age is exactly the variable the two check
-	 * shapes disagree about: {@code NOT_EXISTS} through the tag index does not care how old the cursor
-	 * is, and {@code SCAN_FROM_CURSOR} pays for every stream event after it.
+	 * one pins the cursor's age instead, because cursor age is exactly what the ordered probe pays
+	 * for: every stream event after the cursor is a row it walks past to prove absence, while the tag
+	 * path the no-cursor branch takes does not care how old a cursor is.
 	 *
 	 * <p><b>The filter matches nothing, on purpose, and the appended events do not match it.</b> The
 	 * check's expected result is "no new relevant facts", and proving that absence is the cost under
@@ -311,9 +311,9 @@ public final class AppendWorkloads {
 	 * (an ordinary one, for the walked entity) keeps the store growing like the other append workloads.
 	 *
 	 * <p>Read it beside {@code append-type-and-tag} (fresh-ish cursors) and
-	 * {@code append-empty-boundary} (no cursor at all, the walk's degenerate case): the three are the
-	 * staleness curve, and where {@code SCAN_FROM_CURSOR} crosses the tag path's flat ~44 ms is the
-	 * number an adaptive check-shape choice would be built on.
+	 * {@code append-empty-boundary} (no cursor at all, routed to the tag path): the three are the
+	 * staleness curve the criteria-shaped check was designed against, and this row is its one
+	 * accepted cost -- linear in the walk, and avoided by re-reading the boundary before appending.
 	 */
 	private static Workload staleBoundary ( ) {
 		return new AbstractAppend("append-stale-boundary",

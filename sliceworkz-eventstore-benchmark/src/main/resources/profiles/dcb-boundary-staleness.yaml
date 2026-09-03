@@ -1,42 +1,33 @@
 name: dcb-boundary-staleness
 description: >
-  What cursor age does to the two DCB check shapes, over the large-tier corpus. The scan-from-cursor
-  run showed the ordered probe 5x better on the workload's own boundaries -- but those cursors sit
-  wherever each entity's last event does, which the Zipf walk keeps fresh for the entities it visits
-  most. Cursor age is exactly the variable the shapes disagree about: the tag path reads the entity's
-  whole history whatever the cursor says, and the forward walk pays for every stream event after it.
-  This profile pins the age instead of sampling it, at the three points that bracket the regime:
+  What cursor age does to the DCB check, over the large-tier corpus. The check's shape is derived from
+  the criteria -- the ordered probe walking the position index forward from the cursor when one is
+  present, the custom-planned tag path when not -- and cursor age is the one variable the probe pays
+  for: every stream event after the cursor is a row it walks past to prove absence. This profile pins
+  the age at the three points that bracket the regime:
 
     append-type-and-tag     the boundary read at append time -- fresh-ish, the ordinary decider
     append-stale-boundary   a cursor half the stream old, filter matching nothing, so every
-                            invocation proves absence over the full walk -- the probe's bad case,
-                            and the tag path's best (a GIN lookup finding zero entries)
-    append-empty-boundary   no cursor at all -- under the probe the walk has nowhere to start and
-                            must cover the whole stream; under NOT EXISTS it is a cheap tag miss.
-                            The degenerate case that decides whether the probe can ever simply
-                            replace the old shape, or must be chosen per criteria
+                            invocation proves absence over the full walk -- the probe's bad case
+    append-empty-boundary   no cursor at all -- routed to the tag path, so this row is what the
+                            uniqueness pattern ("this basket was never checked out") costs
 
-  What the first run of this profile decided: neither fixed shape wins. The probe took the fresh row
-  5.5x and, unexpectedly, the stale row 1.9x -- because NOT EXISTS forfeited its own best case to the
-  plan cache, running the 1.16s sequential scan in steady state on both the stale and the empty
-  boundary while its 0.06ms custom plan sat unused. The empty row tied at ~1164ms, a whole-stream
-  walk against a whole-table scan. That run is why BY_CRITERIA exists: the probe when the criteria
-  carries a cursor, the tag path planned from its bound values -- never from the plan cache -- when
-  it does not.
+  What the validation runs of this profile established, and the report record holds: fresh ~12ms/op
+  (the probe finding ~170 rows after the cursor), stale ~605ms/op (2.75M rows walked at ~0.22us each
+  -- linear, predictable, error bars under 3%), empty ~2.4ms/op (a tag-index miss planned from its
+  bound values, plus per-execution planning and a fresh GIN key per insert). Against the historical
+  NOT EXISTS shape the same three rows measured 66ms at 117% error, 1164ms, and 1164ms: the plan
+  cache served a whole-table sequential scan in steady state on the stale and empty boundaries while
+  a 0.06ms custom plan sat unused, which is the run that made the criteria-shaped check the only one.
 
-  This profile now runs the default against BY_CRITERIA, and it is the candidate default's
-  validation run: the one cell no run has measured in steady state is the no-cursor branch at ten
-  million events. The prediction, written before the run: append-empty-boundary collapses from
-  ~1164ms/op to under a millisecond of check (sub-ms tag miss plus the ~0.33ms append), turning the
-  1.4 ops/s row into hundreds; append-type-and-tag matches the probe's ~12ms/op from the earlier
-  run; append-stale-boundary stays at the probe's ~605ms -- the accepted cost of an ancient cursor,
-  bounded, linear and documented, on a path a real decider avoids by re-reading before appending.
-  If empty-boundary does NOT collapse, the forced-custom mechanism is not reaching the server and
-  the design is not ready.
+  The stale row is the check's one accepted cost, and it is the caller's to avoid: a decider that
+  re-reads its boundary before appending -- the ordinary decide-then-append cycle -- has a fresh
+  cursor by construction. A process manager holding an hour-old reference on a busy stream pays the
+  walk; re-reading is both the fix and what a conflict-retry loop does anyway.
 
   Same corpus as large-tier-writes, so nothing re-provisions; same drift reasoning, same warning
   about the estimate: the per-trial restore of ten million rows dominates the wall clock, so expect
-  around an hour and a half for the twenty-four trials against an estimate of a fraction of that.
+  around triple the estimate for the twelve trials.
 
 corpus:
   volume: 10000000
@@ -51,11 +42,6 @@ targets:
     server: EXTERNAL
     metrics: OFF
     schemaMode: ENSURE
-  - backend: POSTGRES
-    server: EXTERNAL
-    metrics: OFF
-    schemaMode: ENSURE
-    appendCheck: BY_CRITERIA
 
 jmh:
   workloads:

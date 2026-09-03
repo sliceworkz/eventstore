@@ -221,10 +221,6 @@ public interface PostgresEventStorage {
 		private MeterOptions meterOptions = MeterOptions.defaults();
 		private ShreddingCodec shreddingCodec;
 		private boolean shreddingOnOwnDataSource;
-		private PostgresEventStorageImpl.ConditionalAppendPlanning conditionalAppendPlanning =
-				PostgresEventStorageImpl.ConditionalAppendPlanning.SERVER_DEFAULT;
-		private PostgresEventStorageImpl.ConditionalAppendCheck conditionalAppendCheck =
-				PostgresEventStorageImpl.ConditionalAppendCheck.NOT_EXISTS;
 
 		private Builder ( ) {
 
@@ -422,61 +418,6 @@ public interface PostgresEventStorage {
 		 */
 		public Builder notificationStartupTimeout ( Duration timeout ) {
 			this.notificationStartupTimeout = timeout == null ? PostgresEventStorageImpl.DEFAULT_NOTIFICATION_STARTUP_TIMEOUT : timeout;
-			return this;
-		}
-
-		/**
-		 * Chooses how PostgreSQL may plan the DCB consistency check.
-		 * <p>
-		 * The check is a re-used prepared statement, so the server holds a <em>custom</em> plan built from
-		 * the actual parameter values and a <em>generic</em> one built against default selectivity, and
-		 * from the tenth execution it adopts the generic plan if its estimate looks no worse. A DCB check
-		 * is the shape that misleads that comparison: its expected result is <em>no rows</em>, while a
-		 * {@code NOT EXISTS} is priced by how soon a row is expected to turn up.
-		 * <p>
-		 * The mistake always favours the generic plan, so there is one remedy and it is
-		 * {@link PostgresEventStorageImpl.ConditionalAppendPlanning#PER_APPEND}: for a filter of several
-		 * OR-ed facts, each extra fact makes the generic plan look cheaper while the custom one, built
-		 * from real tag statistics, looks dearer. Past the crossing the server settles on a plan that
-		 * scans the events table for a row that is not there and never reconsiders; this plans every
-		 * append from its own values instead.
-		 * <p>
-		 * Unconditional appends and every read are unaffected. This is not a general speed-up — where it
-		 * changes no plan it costs up to 2.4× on a types-only filter — so turn it on for a store whose
-		 * plans have been looked at, not on the strength of this javadoc.
-		 * <pre>{@code
-		 * EventStorage storage = PostgresEventStorage.newBuilder()
-		 *     .conditionalAppendPlanning(ConditionalAppendPlanning.PER_APPEND)
-		 *     .build();
-		 * }</pre>
-		 *
-		 * @param planning the mode; {@code null} restores the default
-		 * @return this Builder for method chaining
-		 */
-		public Builder conditionalAppendPlanning (
-				PostgresEventStorageImpl.ConditionalAppendPlanning planning ) {
-			this.conditionalAppendPlanning = planning == null
-					? PostgresEventStorageImpl.ConditionalAppendPlanning.SERVER_DEFAULT
-					: planning;
-			return this;
-		}
-
-		/**
-		 * Chooses which SQL shape the DCB consistency check is stated in. <b>Experimental</b> — this
-		 * setting exists to be measured and is expected to disappear once
-		 * {@link PostgresEventStorageImpl.ConditionalAppendCheck#BY_CRITERIA}, which derives the shape
-		 * from each criteria instead of pinning one, has a validation run behind it and becomes the
-		 * only behaviour. See {@link PostgresEventStorageImpl.ConditionalAppendCheck} for the shapes
-		 * and what each costs. The meaning of a consistency boundary is identical under all of them.
-		 *
-		 * @param check the shape; {@code null} restores the default ({@code NOT_EXISTS})
-		 * @return this Builder for method chaining
-		 */
-		public Builder conditionalAppendCheck (
-				PostgresEventStorageImpl.ConditionalAppendCheck check ) {
-			this.conditionalAppendCheck = check == null
-					? PostgresEventStorageImpl.ConditionalAppendCheck.NOT_EXISTS
-					: check;
 			return this;
 		}
 
@@ -701,8 +642,6 @@ public interface PostgresEventStorage {
 					? new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, createdDataSources, meterRegistry)
 					: new PostgresLegacyEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, createdDataSources, meterRegistry);
 
-				result.setConditionalAppendPlanning(conditionalAppendPlanning);
-				result.setConditionalAppendCheck(conditionalAppendCheck);
 
 				switch ( databaseInitMode ) {
 					case NONE       -> { }

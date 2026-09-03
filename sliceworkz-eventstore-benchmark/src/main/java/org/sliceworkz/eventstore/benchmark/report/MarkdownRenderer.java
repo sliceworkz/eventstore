@@ -174,7 +174,7 @@ final class MarkdownRenderer {
 	/**
 	 * Every workload against every target, with the first target as the reference.
 	 *
-	 * <p>A profile whose targets differ in one setting -- metrics-cost, dcb-plan-cache -- exists to
+	 * <p>A profile whose targets differ in one setting -- metrics-cost is the type specimen -- exists to
 	 * ask what that setting costs, and the per-target tables below cannot answer it: each describes
 	 * one target, so the reader is left doing the division by hand off the "every measurement" table.
 	 * Both profiles' descriptions promise the comparison needs no second report, and until this

@@ -185,20 +185,13 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	private final MeterRegistry meterRegistry;
 
-	/** See {@link ConditionalAppendPlanning}; set by the builder before the storage is started. */
-	private volatile ConditionalAppendPlanning conditionalAppendPlanning =
-			ConditionalAppendPlanning.SERVER_DEFAULT;
-
-	/** See {@link ConditionalAppendCheck}; set by the builder before the storage is started. */
-	private volatile ConditionalAppendCheck conditionalAppendCheck =
-			ConditionalAppendCheck.NOT_EXISTS;
-
 	/**
-	 * Whether the warning about being unable to apply {@link #conditionalAppendPlanning} has been
-	 * logged. Once, not per append: it is a property of the driver under this storage, so it cannot
-	 * start working, and a per-append WARN on the write path would be its own outage.
+	 * Whether the warning about being unable to keep a no-cursor check off the plan cache (see
+	 * {@link #disableServerPreparation}) has been logged. Once, not per append: it is a property of
+	 * the driver under this storage, so it cannot start working, and a per-append WARN on the write
+	 * path would be its own outage.
 	 */
-	private final AtomicBoolean planningWarningLogged = new AtomicBoolean();
+	private final AtomicBoolean preparationWarningLogged = new AtomicBoolean();
 
 	private static final JsonMapper JSONMAPPER = JsonMapper.builder().build();
 
@@ -1223,13 +1216,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * every page of a replay. End to end that was 2.9x on a five-page cursor walk and 2.0x on a
 	 * projector run, with the shapes that carry no boundary unmoved.
 	 *
-	 * <p><b>It also improves the plans the server caches for the DCB check</b>, which is a separate
-	 * question from the read path and was not what this was for. A conditional append's {@code NOT
-	 * EXISTS} carries the same boundary, and under the expansion the <em>generic</em> plan for the
-	 * canonical {@code type + tag} check was a whole-table sequential scan (19.5ms, 100.008 rows
-	 * discarded); with the row comparison it is an index scan (0.23ms). See
-	 * {@code conditionalAppendPlanning} for what remains: filters OR-ing three or more facts still flip,
-	 * because that cliff is the tag disjunction rather than the cursor.
+	 * <p><b>The DCB check depends on the same property</b>, which is a separate question from the read
+	 * path and was not what this was for: a cursor-bearing check carries this boundary as the start
+	 * condition of its ordered probe (see {@code append}), so the probe's cost being "events after the
+	 * cursor" rather than "cursor depth" rests on the row comparison being an index start condition
+	 * exactly as it does here.
 	 *
 	 * @param sqlBuilder the statement being built
 	 * @param parameters the parameter list being built alongside it
@@ -1372,181 +1363,80 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private static final String ACQUIRE_APPEND_LOCK = "SELECT pg_advisory_xact_lock(?)";
 
 	/**
-	 * How PostgreSQL is allowed to plan the conditional append's {@code NOT EXISTS}.
+	 * How the conditional append states its DCB consistency check, and why it is not a setting.
 	 *
-	 * <p><b>Why this is a setting at all.</b> The consistency check is a re-used prepared statement, so
-	 * PostgreSQL holds two plans for it: a <em>custom</em> one re-planned from the actual parameter
-	 * values, and a <em>generic</em> one planned once against default selectivity. From the tenth
-	 * execution it compares their estimated costs and adopts the generic plan if it looks no worse.
-	 *
-	 * <p><b>A DCB check is the shape that defeats that comparison</b>, because its expected result is
-	 * <em>no rows</em> while the planner prices a {@code NOT EXISTS} by how soon it expects to find one.
-	 * Every OR-ed fact a decision rests on makes the generic plan expect a match sooner, so its estimate
-	 * <em>falls</em> while the custom plan's — built from real tag statistics — rises. Past the crossing
-	 * the server adopts a plan that scans the events table for a row that is not there, and never
-	 * reconsiders. {@link #PER_APPEND} is the remedy.
-	 *
-	 * <p><b>The failure only ever runs in that direction, and that has been measured in both regimes
-	 * it was looked for in.</b> Forcing the <em>generic</em> plan instead was tried on the strength of a
-	 * plan capture that turned out to have been read off the wrong workload, and measured on a
-	 * ten-million-event store it was 20× <em>worse</em>: for one type plus one tag the generic plan is a
-	 * sequential scan of the whole table (~1250 ms) where the custom plan bitmaps the entity's history
-	 * (~44 ms), and the planner correctly prices the custom at half the generic and keeps it. So there
-	 * is no mode here for pinning the generic plan — no store has been observed to want one.
-	 *
-	 * <p><b>{@link #PER_APPEND} is still not a "make appends faster" switch.</b> Where it changes no
-	 * plan it costs up to 2.4× on a types-only filter. Turn it on against a store whose plans have been
-	 * <em>looked at</em>, never on the strength of this javadoc.
-	 */
-	public enum ConditionalAppendPlanning {
-
-		/**
-		 * Plan every conditional append from its own parameter values.
-		 *
-		 * <p>Costs planning per append and removes the wide-filter cliff. Equivalent to
-		 * {@code SET plan_cache_mode = 'force_custom_plan'} for this statement, done through the driver
-		 * so it needs no extra round trip and touches no other statement.
-		 */
-		PER_APPEND,
-
-		/**
-		 * Let PostgreSQL choose between its custom and generic plans, as it does for any other
-		 * statement. The historical behaviour, and the default.
-		 */
-		SERVER_DEFAULT
-	}
-
-	/** How this storage lets PostgreSQL plan its conditional appends. */
-	public ConditionalAppendPlanning getConditionalAppendPlanning ( ) {
-		return conditionalAppendPlanning;
-	}
-
-	/**
-	 * Sets how PostgreSQL may plan the conditional append; see {@link ConditionalAppendPlanning}.
-	 *
-	 * @param planning the mode; {@code null} restores {@link ConditionalAppendPlanning#SERVER_DEFAULT}
-	 */
-	public void setConditionalAppendPlanning ( ConditionalAppendPlanning planning ) {
-		this.conditionalAppendPlanning = planning == null ? ConditionalAppendPlanning.SERVER_DEFAULT : planning;
-	}
-
-	/**
-	 * Which SQL shape the conditional append states its consistency check in. <b>Experimental</b> —
-	 * this setting exists to be measured, and may be removed if the measurement says no; do not build
-	 * on it.
-	 *
-	 * <p>Both shapes ask the same question — is there any event matching the boundary's filter after
-	 * the expected reference — and mean exactly the same thing: same predicates, same snapshot, same
-	 * advisory lock, same {@code (event_tx, event_position)} tuple comparison. What differs is which
-	 * access path they invite PostgreSQL to take, and the two paths bill in different currencies:
+	 * <p>The check asks one question — is there any event matching the boundary's filter after the
+	 * expected reference — and PostgreSQL has two fundamentally different ways to answer it, billing
+	 * in different currencies:
 	 *
 	 * <ul>
-	 *   <li>{@link #NOT_EXISTS} leaves the choice to the planner, which on a selective tag filter
-	 *       reaches for the tag index — so the check collects <em>every event the boundary's entity
-	 *       ever had</em> and discards what is before the cursor. Cost follows the entity's whole
-	 *       history, however fresh the cursor is: measured at ten million events, ~44 ms against an
-	 *       entity holding 17.000 events.</li>
-	 *   <li>{@link #SCAN_FROM_CURSOR} phrases the check as an {@code ORDER BY … LIMIT 1} probe in
-	 *       cursor order, which invites the planner to walk the stream's position index <em>forward
-	 *       from the cursor</em>, testing the filter on each event as it passes and stopping at the
-	 *       first match. Cost follows <em>the stream's traffic since the cursor</em>: nearly free for
-	 *       a cursor read moments ago — the ordinary decide-then-append — and unbounded for a stale
-	 *       one, where proving absence walks everything the whole stream appended since. A wildcard
-	 *       stream has no equality prefix for the position index, so there this shape buys nothing and
-	 *       may sort.</li>
+	 *   <li><b>Through the tag index</b> ({@code WHERE NOT EXISTS (SELECT 1 …)}): collect every event
+	 *       the boundary's entity ever had and discard what is before the cursor. O(entity history),
+	 *       however fresh the cursor — measured ~44 ms against a 17.000-event entity on a
+	 *       ten-million-event store.</li>
+	 *   <li><b>Forward from the cursor</b> ({@code WHERE (SELECT event_position … ORDER BY event_tx,
+	 *       event_position LIMIT 1) IS NULL}): walk the stream's position btree from the cursor,
+	 *       testing the filter per event, stopping at the first match. O(stream events after the
+	 *       cursor) — near-free for a cursor read moments ago, unbounded for a criteria with no
+	 *       cursor at all.</li>
 	 * </ul>
 	 *
-	 * <p>Neither fixed shape dominates: the first is O(entity history), the second O(stream events
-	 * after the cursor), and which is smaller is decided by something the criteria itself states —
-	 * whether it carries an expected reference. {@link #BY_CRITERIA} derives the shape from that,
-	 * per append, and the measurements justify it: the probe won or tied {@code NOT_EXISTS} on every
-	 * cursor-bearing workload at 5k, 100k and 10M events (5.5× on the canonical check at the large
-	 * tier, no or-groups cliff, no plan-cache bistability), and the one shape it loses — a criteria
-	 * with no cursor, where the walk has nowhere to start — is exactly the shape routed to the tag
-	 * path instead, custom-planned so the plan cache cannot serve it the sequential scan it was
-	 * measured serving in steady state.
-	 */
-	public enum ConditionalAppendCheck {
-
-		/**
-		 * The shape derived from the criteria, per append: {@link #SCAN_FROM_CURSOR} when an expected
-		 * reference is present (the ordinary decide-then-append), {@link #NOT_EXISTS} — planned from
-		 * the bound values, never from the plan cache — when it is absent (the uniqueness pattern:
-		 * "I decided on an empty boundary"). The intended production shape.
-		 */
-		BY_CRITERIA,
-
-		/**
-		 * The historical shape, pinned: {@code WHERE NOT EXISTS (SELECT 1 … )}, index choice left to
-		 * the planner and the plan cache. The default, until {@link #BY_CRITERIA} has a validation run
-		 * behind it; kept selectable afterwards only as the measurement baseline.
-		 */
-		NOT_EXISTS,
-
-		/**
-		 * The check as an ordered probe, pinned for every criteria: {@code WHERE (SELECT
-		 * event_position … ORDER BY event_tx, event_position LIMIT 1) IS NULL}.
-		 * {@code ORDER BY … LIMIT 1} is the strongest steer the planner knows towards the index that
-		 * yields rows already in that order — the stream's {@code (context, purpose, event_tx,
-		 * event_position)} btree, entered at the cursor. Degenerate for a criteria with no cursor,
-		 * which is why {@link #BY_CRITERIA} exists.
-		 */
-		SCAN_FROM_CURSOR
-	}
-
-	/** How this storage states its conditional appends' consistency check. */
-	public ConditionalAppendCheck getConditionalAppendCheck ( ) {
-		return conditionalAppendCheck;
-	}
-
-	/**
-	 * Sets the SQL shape of the conditional append's consistency check; see
-	 * {@link ConditionalAppendCheck}.
+	 * <p><b>Which is cheaper is stated by the criteria itself</b>, so the store derives the shape per
+	 * append rather than exposing a mode: an expected reference present — the ordinary
+	 * decide-then-append — takes the ordered probe, whose {@code ORDER BY … LIMIT 1} steers the
+	 * planner to the position index entered at the cursor and whose <em>generic</em> plan is already
+	 * that index walk, so the cached plan is stable and good. An expected reference absent — the
+	 * uniqueness pattern, "I decided on an empty boundary" — takes the {@code NOT EXISTS} form with
+	 * server preparation disabled for that statement (see {@link #disableServerPreparation}), so it is
+	 * planned from its bound values every time and answered by the tag index in sub-millisecond.
 	 *
-	 * @param check the shape; {@code null} restores {@link ConditionalAppendCheck#NOT_EXISTS}
+	 * <p><b>Why the no-cursor branch must never come from the plan cache.</b> A {@code NOT EXISTS} is
+	 * priced by how soon a row is expected to turn up, while a DCB check expects <em>no rows</em> —
+	 * the mis-pricing that once produced the or-groups cliff (a two-fact filter 14× slower than one)
+	 * and, at ten million events, a steady state in which the cached generic plan sequentially scanned
+	 * the whole table (~1.16 s per append) while the 0.06 ms custom plan sat unused. Planned from its
+	 * values, the same statement measured 2.42 ms/op — 486× — on the run that made this shape the
+	 * only one.
+	 *
+	 * <p>Both shapes mean exactly the same thing: same predicates, same snapshot, same advisory lock,
+	 * same {@code (event_tx, event_position)} tuple comparison — the compliance suite holds both
+	 * branches and the routing between them to the boundary contract. The measured record for the
+	 * probe half: won or tied the historical shape on every cursor-bearing workload at 5k, 100k and
+	 * 10M events (5.5× on the canonical one-type-one-tag check at the large tier), no or-groups cliff
+	 * (2.6× at ten facts where {@code NOT EXISTS} hit 14× at two), and none of the plan-cache
+	 * bistability that put 50–150% error bars on the old shape's measurements. The probe's one
+	 * accepted cost is a cursor far behind the stream head — linear in the events since it (~0.2 µs
+	 * per event) — which a decider avoids by re-reading its boundary before appending, as the
+	 * decide-then-append cycle does anyway.
 	 */
-	public void setConditionalAppendCheck ( ConditionalAppendCheck check ) {
-		this.conditionalAppendCheck = check == null ? ConditionalAppendCheck.NOT_EXISTS : check;
+	private static boolean scanFromCursor ( AppendCriteria appendCriteria ) {
+		return appendCriteria.expectedLastEventReference().isPresent();
 	}
 
 	/**
-	 * Tells the driver how eagerly to server-prepare the conditional append, which is what decides
-	 * whether the server has a plan to cache at all.
+	 * Keeps a no-cursor consistency check off the plan cache, so PostgreSQL plans it from the values
+	 * bound to it on every execution.
 	 *
 	 * <p>pgjdbc only makes a statement server-prepared after {@code prepareThreshold} executions
 	 * (five by default), and a statement that never becomes server-prepared has no cached plan to be
-	 * chosen for it. {@link ConditionalAppendPlanning#PER_APPEND} therefore sets the threshold to
-	 * <b>0</b>, which keeps the statement unnamed forever, so PostgreSQL plans every execution from the
-	 * values bound to it. Done here rather than with {@code SET LOCAL plan_cache_mode} because it costs
-	 * no round trip and — unlike the GUC — cannot reach any other statement sharing the connection.
-	 *
-	 * <p>{@code forceCustomPlan} is {@link ConditionalAppendCheck#BY_CRITERIA}'s no-cursor branch
-	 * asking for threshold <b>0</b> on this statement regardless of the planning mode: a uniqueness
-	 * check answered from the tag index is sub-millisecond when planned from its bound values, and
-	 * the plan cache was measured serving it a whole-table sequential scan in steady state instead.
-	 * Per statement text, so the cursor-bearing statement on the same connection keeps its cached
-	 * probe plan.
+	 * chosen for it — so threshold <b>0</b>, set through the driver, costs no round trip and, unlike a
+	 * {@code SET LOCAL plan_cache_mode}, cannot reach any other statement sharing the connection. It
+	 * is per statement text, so the cursor-bearing check on the same connection keeps its cached probe
+	 * plan.
 	 *
 	 * <p><b>Best effort, and loud once if it fails.</b> A {@code DataSource} that is not pgjdbc, or a
-	 * proxy that will not unwrap to it, leaves the store running exactly as it did before with a
-	 * configured setting silently not applied — which is worth one WARN naming what was asked for, and
-	 * not worth failing an append over.
+	 * proxy that will not unwrap to it, leaves the statement on the server's custom-versus-generic
+	 * choice — which is worth one WARN naming what could not be applied, and not worth failing an
+	 * append over.
 	 */
-	private void applyConditionalAppendPlanning ( PreparedStatement statement, boolean forceCustomPlan ) {
-		int threshold = forceCustomPlan ? 0 : switch ( conditionalAppendPlanning ) {
-			case PER_APPEND     -> 0;
-			case SERVER_DEFAULT -> -1;
-		};
-		if ( threshold < 0 ) {
-			return;
-		}
+	private void disableServerPreparation ( PreparedStatement statement ) {
 		try {
-			statement.unwrap(org.postgresql.PGStatement.class).setPrepareThreshold(threshold);
+			statement.unwrap(org.postgresql.PGStatement.class).setPrepareThreshold(0);
 		} catch ( SQLException | RuntimeException e ) {
-			if ( planningWarningLogged.compareAndSet(false, true) ) {
-				LOGGER.warn("conditional appends were configured to be planned {}, but this DataSource"
-						+ " does not expose a PostgreSQL statement to say so; PostgreSQL will keep"
-						+ " choosing between its custom and generic plans", conditionalAppendPlanning, e);
+			if ( preparationWarningLogged.compareAndSet(false, true) ) {
+				LOGGER.warn("a no-cursor consistency check should be planned from its bound values, but"
+						+ " this DataSource does not expose a PostgreSQL statement to say so; PostgreSQL"
+						+ " will keep choosing between its custom and generic plans", e);
 			}
 		}
 	}
@@ -1678,7 +1568,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * <p>
 	 * Nothing promises that order — {@code RETURNING} is not in the SQL standard, and PostgreSQL
 	 * documents only "a row per row actually inserted". It holds because the consistency check below
-	 * (whichever {@link ConditionalAppendCheck} shape states it)
+	 * (whichever shape the criteria selects — see {@link #scanFromCursor(AppendCriteria)})
 	 * is <em>uncorrelated</em>: it references the events table and bound parameters, never a column of
 	 * {@code new_events}. PostgreSQL therefore evaluates it once as an InitPlan and applies it as a
 	 * One-Time Filter over the VALUES list, and every node in that plan preserves order. Being
@@ -1742,35 +1632,24 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 			// Both shapes carry identical predicates between these two fragments; they differ only in
 			// how they invite the planner to answer them. The subquery stays uncorrelated with
-			// new_events either way, which is what the RETURNING-order argument above rests on.
-			// BY_CRITERIA resolves to a concrete shape here, from the one property of the criteria the
-			// two shapes disagree about: a cursor gives the ordered probe a place to start; without one
-			// the probe would walk the whole stream, and the tag path answers instantly -- provided it
-			// is planned from the bound values, which forceCustomPlan below sees to.
-			ConditionalAppendCheck checkShape = switch ( conditionalAppendCheck ) {
-				case BY_CRITERIA -> appendCriteria.expectedLastEventReference().isPresent()
-						? ConditionalAppendCheck.SCAN_FROM_CURSOR
-						: ConditionalAppendCheck.NOT_EXISTS;
-				case NOT_EXISTS, SCAN_FROM_CURSOR -> conditionalAppendCheck;
-			};
-			boolean forceCustomPlan = conditionalAppendCheck == ConditionalAppendCheck.BY_CRITERIA
-					&& checkShape == ConditionalAppendCheck.NOT_EXISTS;
+			// new_events either way, which is what the RETURNING-order argument above rests on. The
+			// shape is the criteria's own: a cursor gives the ordered probe a place to start; without
+			// one the probe would walk the whole stream, and the tag path answers instantly -- provided
+			// it is planned from the bound values, which disableServerPreparation below sees to.
+			boolean scanFromCursor = scanFromCursor(appendCriteria);
 
 			if ( ! appendCriteria.isNone() ) {
 
 				// Now add the optimistic locking conditions
-				sqlBuilder.append(switch ( checkShape ) {
-					case NOT_EXISTS -> """
-						WHERE NOT EXISTS (
-							SELECT 1 FROM %sevents
-							WHERE 1=1 """.formatted(prefix);
-					case SCAN_FROM_CURSOR -> """
+				sqlBuilder.append(scanFromCursor
+						? """
 						WHERE (
 							SELECT event_position FROM %sevents
-							WHERE 1=1 """.formatted(prefix);
-					case BY_CRITERIA -> throw new IllegalStateException(
-							"BY_CRITERIA resolves to a concrete shape above and cannot reach the SQL");
-				});
+							WHERE 1=1 """.formatted(prefix)
+						: """
+						WHERE NOT EXISTS (
+							SELECT 1 FROM %sevents
+							WHERE 1=1 """.formatted(prefix));
 
 
 				// Add stream filtering
@@ -1808,16 +1687,13 @@ public class PostgresEventStorageImpl implements EventStorage {
 					addEventFilterFiltering(sqlBuilder, parameters, lockingFilter);
 				}
 
-				sqlBuilder.append(switch ( checkShape ) {
-					case NOT_EXISTS -> ") ";
-					// The ORDER BY is the (event_tx, event_position) tuple order every read and the
-					// cursor comparison already use -- see ConditionalAppendCheck.SCAN_FROM_CURSOR. A
-					// bare event_tx resolves to the xid8 column here: unlike the read path, this select
-					// list carries no text output column shadowing the name.
-					case SCAN_FROM_CURSOR -> " ORDER BY event_tx, event_position LIMIT 1) IS NULL ";
-					case BY_CRITERIA -> throw new IllegalStateException(
-							"BY_CRITERIA resolves to a concrete shape above and cannot reach the SQL");
-				});
+				// The ORDER BY is the (event_tx, event_position) tuple order every read and the cursor
+				// comparison already use -- see scanFromCursor(AppendCriteria). A bare event_tx
+				// resolves to the xid8 column here: unlike the read path, this select list carries no
+				// text output column shadowing the name.
+				sqlBuilder.append(scanFromCursor
+						? " ORDER BY event_tx, event_position LIMIT 1) IS NULL "
+						: ") ");
 			}
 
 			sqlBuilder.append("RETURNING event_position, event_timestamp, event_tx::text, event_id::text");
@@ -1829,7 +1705,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 				try ( PreparedStatement stmt = writeConnection.prepareStatement(sqlBuilder.toString()) ) {
 
 					if ( ! appendCriteria.isNone() ) {
-						applyConditionalAppendPlanning(stmt, forceCustomPlan);
+						if ( !scanFromCursor ) {
+							disableServerPreparation(stmt);
+						}
 
 						// Serialize this stream's conditional appends: the NOT EXISTS below is a phantom
 						// check, which READ COMMITTED does not protect. Held until this transaction ends,

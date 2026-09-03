@@ -265,11 +265,18 @@ And `append-none` scales only 3.01 → 4.69 ops/ms from one writer to eight (1.5
 maintenance and WAL at ten million rows — the most interesting thing in the writes profile, and it
 deserves measuring on purpose rather than as a control.
 
-#### What the three-target run found: a 190× DCB check, and a remedy that was not one
+#### How the DCB check got its shape: four runs at this tier, and what each retired
 
-**A conditional append carrying one type and one tag costs ~200× an unconditional one at this volume**
-— 66.03 ms/op against 0.328 ms/op at one writer. That is the headline. The captured plans say why, and
-they also retire two earlier readings of them:
+**This corpus is where the check's SQL shape was settled.** The library now derives the shape from
+the criteria per append — an ordered probe walking `idx_events_stream_position` forward from the
+cursor when the criteria carry one, the tag path planned from its bound values when they do not —
+and there is no mode to configure. That design was not reasoned out; it was forced, one run at a
+time, and each run's report is committed as the record. The sequence, because every step retired
+something plausible:
+
+**Run one (historical `NOT EXISTS`, three targets): a ~190-220× check and a remedy that was not
+one.** A conditional append carrying one type and one tag measured 66.03 ms/op against 0.328 ms/op
+unconditional at one writer, with 47–147% relative error. The captured plans said why:
 
 | | custom | generic |
 |---|---|---|
@@ -281,40 +288,57 @@ they also retire two earlier readings of them:
 | actual time | **44.4 ms** | **1251 ms** |
 | planner's estimate | cost **130.35** | cost 250.21 |
 
-- **The custom plan is the one in effect, and PostgreSQL is right to keep it.** Binding the tag value
+- The custom plan was the one in effect, and PostgreSQL was right to keep it: binding the tag value
   sends the planner to `idx_events_stream_tags`, and the cursor demotes from a start condition to a
-  filter — so the check exhausts *the entity's whole history* instead of the events after the cursor.
-  On the head entity that history is 455.092 events. That materialisation is the 190×.
-- **The generic plan is not a faster alternative — it is a sequential scan.** An earlier capture was
-  read as showing it doing an index scan on `idx_events_stream_type_position` at 0.242 ms with the
-  cursor in the Index Cond, and a `FORCE_GENERIC` mode was built on that reading. **That plan belongs
-  to `append-types`**, the types-only check, which carries no tag value to send the planner elsewhere.
-  The generic plan for *this* check discards ten million rows.
-- **So the third target settled it by being wrong: 1248.50 ms/op, 20× worse than the default**, 48
-  useful appends in a trial against 731, and matching its captured Seq Scan (1251 ms) almost exactly.
-  The backend setting has been removed and so has the target. This is the suite's clearest result to
-  date, and it is a negative one: reading a ratio off two plans is not measuring it, and the reading
-  was wrong twice — first that the check fell back to a sequential scan (a *reconstructed* plan), then
-  that its generic plan was an index scan (a captured plan, from another workload).
-- **`PER_APPEND` changed nothing**, on both runs. It forces the custom plan, which is the plan already
-  in effect. Keep the target: the null result is the evidence that the default picks correctly here.
-- **`decide-then-append` at 602.87 ms/op is 94–99% its decide read**, not its append. The read returns
+  filter — so the check exhausted *the entity's whole history* (455.092 events on the head entity)
+  instead of the events after the cursor. That materialisation was the ~190×.
+- A `FORCE_GENERIC` mode had been built on a misread capture (an index-scan generic plan that
+  belonged to `append-types`, the types-only check). Measured, it was **1248.50 ms/op — 20× worse**,
+  matching its captured Seq Scan almost exactly, and it was removed. The suite's clearest negative
+  result: reading a ratio off two plans is not measuring it.
+- A `PER_APPEND` planning mode changed nothing here — it forces the custom plan, which was the plan
+  already in effect.
+
+**Run two (the ordered probe, on a branch target): 5.5× better on every cursor-bearing row.** The
+rewrite that actually addresses the materialisation is not a planning mode but a different check:
+`(SELECT event_position ... WHERE stream and cursor and filter ORDER BY event_tx, event_position
+LIMIT 1) IS NULL` walks the position index *forward from the cursor* and stops at the first match,
+so its cost is the events after the cursor (~0.2µs per row walked) rather than the entity's
+history. `append-type-and-tag` went 66 → 11.93 ms/op — and the 47–147% error bars collapsed to
+under 10%, which also settled the variance question run one could not: the scatter was the plan
+cache and the entity ramp *under a plan that materialises history*, and the probe removed both at
+once.
+
+**Run three (`dcb-boundary-staleness`): what `NOT EXISTS` still owned, it forfeited to the plan
+cache.** The probe needs a cursor to start from, so the no-cursor case — the uniqueness pattern,
+"this basket was never checked out", criteria with `Optional.empty()` — stays on the tag path. Left
+as a reused prepared statement, that path's steady state was the **1164 ms/op sequential scan** on
+stale and empty boundaries while a 0.06 ms custom plan sat unused: `NOT EXISTS` is priced by
+expected-first-row, DCB expects *no* row, and from the tenth execution the generic plan wins the
+estimate and loses the store. Forcing the no-cursor statement to plan from its bound values every
+time (`setPrepareThreshold(0)`) took the empty boundary from 1164 to **2.42 ms/op** — per-execution
+planning is noise against a 486× plan defect.
+
+**Run four (validation of the criteria-shaped check, now the shipped behaviour):** fresh boundary
+~12 ms/op (the probe finding ~170 rows after the cursor), stale boundary ~605 ms/op (2.75M rows
+walked, linear and predictable at under 3% error — the probe's one accepted cost, avoided by
+re-reading the boundary before appending, which the decide-then-append cycle does anyway), empty
+boundary ~2.4 ms/op. **~37× an unconditional append on this corpus's boundaries, against the
+~190-220× it replaced**, at error bars that finally describe the store. The or-groups cliff the
+plan-cache profiles measured under `NOT EXISTS` (14× at two facts) is absent under the probe (2.62×
+at ten facts), which is why those two profiles are gone: their question is closed, and their
+committed reports under `results/` are the record.
+
+Two findings from run one that are about the workload rather than the check, still standing:
+
+- **`decide-then-append` at this tier is 94–99% its decide read**, not its append. The read returns
   455.092 rows and falls off three cliffs at once — lossy bitmap (`exact=17849 lossy=44563`), an
-  `external merge Disk: 38120kB` sort, and 190.7 ms of JIT. Forcing a plan will not help there;
-  bounding the read will.
-- **Eight of the eighteen rows were refused publication at 47–147% relative error** — every
-  conditional-append row on the two targets running the custom plan. That refusal is correct, and the
-  scatter has **two candidate causes this run cannot separate**: the Zipf entity walk, whose
-  per-operation cost ramps from ~35 ms/op mid-tail to ~1000 ms/op on the head entity, and the plan
-  cache occasionally serving the 1.25 s generic plan (~2% of appends would account for the gap between
-  a 44 ms plan and 66 ms/op measured). The `FORCE_GENERIC` target's tight error bars (0.8–8.6%) look
-  like evidence for the second and are not: a sequential scan costs the same whatever entity it is
-  asked about, so pinning it flattens the entity ramp too. Separating them needs the permuted entity
-  walk below, which removes one of the two.
-- **The 1-thread against 8-thread gaps here are entity coverage, not concurrency**, the same effect the
-  `ThreadContext` fix addressed. The fix is not more iterations but permuting the entity walk so each
-  trial samples the distribution rather than re-drawing its head — outstanding, and now also the way to
-  tell the two causes above apart.
+  `external merge Disk: 38120kB` sort, and 190.7 ms of JIT. No check shape helps there; bounding
+  the read does.
+- **The 1-thread against 8-thread gaps here are entity coverage, not concurrency**, the same effect
+  the `ThreadContext` fix addressed. Permuting the entity walk so each trial samples the
+  distribution rather than re-drawing its head remains outstanding — though the probe's tight error
+  bars have already answered the question that walk was going to separate.
 
 ### Choosing a stream design: one stream per context, or one per entity
 
@@ -413,7 +437,10 @@ move (11.3 / 11.6 / 10.9 at one thread; 33.5 / 34.2 / 33.6 at eight — it does 
   append*, and the captured plans now say so directly rather than by elimination. Each profile
   explains the append it actually issues (the capture used to be hardwired to `spread`, so all three
   came back byte-identical while their throughputs differed fourfold — a harness fault, now fixed;
-  a plan heading names the mode it was captured under):
+  a plan heading names the mode it was captured under). These captures predate the criteria-shaped
+  check — a cursor-bearing append now runs the ordered probe rather than `NOT EXISTS` — but the
+  arrangement story carries over unchanged, because what separates the three is where the scan
+  starts relative to the cursor, and the probe reads the same predicate:
   - **`spread`** — stream and tag are the same entity, and the cursor is that entity's own last
     event. The `NOT EXISTS` starts at the cursor and stops: no rows removed, 3 buffers, **0.017ms**.
   - **`one-stream`** — the artificial one, and it shows: the append is addressed at the hot entity's

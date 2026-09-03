@@ -12,17 +12,16 @@ description: >
   If that is what happens, the per-append target should be flat where the default one falls off a
   cliff, and no worse anywhere else.
 
-  EXPERIMENT (this branch): a third target states the check as the ordered probe instead
-  (appendCheck: SCAN_FROM_CURSOR), and it is here to answer the one question left before the probe
-  can retire both modes: does the or-groups cliff exist under the probe at all? The cliff is a
-  NOT EXISTS artifact -- the generic plan degenerates as facts widen -- while the probe's plan is
-  the same position-index walk from the cursor whatever the filter says; extra OR-ed facts are just
-  a wider per-row test on that walk. The prediction, written before the run: the probe's or-groups
-  rows stay flat from 2 to 10 facts, near its append-type-and-tag, with no cliff and no bistability
-  -- and its append-empty-boundary row is expected to be its one BAD row (no cursor, so the walk
-  covers the whole stream), which is exactly why the production design derives the shape from the
-  criteria instead of configuring it. If the probe's or-groups rows are NOT flat, the plan is being
-  re-read wrong somewhere and PER_APPEND keeps its job.
+  EXPERIMENT (this branch): the third target ran the pinned ordered probe first, and that run
+  settled the or-groups question -- no cliff (2.62x at ten facts against the default's 14x at two),
+  no bistability, no planning tax, every cursor-bearing row at or above both other targets, and the
+  predicted one bad row on append-empty-boundary (0.06x: no cursor, whole-stream walk). The target
+  now runs BY_CRITERIA, the candidate default built from exactly that result: probe when the
+  criteria carries a cursor, custom-planned tag path when not. The prediction, written before the
+  run: every cursor-bearing row reproduces the probe's numbers from the previous run, and
+  append-empty-boundary comes back to the default's ~1.8 ops/ms instead of the probe's 0.10 --
+  making BY_CRITERIA the first target with no bad row on the board. If the empty row does not
+  recover, the forced-custom mechanism is not reaching the server.
 
 corpus:
   volume: 100000
@@ -45,13 +44,14 @@ targets:
     image: "postgres:18"
     metrics: OFF
     appendPlanning: PER_APPEND
-  # The ordered probe, planning left to the server -- deliberately, because the claim under test is
-  # that its cached generic plan is already the good plan, with nothing for a mode to manage.
+  # The criteria-shaped check: probe when a cursor is present, custom-planned tag path when not.
+  # Planning left to the server on the probe branch, whose cached generic plan the previous run
+  # showed to be the good plan; the no-cursor branch forces its own custom planning internally.
   - backend: POSTGRES
     server: TESTCONTAINERS
     image: "postgres:18"
     metrics: OFF
-    appendCheck: SCAN_FROM_CURSOR
+    appendCheck: BY_CRITERIA
 
 jmh:
   workloads:

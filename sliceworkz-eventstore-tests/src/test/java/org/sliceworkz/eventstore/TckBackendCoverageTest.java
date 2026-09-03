@@ -67,8 +67,10 @@ class TckBackendCoverageTest {
 			"org.sliceworkz.eventstore.testing.backend.Postgres16Backend",
 			"org.sliceworkz.eventstore.testing.backend.Postgres17Backend",
 			"org.sliceworkz.eventstore.testing.backend.Postgres18Backend",
-			// experimental, this branch only: the SCAN_FROM_CURSOR check shape under the full TCK
-			"org.sliceworkz.eventstore.Postgres18ScanFromCursorBackend");
+			// experimental, this branch only: the SCAN_FROM_CURSOR and BY_CRITERIA check shapes under
+			// the full TCK
+			"org.sliceworkz.eventstore.Postgres18ScanFromCursorBackend",
+			"org.sliceworkz.eventstore.Postgres18ByCriteriaBackend");
 
 	@Test
 	void everyInTreeBackendIsRegistered ( ) throws IOException {

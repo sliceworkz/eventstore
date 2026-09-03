@@ -463,9 +463,11 @@ public interface PostgresEventStorage {
 
 		/**
 		 * Chooses which SQL shape the DCB consistency check is stated in. <b>Experimental</b> — this
-		 * setting exists to be measured and may be removed; see
-		 * {@link PostgresEventStorageImpl.ConditionalAppendCheck} for the two shapes and what each
-		 * costs. The meaning of a consistency boundary is identical under both.
+		 * setting exists to be measured and is expected to disappear once
+		 * {@link PostgresEventStorageImpl.ConditionalAppendCheck#BY_CRITERIA}, which derives the shape
+		 * from each criteria instead of pinning one, has a validation run behind it and becomes the
+		 * only behaviour. See {@link PostgresEventStorageImpl.ConditionalAppendCheck} for the shapes
+		 * and what each costs. The meaning of a consistency boundary is identical under all of them.
 		 *
 		 * @param check the shape; {@code null} restores the default ({@code NOT_EXISTS})
 		 * @return this Builder for method chaining

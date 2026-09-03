@@ -16,18 +16,23 @@ description: >
                             The degenerate case that decides whether the probe can ever simply
                             replace the old shape, or must be chosen per criteria
 
-  What the result decides, stated before the run. If the probe's stale and empty rows come back
-  bounded -- worse than the tag path but in the same decade -- the probe can become the only shape
-  and the modes go. If they come back where the model puts them (an index walk over ~2.75M and ~5.5M
-  stream events respectively, so hundreds of ms to seconds against the tag path's sub-ms), then no
-  single shape wins and the store should pick per append from what the criteria itself says: a
-  cursor present and recent favours the walk, a missing or ancient one favours the tag index. Either
-  way ConditionalAppendPlanning's future hangs on the or-groups cliff re-measured under the probe,
-  which is dcb-plan-cache's job, not this profile's.
+  What the first run of this profile decided: neither fixed shape wins. The probe took the fresh row
+  5.5x and, unexpectedly, the stale row 1.9x -- because NOT EXISTS forfeited its own best case to the
+  plan cache, running the 1.16s sequential scan in steady state on both the stale and the empty
+  boundary while its 0.06ms custom plan sat unused. The empty row tied at ~1164ms, a whole-stream
+  walk against a whole-table scan. That run is why BY_CRITERIA exists: the probe when the criteria
+  carries a cursor, the tag path planned from its bound values -- never from the plan cache -- when
+  it does not.
 
-  Expect append-empty-boundary on the probe target to complete very few operations per iteration --
-  an op that walks the whole stream can outlive a four-second iteration, and JMH lets it finish. The
-  throughput is still a number; read it as one op's cost, not a rate with error bars worth quoting.
+  This profile now runs the default against BY_CRITERIA, and it is the candidate default's
+  validation run: the one cell no run has measured in steady state is the no-cursor branch at ten
+  million events. The prediction, written before the run: append-empty-boundary collapses from
+  ~1164ms/op to under a millisecond of check (sub-ms tag miss plus the ~0.33ms append), turning the
+  1.4 ops/s row into hundreds; append-type-and-tag matches the probe's ~12ms/op from the earlier
+  run; append-stale-boundary stays at the probe's ~605ms -- the accepted cost of an ancient cursor,
+  bounded, linear and documented, on a path a real decider avoids by re-reading before appending.
+  If empty-boundary does NOT collapse, the forced-custom mechanism is not reaching the server and
+  the design is not ready.
 
   Same corpus as large-tier-writes, so nothing re-provisions; same drift reasoning, same warning
   about the estimate: the per-trial restore of ten million rows dominates the wall clock, so expect
@@ -50,7 +55,7 @@ targets:
     server: EXTERNAL
     metrics: OFF
     schemaMode: ENSURE
-    appendCheck: SCAN_FROM_CURSOR
+    appendCheck: BY_CRITERIA
 
 jmh:
   workloads:

@@ -171,7 +171,13 @@ public record TargetSpec (
 		NOT_EXISTS,
 
 		/** The check as an ordered probe walking the position index forward from the cursor. */
-		SCAN_FROM_CURSOR
+		SCAN_FROM_CURSOR,
+
+		/**
+		 * The shape derived per append from the criteria: the probe when a cursor is present, the
+		 * custom-planned tag path when not. The candidate default this dimension exists to validate.
+		 */
+		BY_CRITERIA
 	}
 
 	/** The default LISTEN/NOTIFY startup deadline: generous, because a cold pool is not a failure. */
@@ -249,6 +255,7 @@ public record TargetSpec (
 		}
 		switch ( appendCheck ) {
 			case SCAN_FROM_CURSOR -> description.append("/check=scan-from-cursor");
+			case BY_CRITERIA -> description.append("/check=by-criteria");
 			case NOT_EXISTS -> { }
 		}
 		return description.toString();

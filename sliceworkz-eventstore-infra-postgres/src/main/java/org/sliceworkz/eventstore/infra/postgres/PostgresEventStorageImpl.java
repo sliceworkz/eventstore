@@ -1456,24 +1456,40 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 *       may sort.</li>
 	 * </ul>
 	 *
-	 * <p>Neither dominates: the first is O(entity history), the second O(stream events after the
-	 * cursor), and which is smaller depends on the boundary. This setting applies one shape to every
-	 * conditional append of the storage, which is what makes it measurable — an adaptive per-append
-	 * choice would be the production design if the measurement justifies one.
+	 * <p>Neither fixed shape dominates: the first is O(entity history), the second O(stream events
+	 * after the cursor), and which is smaller is decided by something the criteria itself states —
+	 * whether it carries an expected reference. {@link #BY_CRITERIA} derives the shape from that,
+	 * per append, and the measurements justify it: the probe won or tied {@code NOT_EXISTS} on every
+	 * cursor-bearing workload at 5k, 100k and 10M events (5.5× on the canonical check at the large
+	 * tier, no or-groups cliff, no plan-cache bistability), and the one shape it loses — a criteria
+	 * with no cursor, where the walk has nowhere to start — is exactly the shape routed to the tag
+	 * path instead, custom-planned so the plan cache cannot serve it the sequential scan it was
+	 * measured serving in steady state.
 	 */
 	public enum ConditionalAppendCheck {
 
 		/**
-		 * The historical shape and the default: {@code WHERE NOT EXISTS (SELECT 1 … )}, index choice
-		 * left to the planner.
+		 * The shape derived from the criteria, per append: {@link #SCAN_FROM_CURSOR} when an expected
+		 * reference is present (the ordinary decide-then-append), {@link #NOT_EXISTS} — planned from
+		 * the bound values, never from the plan cache — when it is absent (the uniqueness pattern:
+		 * "I decided on an empty boundary"). The intended production shape.
+		 */
+		BY_CRITERIA,
+
+		/**
+		 * The historical shape, pinned: {@code WHERE NOT EXISTS (SELECT 1 … )}, index choice left to
+		 * the planner and the plan cache. The default, until {@link #BY_CRITERIA} has a validation run
+		 * behind it; kept selectable afterwards only as the measurement baseline.
 		 */
 		NOT_EXISTS,
 
 		/**
-		 * The check as an ordered probe: {@code WHERE (SELECT event_position … ORDER BY event_tx,
-		 * event_position LIMIT 1) IS NULL}. {@code ORDER BY … LIMIT 1} is the strongest steer the
-		 * planner knows towards the index that yields rows already in that order — the stream's
-		 * {@code (context, purpose, event_tx, event_position)} btree, entered at the cursor.
+		 * The check as an ordered probe, pinned for every criteria: {@code WHERE (SELECT
+		 * event_position … ORDER BY event_tx, event_position LIMIT 1) IS NULL}.
+		 * {@code ORDER BY … LIMIT 1} is the strongest steer the planner knows towards the index that
+		 * yields rows already in that order — the stream's {@code (context, purpose, event_tx,
+		 * event_position)} btree, entered at the cursor. Degenerate for a criteria with no cursor,
+		 * which is why {@link #BY_CRITERIA} exists.
 		 */
 		SCAN_FROM_CURSOR
 	}
@@ -1504,13 +1520,20 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * values bound to it. Done here rather than with {@code SET LOCAL plan_cache_mode} because it costs
 	 * no round trip and — unlike the GUC — cannot reach any other statement sharing the connection.
 	 *
+	 * <p>{@code forceCustomPlan} is {@link ConditionalAppendCheck#BY_CRITERIA}'s no-cursor branch
+	 * asking for threshold <b>0</b> on this statement regardless of the planning mode: a uniqueness
+	 * check answered from the tag index is sub-millisecond when planned from its bound values, and
+	 * the plan cache was measured serving it a whole-table sequential scan in steady state instead.
+	 * Per statement text, so the cursor-bearing statement on the same connection keeps its cached
+	 * probe plan.
+	 *
 	 * <p><b>Best effort, and loud once if it fails.</b> A {@code DataSource} that is not pgjdbc, or a
 	 * proxy that will not unwrap to it, leaves the store running exactly as it did before with a
 	 * configured setting silently not applied — which is worth one WARN naming what was asked for, and
 	 * not worth failing an append over.
 	 */
-	private void applyConditionalAppendPlanning ( PreparedStatement statement ) {
-		int threshold = switch ( conditionalAppendPlanning ) {
+	private void applyConditionalAppendPlanning ( PreparedStatement statement, boolean forceCustomPlan ) {
+		int threshold = forceCustomPlan ? 0 : switch ( conditionalAppendPlanning ) {
 			case PER_APPEND     -> 0;
 			case SERVER_DEFAULT -> -1;
 		};
@@ -1720,7 +1743,18 @@ public class PostgresEventStorageImpl implements EventStorage {
 			// Both shapes carry identical predicates between these two fragments; they differ only in
 			// how they invite the planner to answer them. The subquery stays uncorrelated with
 			// new_events either way, which is what the RETURNING-order argument above rests on.
-			ConditionalAppendCheck checkShape = conditionalAppendCheck;
+			// BY_CRITERIA resolves to a concrete shape here, from the one property of the criteria the
+			// two shapes disagree about: a cursor gives the ordered probe a place to start; without one
+			// the probe would walk the whole stream, and the tag path answers instantly -- provided it
+			// is planned from the bound values, which forceCustomPlan below sees to.
+			ConditionalAppendCheck checkShape = switch ( conditionalAppendCheck ) {
+				case BY_CRITERIA -> appendCriteria.expectedLastEventReference().isPresent()
+						? ConditionalAppendCheck.SCAN_FROM_CURSOR
+						: ConditionalAppendCheck.NOT_EXISTS;
+				case NOT_EXISTS, SCAN_FROM_CURSOR -> conditionalAppendCheck;
+			};
+			boolean forceCustomPlan = conditionalAppendCheck == ConditionalAppendCheck.BY_CRITERIA
+					&& checkShape == ConditionalAppendCheck.NOT_EXISTS;
 
 			if ( ! appendCriteria.isNone() ) {
 
@@ -1734,6 +1768,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 						WHERE (
 							SELECT event_position FROM %sevents
 							WHERE 1=1 """.formatted(prefix);
+					case BY_CRITERIA -> throw new IllegalStateException(
+							"BY_CRITERIA resolves to a concrete shape above and cannot reach the SQL");
 				});
 
 
@@ -1779,6 +1815,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 					// bare event_tx resolves to the xid8 column here: unlike the read path, this select
 					// list carries no text output column shadowing the name.
 					case SCAN_FROM_CURSOR -> " ORDER BY event_tx, event_position LIMIT 1) IS NULL ";
+					case BY_CRITERIA -> throw new IllegalStateException(
+							"BY_CRITERIA resolves to a concrete shape above and cannot reach the SQL");
 				});
 			}
 
@@ -1791,7 +1829,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 				try ( PreparedStatement stmt = writeConnection.prepareStatement(sqlBuilder.toString()) ) {
 
 					if ( ! appendCriteria.isNone() ) {
-						applyConditionalAppendPlanning(stmt);
+						applyConditionalAppendPlanning(stmt, forceCustomPlan);
 
 						// Serialize this stream's conditional appends: the NOT EXISTS below is a phantom
 						// check, which READ COMMITTED does not protect. Held until this transaction ends,

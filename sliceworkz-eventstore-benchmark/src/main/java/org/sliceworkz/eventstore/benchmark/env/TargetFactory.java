@@ -157,6 +157,7 @@ public final class TargetFactory {
 					})
 					.conditionalAppendCheck(switch ( spec.appendCheck() ) {
 						case SCAN_FROM_CURSOR -> PostgresEventStorageImpl.ConditionalAppendCheck.SCAN_FROM_CURSOR;
+						case BY_CRITERIA -> PostgresEventStorageImpl.ConditionalAppendCheck.BY_CRITERIA;
 						case NOT_EXISTS -> PostgresEventStorageImpl.ConditionalAppendCheck.NOT_EXISTS;
 					});
 			if ( spec.resultLimit() != null ) {

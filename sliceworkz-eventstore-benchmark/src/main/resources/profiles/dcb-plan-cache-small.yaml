@@ -15,13 +15,13 @@ description: >
   consistency check and so cannot be affected by the setting in either profile. Where it moves, the
   machine moved.
 
-  EXPERIMENT (this branch): the third target states the check as the ordered probe
-  (appendCheck: SCAN_FROM_CURSOR), same as in dcb-plan-cache; here it answers the small-store half
-  of the same question. On 5.000 events every path is cheap, so what this can catch is the probe
-  being a net LOSS where NOT EXISTS was already fine -- the analogue of what this profile exists to
-  say about PER_APPEND. The prediction: nothing measurable separates the three targets at this size,
-  or-groups included, and append-empty-boundary stays harmless because the whole stream is a few
-  hundred pages.
+  EXPERIMENT (this branch): the third target ran the pinned ordered probe first and came back as
+  predicted -- indistinguishable from the default on seven of ten rows, harmless on the empty
+  boundary, and better on the two rows where the default hit the small-store cliff at three facts.
+  It now runs BY_CRITERIA, the candidate default; at this size the two shapes it routes between are
+  both cheap, so the prediction is the boring one this profile exists to be able to state: nothing
+  measurable separates BY_CRITERIA from the default anywhere on a 5.000-event store, and the cliff
+  rows keep the probe's improvement.
 
 corpus:
   # 5.000, not 1.000, and the reason is worth writing down because 1.000 was tried first and measured
@@ -68,12 +68,12 @@ targets:
     image: "postgres:18"
     metrics: OFF
     appendPlanning: PER_APPEND
-  # The ordered probe, planning left to the server; see dcb-plan-cache for what this target is for.
+  # The criteria-shaped check; see dcb-plan-cache for what this target is for.
   - backend: POSTGRES
     server: TESTCONTAINERS
     image: "postgres:18"
     metrics: OFF
-    appendCheck: SCAN_FROM_CURSOR
+    appendCheck: BY_CRITERIA
 
 jmh:
   workloads:

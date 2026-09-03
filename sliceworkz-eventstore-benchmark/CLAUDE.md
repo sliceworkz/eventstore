@@ -265,18 +265,19 @@ And `append-none` scales only 3.01 → 4.69 ops/ms from one writer to eight (1.5
 maintenance and WAL at ten million rows — the most interesting thing in the writes profile, and it
 deserves measuring on purpose rather than as a control.
 
-#### How the DCB check got its shape: four runs at this tier, and what each retired
+#### The DCB check's shape, and the alternatives this corpus rejected
 
-**This corpus is where the check's SQL shape was settled.** The library now derives the shape from
-the criteria per append — an ordered probe walking `idx_events_stream_position` forward from the
-cursor when the criteria carry one, the tag path planned from its bound values when they do not —
-and there is no mode to configure. That design was not reasoned out; it was forced, one run at a
-time, and each run's report is committed as the record. The sequence, because every step retired
-something plausible:
+**The check derives its SQL shape from the criteria per append** — an ordered probe walking
+`idx_events_stream_position` forward from the cursor when the criteria carry one, the tag path
+planned from its bound values when they do not — and there is no mode to configure. Every part of
+that sentence is the measured answer to an alternative that looks equally plausible on paper, and
+this corpus is where each was measured. The alternatives and their figures, so none is re-tread:
 
-**Run one (historical `NOT EXISTS`, three targets): a ~190-220× check and a remedy that was not
-one.** A conditional append carrying one type and one tag measured 66.03 ms/op against 0.328 ms/op
-unconditional at one writer, with 47–147% relative error. The captured plans said why:
+**Alternative: one uniform `NOT EXISTS` check for every criteria, left to the plan cache.** The
+obvious spelling — and measured here, a conditional append carrying one type and one tag costs
+66.03 ms/op against 0.328 ms/op unconditional at one writer (~190-220×), with 47–147% relative
+error. The captured plans say why it cannot be fixed by planning alone — *both* of its plans are
+wrong:
 
 | | custom | generic |
 |---|---|---|
@@ -288,50 +289,46 @@ unconditional at one writer, with 47–147% relative error. The captured plans s
 | actual time | **44.4 ms** | **1251 ms** |
 | planner's estimate | cost **130.35** | cost 250.21 |
 
-- The custom plan was the one in effect, and PostgreSQL was right to keep it: binding the tag value
-  sends the planner to `idx_events_stream_tags`, and the cursor demotes from a start condition to a
-  filter — so the check exhausted *the entity's whole history* (455.092 events on the head entity)
-  instead of the events after the cursor. That materialisation was the ~190×.
-- A `FORCE_GENERIC` mode had been built on a misread capture (an index-scan generic plan that
-  belonged to `append-types`, the types-only check). Measured, it was **1248.50 ms/op — 20× worse**,
-  matching its captured Seq Scan almost exactly, and it was removed. The suite's clearest negative
-  result: reading a ratio off two plans is not measuring it.
-- A `PER_APPEND` planning mode changed nothing here — it forces the custom plan, which was the plan
-  already in effect.
+- The custom plan is the better of the two and PostgreSQL keeps it, but binding the tag value sends
+  the planner to `idx_events_stream_tags` with the cursor demoted from a start condition to a
+  filter — so the check exhausts *the entity's whole history* (455.092 events on the head entity)
+  instead of the events after the cursor. That materialisation is the ~190×, and the error bars are
+  the plan cache and the entity-size ramp on top of it.
+- **Forcing the generic plan** is not a way out: measured, **1248.50 ms/op — 20× worse**, matching
+  its captured Seq Scan almost exactly. (A capture from another workload — `append-types`, whose
+  filter binds no tag — shows an index-scan generic plan and makes this alternative look attractive;
+  reading a ratio off two plans is not measuring it.)
+- **Forcing the custom plan on every append** changes nothing at this tier — it is the plan already
+  in effect — and at the medium tier it buys the or-groups behaviour back at 2.4× on types-only
+  filters. Dominated by the probe on every measured row.
 
-**Run two (the ordered probe, on a branch target): 5.5× better on every cursor-bearing row.** The
-rewrite that actually addresses the materialisation is not a planning mode but a different check:
+**The probe, measured against that alternative: 5.5× better on every cursor-bearing row.**
 `(SELECT event_position ... WHERE stream and cursor and filter ORDER BY event_tx, event_position
 LIMIT 1) IS NULL` walks the position index *forward from the cursor* and stops at the first match,
 so its cost is the events after the cursor (~0.2µs per row walked) rather than the entity's
-history. `append-type-and-tag` went 66 → 11.93 ms/op — and the 47–147% error bars collapsed to
-under 10%, which also settled the variance question run one could not: the scatter was the plan
-cache and the entity ramp *under a plan that materialises history*, and the probe removed both at
-once.
+history: `append-type-and-tag` 11.93 against 66 ms/op, with the 47–147% error bars collapsed to
+under 10% — the scatter belongs to the materialising plan, not to the store.
 
-**Run three (`dcb-boundary-staleness`): what `NOT EXISTS` still owned, it forfeited to the plan
-cache.** The probe needs a cursor to start from, so the no-cursor case — the uniqueness pattern,
-"this basket was never checked out", criteria with `Optional.empty()` — stays on the tag path. Left
-as a reused prepared statement, that path's steady state was the **1164 ms/op sequential scan** on
-stale and empty boundaries while a 0.06 ms custom plan sat unused: `NOT EXISTS` is priced by
-expected-first-row, DCB expects *no* row, and from the tenth execution the generic plan wins the
-estimate and loses the store. Forcing the no-cursor statement to plan from its bound values every
-time (`setPrepareThreshold(0)`) took the empty boundary from 1164 to **2.42 ms/op** — per-execution
-planning is noise against a 486× plan defect.
+**Why the no-cursor branch is planned per execution rather than cached.** The probe needs a cursor
+to start from, so the no-cursor case — the uniqueness pattern, "this basket was never checked out",
+criteria with `Optional.empty()` — takes the tag path. Left as a reused prepared statement, that
+path's steady state is a **1164 ms/op sequential scan** on stale and empty boundaries while a
+0.06 ms custom plan sits unused: `NOT EXISTS` is priced by expected-first-row, DCB expects *no*
+row, and from the tenth execution the generic plan wins the estimate and loses the store. Planned
+from its bound values every time (`setPrepareThreshold(0)`), the same boundary measures
+**2.42 ms/op** — per-execution planning is noise against a 486× plan defect.
 
-**Run four (validation of the criteria-shaped check, now the shipped behaviour):** fresh boundary
-~12 ms/op (the probe finding ~170 rows after the cursor), stale boundary ~605 ms/op (2.75M rows
-walked, linear and predictable at under 3% error — the probe's one accepted cost, avoided by
-re-reading the boundary before appending, which the decide-then-append cycle does anyway), empty
-boundary ~2.4 ms/op. **~37× an unconditional append on this corpus's boundaries, against the
-~190-220× it replaced**, at error bars that finally describe the store. The or-groups cliff the
-plan-cache profiles measured under `NOT EXISTS` (14× at two facts) is absent under the probe (2.62×
-at ten facts), which is why those two profiles are gone: their question is closed. Their scratch
-reports were never published and did not survive, so the figures in this section are the record of
-runs two and three; what is committed under `results/` is the old shape's regime (the
-`-not-exists`-suffixed baselines, kept under that name so a re-publish of the shipped check cannot
-overwrite the before half of the comparison) beside the shipped check's own `large-tier-writes` and
-`dcb-boundary-staleness` baselines.
+**The criteria-shaped check, validated whole on this corpus:** fresh boundary ~12 ms/op (the probe
+finding ~170 rows after the cursor), stale boundary ~605 ms/op (2.75M rows walked, linear and
+predictable at under 3% error — the probe's one accepted cost, avoided by re-reading the boundary
+before appending, which the decide-then-append cycle does anyway), empty boundary ~2.4 ms/op.
+**~37× an unconditional append on this corpus's boundaries against the uniform alternative's
+~190-220×**, at error bars that describe the store. The or-groups cliff belongs to the rejected
+alternative alone (14× at two facts against the probe's 2.62× at ten), which is why no profile
+asks the plan-cache question any more: it is closed, the figures in this section are its record,
+and the `-not-exists`-suffixed baselines under `results/` are the rejected alternative's committed
+measurements — kept under that suffix so publishing the shipped check's runs cannot overwrite the
+evidence behind the rejection.
 
 Two findings from run one that are about the workload rather than the check, still standing:
 
@@ -441,10 +438,10 @@ move (11.3 / 11.6 / 10.9 at one thread; 33.5 / 34.2 / 33.6 at eight — it does 
   append*, and the captured plans now say so directly rather than by elimination. Each profile
   explains the append it actually issues (the capture used to be hardwired to `spread`, so all three
   came back byte-identical while their throughputs differed fourfold — a harness fault, now fixed;
-  a plan heading names the mode it was captured under). These captures predate the criteria-shaped
-  check — a cursor-bearing append now runs the ordered probe rather than `NOT EXISTS` — but the
-  arrangement story carries over unchanged, because what separates the three is where the scan
-  starts relative to the cursor, and the probe reads the same predicate:
+  a plan heading names the mode it was captured under). The plans here show the `NOT EXISTS`
+  spelling of the check; the shipped probe reads the same predicate from the same cursor, so the
+  arrangement story is identical — what separates the three is where the scan starts relative to
+  the cursor, not how the check is spelled:
   - **`spread`** — stream and tag are the same entity, and the cursor is that entity's own last
     event. The `NOT EXISTS` starts at the cursor and stops: no rows removed, 3 buffers, **0.017ms**.
   - **`one-stream`** — the artificial one, and it shows: the append is addressed at the hot entity's

@@ -32,8 +32,9 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     wrapped in `Failed to execute database script`.
   - **The schema advisory lock does not cover this statement**, because it is keyed on the table prefix
     while an extension is database-scoped. Two stores with *different* prefixes starting together on a
-    database without `btree_gin` therefore raced on `pg_extension_name_index` exactly as the tables
-    used to race on `pg_type_typname_nsp_index` — the loser rolling its whole schema back. The block
+    database without `btree_gin` therefore race on `pg_extension_name_index` — the same shape of race
+    the prefix-keyed lock exists to prevent on the catalogs, with the loser rolling its whole schema
+    back. The block
     swallows `duplicate_object` and `unique_violation`: by the time either surfaces the winner has
     committed (a conflicting catalog insert blocks until it does), so the opclasses the index needs are
     visible to the loser's transaction, and it goes on to create its index.
@@ -70,12 +71,11 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   - **The cost of the expansion grows with how deep the cursor already sits**, not with the page size.
     That is the wrong shape for the way `Projector` pages, and it grows silently: every result is
     correct, so only a plan shows it.
-  - **It also improves the plans the server *caches* for the DCB check**, which was not what it was for.
-    A conditional append's `NOT EXISTS` carries the same boundary, and under the expansion the *generic*
-    plan for the canonical `type + tag` check was a whole-table sequential scan (19.5ms, 100.008 rows
-    discarded for a row that is not there); with the row comparison it is an index scan (0.23ms). An
-    or-groups cliff remains from two facts up — that one is the tag disjunction, not the cursor —
-    and whether it extended past three varied run to run; the criteria-shaped check below removed it.
+  - **The DCB check leans on the same property.** The ordered probe carries this boundary as its
+    start condition, so its cost being "events after the cursor" rather than "cursor depth" rests
+    on the row comparison reaching the `Index Cond` — spelled as the expansion, the same predicate
+    lands in a `Filter` and the walk starts at the top of the stream (measured 19.5ms against
+    0.23ms for the canonical `type + tag` check at 100k events).
   - **There is no setting for this, deliberately.** The two spellings are semantically identical, so no
     deployment can want the slower one, and a knob whose right value is the same everywhere is an
     unmade decision left in the code. `PostgresCursorBoundaryTest` guards it per backend (16, 17, 18):
@@ -192,42 +192,43 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     serialization failures and a third of the throughput, with disjoint boundaries falsely conflicting
     because the planner's choice (seq scan → relation-level `SIRead` lock) decides the granularity.
   - No DDL change, so no migration: the lock is entirely in the write path.
-- **The DCB check's SQL shape is derived per append from the criteria — there is no mode, and that is
-  the conclusion of a measured campaign recorded run by run in the benchmark module's `CLAUDE.md`,
-  with the two regimes' baselines under its `results/`.** The check asks one question — any event
-  matching the boundary's filter after the
-  expected reference? — and PostgreSQL has two fundamentally different ways to answer it:
+- **The DCB check's SQL shape is derived per append from the criteria — there is no mode, and the
+  measurements behind that choice are recorded in the benchmark module's `CLAUDE.md`, with the
+  rejected alternative's baselines under its `results/`.** The check asks one question — any event
+  matching the boundary's filter after the expected reference? — and PostgreSQL has two
+  fundamentally different ways to answer it:
   - **A criteria carrying an expected reference runs as the ordered probe**:
     `WHERE (SELECT event_position … ORDER BY event_tx, event_position LIMIT 1) IS NULL`. The
     `ORDER BY … LIMIT 1` steers the planner to `idx_events_stream_position` entered *at the cursor*,
     walking forward and stopping at the first match — and its *generic* plan is already that walk, so
     the cached plan is stable and good. Cost is O(stream events after the cursor), ~0.2µs each:
-    ~12 ms/op on a ten-million-event store's own boundaries against the old shape's 66 ms at 117%
-    error, and no or-groups cliff — ten OR-ed facts cost 2.6× one, where the old shape hit 14× at two.
+    ~12 ms/op on a ten-million-event store's own boundaries, and no or-groups cliff — ten OR-ed
+    facts cost 2.6× one, because the disjunction rides along the index walk instead of steering it.
   - **A criteria without a reference — the uniqueness pattern, "I decided on an empty boundary" —
     runs as `NOT EXISTS` with server preparation disabled for that statement**
     (`setPrepareThreshold(0)` through pgjdbc: no round trip, per statement text, cannot leak to the
     probe statement or any other on the connection; best effort against a `DataSource` that will not
     unwrap, which is one WARN rather than a failed append). Planned from its bound values it is a
-    tag-index miss, measured 2.42 ms/op at ten million events; left to the plan cache the very same
-    statement was measured running a **1.16 s whole-table sequential scan in steady state** while its
-    0.06 ms custom plan sat unused — a `NOT EXISTS` is priced by how soon a row is expected to turn
-    up, and a DCB check expects *no rows*, so the estimated-cost comparison that admits generic plans
-    is structurally wrong for this shape at every width.
+    tag-index miss, measured 2.42 ms/op at ten million events. Keeping it off the plan cache is
+    load-bearing: a `NOT EXISTS` is priced by how soon a row is expected to turn up, and a DCB check
+    expects *no rows*, so the estimated-cost comparison that admits generic plans is structurally
+    wrong for this shape at every width — cached, the very same statement was measured settling into
+    a **1.16 s whole-table sequential scan in steady state** while its 0.06 ms custom plan sat unused.
   - **The probe's one accepted cost is a stale cursor**, linear in the stream events since it: half
     the large-tier stream back measured 605 ms/op, walked at ~0.22 µs/row with error bars under 3% —
-    predictable, unlike the plan-cache lottery it replaced. The ordinary decide-then-append cycle has
-    a fresh cursor by construction, and re-reading the boundary before appending — what a conflict
-    retry does anyway — is the fix for a reference held long.
-  - **What was tried and rejected on the way, so nobody re-treads it.** `conditionalAppendPlanning
-    (PER_APPEND)` fixed the old shape's or-groups cliff (9–15× where it bit) at the price of 2.4× on
-    types-only filters and nothing at the large tier, and is dominated by the probe on every measured
-    row; a `FORCE_GENERIC` mode was built on a plan capture read off the wrong workload and measured
-    **20× worse** at the large tier (the generic plan for one-type-one-tag is the whole-table scan,
-    not an index walk). Both are removed. The ~190× the old check cost over an unconditional append
-    at ten million events was the *custom* plan materialising the entity's whole history through the
-    tag index and filtering the cursor afterwards — a cost the probe does not pay, and, for what
-    remains of it, a stream-layout question rather than a planning one.
+    predictable, and bounded by the caller. The ordinary decide-then-append cycle has a fresh cursor
+    by construction, and re-reading the boundary before appending — what a conflict retry does
+    anyway — is the fix for a reference held long.
+  - **The alternatives, and why each loses — so nobody re-treads them.** One uniform `NOT EXISTS`
+    for every criteria, left to the plan cache, binds the tag value and so sends the planner to the
+    tag index with the cursor demoted to a filter: the check materialises the entity's whole history
+    instead of the events after the cursor (~190× an unconditional append at ten million events,
+    with 50–150% error bars from the plan cache flipping, a 14× cliff at two OR-ed facts, and the
+    1.16 s steady state above on stale and empty boundaries). Forcing that statement's *custom* plan
+    on every append buys back the cliff (9–15× where it bites) at 2.4× on types-only filters, and is
+    dominated by the probe on every measured row. Forcing its *generic* plan is the whole-table scan
+    itself — measured **20× worse** at the large tier. And what remains of the tag path's cost on a
+    hot entity is a stream-layout question, not a planning one.
 
   `PostgresConditionalAppendCheckTest` pins the mechanism per version — a cursor-bearing criteria
   runs the probe and reaches the plan cache, a cursorless one runs `NOT EXISTS` and stays off it —

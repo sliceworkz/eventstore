@@ -69,8 +69,8 @@ walk, and was removed along with the losing spelling — a profile that cannot r
 profile, and the result lives in `CLAUDE.md` and in `PostgresCursorBoundaryTest`. The
 `dcb-plan-cache` pair went the same way: it existed to decide how the DCB check should relate to
 the plan cache, and the criteria-shaped check settled it — `CLAUDE.md` records the figures, and
-the old shape's cliffed regime stays committed under `results/` as
-`dcb-cost-curve-ext-not-exists`.
+the rejected uniform-`NOT EXISTS` alternative keeps its committed baselines under `results/`
+(the `-not-exists`-suffixed directories) as the evidence behind the rejection.
 
 | profile | the question | runtime |
 |---|---|---|
@@ -322,20 +322,19 @@ Each run writes `report.json` (the record) and `report.md` (a rendering of it) b
   a generic plan that sequentially scans all 100.000 rows for a row that is not there (17ms/op),
   and stays there at four, five and ten. An eleven-fold cliff, from one more fact in the decision.
 
-  Where the flip lands past three facts is not stable across runs, and the two published
-  `dcb-cost-curve-ext` runs (committed as `dcb-cost-curve-ext-not-exists`, the shape they measured)
-  prove it: same profile, corpus, server and settings, and widths four to
-  ten came out on opposite sides — one run recovered to an index-scan generic plan, the other sat
-  flat on the sequential-scan floor from two facts up, each internally stable. The estimated-cost
-  comparison at those widths is close enough to the crossover that the statistics `ANALYZE` happens
-  to sample decide the side.
+  Where the flip lands past three facts is not stable across runs, and the two committed
+  `dcb-cost-curve-ext-not-exists` runs prove it: same statement shape, corpus, server and settings,
+  and widths four to ten came out on opposite sides — one run recovered to an index-scan generic
+  plan, the other sat flat on the sequential-scan floor from two facts up, each internally stable.
+  The estimated-cost comparison at those widths is close enough to the crossover that the
+  statistics `ANALYZE` happens to sample decide the side.
 
-  That cliff is why the check no longer meets the plan cache at all: the shipped check derives its
+  That cliff is why the shipped check never meets the plan cache on this question: it derives its
   shape from the criteria — an ordered probe from the cursor when one is present, and a
   planned-per-execution tag path when not — so no conditional append leaves its plan to the
-  estimated-cost comparison above. The history matters for reading the committed runs measured
-  under the old shape; the postgres module's `CLAUDE.md` records both regimes and the campaign that
-  retired them.
+  estimated-cost comparison above. The cliff belongs to the rejected alternative (one uniform
+  `NOT EXISTS` reusing a cached plan), whose committed `-not-exists` baselines under `results/` are
+  what these paragraphs describe; the postgres module's `CLAUDE.md` carries the full reasoning.
 - **Load results carry correctness checks**, and a run that fails one is reported as unsound. Events
   in must equal events out; nothing may be projected twice.
 

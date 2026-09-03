@@ -15,10 +15,11 @@ description: >
   What the validation runs of this profile established, and the report record holds: fresh ~12ms/op
   (the probe finding ~170 rows after the cursor), stale ~605ms/op (2.75M rows walked at ~0.22us each
   -- linear, predictable, error bars under 3%), empty ~2.4ms/op (a tag-index miss planned from its
-  bound values, plus per-execution planning and a fresh GIN key per insert). Against the historical
-  NOT EXISTS shape the same three rows measured 66ms at 117% error, 1164ms, and 1164ms: the plan
-  cache served a whole-table sequential scan in steady state on the stale and empty boundaries while
-  a 0.06ms custom plan sat unused, which is the run that made the criteria-shaped check the only one.
+  bound values, plus per-execution planning and a fresh GIN key per insert). The rejected
+  alternative -- one uniform NOT EXISTS check left to the plan cache -- measures 66ms at 117%
+  error, 1164ms and 1164ms on the same three rows: the plan cache settles on a whole-table
+  sequential scan for the stale and empty boundaries while a 0.06ms custom plan sits unused, which
+  is the measurement behind deriving the check's shape from the criteria instead.
 
   The stale row is the check's one accepted cost, and it is the caller's to avoid: a decider that
   re-reads its boundary before appending -- the ordinary decide-then-append cycle -- has a fresh

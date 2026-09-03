@@ -1391,23 +1391,25 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * planned from its bound values every time and answered by the tag index in sub-millisecond.
 	 *
 	 * <p><b>Why the no-cursor branch must never come from the plan cache.</b> A {@code NOT EXISTS} is
-	 * priced by how soon a row is expected to turn up, while a DCB check expects <em>no rows</em> —
-	 * the mis-pricing that once produced the or-groups cliff (a two-fact filter 14× slower than one)
-	 * and, at ten million events, a steady state in which the cached generic plan sequentially scanned
-	 * the whole table (~1.16 s per append) while the 0.06 ms custom plan sat unused. Planned from its
-	 * values, the same statement measured 2.42 ms/op — 486× — on the run that made this shape the
-	 * only one.
+	 * priced by how soon a row is expected to turn up, while a DCB check expects <em>no rows</em>, so
+	 * the estimated-cost comparison that admits cached generic plans is structurally wrong for this
+	 * shape: measured at ten million events, the cached plan settles into a whole-table sequential
+	 * scan (~1.16 s per append) while a 0.06 ms custom plan sits unused, and OR-ing a second fact
+	 * into the filter makes the cached choice 14× worse instead of marginally so. Planned from its
+	 * bound values, the same statement measures 2.42 ms/op — which is why the threshold is forced to
+	 * zero rather than left to the driver's default.
 	 *
 	 * <p>Both shapes mean exactly the same thing: same predicates, same snapshot, same advisory lock,
 	 * same {@code (event_tx, event_position)} tuple comparison — the compliance suite holds both
-	 * branches and the routing between them to the boundary contract. The measured record for the
-	 * probe half: won or tied the historical shape on every cursor-bearing workload at 5k, 100k and
-	 * 10M events (5.5× on the canonical one-type-one-tag check at the large tier), no or-groups cliff
-	 * (2.6× at ten facts where {@code NOT EXISTS} hit 14× at two), and none of the plan-cache
-	 * bistability that put 50–150% error bars on the old shape's measurements. The probe's one
-	 * accepted cost is a cursor far behind the stream head — linear in the events since it (~0.2 µs
-	 * per event) — which a decider avoids by re-reading its boundary before appending, as the
-	 * decide-then-append cycle does anyway.
+	 * branches and the routing between them to the boundary contract. The alternative — one uniform
+	 * {@code NOT EXISTS} for every criteria — loses on every measured cursor-bearing workload at 5k,
+	 * 100k and 10M events (5.5× on the canonical one-type-one-tag check at the large tier), pays the
+	 * or-groups cliff above, and inherits the plan-cache instability (50–150% error bars where the
+	 * probe's are under 10%): binding a tag value sends the planner to the tag index with the cursor
+	 * demoted to a filter, so it collects the entity's whole history however fresh the cursor. The
+	 * probe's one accepted cost is a cursor far behind the stream head — linear in the events since
+	 * it (~0.2 µs per event) — which a decider avoids by re-reading its boundary before appending, as
+	 * the decide-then-append cycle does anyway.
 	 */
 	private static boolean scanFromCursor ( AppendCriteria appendCriteria ) {
 		return appendCriteria.expectedLastEventReference().isPresent();

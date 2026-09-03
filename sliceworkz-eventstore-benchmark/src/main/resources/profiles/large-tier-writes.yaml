@@ -33,15 +33,15 @@ description: >
   the end of each trial is a truncate-and-copy of ten million rows, about two and a half minutes, once
   per trial.
 
-  This profile is where the DCB check's shape was settled, over four runs whose reports are the
-  record. The historical NOT EXISTS check measured ~190-220x an unconditional append here, with
-  50-150% error bars -- the plan cache flipping between a 44ms custom plan and a 1.25s sequential
-  scan -- and two pinned remedies were measured against it: forcing the generic plan (20x worse,
-  removed), and the ordered probe (5.5x better on every cursor-bearing row). The check the library
-  now ships derives its shape from the criteria -- the probe when a cursor is present, the
-  custom-planned tag path when not -- and measures ~37x an unconditional append on this corpus's
-  boundaries, at error bars that finally describe the store. This profile keeps characterising that
-  check as the store and the workloads evolve.
+  This profile is also where the DCB check's shape was settled against its alternatives, and the
+  figures stay quotable from here. One uniform NOT EXISTS check for every criteria -- the obvious
+  spelling -- measures ~190-220x an unconditional append at this tier, with 50-150% error bars
+  from the plan cache flipping between a 44ms custom plan and a 1.25s sequential scan; pinning the
+  generic plan makes it 20x worse still. The check the library ships derives its shape from the
+  criteria instead -- an ordered probe from the cursor when one is present, the custom-planned tag
+  path when not -- and measures ~37x an unconditional append on this corpus's boundaries, at error
+  bars that describe the store. This profile keeps characterising that check as the store and the
+  workloads evolve.
 
 corpus:
   volume: 10000000

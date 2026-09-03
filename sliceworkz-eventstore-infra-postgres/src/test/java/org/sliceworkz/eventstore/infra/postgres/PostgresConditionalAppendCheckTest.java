@@ -58,7 +58,8 @@ import org.sliceworkz.eventstore.stream.OptimisticLockingException;
  * ({@code ORDER BY event_tx, event_position LIMIT 1}), whose cached generic plan is the position-index
  * walk from the cursor; an expected reference absent takes the {@code NOT EXISTS} form with server
  * preparation disabled, so PostgreSQL plans it from the bound values every time and the plan cache can
- * never serve it the whole-table sequential scan it was measured serving in steady state.
+ * never serve it the whole-table sequential scan a cached generic plan settles into for this
+ * statement in steady state.
  * <p>
  * <b>Why the assertions are about {@code pg_prepared_statements} rather than about a plan.</b> The
  * shape choice is a performance property, and a test that measured one would be a benchmark pretending

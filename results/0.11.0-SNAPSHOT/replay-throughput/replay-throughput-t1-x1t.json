@@ -1,0 +1,487 @@
+[
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "org.sliceworkz.eventstore.benchmark.jmh.EventStoreBenchmark.operation",
+        "mode" : "thrpt",
+        "threads" : 1,
+        "forks" : 2,
+        "jvm" : "/usr/lib/jvm/java-21-openjdk-amd64/bin/java",
+        "jvmArgs" : [
+            "-Dbenchmark.profile=replay-throughput",
+            "-Dbenchmark.target.index=1",
+            "-Dbenchmark.collision=SPREAD",
+            "-Dbenchmark.drift.file=/home/vanrogu/git/sliceworkz/eventstore/target/benchmark/replay-throughput/drift.txt",
+            "-Dbenchmark.jdbc.url=jdbc:postgresql://localhost:32960/integration-tests-db?loggerLevel=OFF"
+        ],
+        "jdkVersion" : "21.0.12",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "21.0.12+8-1-26.04-Ubuntu",
+        "warmupIterations" : 2,
+        "warmupTime" : "10 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 3,
+        "measurementTime" : "10 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "workload" : "replay-batches"
+        },
+        "primaryMetric" : {
+            "score" : 0.08260174599301622,
+            "scoreError" : 0.00496103268499387,
+            "scoreConfidence" : [
+                0.07764071330802234,
+                0.08756277867801009
+            ],
+            "scorePercentiles" : {
+                "0.0" : 0.08055420861110667,
+                "50.0" : 0.08209317496107052,
+                "90.0" : 0.08569634353412299,
+                "95.0" : 0.08569634353412299,
+                "99.0" : 0.08569634353412299,
+                "99.9" : 0.08569634353412299,
+                "99.99" : 0.08569634353412299,
+                "99.999" : 0.08569634353412299,
+                "99.9999" : 0.08569634353412299,
+                "100.0" : 0.08569634353412299
+            },
+            "scoreUnit" : "ops/ms",
+            "rawData" : [
+                [
+                    0.082349576473185,
+                    0.08180214322907714,
+                    0.08337143066164945
+                ],
+                [
+                    0.08055420861110667,
+                    0.08183677344895604,
+                    0.08569634353412299
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+            "conflicts" : {
+                "score" : 0.0,
+                "scoreError" : "NaN",
+                "scoreConfidence" : [
+                    0.0,
+                    0.0
+                ],
+                "scorePercentiles" : {
+                    "0.0" : 0.0,
+                    "50.0" : 0.0,
+                    "90.0" : 0.0,
+                    "95.0" : 0.0,
+                    "99.0" : 0.0,
+                    "99.9" : 0.0,
+                    "99.99" : 0.0,
+                    "99.999" : 0.0,
+                    "99.9999" : 0.0,
+                    "100.0" : 0.0
+                },
+                "scoreUnit" : "#",
+                "rawData" : [
+                    [
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    [
+                        0.0,
+                        0.0,
+                        0.0
+                    ]
+                ]
+            },
+            "deduplicated" : {
+                "score" : 0.0,
+                "scoreError" : "NaN",
+                "scoreConfidence" : [
+                    0.0,
+                    0.0
+                ],
+                "scorePercentiles" : {
+                    "0.0" : 0.0,
+                    "50.0" : 0.0,
+                    "90.0" : 0.0,
+                    "95.0" : 0.0,
+                    "99.0" : 0.0,
+                    "99.9" : 0.0,
+                    "99.99" : 0.0,
+                    "99.999" : 0.0,
+                    "99.9999" : 0.0,
+                    "100.0" : 0.0
+                },
+                "scoreUnit" : "#",
+                "rawData" : [
+                    [
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    [
+                        0.0,
+                        0.0,
+                        0.0
+                    ]
+                ]
+            },
+            "ok" : {
+                "score" : 4960.0,
+                "scoreError" : "NaN",
+                "scoreConfidence" : [
+                    4960.0,
+                    4960.0
+                ],
+                "scorePercentiles" : {
+                    "0.0" : 807.0,
+                    "50.0" : 821.5,
+                    "90.0" : 857.0,
+                    "95.0" : 857.0,
+                    "99.0" : 857.0,
+                    "99.9" : 857.0,
+                    "99.99" : 857.0,
+                    "99.999" : 857.0,
+                    "99.9999" : 857.0,
+                    "100.0" : 857.0
+                },
+                "scoreUnit" : "#",
+                "rawData" : [
+                    [
+                        824.0,
+                        819.0,
+                        834.0
+                    ],
+                    [
+                        807.0,
+                        819.0,
+                        857.0
+                    ]
+                ]
+            }
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "org.sliceworkz.eventstore.benchmark.jmh.EventStoreBenchmark.operation",
+        "mode" : "thrpt",
+        "threads" : 1,
+        "forks" : 2,
+        "jvm" : "/usr/lib/jvm/java-21-openjdk-amd64/bin/java",
+        "jvmArgs" : [
+            "-Dbenchmark.profile=replay-throughput",
+            "-Dbenchmark.target.index=1",
+            "-Dbenchmark.collision=SPREAD",
+            "-Dbenchmark.drift.file=/home/vanrogu/git/sliceworkz/eventstore/target/benchmark/replay-throughput/drift.txt",
+            "-Dbenchmark.jdbc.url=jdbc:postgresql://localhost:32960/integration-tests-db?loggerLevel=OFF"
+        ],
+        "jdkVersion" : "21.0.12",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "21.0.12+8-1-26.04-Ubuntu",
+        "warmupIterations" : 2,
+        "warmupTime" : "10 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 3,
+        "measurementTime" : "10 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "workload" : "query-cursor-walk"
+        },
+        "primaryMetric" : {
+            "score" : 0.18270037523938074,
+            "scoreError" : 0.010137262945507099,
+            "scoreConfidence" : [
+                0.17256311229387364,
+                0.19283763818488783
+            ],
+            "scorePercentiles" : {
+                "0.0" : 0.17675508517184368,
+                "50.0" : 0.18287250246153658,
+                "90.0" : 0.1866413240041215,
+                "95.0" : 0.1866413240041215,
+                "99.0" : 0.1866413240041215,
+                "99.9" : 0.1866413240041215,
+                "99.99" : 0.1866413240041215,
+                "99.999" : 0.1866413240041215,
+                "99.9999" : 0.1866413240041215,
+                "100.0" : 0.1866413240041215
+            },
+            "scoreUnit" : "ops/ms",
+            "rawData" : [
+                [
+                    0.18398795031635426,
+                    0.17675508517184368,
+                    0.1812348168501664
+                ],
+                [
+                    0.1866413240041215,
+                    0.18175705460671887,
+                    0.18582602048707966
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+            "conflicts" : {
+                "score" : 0.0,
+                "scoreError" : "NaN",
+                "scoreConfidence" : [
+                    0.0,
+                    0.0
+                ],
+                "scorePercentiles" : {
+                    "0.0" : 0.0,
+                    "50.0" : 0.0,
+                    "90.0" : 0.0,
+                    "95.0" : 0.0,
+                    "99.0" : 0.0,
+                    "99.9" : 0.0,
+                    "99.99" : 0.0,
+                    "99.999" : 0.0,
+                    "99.9999" : 0.0,
+                    "100.0" : 0.0
+                },
+                "scoreUnit" : "#",
+                "rawData" : [
+                    [
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    [
+                        0.0,
+                        0.0,
+                        0.0
+                    ]
+                ]
+            },
+            "deduplicated" : {
+                "score" : 0.0,
+                "scoreError" : "NaN",
+                "scoreConfidence" : [
+                    0.0,
+                    0.0
+                ],
+                "scorePercentiles" : {
+                    "0.0" : 0.0,
+                    "50.0" : 0.0,
+                    "90.0" : 0.0,
+                    "95.0" : 0.0,
+                    "99.0" : 0.0,
+                    "99.9" : 0.0,
+                    "99.99" : 0.0,
+                    "99.999" : 0.0,
+                    "99.9999" : 0.0,
+                    "100.0" : 0.0
+                },
+                "scoreUnit" : "#",
+                "rawData" : [
+                    [
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    [
+                        0.0,
+                        0.0,
+                        0.0
+                    ]
+                ]
+            },
+            "ok" : {
+                "score" : 10966.0,
+                "scoreError" : "NaN",
+                "scoreConfidence" : [
+                    10966.0,
+                    10966.0
+                ],
+                "scorePercentiles" : {
+                    "0.0" : 1768.0,
+                    "50.0" : 1829.0,
+                    "90.0" : 1868.0,
+                    "95.0" : 1868.0,
+                    "99.0" : 1868.0,
+                    "99.9" : 1868.0,
+                    "99.99" : 1868.0,
+                    "99.999" : 1868.0,
+                    "99.9999" : 1868.0,
+                    "100.0" : 1868.0
+                },
+                "scoreUnit" : "#",
+                "rawData" : [
+                    [
+                        1840.0,
+                        1768.0,
+                        1813.0
+                    ],
+                    [
+                        1868.0,
+                        1818.0,
+                        1859.0
+                    ]
+                ]
+            }
+        }
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "org.sliceworkz.eventstore.benchmark.jmh.EventStoreBenchmark.operation",
+        "mode" : "thrpt",
+        "threads" : 1,
+        "forks" : 2,
+        "jvm" : "/usr/lib/jvm/java-21-openjdk-amd64/bin/java",
+        "jvmArgs" : [
+            "-Dbenchmark.profile=replay-throughput",
+            "-Dbenchmark.target.index=1",
+            "-Dbenchmark.collision=SPREAD",
+            "-Dbenchmark.drift.file=/home/vanrogu/git/sliceworkz/eventstore/target/benchmark/replay-throughput/drift.txt",
+            "-Dbenchmark.jdbc.url=jdbc:postgresql://localhost:32960/integration-tests-db?loggerLevel=OFF"
+        ],
+        "jdkVersion" : "21.0.12",
+        "vmName" : "OpenJDK 64-Bit Server VM",
+        "vmVersion" : "21.0.12+8-1-26.04-Ubuntu",
+        "warmupIterations" : 2,
+        "warmupTime" : "10 s",
+        "warmupBatchSize" : 1,
+        "measurementIterations" : 3,
+        "measurementTime" : "10 s",
+        "measurementBatchSize" : 1,
+        "params" : {
+            "workload" : "query-stream-page"
+        },
+        "primaryMetric" : {
+            "score" : 0.9503359793648561,
+            "scoreError" : 0.08446683589357669,
+            "scoreConfidence" : [
+                0.8658691434712794,
+                1.0348028152584328
+            ],
+            "scorePercentiles" : {
+                "0.0" : 0.9190675967094631,
+                "50.0" : 0.9502522769292774,
+                "90.0" : 0.985670375676859,
+                "95.0" : 0.985670375676859,
+                "99.0" : 0.985670375676859,
+                "99.9" : 0.985670375676859,
+                "99.99" : 0.985670375676859,
+                "99.999" : 0.985670375676859,
+                "99.9999" : 0.985670375676859,
+                "100.0" : 0.985670375676859
+            },
+            "scoreUnit" : "ops/ms",
+            "rawData" : [
+                [
+                    0.9273104317345161,
+                    0.9233858867854292,
+                    0.9190675967094631
+                ],
+                [
+                    0.9733874631588295,
+                    0.985670375676859,
+                    0.9731941221240388
+                ]
+            ]
+        },
+        "secondaryMetrics" : {
+            "conflicts" : {
+                "score" : 0.0,
+                "scoreError" : "NaN",
+                "scoreConfidence" : [
+                    0.0,
+                    0.0
+                ],
+                "scorePercentiles" : {
+                    "0.0" : 0.0,
+                    "50.0" : 0.0,
+                    "90.0" : 0.0,
+                    "95.0" : 0.0,
+                    "99.0" : 0.0,
+                    "99.9" : 0.0,
+                    "99.99" : 0.0,
+                    "99.999" : 0.0,
+                    "99.9999" : 0.0,
+                    "100.0" : 0.0
+                },
+                "scoreUnit" : "#",
+                "rawData" : [
+                    [
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    [
+                        0.0,
+                        0.0,
+                        0.0
+                    ]
+                ]
+            },
+            "deduplicated" : {
+                "score" : 0.0,
+                "scoreError" : "NaN",
+                "scoreConfidence" : [
+                    0.0,
+                    0.0
+                ],
+                "scorePercentiles" : {
+                    "0.0" : 0.0,
+                    "50.0" : 0.0,
+                    "90.0" : 0.0,
+                    "95.0" : 0.0,
+                    "99.0" : 0.0,
+                    "99.9" : 0.0,
+                    "99.99" : 0.0,
+                    "99.999" : 0.0,
+                    "99.9999" : 0.0,
+                    "100.0" : 0.0
+                },
+                "scoreUnit" : "#",
+                "rawData" : [
+                    [
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    [
+                        0.0,
+                        0.0,
+                        0.0
+                    ]
+                ]
+            },
+            "ok" : {
+                "score" : 57023.0,
+                "scoreError" : "NaN",
+                "scoreConfidence" : [
+                    57023.0,
+                    57023.0
+                ],
+                "scorePercentiles" : {
+                    "0.0" : 9191.0,
+                    "50.0" : 9503.5,
+                    "90.0" : 9857.0,
+                    "95.0" : 9857.0,
+                    "99.0" : 9857.0,
+                    "99.9" : 9857.0,
+                    "99.99" : 9857.0,
+                    "99.999" : 9857.0,
+                    "99.9999" : 9857.0,
+                    "100.0" : 9857.0
+                },
+                "scoreUnit" : "#",
+                "rawData" : [
+                    [
+                        9274.0,
+                        9234.0,
+                        9191.0
+                    ],
+                    [
+                        9734.0,
+                        9857.0,
+                        9733.0
+                    ]
+                ]
+            }
+        }
+    }
+]
+
+

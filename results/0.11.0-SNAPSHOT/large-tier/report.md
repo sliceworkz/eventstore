@@ -9,8 +9,8 @@ Set the schema mode to NONE if a DBA owns the schema on that server; ENSURE is r
 | | |
 |---|---|
 | suite version | 0.11.0-SNAPSHOT |
-| started | 2026-09-04T11:25:35.768359535Z |
-| finished | 2026-09-04T11:43:52.818313898Z |
+| started | 2026-09-05T06:42:43.143592732Z |
+| finished | 2026-09-05T07:00:50.671482341Z |
 | targets | postgres:external/metrics=off |
 | corpus restore | no restore needed: every workload in this run is read-only |
 
@@ -48,28 +48,28 @@ These are the settings the numbers below depend on. Two runs whose environments 
 | autovacuum_vacuum_scale_factor | 0.2 |
 | checkpoint_completion_target | 0.9 |
 | current_database | bmdb |
-| effective_cache_size | 5242888kB |
-| effective_io_concurrency | 16 |
+| effective_cache_size | 52428808kB |
+| effective_io_concurrency | 200 |
 | fsync | on |
 | full_page_writes | on |
 | jit | on |
 | lc_messages | en_US.UTF-8 |
-| maintenance_work_mem | 65536kB |
+| maintenance_work_mem | 1048576kB |
 | max_connections | 100 |
 | max_parallel_workers | 8 |
 | max_parallel_workers_per_gather | 2 |
-| max_wal_size | 1024MB |
+| max_wal_size | 8192MB |
 | max_worker_processes | 8 |
-| min_wal_size | 80MB |
-| random_page_cost | 4 |
+| min_wal_size | 1024MB |
+| random_page_cost | 1.1 |
 | seq_page_cost | 1 |
 | server_version | 18.6 (Ubuntu 18.6-0ubuntu0.26.04.1) |
-| shared_buffers | 163848kB |
+| shared_buffers | 15728648kB |
 | synchronous_commit | on |
 | track_io_timing | off |
 | version | PostgreSQL 18.6 (Ubuntu 18.6-0ubuntu0.26.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0, 64-bit |
 | wal_compression | off |
-| work_mem | 4096kB |
+| work_mem | 131072kB |
 
 ## Corpus
 
@@ -98,111 +98,100 @@ The reconstructed statements below describe the run's first PostgreSQL target. T
 ### stream page (unfiltered, limit 500)
 
 ```
-Limit  (cost=0.56..225.08 rows=500 width=313) (actual time=0.036..0.296 rows=500.00 loops=1)
-  Buffers: shared hit=3 read=29
-  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..2465305.99 rows=5490276 width=313) (actual time=0.035..0.250 rows=500.00 loops=1)
+Limit  (cost=0.56..60.86 rows=500 width=313) (actual time=0.019..0.153 rows=500.00 loops=1)
+  Buffers: shared hit=32
+  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..670823.80 rows=5562386 width=313) (actual time=0.019..0.130 rows=500.00 loops=1)
         Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))
         Index Searches: 1
-        Buffers: shared hit=3 read=29
+        Buffers: shared hit=32
 Planning:
-  Buffers: shared hit=54 read=16
-Planning Time: 0.580 ms
-Execution Time: 0.345 ms
+  Buffers: shared hit=70
+Planning Time: 0.324 ms
+Execution Time: 0.181 ms
 ```
 
 ### tag needle (~10 matches)
 
 ```
-Sort  (cost=2966.91..2968.74 rows=732 width=313) (actual time=0.687..0.688 rows=10.00 loops=1)
+Sort  (cost=894.10..895.96 rows=742 width=313) (actual time=0.291..0.292 rows=10.00 loops=1)
   Sort Key: event_tx, event_position
   Sort Method: quicksort  Memory: 27kB
-  Buffers: shared hit=44 read=42
-  ->  Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=72.39..2932.08 rows=732 width=313) (actual time=0.547..0.668 rows=10.00 loops=1)
+  Buffers: shared hit=84
+  ->  Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=23.34..858.73 rows=742 width=313) (actual time=0.266..0.278 rows=10.00 loops=1)
         Recheck Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{campaign:needle}'::text[]))
         Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))
         Heap Blocks: exact=10
-        Buffers: shared hit=36 read=42
-        ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..72.20 rows=732 width=0) (actual time=0.522..0.523 rows=10.00 loops=1)
+        Buffers: shared hit=76
+        ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..23.15 rows=742 width=0) (actual time=0.252..0.252 rows=10.00 loops=1)
               Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{campaign:needle}'::text[]))
               Index Searches: 1
-              Buffers: shared hit=35 read=33
+              Buffers: shared hit=66
 Planning:
-  Buffers: shared hit=11 read=1
-Planning Time: 0.153 ms
-Execution Time: 0.745 ms
+  Buffers: shared hit=12
+Planning Time: 0.115 ms
+Execution Time: 0.328 ms
 ```
 
 ### tag swathe (~1% of the store)
 
 ```
-Limit  (cost=0.56..19305.63 rows=500 width=313) (actual time=0.027..8.011 rows=500.00 loops=1)
-  Buffers: shared hit=92 read=1352
-  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..2451897.82 rows=63504 width=313) (actual time=0.026..7.975 rows=500.00 loops=1)
+Limit  (cost=0.56..5888.47 rows=500 width=313) (actual time=0.019..5.338 rows=500.00 loops=1)
+  Buffers: shared hit=1444
+  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..657196.88 rows=55809 width=313) (actual time=0.018..5.315 rows=500.00 loops=1)
         Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))
         Filter: (event_tags @> '{campaign:swathe}'::text[])
         Rows Removed by Filter: 26973
         Index Searches: 1
-        Buffers: shared hit=92 read=1352
+        Buffers: shared hit=1444
 Planning:
   Buffers: shared hit=3
-Planning Time: 0.102 ms
-Execution Time: 8.047 ms
+Planning Time: 0.077 ms
+Execution Time: 5.360 ms
 ```
 
-### one entity's whole history (hot) — **lossy bitmap**, **sorts on disk**, **JIT 206ms**
+### one entity's whole history (hot) — **JIT 4ms**
 
-> the bitmap outgrew work_mem, so whole pages were marked instead of rows and every row on them had to be re-checked. Raising work_mem for this statement removes the recheck entirely.
-> the sort did not fit in work_mem and spilled to disk. Either the read returns more rows than it needs -- a limit or a savepoint -- or work_mem is too small for the size of result this query is meant to produce.
 > PostgreSQL compiled this query before running it, which it does when the estimated cost is high. On a query that turns out to be short the compilation is most of the wait, and jit_above_cost is the knob.
 
 ```
-Gather Merge  (cost=500994.70..530131.58 rows=250174 width=313) (actual time=514.898..575.028 rows=455092.00 loops=1)
-  Workers Planned: 2
-  Workers Launched: 2
-  Buffers: shared hit=3084 read=185297, temp read=14111 written=14141
-  ->  Sort  (cost=499994.67..500255.27 rows=104239 width=313) (actual time=505.469..519.664 rows=151697.33 loops=3)
-        Sort Key: event_tx, event_position
-        Sort Method: external merge  Disk: 36896kB
-        Buffers: shared hit=3084 read=185297, temp read=14111 written=14141
-        Worker 0:  Sort Method: external merge  Disk: 35616kB
-        Worker 1:  Sort Method: external merge  Disk: 40376kB
-        ->  Parallel Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=1757.45..475983.59 rows=104239 width=313) (actual time=172.562..449.599 rows=151697.33 loops=3)
-              Recheck Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-000000}'::text[]))
-              Rows Removed by Index Recheck: 1070154
-              Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))
-              Heap Blocks: exact=17593 lossy=42757
-              Buffers: shared hit=3050 read=185297
-              Worker 0:  Heap Blocks: exact=16177 lossy=42052
-              Worker 1:  Heap Blocks: exact=19035 lossy=46983
-              ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..1694.90 rows=250197 width=0) (actual time=106.395..106.395 rows=455094.00 loops=1)
-                    Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-000000}'::text[]))
-                    Index Searches: 1
-                    Buffers: shared hit=2000 read=1618
+Sort  (cost=241744.90..242404.04 rows=263657 width=313) (actual time=487.314..498.360 rows=455092.00 loops=1)
+  Sort Key: event_tx, event_position
+  Sort Method: quicksort  Memory: 126338kB
+  Buffers: shared hit=188212
+  ->  Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=1521.37..218004.82 rows=263657 width=313) (actual time=122.803..349.419 rows=455092.00 loops=1)
+        Recheck Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-000000}'::text[]))
+        Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))
+        Heap Blocks: exact=184596
+        Buffers: shared hit=188212
+        ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..1455.45 rows=263682 width=0) (actual time=97.309..97.310 rows=455093.00 loops=1)
+              Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-000000}'::text[]))
+              Index Searches: 1
+              Buffers: shared hit=3616
 Planning:
   Buffers: shared hit=3
-Planning Time: 0.102 ms
+Planning Time: 0.085 ms
 JIT:
-  Functions: 18
-  Options: Inlining true, Optimization true, Expressions true, Deforming true
-  Timing: Generation 0.769 ms (Deform 0.370 ms), Inlining 76.977 ms, Optimization 80.685 ms, Emission 47.399 ms, Total 205.830 ms
-Execution Time: 588.791 ms
+  Functions: 6
+  Options: Inlining false, Optimization false, Expressions true, Deforming true
+  Timing: Generation 0.256 ms (Deform 0.120 ms), Inlining 0.000 ms, Optimization 0.244 ms, Emission 3.172 ms, Total 3.672 ms
+Execution Time: 521.576 ms
 ```
 
 ### most recent event, backwards limit 1
 
 ```
-Limit  (cost=0.56..10.37 rows=1 width=313) (actual time=0.037..0.037 rows=1.00 loops=1)
-  Buffers: shared hit=1 read=7
-  ->  Index Scan Backward using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..2452831.17 rows=250174 width=313) (actual time=0.036..0.037 rows=1.00 loops=1)
+Limit  (cost=0.56..3.06 rows=1 width=313) (actual time=0.056..0.056 rows=1.00 loops=1)
+  Buffers: shared hit=4 read=4
+  ->  Index Scan Backward using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..658236.12 rows=263657 width=313) (actual time=0.055..0.055 rows=1.00 loops=1)
         Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))
         Filter: (event_tags @> '{sku:SKU-000000}'::text[])
         Rows Removed by Filter: 17
         Index Searches: 1
-        Buffers: shared hit=1 read=7
+        Buffers: shared hit=4 read=4
 Planning:
-  Buffers: shared hit=2 read=9
-Planning Time: 0.203 ms
-Execution Time: 0.057 ms
+  Buffers: shared hit=11
+Planning Time: 0.165 ms
+Execution Time: 0.071 ms
 ```
 
 ### cursor page from the midpoint (limit 500)
@@ -210,16 +199,16 @@ Execution Time: 0.057 ms
 > the cursor boundary is an Index Cond here, so the scan starts at the boundary rather than filtering its way to it.
 
 ```
-Limit  (cost=0.56..274.27 rows=500 width=313) (actual time=0.020..0.168 rows=500.00 loops=1)
-  Buffers: shared hit=3 read=29
-  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..2177346.62 rows=3977591 width=313) (actual time=0.019..0.145 rows=500.00 loops=1)
+Limit  (cost=0.56..76.91 rows=500 width=313) (actual time=0.018..0.161 rows=500.00 loops=1)
+  Buffers: shared hit=32
+  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..612016.42 rows=4008431 width=313) (actual time=0.018..0.139 rows=500.00 loops=1)
         Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())) AND (ROW(event_tx, event_position) > ROW('3087567'::xid8, '2750000'::bigint)))
         Index Searches: 1
-        Buffers: shared hit=3 read=29
+        Buffers: shared hit=32
 Planning:
-  Buffers: shared hit=7 read=7
-Planning Time: 0.134 ms
-Execution Time: 0.203 ms
+  Buffers: shared hit=14
+Planning Time: 0.094 ms
+Execution Time: 0.190 ms
 ```
 
 > **These are the store's own statements, explained by the server.** Captured by running each 
@@ -246,9 +235,7 @@ Execution Time: 0.203 ms
 > on a sub-millisecond read. The subtraction is only safe where the plan's time dominates the 
 > instrumentation -- a read returning thousands of rows.
 
-### read as issued: query-stream-page @ postgres:external/metrics=off (generic plan) — measured 1.04 ms/op — **JIT 4ms**
-
-> PostgreSQL compiled this query before running it, which it does when the estimated cost is high. On a query that turns out to be short the compilation is most of the wait, and jit_above_cost is the knob.
+### read as issued: query-stream-page @ postgres:external/metrics=off (generic plan) — measured 1.04 ms/op
 
 ```
 	Query Text: 	SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags, idempotency_key
@@ -256,21 +243,15 @@ Execution Time: 0.203 ms
 		WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 	 AND stream_context = $1 AND stream_purpose = $2 ORDER BY event_tx::xid8, event_position  LIMIT $3 OFFSET 0
 	Query Parameters: $1 = 'inventory', $2 = 'default', $3 = '500'
-	Limit  (cost=0.56..236839.18 rows=499813 width=401) (actual time=3.988..4.221 rows=500.00 loops=1)
+	Limit  (cost=0.56..64582.84 rows=499795 width=401) (actual time=0.018..0.176 rows=500.00 loops=1)
 	  Buffers: shared hit=32
-	  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..2368385.31 rows=4998127 width=401) (actual time=0.046..0.235 rows=500.00 loops=1)
+	  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..645823.45 rows=4997951 width=401) (actual time=0.017..0.152 rows=500.00 loops=1)
 	        Index Cond: ((stream_context = ($1)::text) AND (stream_purpose = ($2)::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))
 	        Index Searches: 1
 	        Buffers: shared hit=32
-	JIT:
-	  Functions: 9
-	  Options: Inlining false, Optimization false, Expressions true, Deforming true
-	  Timing: Generation 0.534 ms (Deform 0.194 ms), Inlining 0.000 ms, Optimization 0.234 ms, Emission 3.706 ms, Total 4.474 ms
 ```
 
-### read as issued: query-by-type @ postgres:external/metrics=off (generic plan) — measured 1.00 ms/op — **JIT 4ms**
-
-> PostgreSQL compiled this query before running it, which it does when the estimated cost is high. On a query that turns out to be short the compilation is most of the wait, and jit_above_cost is the knob.
+### read as issued: query-by-type @ postgres:external/metrics=off (generic plan) — measured 1.00 ms/op
 
 ```
 	Query Text: 	SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags, idempotency_key
@@ -278,16 +259,12 @@ Execution Time: 0.203 ms
 		WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 	 AND stream_context = $1 AND stream_purpose = $2 AND ((event_type IN ($3))) ORDER BY event_tx::xid8, event_position  LIMIT $4 OFFSET 0
 	Query Parameters: $1 = 'inventory', $2 = 'default', $3 = 'StockReserved', $4 = '500'
-	Limit  (cost=0.56..109735.12 rows=45438 width=401) (actual time=3.645..3.935 rows=500.00 loops=1)
+	Limit  (cost=0.56..31497.53 rows=45436 width=401) (actual time=0.056..0.468 rows=500.00 loops=1)
 	  Buffers: shared hit=54
-	  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_type_position on bm_n3tx9gechuj9_events  (cost=0.56..1097334.04 rows=454375 width=401) (actual time=0.052..0.311 rows=500.00 loops=1)
+	  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_type_position on bm_n3tx9gechuj9_events  (cost=0.56..314969.53 rows=454359 width=401) (actual time=0.054..0.416 rows=500.00 loops=1)
 	        Index Cond: ((stream_context = ($1)::text) AND (stream_purpose = ($2)::text) AND (event_type = ($3)::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))
 	        Index Searches: 1
 	        Buffers: shared hit=54
-	JIT:
-	  Functions: 10
-	  Options: Inlining false, Optimization false, Expressions true, Deforming true
-	  Timing: Generation 0.490 ms (Deform 0.176 ms), Inlining 0.000 ms, Optimization 0.197 ms, Emission 3.393 ms, Total 4.080 ms
 ```
 
 ### read as issued: query-by-tag-needle @ postgres:external/metrics=off (generic plan) — measured 0.26 ms/op
@@ -298,53 +275,22 @@ Execution Time: 0.203 ms
 		WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 	 AND stream_context = $1 AND stream_purpose = $2 AND ((event_tags @> ARRAY[$3]::text[])) ORDER BY event_tx::xid8, event_position
 	Query Parameters: $1 = 'inventory', $2 = 'default', $3 = 'campaign:needle'
-	Gather Merge  (cost=84084.48..86995.10 rows=24991 width=401) (actual time=13.657..15.760 rows=10.00 loops=1)
-	  Workers Planned: 2
-	  Workers Launched: 2
-	  Buffers: shared hit=152
-	  ->  Sort  (cost=83084.46..83110.49 rows=10413 width=401) (actual time=0.218..0.219 rows=3.33 loops=3)
-	        Sort Key: event_tx, event_position
-	        Sort Method: quicksort  Memory: 28kB
-	        Buffers: shared hit=152
-	        Worker 0:  Sort Method: quicksort  Memory: 25kB
-	        Worker 1:  Sort Method: quicksort  Memory: 25kB
-	        ->  Parallel Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=236.88..80464.59 rows=10413 width=401) (actual time=0.189..0.193 rows=3.33 loops=3)
-	              Recheck Cond: ((stream_context = ($1)::text) AND (stream_purpose = ($2)::text) AND (event_tags @> ARRAY[($3)::text]))
-	              Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))
-	              Heap Blocks: exact=10
-	              Buffers: shared hit=118
-	              ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..230.63 rows=24993 width=0) (actual time=0.445..0.445 rows=10.00 loops=1)
-	                    Index Cond: ((stream_context = ($1)::text) AND (stream_purpose = ($2)::text) AND (event_tags @> ARRAY[($3)::text]))
-	                    Index Searches: 1
-	                    Buffers: shared hit=68
-```
-
-### read as issued: query-by-tag-needle @ postgres:external/metrics=off (custom plan, first executions only) — measured 0.26 ms/op
-
-```
-	Query Text: 	SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags, idempotency_key
-		FROM bm_n3tx9gechuj9_events
-		WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
-	 AND stream_context = $1 AND stream_purpose = $2 AND ((event_tags @> ARRAY[$3]::text[])) ORDER BY event_tx::xid8, event_position
-	Query Parameters: $1 = 'inventory', $2 = 'default', $3 = 'campaign:needle'
-	Sort  (cost=2966.91..2968.74 rows=732 width=401) (actual time=0.199..0.199 rows=10.00 loops=1)
+	Sort  (cost=28882.84..28945.31 rows=24990 width=401) (actual time=0.534..0.535 rows=10.00 loops=1)
 	  Sort Key: event_tx, event_position
 	  Sort Method: quicksort  Memory: 28kB
-	  Buffers: shared hit=78
-	  ->  Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=72.39..2932.08 rows=732 width=401) (actual time=0.193..0.196 rows=10.00 loops=1)
-	        Recheck Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{campaign:needle}'::text[]))
+	  Buffers: shared hit=76
+	  ->  Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=161.68..27057.44 rows=24990 width=401) (actual time=0.507..0.520 rows=10.00 loops=1)
+	        Recheck Cond: ((stream_context = ($1)::text) AND (stream_purpose = ($2)::text) AND (event_tags @> ARRAY[($3)::text]))
 	        Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))
 	        Heap Blocks: exact=10
-	        Buffers: shared hit=78
-	        ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..72.20 rows=732 width=0) (actual time=0.190..0.190 rows=10.00 loops=1)
-	              Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{campaign:needle}'::text[]))
+	        Buffers: shared hit=76
+	        ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..155.43 rows=24992 width=0) (actual time=0.480..0.480 rows=10.00 loops=1)
+	              Index Cond: ((stream_context = ($1)::text) AND (stream_purpose = ($2)::text) AND (event_tags @> ARRAY[($3)::text]))
 	              Index Searches: 1
-	              Buffers: shared hit=68
+	              Buffers: shared hit=66
 ```
 
-### read as issued: query-by-tag-swathe @ postgres:external/metrics=off (generic plan) — measured 5.10 ms/op — **lossy bitmap**
-
-> the bitmap outgrew work_mem, so whole pages were marked instead of rows and every row on them had to be re-checked. Raising work_mem for this statement removes the recheck entirely.
+### read as issued: query-by-tag-swathe @ postgres:external/metrics=off (generic plan) — measured 5.02 ms/op
 
 ```
 	Query Text: 	SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags, idempotency_key
@@ -352,33 +298,32 @@ Execution Time: 0.203 ms
 		WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 	 AND stream_context = $1 AND stream_purpose = $2 AND ((event_tags @> ARRAY[$3]::text[])) ORDER BY event_tx::xid8, event_position  LIMIT $4 OFFSET 0
 	Query Parameters: $1 = 'inventory', $2 = 'default', $3 = 'campaign:swathe', $4 = '500'
-	Limit  (cost=84084.48..84375.53 rows=2499 width=401) (actual time=219.507..229.331 rows=500.00 loops=1)
-	  Buffers: shared hit=2364 read=101587
-	  ->  Gather Merge  (cost=84084.48..86995.10 rows=24991 width=401) (actual time=219.504..229.300 rows=500.00 loops=1)
+	Limit  (cost=28314.89..28605.94 rows=2499 width=401) (actual time=113.475..147.951 rows=500.00 loops=1)
+	  Buffers: shared hit=103857
+	  ->  Gather Merge  (cost=28314.89..31225.28 rows=24989 width=401) (actual time=113.473..147.926 rows=500.00 loops=1)
 	        Workers Planned: 2
 	        Workers Launched: 2
-	        Buffers: shared hit=2364 read=101587
-	        ->  Sort  (cost=83084.46..83110.49 rows=10413 width=401) (actual time=212.713..212.724 rows=301.00 loops=3)
+	        Buffers: shared hit=103857
+	        ->  Sort  (cost=27314.87..27340.90 rows=10412 width=401) (actual time=111.535..111.546 rows=288.67 loops=3)
 	              Sort Key: event_tx, event_position
-	              Sort Method: top-N heapsort  Memory: 365kB
-	              Buffers: shared hit=2364 read=101587
-	              Worker 0:  Sort Method: top-N heapsort  Memory: 468kB
-	              Worker 1:  Sort Method: top-N heapsort  Memory: 496kB
-	              ->  Parallel Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=236.88..80464.59 rows=10413 width=401) (actual time=44.166..205.012 rows=33333.33 loops=3)
+	              Sort Method: top-N heapsort  Memory: 278kB
+	              Buffers: shared hit=103857
+	              Worker 0:  Sort Method: top-N heapsort  Memory: 446kB
+	              Worker 1:  Sort Method: top-N heapsort  Memory: 398kB
+	              ->  Parallel Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=161.68..26620.08 rows=10412 width=401) (actual time=51.778..105.210 rows=33333.33 loops=3)
 	                    Recheck Cond: ((stream_context = ($1)::text) AND (stream_purpose = ($2)::text) AND (event_tags @> ARRAY[($3)::text]))
-	                    Rows Removed by Index Recheck: 570493
 	                    Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))
-	                    Heap Blocks: exact=11927 lossy=22902
-	                    Buffers: shared hit=2335 read=101582
-	                    Worker 0:  Heap Blocks: exact=11929 lossy=22199
-	                    Worker 1:  Heap Blocks: exact=9813 lossy=21226
-	                    ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..230.63 rows=24993 width=0) (actual time=47.138..47.138 rows=100000.00 loops=1)
+	                    Heap Blocks: exact=54998
+	                    Buffers: shared hit=103823
+	                    Worker 0:  Heap Blocks: exact=23086
+	                    Worker 1:  Heap Blocks: exact=21912
+	                    ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..155.43 rows=24992 width=0) (actual time=43.179..43.179 rows=100000.00 loops=1)
 	                          Index Cond: ((stream_context = ($1)::text) AND (stream_purpose = ($2)::text) AND (event_tags @> ARRAY[($3)::text]))
 	                          Index Searches: 1
-	                          Buffers: shared hit=2213 read=1576
+	                          Buffers: shared hit=3787
 ```
 
-### read as issued: query-by-tag-swathe @ postgres:external/metrics=off (custom plan, first executions only) — measured 5.10 ms/op
+### read as issued: query-by-tag-swathe @ postgres:external/metrics=off (custom plan, first executions only) — measured 5.02 ms/op
 
 ```
 	Query Text: 	SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags, idempotency_key
@@ -386,9 +331,9 @@ Execution Time: 0.203 ms
 		WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 	 AND stream_context = $1 AND stream_purpose = $2 AND ((event_tags @> ARRAY[$3]::text[])) ORDER BY event_tx::xid8, event_position  LIMIT $4 OFFSET 0
 	Query Parameters: $1 = 'inventory', $2 = 'default', $3 = 'campaign:swathe', $4 = '500'
-	Limit  (cost=0.56..19305.63 rows=500 width=401) (actual time=0.032..6.894 rows=500.00 loops=1)
+	Limit  (cost=0.56..5888.47 rows=500 width=401) (actual time=0.017..5.047 rows=500.00 loops=1)
 	  Buffers: shared hit=1444
-	  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..2451897.82 rows=63504 width=401) (actual time=0.031..6.865 rows=500.00 loops=1)
+	  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..657196.88 rows=55809 width=401) (actual time=0.016..5.024 rows=500.00 loops=1)
 	        Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))
 	        Filter: (event_tags @> '{campaign:swathe}'::text[])
 	        Rows Removed by Filter: 26973
@@ -396,9 +341,8 @@ Execution Time: 0.203 ms
 	        Buffers: shared hit=1444
 ```
 
-### read as issued: query-by-entity-hot @ postgres:external/metrics=off (generic plan) — measured 1633.47 ms/op — **lossy bitmap**, **sorts on disk**
+### read as issued: query-by-entity-hot @ postgres:external/metrics=off (generic plan) — measured 1677.55 ms/op — **sorts on disk**
 
-> the bitmap outgrew work_mem, so whole pages were marked instead of rows and every row on them had to be re-checked. Raising work_mem for this statement removes the recheck entirely.
 > the sort did not fit in work_mem and spilled to disk. Either the read returns more rows than it needs -- a limit or a savepoint -- or work_mem is too small for the size of result this query is meant to produce.
 
 ```
@@ -407,31 +351,22 @@ Execution Time: 0.203 ms
 		WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 	 AND stream_context = $1 AND stream_purpose = $2 AND ((event_tags @> ARRAY[$3]::text[])) ORDER BY event_tx::xid8, event_position
 	Query Parameters: $1 = 'inventory', $2 = 'default', $3 = 'sku:SKU-000000'
-	Gather Merge  (cost=84084.48..86995.10 rows=24991 width=401) (actual time=462.586..534.928 rows=455092.00 loops=1)
-	  Workers Planned: 2
-	  Workers Launched: 2
-	  Buffers: shared hit=2117 read=186264, temp read=16147 written=16180
-	  ->  Sort  (cost=83084.46..83110.49 rows=10413 width=401) (actual time=452.315..469.189 rows=151697.33 loops=3)
-	        Sort Key: event_tx, event_position
-	        Sort Method: external merge  Disk: 42912kB
-	        Buffers: shared hit=2117 read=186264, temp read=16147 written=16180
-	        Worker 0:  Sort Method: external merge  Disk: 43160kB
-	        Worker 1:  Sort Method: external merge  Disk: 43104kB
-	        ->  Parallel Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=236.88..80464.59 rows=10413 width=401) (actual time=95.656..389.626 rows=151697.33 loops=3)
-	              Recheck Cond: ((stream_context = ($1)::text) AND (stream_purpose = ($2)::text) AND (event_tags @> ARRAY[($3)::text]))
-	              Rows Removed by Index Recheck: 1070154
-	              Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))
-	              Heap Blocks: exact=17892 lossy=43604
-	              Buffers: shared hit=2088 read=186259
-	              Worker 0:  Heap Blocks: exact=17557 lossy=44055
-	              Worker 1:  Heap Blocks: exact=17356 lossy=44133
-	              ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..230.63 rows=24993 width=0) (actual time=99.775..99.776 rows=455094.00 loops=1)
-	                    Index Cond: ((stream_context = ($1)::text) AND (stream_purpose = ($2)::text) AND (event_tags @> ARRAY[($3)::text]))
-	                    Index Searches: 1
-	                    Buffers: shared hit=1966 read=1652
+	Sort  (cost=28882.84..28945.31 rows=24990 width=401) (actual time=505.971..543.785 rows=455092.00 loops=1)
+	  Sort Key: event_tx, event_position
+	  Sort Method: external merge  Disk: 128952kB
+	  Buffers: shared hit=188212, temp read=16119 written=16120
+	  ->  Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=161.68..27057.44 rows=24990 width=401) (actual time=107.800..287.944 rows=455092.00 loops=1)
+	        Recheck Cond: ((stream_context = ($1)::text) AND (stream_purpose = ($2)::text) AND (event_tags @> ARRAY[($3)::text]))
+	        Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))
+	        Heap Blocks: exact=184596
+	        Buffers: shared hit=188212
+	        ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..155.43 rows=24992 width=0) (actual time=88.654..88.655 rows=455093.00 loops=1)
+	              Index Cond: ((stream_context = ($1)::text) AND (stream_purpose = ($2)::text) AND (event_tags @> ARRAY[($3)::text]))
+	              Index Searches: 1
+	              Buffers: shared hit=3616
 ```
 
-### read as issued: query-by-entity-cold @ postgres:external/metrics=off (generic plan) — measured 0.12 ms/op
+### read as issued: query-by-entity-cold @ postgres:external/metrics=off (generic plan) — measured 0.10 ms/op
 
 ```
 	Query Text: 	SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags, idempotency_key
@@ -439,51 +374,22 @@ Execution Time: 0.203 ms
 		WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 	 AND stream_context = $1 AND stream_purpose = $2 AND ((event_tags @> ARRAY[$3]::text[])) ORDER BY event_tx::xid8, event_position
 	Query Parameters: $1 = 'inventory', $2 = 'default', $3 = 'sku:SKU-094269'
-	Gather Merge  (cost=84084.48..86995.10 rows=24991 width=401) (actual time=11.038..12.456 rows=1.00 loops=1)
-	  Workers Planned: 2
-	  Workers Launched: 2
-	  Buffers: shared hit=98
-	  ->  Sort  (cost=83084.46..83110.49 rows=10413 width=401) (actual time=0.121..0.122 rows=0.33 loops=3)
-	        Sort Key: event_tx, event_position
-	        Sort Method: quicksort  Memory: 25kB
-	        Buffers: shared hit=98
-	        Worker 0:  Sort Method: quicksort  Memory: 25kB
-	        Worker 1:  Sort Method: quicksort  Memory: 25kB
-	        ->  Parallel Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=236.88..80464.59 rows=10413 width=401) (actual time=0.105..0.105 rows=0.33 loops=3)
-	              Recheck Cond: ((stream_context = ($1)::text) AND (stream_purpose = ($2)::text) AND (event_tags @> ARRAY[($3)::text]))
-	              Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))
-	              Heap Blocks: exact=1
-	              Buffers: shared hit=64
-	              ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..230.63 rows=24993 width=0) (actual time=0.097..0.097 rows=1.00 loops=1)
-	                    Index Cond: ((stream_context = ($1)::text) AND (stream_purpose = ($2)::text) AND (event_tags @> ARRAY[($3)::text]))
-	                    Index Searches: 1
-	                    Buffers: shared hit=23
-```
-
-### read as issued: query-by-entity-cold @ postgres:external/metrics=off (custom plan, first executions only) — measured 0.12 ms/op
-
-```
-	Query Text: 	SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags, idempotency_key
-		FROM bm_n3tx9gechuj9_events
-		WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
-	 AND stream_context = $1 AND stream_purpose = $2 AND ((event_tags @> ARRAY[$3]::text[])) ORDER BY event_tx::xid8, event_position
-	Query Parameters: $1 = 'inventory', $2 = 'default', $3 = 'sku:SKU-094269'
-	Sort  (cost=2966.91..2968.74 rows=732 width=401) (actual time=0.068..0.068 rows=1.00 loops=1)
+	Sort  (cost=28882.84..28945.31 rows=24990 width=401) (actual time=0.054..0.054 rows=1.00 loops=1)
 	  Sort Key: event_tx, event_position
 	  Sort Method: quicksort  Memory: 25kB
-	  Buffers: shared hit=24
-	  ->  Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=72.39..2932.08 rows=732 width=401) (actual time=0.066..0.066 rows=1.00 loops=1)
-	        Recheck Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-094269}'::text[]))
+	  Buffers: shared hit=22
+	  ->  Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=161.68..27057.44 rows=24990 width=401) (actual time=0.053..0.053 rows=1.00 loops=1)
+	        Recheck Cond: ((stream_context = ($1)::text) AND (stream_purpose = ($2)::text) AND (event_tags @> ARRAY[($3)::text]))
 	        Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))
 	        Heap Blocks: exact=1
-	        Buffers: shared hit=24
-	        ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..72.20 rows=732 width=0) (actual time=0.063..0.063 rows=1.00 loops=1)
-	              Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-094269}'::text[]))
+	        Buffers: shared hit=22
+	        ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..155.43 rows=24992 width=0) (actual time=0.051..0.051 rows=1.00 loops=1)
+	              Index Cond: ((stream_context = ($1)::text) AND (stream_purpose = ($2)::text) AND (event_tags @> ARRAY[($3)::text]))
 	              Index Searches: 1
-	              Buffers: shared hit=23
+	              Buffers: shared hit=21
 ```
 
-### read as issued: query-by-multi-tag @ postgres:external/metrics=off (generic plan) — measured 14.97 ms/op
+### read as issued: query-by-multi-tag @ postgres:external/metrics=off (generic plan) — measured 14.85 ms/op
 
 ```
 	Query Text: 	SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags, idempotency_key
@@ -491,32 +397,32 @@ Execution Time: 0.203 ms
 		WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 	 AND stream_context = $1 AND stream_purpose = $2 AND ((event_tags @> ARRAY[$3, $4, $5]::text[])) ORDER BY event_tx::xid8, event_position  LIMIT $6 OFFSET 0
 	Query Parameters: $1 = 'inventory', $2 = 'default', $3 = 'channel:web', $4 = 'country:BE', $5 = 'sku:SKU-000000', $6 = '500'
-	Limit  (cost=84084.48..84375.53 rows=2499 width=401) (actual time=125.428..135.062 rows=500.00 loops=1)
-	  Buffers: shared hit=2676 read=37144
-	  ->  Gather Merge  (cost=84084.48..86995.10 rows=24991 width=401) (actual time=125.427..135.034 rows=500.00 loops=1)
+	Limit  (cost=28314.89..28605.94 rows=2499 width=401) (actual time=120.004..134.024 rows=500.00 loops=1)
+	  Buffers: shared hit=39818
+	  ->  Gather Merge  (cost=28314.89..31225.28 rows=24989 width=401) (actual time=120.002..133.999 rows=500.00 loops=1)
 	        Workers Planned: 2
 	        Workers Launched: 2
-	        Buffers: shared hit=2676 read=37144
-	        ->  Sort  (cost=83084.46..83110.49 rows=10413 width=401) (actual time=119.270..119.285 rows=299.00 loops=3)
+	        Buffers: shared hit=39818
+	        ->  Sort  (cost=27314.87..27340.90 rows=10412 width=401) (actual time=118.112..118.121 rows=292.00 loops=3)
 	              Sort Key: event_tx, event_position
-	              Sort Method: top-N heapsort  Memory: 509kB
-	              Buffers: shared hit=2676 read=37144
-	              Worker 0:  Sort Method: top-N heapsort  Memory: 318kB
-	              Worker 1:  Sort Method: top-N heapsort  Memory: 343kB
-	              ->  Parallel Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=236.88..80464.59 rows=10413 width=401) (actual time=92.756..116.013 rows=12723.67 loops=3)
+	              Sort Method: top-N heapsort  Memory: 517kB
+	              Buffers: shared hit=39818
+	              Worker 0:  Sort Method: top-N heapsort  Memory: 313kB
+	              Worker 1:  Sort Method: top-N heapsort  Memory: 309kB
+	              ->  Parallel Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=161.68..26620.08 rows=10412 width=401) (actual time=93.144..115.404 rows=12723.67 loops=3)
 	                    Recheck Cond: ((stream_context = ($1)::text) AND (stream_purpose = ($2)::text) AND (event_tags @> ARRAY[($3)::text, ($4)::text, ($5)::text]))
 	                    Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))
-	                    Heap Blocks: exact=15488
-	                    Buffers: shared hit=2647 read=37139
-	                    Worker 0:  Heap Blocks: exact=9167
-	                    Worker 1:  Heap Blocks: exact=10293
-	                    ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..230.63 rows=24993 width=0) (actual time=95.077..95.077 rows=38171.00 loops=1)
+	                    Heap Blocks: exact=20456
+	                    Buffers: shared hit=39784
+	                    Worker 0:  Heap Blocks: exact=7629
+	                    Worker 1:  Heap Blocks: exact=6863
+	                    ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..155.43 rows=24992 width=0) (actual time=91.325..91.325 rows=38171.00 loops=1)
 	                          Index Cond: ((stream_context = ($1)::text) AND (stream_purpose = ($2)::text) AND (event_tags @> ARRAY[($3)::text, ($4)::text, ($5)::text]))
 	                          Index Searches: 1
-	                          Buffers: shared hit=2610 read=2188
+	                          Buffers: shared hit=4796
 ```
 
-### read as issued: query-by-multi-tag @ postgres:external/metrics=off (custom plan, first executions only) — measured 14.97 ms/op
+### read as issued: query-by-multi-tag @ postgres:external/metrics=off (custom plan, first executions only) — measured 14.85 ms/op
 
 ```
 	Query Text: 	SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags, idempotency_key
@@ -524,9 +430,9 @@ Execution Time: 0.203 ms
 		WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 	 AND stream_context = $1 AND stream_purpose = $2 AND ((event_tags @> ARRAY[$3, $4, $5]::text[])) ORDER BY event_tx::xid8, event_position  LIMIT $6 OFFSET 0
 	Query Parameters: $1 = 'inventory', $2 = 'default', $3 = 'channel:web', $4 = 'country:BE', $5 = 'sku:SKU-000000', $6 = '500'
-	Limit  (cost=0.56..58751.68 rows=500 width=401) (actual time=0.014..12.887 rows=500.00 loops=1)
+	Limit  (cost=0.56..14839.94 rows=500 width=401) (actual time=0.017..12.505 rows=500.00 loops=1)
 	  Buffers: shared hit=3959
-	  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..2451684.62 rows=20865 width=401) (actual time=0.013..12.864 rows=500.00 loops=1)
+	  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..657028.53 rows=22138 width=401) (actual time=0.017..12.481 rows=500.00 loops=1)
 	        Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))
 	        Filter: (event_tags @> '{channel:web,country:BE,sku:SKU-000000}'::text[])
 	        Rows Removed by Filter: 76022
@@ -534,9 +440,7 @@ Execution Time: 0.203 ms
 	        Buffers: shared hit=3959
 ```
 
-### read as issued: query-by-or-groups @ postgres:external/metrics=off (generic plan) — measured 2.38 ms/op — **JIT 12ms**
-
-> PostgreSQL compiled this query before running it, which it does when the estimated cost is high. On a query that turns out to be short the compilation is most of the wait, and jit_above_cost is the knob.
+### read as issued: query-by-or-groups @ postgres:external/metrics=off (generic plan) — measured 2.36 ms/op
 
 ```
 	Query Text: 	SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags, idempotency_key
@@ -544,25 +448,21 @@ Execution Time: 0.203 ms
 		WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 	 AND stream_context = $1 AND stream_purpose = $2 AND ((event_type IN ($3, $4) AND event_tags @> ARRAY[$5]::text[]) OR (event_type IN ($6, $7) AND event_tags @> ARRAY[$8]::text[]) OR (event_type IN ($9, $10) AND event_tags @> ARRAY[$11]::text[]) OR (event_type IN ($12, $13) AND event_tags @> ARRAY[$14]::text[]) OR (event_type IN ($15, $16) AND event_tags @> ARRAY[$17]::text[])) ORDER BY event_tx::xid8, event_position  LIMIT $18 OFFSET 0
 	Query Parameters: $1 = 'inventory', $2 = 'default', $3 = 'StockReserved', $4 = 'StockPicked', $5 = 'sku:SKU-000000', $6 = 'StockReserved', $7 = 'StockPicked', $8 = 'sku:SKU-000001', $9 = 'StockReserved', $10 = 'StockPicked', $11 = 'sku:SKU-000002', $12 = 'StockReserved', $13 = 'StockPicked', $14 = 'sku:SKU-000003', $15 = 'StockReserved', $16 = 'StockPicked', $17 = 'sku:SKU-000004', $18 = '500'
-	Limit  (cost=1000.59..237928.62 rows=2268 width=401) (actual time=18.043..21.353 rows=500.00 loops=1)
+	Limit  (cost=1000.59..65649.65 rows=2268 width=401) (actual time=3.548..6.252 rows=500.00 loops=1)
 	  Buffers: shared hit=582
-	  ->  Gather Merge  (cost=1000.59..2369967.51 rows=22677 width=401) (actual time=14.830..18.113 rows=500.00 loops=1)
+	  ->  Gather Merge  (cost=1000.59..647405.73 rows=22677 width=401) (actual time=3.547..6.228 rows=500.00 loops=1)
 	        Workers Planned: 2
 	        Workers Launched: 2
 	        Buffers: shared hit=582
-	        ->  Parallel Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..2366350.00 rows=9449 width=401) (actual time=2.532..3.750 rows=202.00 loops=3)
+	        ->  Parallel Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..643788.22 rows=9449 width=401) (actual time=0.133..1.599 rows=211.33 loops=3)
 	              Index Cond: ((stream_context = ($1)::text) AND (stream_purpose = ($2)::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))
 	              Filter: (((event_type = ANY (ARRAY[($3)::text, ($4)::text])) AND (event_tags @> ARRAY[($5)::text])) OR ((event_type = ANY (ARRAY[($6)::text, ($7)::text])) AND (event_tags @> ARRAY[($8)::text])) OR ((event_type = ANY (ARRAY[($9)::text, ($10)::text])) AND (event_tags @> ARRAY[($11)::text])) OR ((event_type = ANY (ARRAY[($12)::text, ($13)::text])) AND (event_tags @> ARRAY[($14)::text])) OR ((event_type = ANY (ARRAY[($15)::text, ($16)::text])) AND (event_tags @> ARRAY[($17)::text])))
-	              Rows Removed by Filter: 1425
+	              Rows Removed by Filter: 1485
 	              Index Searches: 1
 	              Buffers: shared hit=582
-	JIT:
-	  Functions: 29
-	  Options: Inlining false, Optimization false, Expressions true, Deforming true
-	  Timing: Generation 1.364 ms (Deform 0.457 ms), Inlining 0.000 ms, Optimization 0.578 ms, Emission 9.938 ms, Total 11.880 ms
 ```
 
-### read as issued: query-by-or-groups @ postgres:external/metrics=off (custom plan, first executions only) — measured 2.38 ms/op
+### read as issued: query-by-or-groups @ postgres:external/metrics=off (custom plan, first executions only) — measured 2.36 ms/op
 
 ```
 	Query Text: 	SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags, idempotency_key
@@ -570,9 +470,9 @@ Execution Time: 0.203 ms
 		WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 	 AND stream_context = $1 AND stream_purpose = $2 AND ((event_type IN ($3, $4) AND event_tags @> ARRAY[$5]::text[]) OR (event_type IN ($6, $7) AND event_tags @> ARRAY[$8]::text[]) OR (event_type IN ($9, $10) AND event_tags @> ARRAY[$11]::text[]) OR (event_type IN ($12, $13) AND event_tags @> ARRAY[$14]::text[]) OR (event_type IN ($15, $16) AND event_tags @> ARRAY[$17]::text[])) ORDER BY event_tx::xid8, event_position  LIMIT $18 OFFSET 0
 	Query Parameters: $1 = 'inventory', $2 = 'default', $3 = 'StockReserved', $4 = 'StockPicked', $5 = 'sku:SKU-000000', $6 = 'StockReserved', $7 = 'StockPicked', $8 = 'sku:SKU-000001', $9 = 'StockReserved', $10 = 'StockPicked', $11 = 'sku:SKU-000002', $12 = 'StockReserved', $13 = 'StockPicked', $14 = 'sku:SKU-000003', $15 = 'StockReserved', $16 = 'StockPicked', $17 = 'sku:SKU-000004', $18 = '500'
-	Limit  (cost=0.56..5876.14 rows=500 width=401) (actual time=0.010..1.209 rows=500.00 loops=1)
+	Limit  (cost=0.56..1578.37 rows=500 width=401) (actual time=0.011..1.271 rows=500.00 loops=1)
 	  Buffers: shared hit=219
-	  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..2521281.53 rows=214556 width=401) (actual time=0.010..1.186 rows=500.00 loops=1)
+	  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..727600.53 rows=230574 width=401) (actual time=0.010..1.247 rows=500.00 loops=1)
 	        Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))
 	        Filter: ((event_type = ANY ('{StockReserved,StockPicked}'::text[])) AND ((event_tags @> '{sku:SKU-000000}'::text[]) OR (event_tags @> '{sku:SKU-000001}'::text[]) OR (event_tags @> '{sku:SKU-000002}'::text[]) OR (event_tags @> '{sku:SKU-000003}'::text[]) OR (event_tags @> '{sku:SKU-000004}'::text[])))
 	        Rows Removed by Filter: 3494
@@ -580,9 +480,7 @@ Execution Time: 0.203 ms
 	        Buffers: shared hit=219
 ```
 
-### read as issued: query-last-event @ postgres:external/metrics=off (generic plan) — measured 0.06 ms/op — **lossy bitmap**
-
-> the bitmap outgrew work_mem, so whole pages were marked instead of rows and every row on them had to be re-checked. Raising work_mem for this statement removes the recheck entirely.
+### read as issued: query-last-event @ postgres:external/metrics=off (generic plan) — measured 0.06 ms/op
 
 ```
 	Query Text: 	SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags, idempotency_key
@@ -590,27 +488,26 @@ Execution Time: 0.203 ms
 		WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 	 AND stream_context = $1 AND stream_purpose = $2 AND ((event_type IN ($3) AND event_tags @> ARRAY[$4]::text[])) ORDER BY event_tx::xid8 DESC, event_position DESC LIMIT $5 OFFSET 0
 	Query Parameters: $1 = 'inventory', $2 = 'default', $3 = 'StockCounted', $4 = 'sku:SKU-000000', $5 = '1'
-	Limit  (cost=42072.16..42072.73 rows=227 width=401) (actual time=409.364..409.367 rows=1.00 loops=1)
-	  Buffers: shared read=88300
-	  ->  Sort  (cost=42072.16..42077.84 rows=2272 width=401) (actual time=409.362..409.364 rows=1.00 loops=1)
+	Limit  (cost=16959.40..16959.97 rows=227 width=401) (actual time=54.712..54.714 rows=1.00 loops=1)
+	  Buffers: shared hit=15616
+	  ->  Sort  (cost=16959.40..16965.08 rows=2272 width=401) (actual time=54.709..54.711 rows=1.00 loops=1)
 	        Sort Key: event_tx DESC, event_position DESC
 	        Sort Method: top-N heapsort  Memory: 26kB
-	        Buffers: shared read=88300
-	        ->  Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=33295.60..41945.50 rows=2272 width=401) (actual time=49.398..406.928 rows=13529.00 loops=1)
+	        Buffers: shared hit=15616
+	        ->  Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=14281.60..16832.74 rows=2272 width=401) (actual time=42.057..52.704 rows=13529.00 loops=1)
 	              Recheck Cond: ((event_tags @> ARRAY[($4)::text]) AND (stream_context = ($1)::text) AND (stream_purpose = ($2)::text) AND (event_type = ($3)::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))
-	              Rows Removed by Index Recheck: 1988036
-	              Heap Blocks: exact=12261 lossy=73491
-	              Buffers: shared read=88300
-	              ->  BitmapAnd  (cost=33295.60..33295.60 rows=2272 width=0) (actual time=47.930..47.931 rows=0.00 loops=1)
-	                    Buffers: shared read=2548
-	                    ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_tags  (cost=0.00..354.02 rows=49986 width=0) (actual time=27.233..27.233 rows=455094.00 loops=1)
+	              Heap Blocks: exact=13069
+	              Buffers: shared hit=15616
+	              ->  BitmapAnd  (cost=14281.60..14281.60 rows=2272 width=0) (actual time=40.661..40.663 rows=0.00 loops=1)
+	                    Buffers: shared hit=2547
+	                    ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_tags  (cost=0.00..280.16 rows=49984 width=0) (actual time=25.481..25.481 rows=455093.00 loops=1)
 	                          Index Cond: (event_tags @> ARRAY[($4)::text])
 	                          Index Searches: 1
-	                          Buffers: shared read=113
-	                    ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_type_position  (cost=0.00..32940.19 rows=454375 width=0) (actual time=15.440..15.440 rows=165193.00 loops=1)
+	                          Buffers: shared hit=112
+	                    ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_type_position  (cost=0.00..14000.05 rows=454359 width=0) (actual time=11.349..11.349 rows=165193.00 loops=1)
 	                          Index Cond: ((stream_context = ($1)::text) AND (stream_purpose = ($2)::text) AND (event_type = ($3)::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))
 	                          Index Searches: 1
-	                          Buffers: shared read=2435
+	                          Buffers: shared hit=2435
 ```
 
 ### read as issued: query-last-event @ postgres:external/metrics=off (custom plan, first executions only) — measured 0.06 ms/op
@@ -621,9 +518,9 @@ Execution Time: 0.203 ms
 		WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 	 AND stream_context = $1 AND stream_purpose = $2 AND ((event_type IN ($3) AND event_tags @> ARRAY[$4]::text[])) ORDER BY event_tx::xid8 DESC, event_position DESC LIMIT $5 OFFSET 0
 	Query Parameters: $1 = 'inventory', $2 = 'default', $3 = 'StockCounted', $4 = 'sku:SKU-000000', $5 = '1'
-	Limit  (cost=0.56..72.32 rows=1 width=401) (actual time=0.007..0.007 rows=1.00 loops=1)
+	Limit  (cost=0.56..20.14 rows=1 width=401) (actual time=0.009..0.010 rows=1.00 loops=1)
 	  Buffers: shared hit=8
-	  ->  Index Scan Backward using bm_n3tx9gechuj9_idx_events_stream_type_position on bm_n3tx9gechuj9_events  (cost=0.56..321904.11 rows=4486 width=401) (actual time=0.007..0.007 rows=1.00 loops=1)
+	  ->  Index Scan Backward using bm_n3tx9gechuj9_idx_events_stream_type_position on bm_n3tx9gechuj9_events  (cost=0.56..91519.66 rows=4676 width=401) (actual time=0.009..0.009 rows=1.00 loops=1)
 	        Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_type = 'StockCounted'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))
 	        Filter: (event_tags @> '{sku:SKU-000000}'::text[])
 	        Rows Removed by Filter: 4
@@ -631,9 +528,8 @@ Execution Time: 0.203 ms
 	        Buffers: shared hit=8
 ```
 
-### read as issued: query-cursor-walk @ postgres:external/metrics=off (generic plan) — measured 5.26 ms/op — **JIT 2ms**
+### read as issued: query-cursor-walk @ postgres:external/metrics=off (generic plan) — measured 5.37 ms/op
 
-> PostgreSQL compiled this query before running it, which it does when the estimated cost is high. On a query that turns out to be short the compilation is most of the wait, and jit_above_cost is the knob.
 > the cursor boundary is an Index Cond here, so the scan starts at the boundary rather than filtering its way to it.
 
 ```
@@ -642,16 +538,12 @@ Execution Time: 0.203 ms
 		WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 	 AND (event_tx, event_position) > ($1::xid8, $2) AND stream_context = $3 AND stream_purpose = $4 ORDER BY event_tx::xid8, event_position  LIMIT $5 OFFSET 0
 	Query Parameters: $1 = '3087568', $2 = '2752000', $3 = 'inventory', $4 = 'default', $5 = '500'
-	Limit  (cost=0.57..171633.26 rows=166604 width=401) (actual time=1.876..2.013 rows=500.00 loops=1)
+	Limit  (cost=0.57..50241.16 rows=166598 width=401) (actual time=0.008..0.228 rows=500.00 loops=1)
 	  Buffers: shared hit=30
-	  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.57..1716329.50 rows=1666042 width=401) (actual time=0.017..0.132 rows=500.00 loops=1)
+	  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.57..502407.70 rows=1665984 width=401) (actual time=0.007..0.190 rows=500.00 loops=1)
 	        Index Cond: ((stream_context = ($3)::text) AND (stream_purpose = ($4)::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())) AND (ROW(event_tx, event_position) > ROW(($1)::xid8, $2)))
 	        Index Searches: 1
 	        Buffers: shared hit=30
-	JIT:
-	  Functions: 11
-	  Options: Inlining false, Optimization false, Expressions true, Deforming true
-	  Timing: Generation 0.217 ms (Deform 0.067 ms), Inlining 0.000 ms, Optimization 0.110 ms, Emission 1.750 ms, Total 2.077 ms
 ```
 
 ### read as issued: query-by-id @ postgres:external/metrics=off (generic plan) — measured 0.02 ms/op
@@ -662,7 +554,7 @@ Execution Time: 0.203 ms
 		WHERE event_id = $1::uuid
 
 	Query Parameters: $1 = '018cc251-f400-74eb-8412-04a7d99e38f3'
-	Index Scan using bm_n3tx9gechuj9_events_event_id_key on bm_n3tx9gechuj9_events  (cost=0.56..8.59 rows=1 width=393) (actual time=0.002..0.002 rows=1.00 loops=1)
+	Index Scan using bm_n3tx9gechuj9_events_event_id_key on bm_n3tx9gechuj9_events  (cost=0.56..2.79 rows=1 width=393) (actual time=0.005..0.005 rows=1.00 loops=1)
 	  Index Cond: (event_id = ($1)::uuid)
 	  Index Searches: 1
 	  Buffers: shared hit=5
@@ -672,16 +564,16 @@ Execution Time: 0.203 ms
 
 | target | workload | mode | threads | score | unit | error | useful ops/s | ok | conflicts |
 |---|---|---|---|---|---|---|---|---|---|
-| postgres:external/metrics=off | query-by-entity-cold | thrpt | 1 | 8.520 | ops/ms | 3.9% | 8,520 | 511,242 | 0 |
-| postgres:external/metrics=off | query-by-entity-hot | thrpt | 1 | 0.001 | ops/ms | 5.1% | 1 | 45 | 0 |
-| postgres:external/metrics=off | query-by-id | thrpt | 1 | 57.647 | ops/ms | 2.9% | 57,647 | 3,458,898 | 0 |
-| postgres:external/metrics=off | query-by-multi-tag | thrpt | 1 | 0.067 | ops/ms | 3.8% | 67 | 4,015 | 0 |
-| postgres:external/metrics=off | query-by-or-groups | thrpt | 1 | 0.421 | ops/ms | 4.9% | 421 | 25,261 | 0 |
-| postgres:external/metrics=off | query-by-tag-needle | thrpt | 1 | 3.846 | ops/ms | 2.3% | 3,846 | 230,763 | 0 |
-| postgres:external/metrics=off | query-by-tag-swathe | thrpt | 1 | 0.196 | ops/ms | 1.8% | 196 | 11,778 | 0 |
-| postgres:external/metrics=off | query-by-type | thrpt | 1 | 0.999 | ops/ms | 1.6% | 999 | 59,952 | 0 |
-| postgres:external/metrics=off | query-cursor-walk | thrpt | 1 | 0.190 | ops/ms | 2.2% | 190 | 11,422 | 0 |
-| postgres:external/metrics=off | query-last-event | thrpt | 1 | 17.708 | ops/ms | 5.4% | 17,708 | 1,062,541 | 0 |
-| postgres:external/metrics=off | query-stream-page | thrpt | 1 | 0.965 | ops/ms | 3.5% | 965 | 57,920 | 0 |
+| postgres:external/metrics=off | query-by-entity-cold | thrpt | 1 | 9.682 | ops/ms | 3.1% | 9,682 | 580,945 | 0 |
+| postgres:external/metrics=off | query-by-entity-hot | thrpt | 1 | 0.001 | ops/ms | 5.8% | 1 | 43 | 0 |
+| postgres:external/metrics=off | query-by-id | thrpt | 1 | 57.872 | ops/ms | 3.8% | 57,872 | 3,472,416 | 0 |
+| postgres:external/metrics=off | query-by-multi-tag | thrpt | 1 | 0.067 | ops/ms | 3.1% | 67 | 4,047 | 0 |
+| postgres:external/metrics=off | query-by-or-groups | thrpt | 1 | 0.425 | ops/ms | 5.3% | 425 | 25,481 | 0 |
+| postgres:external/metrics=off | query-by-tag-needle | thrpt | 1 | 3.835 | ops/ms | 2.0% | 3,835 | 230,135 | 0 |
+| postgres:external/metrics=off | query-by-tag-swathe | thrpt | 1 | 0.199 | ops/ms | 2.6% | 199 | 11,950 | 0 |
+| postgres:external/metrics=off | query-by-type | thrpt | 1 | 1.004 | ops/ms | 2.7% | 1,004 | 60,261 | 0 |
+| postgres:external/metrics=off | query-cursor-walk | thrpt | 1 | 0.186 | ops/ms | 3.4% | 186 | 11,175 | 0 |
+| postgres:external/metrics=off | query-last-event | thrpt | 1 | 17.431 | ops/ms | 6.4% | 17,431 | 1,045,906 | 0 |
+| postgres:external/metrics=off | query-stream-page | thrpt | 1 | 0.959 | ops/ms | 6.6% | 959 | 57,547 | 0 |
 
 A relative error above about 10% means the measurement is too noisy to compare against anything; raise the iteration count or quieten the machine.

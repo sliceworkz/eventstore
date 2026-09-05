@@ -170,9 +170,20 @@ public final class WorkloadContext {
 	 *
 	 * <p>Carried across iterations the walk continues where it left off, so a slow workload samples the
 	 * distribution instead of re-drawing its head, and the thread stride still gives each thread a
-	 * disjoint slice.
+	 * disjoint slice. Carrying the counter is half of that sampling; {@link #permute} is the other
+	 * half -- continuing an in-order walk still reads the ranks in order, just from further along.
 	 */
 	private final AtomicInteger rotation;
+
+	/**
+	 * Multiplier and offset of the bijection {@link #permute} applies over the writable entities.
+	 *
+	 * <p>Derived from the corpus seed and the writable count alone -- never from the thread index --
+	 * because every thread must apply the <em>same</em> permutation: the walk hands out disjoint raw
+	 * indices across threads, and only a shared bijection keeps the entities they name disjoint too.
+	 */
+	private final int entityStride;
+	private final int entityOffset;
 
 	/**
 	 * Hands out ids nothing has ever used; see {@link #freshEntity()}.
@@ -229,6 +240,10 @@ public final class WorkloadContext {
 		this.threadIndex = threadIndex;
 		this.threadCount = Math.max(threadCount, 1);
 		this.random = new SplittableRandom(seed + threadIndex);
+
+		int writable = writableEntityCount();
+		this.entityStride = strideFor(writable);
+		this.entityOffset = (int) Math.floorMod(seed, writable);
 
 		this.inventory = target.store().getEventStream(
 				streamIdFor(WebshopContext.INVENTORY, null), InventoryEvent.class);
@@ -381,6 +396,9 @@ public final class WorkloadContext {
 	 * two contention modes the same measurement under a different name: identical throughput, identical
 	 * conflict counts, and a pair of profiles whose descriptions promised a distinction the numbers
 	 * could not contain.
+	 *
+	 * <p>The index the rotation produces goes through {@link #permute} before it names an entity, so
+	 * the walk samples the corpus's size distribution rather than reading it in rank order.
 	 */
 	public String nextEntity ( ) {
 		return switch ( collision ) {
@@ -389,12 +407,59 @@ public final class WorkloadContext {
 				// stride by thread count so the slices interleave rather than sitting in disjoint
 				// position ranges, which would give each thread a different part of the index
 				int raw = ( rotation.getAndIncrement() * threadCount + threadIndex ) % writableEntityCount();
+				int scattered = permute(raw);
 				// step over the reserved band rather than round it, so the writable entities stay a
-				// contiguous walk of the distribution with a hole in the middle
-				int entity = raw >= companionStart() ? raw + companionCount() : raw;
+				// walk of the whole distribution with a hole in the middle
+				int entity = scattered >= companionStart() ? scattered + companionCount() : scattered;
 				yield "SKU-%06d".formatted(entity);
 			}
 		};
+	}
+
+	/**
+	 * A seeded bijection over the writable entity indices, so the walk samples the size distribution
+	 * instead of reading it in rank order.
+	 *
+	 * <p>Entity ids are Zipf-sized by rank -- {@code SKU-000000} is the hot entity and sizes fall from
+	 * there -- so an unpermuted walk is a sorted walk of that distribution, head first. A workload fast
+	 * enough to cover the whole rotation in every measurement window never notices; a slow one covers a
+	 * few dozen indices per trial, and unpermuted those few dozen are all head: the measured mean is
+	 * the cost of the largest entities rather than of the corpus, and the iteration-to-iteration spread
+	 * is which of them a window happened to catch -- error bars that reproduce run to run because they
+	 * are structural, not machine noise.
+	 *
+	 * <p>The map is {@code (raw * stride + offset) mod writable} with the stride coprime to the count,
+	 * so it is a bijection: a full rotation still visits every writable entity exactly once, which is
+	 * what the plan capture's "one rotation back" anchoring counts on. The stride sits at the golden
+	 * ratio of the count, which scatters any window of consecutive draws into roughly evenly spaced
+	 * ranks -- a short trial reads a fair sample of the distribution rather than its head. Seeded and
+	 * thread-independent on purpose: the walk stays reproducible for a profile, disjoint raw indices
+	 * stay disjoint entities, and {@code ONE_STREAM} keeps drawing exactly the boundaries
+	 * {@code SPREAD} draws.
+	 */
+	private int permute ( int raw ) {
+		return (int) ( ( (long) raw * entityStride + entityOffset ) % writableEntityCount() );
+	}
+
+	/** The largest multiplier at or below the golden-ratio point that is coprime to the count. */
+	private static int strideFor ( int writable ) {
+		if ( writable <= 2 ) {
+			return 1;
+		}
+		int candidate = Math.max(1, (int) ( writable * 0.6180339887498949 ));
+		while ( gcd(candidate, writable) != 1 ) {
+			candidate--;
+		}
+		return candidate;
+	}
+
+	private static int gcd ( int a, int b ) {
+		while ( b != 0 ) {
+			int remainder = a % b;
+			a = b;
+			b = remainder;
+		}
+		return a;
 	}
 
 	/** How many entities appends may target -- everything but the reserved companions. */

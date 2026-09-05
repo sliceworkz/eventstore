@@ -149,9 +149,8 @@ public record EnvironmentReport (
 				statement.setArray(1, connection.createArrayOf("text", POSTGRES_SETTINGS.toArray()));
 				try ( ResultSet rows = statement.executeQuery() ) {
 					while ( rows.next() ) {
-						String unit = rows.getString("unit");
-						String value = rows.getString("setting") + ( unit == null ? "" : unit );
-						settings.put(rows.getString("name"), value);
+						settings.put(rows.getString("name"),
+								renderSetting(rows.getString("setting"), rows.getString("unit")));
 					}
 				}
 			}
@@ -163,6 +162,33 @@ public record EnvironmentReport (
 			LOGGER.warn("could not read PostgreSQL settings; this run will not be comparable against a baseline", e);
 		}
 		return settings;
+	}
+
+	/**
+	 * A setting rendered with its unit. {@code pg_settings.unit} is sometimes a <em>multiple</em> of a
+	 * base unit -- {@code shared_buffers} is counted in units of {@code 8kB}, and WAL sizes were in
+	 * {@code 16MB} segments before version 10 -- and such a multiplier must be applied to the value,
+	 * never appended to it: a {@code shared_buffers} of 1572864 units of 8kB is {@code 12582912kB},
+	 * while concatenation renders it {@code 15728648kB}, a plausible-looking figure that misstates the
+	 * server by an order of magnitude. The comparator is unaffected either way -- the rendering is
+	 * injective, so equal configurations still compare equal -- but this string is also what a person
+	 * reads to judge whether a server was configured deliberately.
+	 */
+	static String renderSetting ( String setting, String unit ) {
+		if ( unit == null ) {
+			return setting;
+		}
+		java.util.regex.Matcher multiplied = java.util.regex.Pattern.compile("(\\d+)(\\D+)").matcher(unit);
+		if ( multiplied.matches() ) {
+			try {
+				long multiple = Long.parseLong(setting) * Long.parseLong(multiplied.group(1));
+				return multiple + multiplied.group(2);
+			} catch ( NumberFormatException e ) {
+				// a value the multiplier cannot be applied to: keep both parts, visibly unapplied
+				return setting + " x " + unit;
+			}
+		}
+		return setting + unit;
 	}
 
 	private static String scalar ( Connection connection, String sql ) throws java.sql.SQLException {

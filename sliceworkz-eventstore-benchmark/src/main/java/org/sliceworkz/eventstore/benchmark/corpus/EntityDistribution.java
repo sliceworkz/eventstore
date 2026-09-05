@@ -35,11 +35,11 @@ import java.util.random.RandomGenerator;
  * <p>The cumulative weights are precomputed once, so a draw is a binary search rather than a sum --
  * generating ten million events would otherwise spend most of its time here.
  */
-final class EntityDistribution {
+public final class EntityDistribution {
 
 	private final double[] cumulative;
 
-	EntityDistribution ( int entityCount ) {
+	public EntityDistribution ( int entityCount ) {
 		if ( entityCount <= 0 ) {
 			throw new IllegalArgumentException("entityCount must be positive");
 		}
@@ -59,7 +59,11 @@ final class EntityDistribution {
 
 	/** The index of the entity an event is about, most popular first. */
 	int next ( RandomGenerator random ) {
-		double value = random.nextDouble();
+		return rankFor(random.nextDouble());
+	}
+
+	/** The entity rank whose cumulative-share interval contains the given value in {@code [0,1)}. */
+	public int rankFor ( double value ) {
 		int low = 0;
 		int high = cumulative.length - 1;
 		while ( low < high ) {
@@ -74,7 +78,7 @@ final class EntityDistribution {
 	}
 
 	/** The expected share of all events falling on the given entity. */
-	double shareOf ( int index ) {
+	public double shareOf ( int index ) {
 		return index == 0 ? cumulative[0] : cumulative[index] - cumulative[index - 1];
 	}
 

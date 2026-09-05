@@ -22,11 +22,14 @@ description: >
   at eight writers where the real figure is 4.7. Left as it is rather than tightened to the default,
   because a server faster than that one should not fail a two-hour run over a label.
 
-  One caveat before reading any of these against the medium tier: at a hundred thousand entities the
-  per-iteration boundary cache almost never gets a hit, so nearly every append-type-and-tag invocation
-  here is a boundary probe plus the append, where the medium tier amortizes the probe over a whole
-  iteration. Compare decide-then-append across tiers -- it always includes its read -- and treat this
-  tier's append-type-and-tag as a different operation mix rather than the same workload at more volume.
+  One caveat before reading any of these against the medium tier: the walk draws entities with the
+  corpus's own skew, so the head of the distribution recurs fast enough to keep its cached boundary
+  while the tail presents a cold, stale one -- and at a hundred thousand entities the tail is most
+  draws, so many append-type-and-tag invocations here carry a boundary read and a long probe walk the
+  medium tier's denser recurrence mostly avoids. Compare decide-then-append across tiers -- it always
+  includes its read -- and treat this tier's append-type-and-tag as a different operation mix rather
+  than the same workload at more volume. The staleness itself is measured deliberately, with the
+  cursor's age pinned, in dcb-boundary-staleness.
 
   Budget more wall clock than the estimate promises. The estimator counts iteration time only, and at
   this tier the restore dominates it: taking the template costs seconds, but handing the store back at
@@ -39,9 +42,11 @@ description: >
   from the plan cache flipping between a 44ms custom plan and a 1.25s sequential scan; pinning the
   generic plan makes it 20x worse still. The check the library ships derives its shape from the
   criteria instead -- an ordered probe from the cursor when one is present, the custom-planned tag
-  path when not -- and measures ~37x an unconditional append on this corpus's boundaries, at error
-  bars that describe the store. This profile keeps characterising that check as the store and the
-  workloads evolve.
+  path when not -- and dcb-boundary-staleness brackets what that probe costs against cursor age
+  (fresh ~12ms/op, a pinned half-stream-stale cursor ~605ms/op, no cursor ~2.4ms/op). What this
+  profile adds beside those pinned points is the check under the corpus's own traffic mix: entities
+  drawn with the skew that wrote the store, so cursors are as fresh or as stale as that traffic
+  makes them. This profile keeps characterising that check as the store and the workloads evolve.
 
 corpus:
   volume: 10000000

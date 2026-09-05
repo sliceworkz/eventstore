@@ -337,15 +337,20 @@ Two findings from run one that are about the workload rather than the check, sti
   `external merge Disk: 38120kB` sort, and 190.7 ms of JIT. No check shape helps there; bounding
   the read does.
 - **The 1-thread against 8-thread gaps here are entity coverage, not concurrency**, the same effect
-  the `ThreadContext` fix addressed. The walk is now permuted (`WorkloadContext.permute`): a seeded
-  golden-ratio stride, coprime to the writable count and identical on every thread, maps the
-  rotation's index onto the entities — so a window of k draws samples k roughly evenly spaced ranks
-  of the distribution instead of its head, while a full rotation still visits every writable entity
-  exactly once (which the plan capture's "one rotation back" anchoring counts on), thread slices
-  stay disjoint, and `one-stream` still draws exactly the boundaries `spread` draws. The published
-  `large-tier-writes` runs predate the permutation, so their `decide-then-append` rows still carry
-  the coverage artifact and its 33–56% error bars; a re-run is what would retire this caveat, and
-  should also close the superlinear 1-thread-to-8-thread gap those rows show.
+  the `ThreadContext` fix addressed. The walk now draws entities with the corpus's own Zipf skew
+  (`WorkloadContext.nextWeightedRank`): a stateless draw positioned by the rotation counter, snapped
+  to the thread's own residue class so `spread` slices stay disjoint and `one-stream` still draws
+  exactly the boundaries `spread` draws, never landing on a reserved companion. The alternatives
+  each measured the wrong thing: a rank-ordered walk reads only the head (a slow trial's every draw
+  was a giant entity), and a *uniform* draw — measured once, on the run between the two fixes —
+  reads mostly the tail, whose boundaries sit millions of events back, so `append-type-and-tag`
+  came out at 124 ms/op ("393×") with the probe walking ~500k rows per check: the staleness cost of
+  a mix no real traffic produces, dressed up as the check's price. Weighted, the mix is the one that
+  wrote the store; the deliberately-stale case is measured with its cursor age pinned in
+  `dcb-boundary-staleness` instead of being blended into a mean. The snap is exact at one thread
+  and dilutes only the very head at T threads (each rank is owned by one thread with its T-wide
+  bucket's weight) — the price of never manufacturing contention under `spread`. The published
+  `large-tier-writes` runs predate the weighted walk; a re-run retires this caveat.
 
 ### Choosing a stream design: one stream per context, or one per entity
 

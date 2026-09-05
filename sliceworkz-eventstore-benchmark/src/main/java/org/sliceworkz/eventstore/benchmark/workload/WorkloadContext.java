@@ -26,6 +26,7 @@ import java.util.SplittableRandom;
 import org.sliceworkz.eventstore.benchmark.corpus.CorpusFacts;
 import org.sliceworkz.eventstore.benchmark.corpus.CorpusSpec;
 import org.sliceworkz.eventstore.benchmark.corpus.CorpusSpec.StreamDesign;
+import org.sliceworkz.eventstore.benchmark.corpus.EntityDistribution;
 import org.sliceworkz.eventstore.benchmark.domain.CrmEvent;
 import org.sliceworkz.eventstore.benchmark.domain.InventoryEvent;
 import org.sliceworkz.eventstore.benchmark.domain.SalesEvent;
@@ -111,6 +112,7 @@ public final class WorkloadContext {
 	private final Collision collision;
 	private final int threadIndex;
 	private final int threadCount;
+	private final long seed;
 	private final SplittableRandom random;
 
 	private final EventStream<InventoryEvent> inventory;
@@ -156,34 +158,33 @@ public final class WorkloadContext {
 	 * same defect {@code FRESH_IDS} above documents, in the counter that decides <em>which entity</em>
 	 * every append and every decide touches.
 	 *
-	 * <p>What it cost is worth stating, because it is invisible until the operation is slow. The walk
-	 * is {@code rotation * threadCount + threadIndex} over a corpus whose entity sizes are steeply
-	 * skewed, so restarting it means re-drawing the <b>head</b> of that distribution every iteration.
-	 * At the medium tier a trial runs tens of thousands of operations, the rotation covers the whole
-	 * entity set, and nothing is visible. At ten million events {@code decide-then-append} completed
-	 * <b>39 operations across twelve measurement iterations</b> -- about three each, so entities 0, 1
-	 * and 2 nearly every time, and entity 0 is the hot one holding 455.092 events at roughly 1.6
-	 * seconds a read. At eight threads the same budget spread over entities 0-7 and beyond, so the hot
-	 * entity carried about 1/185th of the operations instead of a third. That dilution, not
-	 * concurrency, is the 71x the published report shows between one thread and eight: eight threads
-	 * cannot make one operation seventy times faster, and the comparison was never about threads.
+	 * <p>What restarting it cost is worth stating, because it is invisible until the operation is slow.
+	 * The counter positions the walk over a corpus whose entity sizes are steeply skewed, so
+	 * restarting it means re-drawing the same first draws every iteration. At the medium tier a trial
+	 * runs tens of thousands of operations and nothing is visible. At ten million events, back when
+	 * the walk read the corpus in rank order, {@code decide-then-append} completed <b>39 operations
+	 * across twelve measurement iterations</b> -- about three each, so entities 0, 1 and 2 nearly
+	 * every time, and entity 0 is the hot one holding 455.092 events at roughly 1.6 seconds a read.
+	 * At eight threads the same budget spread over entities 0-7 and beyond, so the hot entity carried
+	 * about 1/185th of the operations instead of a third. That dilution, not concurrency, is the 71x
+	 * the report of that run shows between one thread and eight: eight threads cannot make one
+	 * operation seventy times faster, and the comparison was never about threads.
 	 *
-	 * <p>Carried across iterations the walk continues where it left off, so a slow workload samples the
-	 * distribution instead of re-drawing its head, and the thread stride still gives each thread a
-	 * disjoint slice. Carrying the counter is half of that sampling; {@link #permute} is the other
-	 * half -- continuing an in-order walk still reads the ranks in order, just from further along.
+	 * <p>Carried across iterations the walk continues where it left off, so a slow workload keeps
+	 * sampling the traffic distribution instead of replaying its first draws. The draw at each
+	 * position is a pure function of the seed, the thread and the position ({@link #nextWeightedRank}),
+	 * so continuing the counter is all the continuity the walk needs.
 	 */
 	private final AtomicInteger rotation;
 
 	/**
-	 * Multiplier and offset of the bijection {@link #permute} applies over the writable entities.
-	 *
-	 * <p>Derived from the corpus seed and the writable count alone -- never from the thread index --
-	 * because every thread must apply the <em>same</em> permutation: the walk hands out disjoint raw
-	 * indices across threads, and only a shared bijection keeps the entities they name disjoint too.
+	 * The traffic distribution the walk draws from -- the same Zipf(1) the corpus generator used, so
+	 * the operations a run measures are mixed the way the events in the store were. One instance per
+	 * entity count, shared: the cumulative array is read-only after construction and costs
+	 * O(entityCount) to build, which is too much to re-pay on a context that is rebuilt per iteration.
 	 */
-	private final int entityStride;
-	private final int entityOffset;
+	private static final java.util.concurrent.ConcurrentHashMap<Integer, EntityDistribution> TRAFFIC =
+			new java.util.concurrent.ConcurrentHashMap<>();
 
 	/**
 	 * Hands out ids nothing has ever used; see {@link #freshEntity()}.
@@ -239,11 +240,8 @@ public final class WorkloadContext {
 		this.collision = collision;
 		this.threadIndex = threadIndex;
 		this.threadCount = Math.max(threadCount, 1);
+		this.seed = seed;
 		this.random = new SplittableRandom(seed + threadIndex);
-
-		int writable = writableEntityCount();
-		this.entityStride = strideFor(writable);
-		this.entityOffset = (int) Math.floorMod(seed, writable);
 
 		this.inventory = target.store().getEventStream(
 				streamIdFor(WebshopContext.INVENTORY, null), InventoryEvent.class);
@@ -397,74 +395,93 @@ public final class WorkloadContext {
 	 * conflict counts, and a pair of profiles whose descriptions promised a distinction the numbers
 	 * could not contain.
 	 *
-	 * <p>The index the rotation produces goes through {@link #permute} before it names an entity, so
-	 * the walk samples the corpus's size distribution rather than reading it in rank order.
+	 * <p>The entity a draw names comes from {@link #nextWeightedRank()}: drawn with the corpus's own
+	 * traffic skew, snapped to this thread's slice, never a reserved companion.
 	 */
 	public String nextEntity ( ) {
 		return switch ( collision ) {
 			case ONE_BOUNDARY -> facts.hotEntity();
-			case SPREAD, ONE_STREAM -> {
-				// stride by thread count so the slices interleave rather than sitting in disjoint
-				// position ranges, which would give each thread a different part of the index
-				int raw = ( rotation.getAndIncrement() * threadCount + threadIndex ) % writableEntityCount();
-				int scattered = permute(raw);
-				// step over the reserved band rather than round it, so the writable entities stay a
-				// walk of the whole distribution with a hole in the middle
-				int entity = scattered >= companionStart() ? scattered + companionCount() : scattered;
-				yield "SKU-%06d".formatted(entity);
-			}
+			case SPREAD, ONE_STREAM -> "SKU-%06d".formatted(nextWeightedRank());
 		};
 	}
 
 	/**
-	 * A seeded bijection over the writable entity indices, so the walk samples the size distribution
-	 * instead of reading it in rank order.
+	 * The next entity rank, drawn with the skew the corpus was generated with.
 	 *
-	 * <p>Entity ids are Zipf-sized by rank -- {@code SKU-000000} is the hot entity and sizes fall from
-	 * there -- so an unpermuted walk is a sorted walk of that distribution, head first. A workload fast
-	 * enough to cover the whole rotation in every measurement window never notices; a slow one covers a
-	 * few dozen indices per trial, and unpermuted those few dozen are all head: the measured mean is
-	 * the cost of the largest entities rather than of the corpus, and the iteration-to-iteration spread
-	 * is which of them a window happened to catch -- error bars that reproduce run to run because they
-	 * are structural, not machine noise.
+	 * <p><b>Why weighted rather than uniform.</b> Entity ids are Zipf-sized by rank, and how stale a
+	 * boundary is when an append checks it is decided by how the walk draws: a walk in rank order
+	 * measures only the head (the defect the trial-lifetime counter fixed); a uniform draw measures
+	 * mostly the tail, whose boundaries sit millions of events back -- so its mean is the ordered
+	 * probe's staleness walk, a mix no real traffic produces, dressed up as "the DCB check". Drawing
+	 * with the corpus's own distribution makes the measured mix the one that wrote the store: the head
+	 * recurs fast enough to present fresh cursors, the tail presents stale ones at the rate it would in
+	 * production. The deliberately-stale case is not lost to that realism -- it is its own workload
+	 * ({@code append-stale-boundary}) in its own profile ({@code dcb-boundary-staleness}), where the
+	 * cursor's age is pinned rather than sampled.
 	 *
-	 * <p>The map is {@code (raw * stride + offset) mod writable} with the stride coprime to the count,
-	 * so it is a bijection: a full rotation still visits every writable entity exactly once, which is
-	 * what the plan capture's "one rotation back" anchoring counts on. The stride sits at the golden
-	 * ratio of the count, which scatters any window of consecutive draws into roughly evenly spaced
-	 * ranks -- a short trial reads a fair sample of the distribution rather than its head. Seeded and
-	 * thread-independent on purpose: the walk stays reproducible for a profile, disjoint raw indices
-	 * stay disjoint entities, and {@code ONE_STREAM} keeps drawing exactly the boundaries
-	 * {@code SPREAD} draws.
+	 * <p><b>Positioned by {@link #rotation}, not by a stateful generator.</b> The draw at position n is
+	 * a pure function of the seed, the thread and n, so the sequence continues across per-iteration
+	 * context rebuilds exactly as the counter does, and a re-run replays it.
+	 *
+	 * <p><b>Snapped to this thread's residue class, so no two threads can draw the same entity.</b>
+	 * Under {@code SPREAD} a shared entity would be a shared boundary and a shared advisory lock, and
+	 * "no contention" would quietly be contended -- the one outcome this walk must never produce. The
+	 * snap is the identity at one thread, so the single-threaded mix is the corpus's exactly; at T
+	 * threads each rank is drawn by its one owner with the weight of the T-wide bucket it heads, which
+	 * understates the very head of the distribution -- the price of disjoint slices, and why the
+	 * aggregate mix at eight writers is close to the corpus's rather than equal to it.
+	 *
+	 * <p>A draw landing in the reserved companion band is redrawn -- deterministically, the attempt
+	 * being part of the position -- so nothing ever appends to a companion.
 	 */
-	private int permute ( int raw ) {
-		return (int) ( ( (long) raw * entityStride + entityOffset ) % writableEntityCount() );
+	private int nextWeightedRank ( ) {
+		EntityDistribution traffic = TRAFFIC.computeIfAbsent(spec.entityCount(), EntityDistribution::new);
+		long position = rotation.getAndIncrement();
+		for ( int attempt = 0; attempt < 64; attempt++ ) {
+			int rank = snapToSlice(traffic.rankFor(unit(position, attempt)));
+			if ( !inCompanionBand(rank) ) {
+				return rank;
+			}
+		}
+		// vanishingly unlikely (the band is a sliver of the draw space): take this thread's first
+		// rank past the band, clamped for corpora too small to hold one
+		int bandEnd = companionStart() + companionCount();
+		int fallback = bandEnd + Math.floorMod(threadIndex - bandEnd, threadCount);
+		return Math.min(fallback, Math.max(spec.entityCount() - 1, 0));
 	}
 
-	/** The largest multiplier at or below the golden-ratio point that is coprime to the count. */
-	private static int strideFor ( int writable ) {
-		if ( writable <= 2 ) {
-			return 1;
+	/** The nearest rank at or below the drawn one that this thread owns; the identity at one thread. */
+	private int snapToSlice ( int rank ) {
+		if ( threadCount <= 1 ) {
+			return rank;
 		}
-		int candidate = Math.max(1, (int) ( writable * 0.6180339887498949 ));
-		while ( gcd(candidate, writable) != 1 ) {
-			candidate--;
+		int snapped = rank - Math.floorMod(rank - threadIndex, threadCount);
+		if ( snapped < 0 ) {
+			snapped += threadCount;
 		}
-		return candidate;
+		return Math.min(snapped, spec.entityCount() - 1);
 	}
 
-	private static int gcd ( int a, int b ) {
-		while ( b != 0 ) {
-			int remainder = a % b;
-			a = b;
-			b = remainder;
-		}
-		return a;
+	/** Whether a rank falls inside the reserved companion band -- the numeric twin of {@link #isCompanion}. */
+	private boolean inCompanionBand ( int rank ) {
+		int start = companionStart();
+		return rank >= start && rank < start + companionCount();
 	}
 
-	/** How many entities appends may target -- everything but the reserved companions. */
-	public int writableEntityCount ( ) {
-		return Math.max(spec.entityCount() - companionCount(), 1);
+	/**
+	 * A uniform value in {@code [0,1)} for the walk's n-th draw: SplitMix64's finalizer over the seed,
+	 * the thread and the position. Stateless on purpose -- reproducible for a profile, continuous
+	 * across the per-iteration context rebuilds, and uncorrelated between threads.
+	 */
+	private double unit ( long position, int attempt ) {
+		long z = seed
+				+ 0x9E3779B97F4A7C15L * ( position + 1 )
+				+ 0xC2B2AE3D27D4EB4FL * ( threadIndex + 1L )
+				+ 0x165667B19E3779F9L * ( attempt + 1L );
+		z = ( z ^ ( z >>> 30 ) ) * 0xBF58476D1CE4E5B9L;
+		z = ( z ^ ( z >>> 27 ) ) * 0x94D049BB133111EBL;
+		z = z ^ ( z >>> 31 );
+		return ( z >>> 11 ) * 0x1.0p-53;
 	}
 
 	private int companionCount ( ) {

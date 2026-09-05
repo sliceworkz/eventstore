@@ -345,13 +345,19 @@ public final class QueryPlans {
 	 * How many events pass between one entity's append and its next, measured in the scope the
 	 * predicate is confined to -- which is what the check has to search.
 	 *
-	 * <p>Under {@code TAGGED} one stream holds every entity, so a full rotation of the writable
-	 * entities lands in it before the workload returns to any one of them. Under {@code PER_ENTITY}
-	 * the predicate is scoped to that entity's own stream, which receives exactly one append per
-	 * rotation, so the same reasoning gives one.
+	 * <p>The reconstructed predicates are scoped to the hot entity, and the walk draws entities with
+	 * the corpus's own skew -- so under {@code TAGGED}, where one stream holds every entity, the hot
+	 * entity's steady-state boundary is its expected re-draw gap old: one draw in every
+	 * {@code 1/share} lands on it, and every draw in between appends one event to the shared stream.
+	 * Under {@code PER_ENTITY} the predicate is scoped to that entity's own stream, which receives
+	 * only its own appends, so the distance is one whatever the walk does.
 	 */
 	private static int boundaryDistance ( CorpusSpec spec, boolean perEntity ) {
-		return perEntity ? 1 : Math.max(1, spec.entityCount());
+		if ( perEntity ) {
+			return 1;
+		}
+		double hotShare = new org.sliceworkz.eventstore.benchmark.corpus.EntityDistribution(spec.entityCount()).shareOf(0);
+		return Math.max(1, (int) Math.round(1.0d / hotShare));
 	}
 
 	private static Boundary readBoundary ( DataSource dataSource, String prefix, String purpose, int distance ) {

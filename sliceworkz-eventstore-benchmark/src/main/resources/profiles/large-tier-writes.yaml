@@ -43,10 +43,15 @@ description: >
   generic plan makes it 20x worse still. The check the library ships derives its shape from the
   criteria instead -- an ordered probe from the cursor when one is present, the custom-planned tag
   path when not -- and dcb-boundary-staleness brackets what that probe costs against cursor age
-  (fresh ~12ms/op, a pinned half-stream-stale cursor ~605ms/op, no cursor ~2.4ms/op). What this
-  profile adds beside those pinned points is the check under the corpus's own traffic mix: entities
-  drawn with the skew that wrote the store, so cursors are as fresh or as stale as that traffic
-  makes them. This profile keeps characterising that check as the store and the workloads evolve.
+  (traffic-mix cursors ~26ms/op, a pinned half-stream-stale cursor ~590ms/op at 0.7% error, no
+  cursor ~2.3ms/op; append-none 0.32ms/op beside them). What this profile adds beside those pinned
+  points is the check under concurrency and against a growing store, plus the decider pair:
+  decide-then-append reads its boundary unbounded and presents the last matching event -- so it
+  pays the full history read on hot entities and the staleness walk on idle ones, which is most of
+  its mean and all of its error bar -- while decide-then-append-fresh bounds the read and presents
+  the freshest reference it observed, the recommended pattern on a tagged stream at scale. The gap
+  between the pair is what that pattern is worth. This profile keeps characterising the check as
+  the store and the workloads evolve.
 
 corpus:
   volume: 10000000
@@ -67,6 +72,7 @@ jmh:
     - append-none
     - append-type-and-tag
     - decide-then-append
+    - decide-then-append-fresh
   # append-none is the control that must not move between thread counts for reasons of contention: it
   # takes no advisory lock and reads no boundary, so what it measures is the insert and the round trip.
   threads: [ 1, 8 ]

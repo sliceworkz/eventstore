@@ -1322,12 +1322,17 @@ that bind everywhere:
   expected reference runs as an ordered probe (`ORDER BY event_tx, event_position LIMIT 1`) that
   walks the position index forward *from the cursor* and stops at the first match — its cached
   generic plan is that walk, so the plan is stable, there is no or-groups cliff (2.6× at ten OR-ed
-  facts), and the canonical one-type-one-tag check measures ~37× an unconditional append at ten
-  million events. A criteria *without* a reference — the uniqueness pattern, "I decided on an empty
-  boundary" — runs as `NOT EXISTS` with server preparation disabled for that statement, so it is
-  planned from its bound values and answered by the tag index (~2.4 ms/op at ten million events).
-  The probe's one cost is a stale cursor — linear in the stream events since it, ~0.2 µs each —
-  which the decide-then-append cycle avoids by construction. The natural alternative — one uniform
+  facts), and the canonical one-type-one-tag check under a traffic-faithful entity mix measures
+  ~26 ms/op (~83× an unconditional append) at ten million events. A criteria *without* a
+  reference — the uniqueness pattern, "I decided on an empty boundary" — runs as `NOT EXISTS` with
+  server preparation disabled for that statement, so it is planned from its bound values and
+  answered by the tag index (~2.3 ms/op at ten million events).
+  The probe's one cost is a stale cursor — linear in the stream events since it, ~0.2 µs each, so
+  the *average* check on a tagged stream prices at ~0.2 µs × the count of entities active in it,
+  whatever the traffic skew. Re-reading the boundary refreshes the cursor only for an entity that
+  has been moving; for a long-idle one the fix is presenting the freshest reference the read
+  observed (head read *before* the boundary), which collapses the walk — the benchmark module's
+  notes carry the reasoning and the measured curve. The natural alternative — one uniform
   `NOT EXISTS` statement for every criteria, left to the plan cache — was measured and rejected: a
   `NOT EXISTS` is priced by how soon a row turns up while a DCB check expects no row, so the plan
   cache settles on plans built for the wrong question (~190× with 50–150% error bars on the

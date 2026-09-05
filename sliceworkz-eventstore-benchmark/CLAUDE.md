@@ -318,39 +318,65 @@ row, and from the tenth execution the generic plan wins the estimate and loses t
 from its bound values every time (`setPrepareThreshold(0)`), the same boundary measures
 **2.42 ms/op** — per-execution planning is noise against a 486× plan defect.
 
-**The criteria-shaped check, validated whole on this corpus:** fresh boundary ~12 ms/op (the probe
-finding ~170 rows after the cursor), stale boundary ~605 ms/op (2.75M rows walked, linear and
-predictable at under 3% error — the probe's one accepted cost, avoided by re-reading the boundary
-before appending, which the decide-then-append cycle does anyway), empty boundary ~2.4 ms/op.
-**~37× an unconditional append on this corpus's boundaries against the uniform alternative's
-~190-220×**, at error bars that describe the store. The or-groups cliff belongs to the rejected
+**The criteria-shaped check, measured whole on this corpus** (the `dcb-boundary-staleness`
+published run, external PG18, one thread, `append-none` at 0.32 ms/op beside it): empty boundary
+~2.3 ms/op, **traffic-mix boundaries ~26 ms/op (~83×)**, pinned half-stream-stale boundary
+~590 ms/op at **0.7% relative error** — 2.75M rows walked at ~0.215 µs each, linear and utterly
+predictable, and reproduced across profiles (`append-type-and-tag` at 26.1 and 26.3 ms/op in the
+same day's `large-tier-writes` and staleness runs). The traffic-mix figure is a renewal identity
+made visible: under *any* stationary write mix, entities recur at the rate they are written to, so
+the mean probe walk is about one event per entity active in the stream — **~0.2 µs × the entity
+count, whatever the skew and whatever the volume**. Entity count, not event count, prices the
+average check on a `TAGGED` stream. (An earlier figure of ~37× was measured under the rank-ordered
+walk, whose draws were all head entities with near-fresh cursors — a lower bound, not the mix.)
+
+**How a caller avoids the stale walk depends on why the cursor is old.** An entity that has been
+moving gets a fresh cursor from re-reading its boundary, which a conflict-retry loop does anyway.
+A long-idle entity does not: its last matching event simply *is* old, and re-reading cannot advance
+a cursor past events that do not exist — which is why `decide-then-append`, which faithfully
+re-reads, still pays the walk on idle entities. What the read does establish is that nothing
+matching sits between that old cursor and the head it read at, so a decider may present the *head*
+as the expected reference — claiming exactly what was proven — and the probe starts where the
+reader stopped. Sound because of the `pg_snapshot_xmin` barrier (nothing a running transaction
+later commits can order below a head readable now), with one rule: read the head *before* the
+boundary, so everything at or below the presented head was visible to the read that decided.
+`decide-then-append-fresh` is that pattern as a workload, beside its naive sibling in
+`large-tier-writes` and `dcb-boundary-staleness`.
+
+**~83× an unconditional append on this corpus's traffic-weighted boundaries against the uniform
+alternative's ~190-220×**, at error bars that describe the store. The or-groups cliff belongs to the rejected
 alternative alone (14× at two facts against the probe's 2.62× at ten), which is why no profile
 asks the plan-cache question any more: it is closed, the figures in this section are its record,
 and the `-not-exists`-suffixed baselines under `results/` are the rejected alternative's committed
 measurements — kept under that suffix so publishing the shipped check's runs cannot overwrite the
 evidence behind the rejection.
 
-Two findings from run one that are about the workload rather than the check, still standing:
+Two findings that are about the workload rather than the check:
 
-- **`decide-then-append` at this tier is 94–99% its decide read**, not its append. The read returns
-  455.092 rows and falls off three cliffs at once — lossy bitmap (`exact=17849 lossy=44563`), an
-  `external merge Disk: 38120kB` sort, and 190.7 ms of JIT. No check shape helps there; bounding
-  the read does.
-- **The 1-thread against 8-thread gaps here are entity coverage, not concurrency**, the same effect
-  the `ThreadContext` fix addressed. The walk now draws entities with the corpus's own Zipf skew
-  (`WorkloadContext.nextWeightedRank`): a stateless draw positioned by the rotation counter, snapped
-  to the thread's own residue class so `spread` slices stay disjoint and `one-stream` still draws
-  exactly the boundaries `spread` draws, never landing on a reserved companion. The alternatives
-  each measured the wrong thing: a rank-ordered walk reads only the head (a slow trial's every draw
-  was a giant entity), and a *uniform* draw — measured once, on the run between the two fixes —
-  reads mostly the tail, whose boundaries sit millions of events back, so `append-type-and-tag`
-  came out at 124 ms/op ("393×") with the probe walking ~500k rows per check: the staleness cost of
-  a mix no real traffic produces, dressed up as the check's price. Weighted, the mix is the one that
-  wrote the store; the deliberately-stale case is measured with its cursor age pinned in
-  `dcb-boundary-staleness` instead of being blended into a mean. The snap is exact at one thread
-  and dilutes only the very head at T threads (each rank is owned by one thread with its T-wide
-  bucket's weight) — the price of never manufacturing contention under `spread`. The published
-  `large-tier-writes` runs predate the weighted walk; a re-run retires this caveat.
+- **`decide-then-append` at this tier is dominated by its unbounded decide read**, not its append —
+  and under the traffic-weighted walk that is now the whole row: ~500 ms/op at one thread with a
+  67% error bar, because 8% of draws land on the hot entity whose 455k-event history reads at
+  ~1.6 s (lossy bitmap, an external-merge disk sort, JIT — three cliffs at once), and which
+  entities a short window catches is a lottery. That bar is the workload's honest content — the
+  cost of skewed traffic through an unbounded read — not harness noise; no check shape helps
+  there, bounding the read does, and `decide-then-append-fresh` measures the bounded pattern
+  beside it. Its 1-thread-to-8-thread gap is head dilution from the walk's slice snap (the hot
+  entity falls from 8.3% of draws to 2.8% of the aggregate), never concurrency.
+- **The walk draws entities with the corpus's own Zipf skew** (`WorkloadContext.nextWeightedRank`):
+  a stateless draw positioned by the rotation counter, snapped to the thread's own residue class so
+  `spread` slices stay disjoint and `one-stream` still draws exactly the boundaries `spread` draws,
+  never landing on a reserved companion. The alternatives each measured the wrong thing: a
+  rank-ordered walk reads only the head (a slow trial's every draw was a giant entity, and the 71×
+  1-vs-8-thread gap in the first published run was that coverage, not threads), and a *uniform*
+  draw — measured once, on the run between the two fixes — reads mostly the tail, whose boundaries
+  sit millions of events back, so `append-type-and-tag` came out at 124 ms/op ("393×") with the
+  probe walking ~500k rows per check: the staleness cost of a mix no real traffic produces, dressed
+  up as the check's price. Weighted, the mix is the one that wrote the store — and the measured
+  26 ms/op confirmed the renewal prediction made before the run. The deliberately-stale case is
+  measured with its cursor age pinned in `dcb-boundary-staleness` instead of being blended into a
+  mean. The snap is exact at one thread and dilutes only the very head at T threads (each rank is
+  owned by one thread with its T-wide bucket's weight) — the price of never manufacturing
+  contention under `spread`.
 
 ### Choosing a stream design: one stream per context, or one per entity
 

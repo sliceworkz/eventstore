@@ -82,6 +82,7 @@ public final class AppendWorkloads {
 				idempotentFresh(),
 				idempotentDuplicate(),
 				decideThenAppend(),
+				decideThenAppendFresh(),
 				shreddedAppend(false),
 				shreddedAppend(true));
 	}
@@ -445,6 +446,93 @@ public final class AppendWorkloads {
 				} catch ( OptimisticLockingException e ) {
 					// under ONE_BOUNDARY this is the expected outcome for most threads; the JMH layer
 					// counts them separately rather than treating them as errors
+					return -1;
+				}
+			}
+		};
+	}
+
+	/**
+	 * The decider a tagged stream at scale actually wants: read the boundary <em>bounded</em>, then
+	 * append presenting the freshest reference the read observed -- the stream head, not the last
+	 * matching event.
+	 *
+	 * <p>The distinction is the whole workload. The check's probe walks the stream forward from the
+	 * reference in the criteria, so its cost is the reference's <em>age</em>, and the last matching
+	 * event of a long-idle entity is old no matter how recently it was read -- re-reading the boundary
+	 * cannot advance a cursor past events that do not exist. What the read <em>does</em> establish is
+	 * that no matching event sits between that old cursor and the head it read at; presenting the head
+	 * therefore claims exactly what was proven, and the probe starts where the reader stopped.
+	 *
+	 * <p>Presenting a reference that is not a matching event is sound, and the read barrier is why: a
+	 * query only sees events below {@code pg_snapshot_xmin}, so anything a still-running transaction
+	 * later commits orders <em>after</em> everything readable now -- "nothing matching after the head I
+	 * observed" cannot be invalidated retroactively. One ordering rule keeps it sound, and any caller
+	 * copying this pattern must copy it too: <b>read the head before the boundary</b>, so everything
+	 * ordering at or below the presented head was visible to the boundary read that decided.
+	 *
+	 * <p>Read it against {@code decide-then-append}, its naive sibling: same entity walk, same filter,
+	 * same append. That one reads the whole history unbounded and presents the last matching event, so
+	 * it pays the full read on hot entities and the staleness walk on idle ones; this one pays two
+	 * savepoint-shaped reads and a probe over whatever landed between them. The gap between the pair is
+	 * what bounding the read and presenting the head are worth -- the two halves of the recommended
+	 * pattern, measured together.
+	 */
+	private static Workload decideThenAppendFresh ( ) {
+		return new Workload() {
+
+			@Override
+			public String name ( ) {
+				return "decide-then-append-fresh";
+			}
+
+			@Override
+			public String description ( ) {
+				return "read the boundary bounded, then append presenting the freshest reference observed"
+						+ " -- the recommended decider on a tagged stream at scale";
+			}
+
+			@Override
+			public WorkloadRequirement requirement ( ) {
+				return WorkloadRequirement.mutating();
+			}
+
+			@Override
+			public Object invoke ( WorkloadContext context ) {
+				String sku = context.nextEntity();
+				EventQuery boundary = EventQuery.forEvents(stockTypes(), Tags.of(TagKeys.SKU, sku));
+
+				// head FIRST, boundary second -- the order is the safety. Presenting the head claims
+				// "no matching events after it that I have not seen", and only this order makes that
+				// true: anything ordering at or below a head read now is below the read barrier, so the
+				// boundary read that follows is guaranteed to see it. Read the other way round, a
+				// matching event landing between the two reads can order below the head yet stay unseen
+				// -- a new relevant fact the check would then never raise.
+				EventReference head = context.inventory()
+						.query(EventQuery.matchAll().backwards().limit(1))
+						.map(Event::reference)
+						.findFirst()
+						.orElse(null);
+
+				// the decision, bounded: the last matching event is all a decider needs to see, and
+				// backwards-limit-1 is the savepoint probe rather than a walk of the entity's history
+				EventReference lastMatching = context.inventory()
+						.query(boundary.backwards().limit(1))
+						.map(Event::reference)
+						.findFirst()
+						.orElse(null);
+				if ( head == null ) {
+					head = lastMatching;
+				}
+
+				try {
+					return context.inventory().append(
+							AppendCriteria.of(boundary.filter(), head),
+							reservation(context, sku),
+							context.streamIdFor(WebshopContext.INVENTORY, sku)).size();
+				} catch ( OptimisticLockingException e ) {
+					// a matching event landed between the reads and the append -- the genuine conflict
+					// this pattern still detects; counted, like its sibling's
 					return -1;
 				}
 			}

@@ -197,7 +197,7 @@ public final class AppendPlanCapture {
 	 */
 	private static boolean isConditionalAppend ( Workload workload ) {
 		String name = workload.name();
-		return ( name.startsWith("append-") || name.equals("decide-then-append") )
+		return ( name.startsWith("append-") || name.startsWith("decide-then-append") )
 				&& !name.equals("append-none")
 				&& !name.startsWith("append-batch")
 				&& !name.startsWith("append-idempotent");

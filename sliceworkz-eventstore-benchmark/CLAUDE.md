@@ -341,7 +341,16 @@ reader stopped. Sound because of the `pg_snapshot_xmin` barrier (nothing a runni
 later commits can order below a head readable now), with one rule: read the head *before* the
 boundary, so everything at or below the presented head was visible to the read that decided.
 `decide-then-append-fresh` is that pattern as a workload, beside its naive sibling in
-`large-tier-writes` and `dcb-boundary-staleness`.
+`large-tier-writes` and `dcb-boundary-staleness` — and measured, it is the best-behaved write
+number at this tier: **~4.0 ms/op at 4–7% relative error, reproduced across both profiles at
+0.249/0.250 ops/ms** — a whole correctly-done decision (two bounded reads plus the checked append)
+at ~12× a blind insert, **~125× its naive sibling** and ~6.5× under even the average traffic-mix
+check, since the presented head leaves the probe nearly nothing to walk. It is also the only
+conditional write that scales with writers under `TAGGED` (0.250 → 0.741 ops/ms at eight, 3.0×):
+the context's single advisory lock serialises only the append, which the pattern shrinks to a
+sliver of the operation while the reads run in parallel. Zero conflicts at eight spread writers,
+which is the concurrency-correctness check for presenting the head — other writers' events land
+after it but match nothing in the filter, so the probe passes them.
 
 **~83× an unconditional append on this corpus's traffic-weighted boundaries against the uniform
 alternative's ~190-220×**, at error bars that describe the store. The or-groups cliff belongs to the rejected
@@ -359,8 +368,8 @@ Two findings that are about the workload rather than the check:
   ~1.6 s (lossy bitmap, an external-merge disk sort, JIT — three cliffs at once), and which
   entities a short window catches is a lottery. That bar is the workload's honest content — the
   cost of skewed traffic through an unbounded read — not harness noise; no check shape helps
-  there, bounding the read does, and `decide-then-append-fresh` measures the bounded pattern
-  beside it. Its 1-thread-to-8-thread gap is head dilution from the walk's slice snap (the hot
+  there, bounding the read does, and `decide-then-append-fresh` beside it measures what bounding
+  is worth: ~4.0 ms/op against ~500. Its 1-thread-to-8-thread gap is head dilution from the walk's slice snap (the hot
   entity falls from 8.3% of draws to 2.8% of the aggregate), never concurrency.
 - **The walk draws entities with the corpus's own Zipf skew** (`WorkloadContext.nextWeightedRank`):
   a stateless draw positioned by the rotation counter, snapped to the thread's own residue class so

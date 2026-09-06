@@ -1331,8 +1331,10 @@ that bind everywhere:
   the *average* check on a tagged stream prices at ~0.2 µs × the count of entities active in it,
   whatever the traffic skew. Re-reading the boundary refreshes the cursor only for an entity that
   has been moving; for a long-idle one the fix is presenting the freshest reference the read
-  observed (head read *before* the boundary), which collapses the walk — the benchmark module's
-  notes carry the reasoning and the measured curve. The natural alternative — one uniform
+  observed (head read *before* the boundary), which collapses the walk: a whole decision done that
+  way — two bounded reads plus the checked append — measures ~4 ms/op against the unbounded naive
+  decider's ~500, and is the one conditional write that scales with writers on a tagged stream.
+  The benchmark module's notes carry the reasoning and the measured curve. The natural alternative — one uniform
   `NOT EXISTS` statement for every criteria, left to the plan cache — was measured and rejected: a
   `NOT EXISTS` is priced by how soon a row turns up while a DCB check expects no row, so the plan
   cache settles on plans built for the wrong question (~190× with 50–150% error bars on the

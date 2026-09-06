@@ -301,15 +301,9 @@ public final class EventStoreImporter {
 
 	/**
 	 * Returns the reference of the last event in the storage, or null when it holds none.
-	 * <p>
-	 * Note the direction is passed explicitly: at the storage level a query's own direction is not
-	 * consulted, so {@link EventQuery#backwards()} alone would be ignored.
 	 */
 	private static EventReference headOf ( EventStorage storage ) {
-		return storage.query(EventQuery.matchAll(), Optional.empty(), null, Limit.to(1), QueryDirection.BACKWARD)
-				.findFirst()
-				.map(StoredEvent::reference)
-				.orElse(null);
+		return storage.head(Optional.empty()).orElse(null);
 	}
 
 	private static Duration elapsedSince ( long startedAtNanos ) {

@@ -2091,6 +2091,74 @@ public class PostgresEventStorageImpl implements EventStorage {
 		return List.of(matcher.group(1).split(", ", -1));
 	}
 
+	/**
+	 * The statement behind {@link #head(Optional)}: the reference columns only, off
+	 * {@code idx_events_stream_position} walked backwards, behind the same {@code pg_snapshot_xmin}
+	 * barrier as {@link #query}. Package-private so the postgres module's tests can pin its shape —
+	 * that it reads no payload and sits behind the barrier are properties nothing else would notice.
+	 */
+	static String headSql ( String prefix, Optional<EventStreamId> stream ) {
+		StringBuilder sql = new StringBuilder();
+		sql.append(
+			"""
+				SELECT event_position, event_tx::text, event_id
+				FROM %sevents
+				WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
+			""".formatted(prefix)
+			);
+		if ( stream.isPresent() ) {
+			if ( !stream.get().isAnyContext() ) {
+				sql.append(" AND stream_context = ?");
+			}
+			if ( !stream.get().isAnyPurpose() ) {
+				sql.append(" AND stream_purpose = ?");
+			}
+		}
+		sql.append(" ORDER BY event_tx::xid8 DESC, event_position DESC LIMIT 1");
+		return sql.toString();
+	}
+
+	/**
+	 * The newest stored event of the stream a reader can see, as a reference and nothing else.
+	 * <p>
+	 * Behind the same visibility barrier as {@link #query}, on purpose: the head is what a read would
+	 * see, never what has been committed. A boundary pinned at the head bounds the reads and feeds the
+	 * lock check, and a head that ran ahead of the reads would let the two disagree during a
+	 * visibility stall — the reads still denied the withheld event, the check treating it as accounted
+	 * for. {@code PostgresVisibilityStallTest} pins it.
+	 */
+	@Override
+	public Optional<EventReference> head ( Optional<EventStreamId> stream ) {
+		checkNotClosed();
+		String sql = headSql(prefix, stream);
+
+		try ( Connection readConnection = dataSource.getConnection() ) {
+			readConnection.setAutoCommit(true);
+			try ( PreparedStatement stmt = readConnection.prepareStatement(sql) ) {
+				int parameter = 1;
+				if ( stream.isPresent() ) {
+					if ( !stream.get().isAnyContext() ) {
+						stmt.setString(parameter++, stream.get().context());
+					}
+					if ( !stream.get().isAnyPurpose() ) {
+						stmt.setString(parameter++, stream.get().purpose());
+					}
+				}
+				try ( ResultSet rs = stmt.executeQuery() ) {
+					if ( rs.next() ) {
+						long position = rs.getLong("event_position");
+						long tx = Long.parseUnsignedLong(rs.getString("event_tx"));
+						EventId eventId = new EventId(rs.getString("event_id"));
+						return Optional.of(EventReference.of(eventId, position, tx));
+					}
+					return Optional.empty();
+				}
+			}
+		} catch ( SQLException e ) {
+			throw new EventStorageException("Failed to read the stream head", e);
+		}
+	}
+
 	@Override
 	public Optional<StoredEvent> getEventById(EventId eventId) {
 		checkNotClosed();

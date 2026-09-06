@@ -72,6 +72,34 @@ mvn clean install -DskipTests
   `query(q.limit(n), cursor)`, advancing `cursor` to the last reference of each page. The unlimited path
   exists for callers who know their result set is small, or who genuinely want it all at once — it is
   not a way to process a large stream incrementally
+- **`head()` is the reference of the newest stored event of the stream, answered without reading it.**
+  It exists to pin a consistency boundary *before* a decision is read: take the head, bound every read
+  with `until(head)` or `Projector.runUntil(head)`, and hand the same reference to `AppendCriteria`.
+  Several reads then share one boundary, so nothing lands between them unseen, and the lock check gets
+  a cursor at the stream head instead of at the boundary's own newest event — which on Postgres turns
+  a walk over every stream event since that event into a walk over the few appended during the
+  decision (see the stale-cursor note under PostgreSQL). Three properties carry it, pinned per backend
+  by `HeadTest`:
+  - **It is what a query would see**, not what has been committed: on Postgres it sits behind the same
+    `pg_snapshot_xmin` barrier as every read, so during a visibility stall it lags exactly as reads do.
+    A head that ran ahead of the reads it bounds would let the reads and the check disagree
+    (`PostgresVisibilityStallTest.testTheHeadSitsBehindTheSameBarrierAsReads`)
+  - **It never deserializes, upcasts or decrypts.** The stream's mappings are irrelevant, so a head this
+    stream cannot map, one that upcasts into nothing, or one holding a `Shreddable` under a key store
+    that is down cannot make it fail or lie. The natural alternative — the typed
+    `query(matchAll().backwards().limit(1))` idiom — loses on all three: a poison event at the head
+    fails every command, an upcast-to-nothing head reads as an empty stream, and a sealed value costs a
+    key-store round trip. That is why it is a method on `EventSource` and an SPI method on
+    `EventStorage`, whose `default` is that query for a backend written before it; Postgres reads the
+    three reference columns off `idx_events_stream_position` and no payload
+    (`PostgresHeadStatementTest`)
+  - **It names a stored event, whole**: `index` 0, and a boundary at it includes every event the stored
+    event upcasts into — see the `until` note under EventFilter
+  - The event at the head need not match the boundary's filter: the reference is a cursor for the check,
+    and only matching events after it count. An absent head is an empty stream and must stay an absent
+    reference — "I decided on an empty boundary" — never be substituted with some other reference.
+    Counted on `sliceworkz.eventstore.head`, not on the query meters. `EventStoreImporter` bounds its
+    reads at the source head through the same method
 
 **Event:**
 - Record type containing: `stream`, `type`, `reference`, `data`, `tags`, `timestamp`
@@ -143,12 +171,24 @@ mvn clean install -DskipTests
 - Can match all (`EventFilter.matchAll()`), none (`EventFilter.matchNone()`), or specific criteria
 - Created via `EventFilter.forEvents(eventTypesFilter, tags)`
 - Used by `AppendCriteria` for optimistic locking (where direction/limit are irrelevant)
-- **`until` is an inclusive upper bound over the total `(tx, position, index)` order and is
+- **`until` is an inclusive upper bound over *stored* events, in the `(tx, position)` order, and is
   direction-independent**: `.backwards()` returns the same events as forward, newest first. It is part of
   the filter, so it also bounds a consistency boundary — an event past it is not a new relevant fact and
   raises no `OptimisticLockingException`. Backends must compare it as the tuple, exactly as they compare
   the cursor; comparing positions alone drops events whose transaction and position were assigned in
   different orders. `EventQueryUntilBoundaryTest` pins all of this down per backend
+- **A boundary names a stored event, whole — never a fragment of one.** The `index` on a reference
+  distinguishes the events one stored event upcasts into, and a storage never sees it: it compares
+  stored events, whose index is always 0. So the read side compares the same way
+  (`EventReference.storedEventHappenedAfter`, used by `EventFilter.matches` and `Projector.runUntil`),
+  and every event the stored event at the boundary upcasts into is at or before it, whatever its index.
+  This is what lets a reference obtained without upcasting — `head()`, a bookmark read back from
+  Postgres, which stores no index — bound a typed read without cutting the newest stored event in
+  pieces. The alternative — comparing the full `(tx, position, index)` on the read side — loses
+  because such a reference would then include the first upcast event of the newest stored event and
+  drop the rest, and a decision made on that fragment is admitted by the lock check, which compares
+  stored events and sees nothing after the boundary. `EventFilterTest` pins the comparison,
+  `HeadTest.theHeadNamesTheWholeStoredEventWhenItUpcastsIntoSeveral` the read and the projector
 
 **EventQuery:**
 - Wraps an `EventFilter` together with traversal semantics (direction and limit)
@@ -638,6 +678,11 @@ secondary identifier … (e.g. customer ID, order number)", and half the example
   `append.event` counts submitted events, and one call can carry several events, so no subtraction
   recovers it. A clean run reads 0. Tagged like the other stream meters, and pinned per backend by
   `EventStreamIdempotencyTest.aSwallowedDuplicateIsCountedOnTheDeduplicatedMeter`.
+- **`sliceworkz.eventstore.head`** (and `head.duration`) counts head lookups, tagged like the other
+  stream meters and deliberately not folded into `sliceworkz.eventstore.query`: a head lookup is the pin
+  of a consistency boundary, and a dashboard should tell pins from reads — once a framework pins every
+  command at the head, this series is its command rate. Pinned per backend by
+  `HeadTest.headLookupsAreCountedOnTheirOwnMeter`.
 - `MeterPurposeCardinalityTest` pins the cap, the pooling, the permanence of an admitted purpose, that
   the default applies to a store nobody configured, and that the cap holds exactly under concurrent first
   use of distinct purposes.
@@ -1272,7 +1317,10 @@ This implementation is fully compliant with the [DCB Specification](https://dcb.
 
 The key insight of DCB is that business decisions are based on querying relevant historical events, and new events should only be stored if no new relevant facts have emerged since the decision was made. This is achieved through:
 1. Query events with an `EventQuery` to make a decision
-2. Note the reference of the last relevant event
+2. Note the reference of the last relevant event — or take the stream's `head()` *before* the query and
+   bound the query with it, which is the same boundary with a cursor at the stream head (see `head()`
+   under EventStream: cheaper to check on Postgres, and the only sound way when the decision takes more
+   than one read)
 3. Append new events with `AppendCriteria` containing the query's `EventFilter` and last reference
 4. If new events matching the filter exist after the reference, the append fails
 
@@ -1331,9 +1379,10 @@ that bind everywhere:
   the *average* check on a tagged stream prices at ~0.2 µs × the count of entities active in it,
   whatever the traffic skew. Re-reading the boundary refreshes the cursor only for an entity that
   has been moving; for a long-idle one the fix is presenting the freshest reference the read
-  observed (head read *before* the boundary), which collapses the walk: a whole decision done that
-  way — two bounded reads plus the checked append — measures ~4 ms/op against the unbounded naive
-  decider's ~500, and is the one conditional write that scales with writers on a tagged stream.
+  observed — `EventSource.head()` taken *before* the boundary read, which bounds the read and feeds
+  the check — and that collapses the walk: a whole decision done that way — two bounded reads plus
+  the checked append — measures ~4 ms/op against the unbounded naive decider's ~500, and is the one
+  conditional write that scales with writers on a tagged stream.
   The benchmark module's notes carry the reasoning and the measured curve. The natural alternative — one uniform
   `NOT EXISTS` statement for every criteria, left to the plan cache — was measured and rejected: a
   `NOT EXISTS` is priced by how soon a row turns up while a DCB check expects no row, so the plan

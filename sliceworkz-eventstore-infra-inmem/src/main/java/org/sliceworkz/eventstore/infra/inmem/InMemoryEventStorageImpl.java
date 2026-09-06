@@ -479,6 +479,21 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		return Optional.ofNullable(eventsById.get(eventId));
 	}
 
+	/**
+	 * The newest stored event of the stream: the log walked backwards to the first event the stream can
+	 * read. Under the same monitor as {@link #query} and {@link #append}, so it is exactly what a query
+	 * issued at the same instant would return last.
+	 */
+	@Override
+	public synchronized Optional<EventReference> head ( Optional<EventStreamId> stream ) {
+		checkNotClosed();
+		Stream<StoredEvent> newestFirst = eventlog.reversed().stream();
+		if ( stream.isPresent() ) {
+			newestFirst = newestFirst.filter(e -> stream.get().canRead(e.stream()));
+		}
+		return newestFirst.findFirst().map(StoredEvent::reference);
+	}
+
 	@Override
 	public void subscribe(EventStoreListener listener) {
 		checkNotClosed();

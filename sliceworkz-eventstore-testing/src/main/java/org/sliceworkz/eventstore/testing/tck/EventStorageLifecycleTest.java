@@ -113,6 +113,8 @@ public class EventStorageLifecycleTest extends AbstractEventStoreTest {
 			() -> storage.removeBookmark("some-reader"));
 		assertThrows(EventStorageClosedException.class,
 			() -> storage.bookmark("some-reader", null, Tags.none()));
+		assertThrows(EventStorageClosedException.class,
+			() -> storage.head(Optional.empty()));
 	}
 
 	@ForEachBackend(requires = Capability.IMPORT)
@@ -156,6 +158,7 @@ public class EventStorageLifecycleTest extends AbstractEventStoreTest {
 
 		// the closed store is done, though: its notifications have stopped, so it must not read on
 		assertThrows(EventStorageClosedException.class, () -> stream.query(EventQuery.matchAll()).count());
+		assertThrows(EventStorageClosedException.class, () -> stream.head());
 		assertThrows(EventStorageClosedException.class,
 			() -> eventStore().getEventStream(EventStreamId.forContext("lifecycle"), MockDomainEvent.class));
 

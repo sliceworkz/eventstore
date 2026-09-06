@@ -339,7 +339,9 @@ matching sits between that old cursor and the head it read at, so a decider may 
 as the expected reference — claiming exactly what was proven — and the probe starts where the
 reader stopped. Sound because of the `pg_snapshot_xmin` barrier (nothing a running transaction
 later commits can order below a head readable now), with one rule: read the head *before* the
-boundary, so everything at or below the presented head was visible to the read that decided.
+boundary, and bound the boundary read at it, so everything at or below the presented head was
+visible to the read that decided. The head is `EventSource.head()` — the reference columns off the
+stream position index behind the same barrier, no payload, whatever type sits at the head.
 `decide-then-append-fresh` is that pattern as a workload, beside its naive sibling in
 `large-tier-writes` and `dcb-boundary-staleness` — and measured, it is the best-behaved write
 number at this tier: **~4.0 ms/op at 4–7% relative error, reproduced across both profiles at

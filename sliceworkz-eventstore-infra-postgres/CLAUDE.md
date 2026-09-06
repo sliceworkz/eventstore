@@ -216,9 +216,15 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     a **1.16 s whole-table sequential scan in steady state** while its 0.06 ms custom plan sat unused.
   - **The probe's one accepted cost is a stale cursor**, linear in the stream events since it: half
     the large-tier stream back measured 605 ms/op, walked at ~0.22 µs/row with error bars under 3% —
-    predictable, and bounded by the caller. The ordinary decide-then-append cycle has a fresh cursor
-    by construction, and re-reading the boundary before appending — what a conflict retry does
-    anyway — is the fix for a reference held long.
+    predictable, and bounded by the caller. A decide-then-append cycle whose reference is the
+    boundary's own newest event pays it whenever the boundary is quiet in a busy stream — a stream
+    per bounded context puts an idle entity's reference millions of rows back. Pinning at
+    `EventSource.head()` *before* the read, and bounding the read with it, hands the probe a cursor
+    at the stream head whatever the boundary; the head statement (`headSql`) reads the three
+    reference columns off `idx_events_stream_position` behind the same `pg_snapshot_xmin` barrier as
+    every read, so it can never run ahead of the reads it bounds (`PostgresVisibilityStallTest`,
+    `PostgresHeadStatementTest`). Re-reading the boundary before appending — what a conflict retry
+    does anyway — remains the fix for a reference held long.
   - **The alternatives, and why each loses — so nobody re-treads them.** One uniform `NOT EXISTS`
     for every criteria, left to the plan cache, binds the tag value and so sends the planner to the
     tag index with the cursor demoted to a filter: the check materialises the entity's whole history

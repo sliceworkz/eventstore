@@ -553,8 +553,10 @@ public class EventStoreImpl implements EventStore {
 		private Counter meterBookmarkPlace;
 		private Counter meterBookmarkGet;
 		private Counter meterBookmarkList;
+		private Counter meterHead;
 		private Timer timerQuery;
 		private Timer timerAppend;
+		private Timer timerHead;
 
 		private final io.micrometer.core.instrument.Tags baseTags;
 
@@ -596,9 +598,13 @@ public class EventStoreImpl implements EventStore {
 			this.meterBookmarkPlace = meterRegistry.counter("sliceworkz.eventstore.bookmark.place", baseTags);
 			this.meterBookmarkGet= meterRegistry.counter("sliceworkz.eventstore.bookmark.get", baseTags);
 			this.meterBookmarkList = meterRegistry.counter("sliceworkz.eventstore.bookmark.list", baseTags);
+			// its own meter rather than a share of sliceworkz.eventstore.query: a head lookup is the pin
+			// of a consistency boundary, and a dashboard should tell pins from reads
+			this.meterHead = meterRegistry.counter("sliceworkz.eventstore.head", baseTags);
 
 			this.timerQuery = meterRegistry.timer("sliceworkz.eventstore.query.duration", baseTags);
 			this.timerAppend = meterRegistry.timer("sliceworkz.eventstore.append.duration", baseTags);
+			this.timerHead = meterRegistry.timer("sliceworkz.eventstore.head.duration", baseTags);
 
 			// pick up the shared holder for the highest event position, registering its gauge if this is
 			// the first stream to meter under these tags
@@ -1024,6 +1030,16 @@ public class EventStoreImpl implements EventStore {
 				.map(e->enrich(e, QueryDirection.FORWARD))
 				.map(s->s.toList())
 				.orElse(List.of());
+		}
+
+		@Override
+		public Optional<EventReference> head ( ) {
+			checkStoreNotClosed();
+			meterHead.increment();
+			// straight to the storage: the head is a stored event's reference and nothing about it goes
+			// through this stream's mappings -- no legacy-type widening, no upcasting, no decryption --
+			// which is what lets it be answered for a head this stream could not read
+			return timerHead.record(() -> eventStorage.head(Optional.of(eventStreamId)));
 		}
 
 	}

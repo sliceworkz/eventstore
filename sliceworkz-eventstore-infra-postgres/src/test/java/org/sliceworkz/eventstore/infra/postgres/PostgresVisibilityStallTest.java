@@ -227,6 +227,46 @@ public class PostgresVisibilityStallTest {
 			});
 		}
 
+		/**
+		 * The head is what a read would see, never what has been committed. A boundary pinned at the
+		 * head bounds the reads and feeds the lock check, so a head that ran ahead of the reads would
+		 * let the two disagree: reads bounded to it would still be denied the withheld event, while the
+		 * check would treat it as already accounted for.
+		 */
+		@Test
+		public void testTheHeadSitsBehindTheSameBarrierAsReads ( ) throws Exception {
+			withStorage("vishead_", (storage, dataSource, prefix) -> {
+
+				EventStreamId stream = EventStreamId.forContext("account").withPurpose("42");
+				execute(dataSource, "CREATE TABLE IF NOT EXISTS " + prefix + "unrelated_workload (id int)");
+
+				StoredEvent visible = storage.append(AppendCriteria.none(), Optional.of(stream), List.of(event(stream, "MoneyDeposited"))).getFirst();
+				assertEquals(Optional.of(visible.reference()), storage.head(Optional.of(stream)));
+
+				StoredEvent withheld;
+				try ( Connection held = dataSource.getConnection() ) {
+					held.setAutoCommit(false);
+					try ( Statement stmt = held.createStatement() ) {
+						stmt.execute("INSERT INTO " + prefix + "unrelated_workload VALUES (1)");
+					}
+
+					// committed, and behind the barrier for every reader
+					withheld = storage.append(AppendCriteria.none(), Optional.of(stream), List.of(event(stream, "MoneyWithdrawn"))).getFirst();
+					assertEquals(1, visibleCount(storage, stream), "fixture: the appended event is withheld from reads");
+
+					assertEquals(Optional.of(visible.reference()), storage.head(Optional.of(stream)),
+						"the head must be what a read sees, not what has been committed");
+					assertTrue(withheld.reference().happenedAfter(visible.reference()),
+						"the withheld event sorts after the head a reader can hold");
+
+					held.commit();
+				}
+
+				assertEquals(Optional.of(withheld.reference()), storage.head(Optional.of(stream)),
+					"with the blocker gone, the head advances to the withheld event");
+			});
+		}
+
 		// --- helpers -------------------------------------------------------------------------------
 
 		private interface Scenario {

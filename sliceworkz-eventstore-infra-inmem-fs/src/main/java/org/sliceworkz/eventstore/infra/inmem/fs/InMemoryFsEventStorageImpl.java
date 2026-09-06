@@ -129,6 +129,11 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 	}
 
 	@Override
+	public Optional<EventReference> head ( Optional<EventStreamId> stream ) {
+		return delegate.head(stream);
+	}
+
+	@Override
 	public void subscribe ( EventStoreListener listener ) {
 		delegate.subscribe(listener);
 	}

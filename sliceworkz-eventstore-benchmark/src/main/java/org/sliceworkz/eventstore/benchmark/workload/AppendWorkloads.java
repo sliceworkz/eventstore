@@ -465,18 +465,20 @@ public final class AppendWorkloads {
 	 * therefore claims exactly what was proven, and the probe starts where the reader stopped.
 	 *
 	 * <p>Presenting a reference that is not a matching event is sound, and the read barrier is why: a
-	 * query only sees events below {@code pg_snapshot_xmin}, so anything a still-running transaction
-	 * later commits orders <em>after</em> everything readable now -- "nothing matching after the head I
-	 * observed" cannot be invalidated retroactively. One ordering rule keeps it sound, and any caller
-	 * copying this pattern must copy it too: <b>read the head before the boundary</b>, so everything
-	 * ordering at or below the presented head was visible to the boundary read that decided.
+	 * query only sees events below {@code pg_snapshot_xmin}, and so does {@code EventSource.head()},
+	 * so anything a still-running transaction later commits orders <em>after</em> everything readable
+	 * now -- "nothing matching after the head I observed" cannot be invalidated retroactively. One
+	 * ordering rule keeps it sound, and any caller copying this pattern must copy it too: <b>read the
+	 * head before the boundary</b>, and bound the boundary read at it, so everything ordering at or
+	 * below the presented head was visible to the boundary read that decided.
 	 *
 	 * <p>Read it against {@code decide-then-append}, its naive sibling: same entity walk, same filter,
 	 * same append. That one reads the whole history unbounded and presents the last matching event, so
-	 * it pays the full read on hot entities and the staleness walk on idle ones; this one pays two
-	 * savepoint-shaped reads and a probe over whatever landed between them. The gap between the pair is
-	 * what bounding the read and presenting the head are worth -- the two halves of the recommended
-	 * pattern, measured together.
+	 * it pays the full read on hot entities and the staleness walk on idle ones; this one pays a head
+	 * lookup (three reference columns off the stream position index, no payload), one savepoint-shaped
+	 * read bounded at that head, and a probe over whatever landed between them. The gap between the
+	 * pair is what bounding the read and presenting the head are worth -- the two halves of the
+	 * recommended pattern, measured together.
 	 */
 	private static Workload decideThenAppendFresh ( ) {
 		return new Workload() {
@@ -507,23 +509,20 @@ public final class AppendWorkloads {
 				// true: anything ordering at or below a head read now is below the read barrier, so the
 				// boundary read that follows is guaranteed to see it. Read the other way round, a
 				// matching event landing between the two reads can order below the head yet stay unseen
-				// -- a new relevant fact the check would then never raise.
-				EventReference head = context.inventory()
-						.query(EventQuery.matchAll().backwards().limit(1))
-						.map(Event::reference)
-						.findFirst()
-						.orElse(null);
+				// -- a new relevant fact the check would then never raise. head() reads the reference
+				// columns and nothing else: no payload, no deserialization, whatever type sits at the
+				// head. An absent head is an empty stream, and stays absent -- "I decided on an empty
+				// boundary" is still a boundary.
+				EventReference head = context.inventory().head().orElse(null);
 
-				// the decision, bounded: the last matching event is all a decider needs to see, and
-				// backwards-limit-1 is the savepoint probe rather than a walk of the entity's history
-				EventReference lastMatching = context.inventory()
-						.query(boundary.backwards().limit(1))
-						.map(Event::reference)
-						.findFirst()
-						.orElse(null);
-				if ( head == null ) {
-					head = lastMatching;
-				}
+				// the decision, bounded at the head: the last matching event is all a decider needs to
+				// see, backwards-limit-1 is the savepoint probe rather than a walk of the entity's
+				// history, and until(head) makes the read say exactly what the presented reference
+				// claims -- a matching event landing between the two reads is left for the check to
+				// raise rather than folded into a decision the check then rejects
+				context.inventory()
+						.query(boundary.until(head).backwards().limit(1))
+						.findFirst();
 
 				try {
 					return context.inventory().append(

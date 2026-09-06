@@ -218,6 +218,11 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 	 *   <li>Controlled incremental updates</li>
 	 * </ul>
 	 *
+	 * The boundary is over <em>stored</em> events: every event the stored event at the boundary upcasts
+	 * into is handled, whatever its index. So a reference obtained without upcasting — the stream's
+	 * {@link org.sliceworkz.eventstore.stream.EventSource#head() head}, a bookmark read back — bounds a
+	 * run without cutting the newest stored event in pieces.
+	 *
 	 * @param until the event reference to process up to (inclusive), or null to process to the end
 	 * @return metrics about this projection run (events streamed, handled, queries done, and last event reference)
 	 * @see #run()
@@ -432,7 +437,9 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 			if ( mostRecentEventReference == null || e.reference().happenedAfter(mostRecentEventReference) ) {
 				mostRecentEventReference = e.reference();
 			}
-			if ( until == null || !e.reference().happenedAfter(until) ) {
+			// the boundary is over stored events: every event the stored event at the boundary upcasts
+			// into is at or before it, exactly as EventFilter.matches decides for the query itself
+			if ( until == null || !e.reference().storedEventHappenedAfter(until) ) {
 				if ( projection.eventQuery().matches(e) ) {
 					batch.startBatchIfNeeded(e);
 					currentEventReference = e.reference();

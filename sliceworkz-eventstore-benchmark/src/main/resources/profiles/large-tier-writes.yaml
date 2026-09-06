@@ -48,8 +48,9 @@ description: >
   points is the check under concurrency and against a growing store, plus the decider pair:
   decide-then-append reads its boundary unbounded and presents the last matching event -- so it
   pays the full history read on hot entities and the staleness walk on idle ones, which is most of
-  its mean and all of its error bar -- while decide-then-append-fresh bounds the read and presents
-  the freshest reference it observed, the recommended pattern on a tagged stream at scale. The gap
+  its mean and all of its error bar -- while decide-then-append-fresh takes the stream head
+  (EventSource.head()), bounds the read at it and presents it, the recommended pattern on a tagged
+  stream at scale. The gap
   between the pair is what that pattern is worth. This profile keeps characterising the check as
   the store and the workloads evolve.
 

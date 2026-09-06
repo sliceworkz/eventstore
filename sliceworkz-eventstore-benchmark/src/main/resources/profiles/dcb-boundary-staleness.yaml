@@ -8,10 +8,10 @@ description: >
 
     append-type-and-tag       the boundary as the traffic-weighted walk presents it -- cursors as
                               fresh or as stale as the corpus's own write mix makes them
-    decide-then-append-fresh  the recommended decider: boundary read bounded, and the append
-                              presents the freshest reference the read observed (the stream head,
-                              read before the boundary), so the probe starts where the reader
-                              stopped -- the cursor path's floor
+    decide-then-append-fresh  the recommended decider: the stream head (EventSource.head(), no
+                              payload) taken first, the boundary read bounded at it, and the append
+                              presents that head, so the probe starts where the reader stopped --
+                              the cursor path's floor
     append-stale-boundary     a cursor pinned half the stream old, filter matching nothing, so
                               every invocation proves absence over the full walk -- the ceiling
     append-empty-boundary     no cursor at all -- routed to the tag path, so this row is what the
@@ -35,8 +35,8 @@ description: >
   not exist. What the read does establish is that nothing matching sits between that old cursor and
   the head it read at, so presenting the head claims exactly what was proven and the probe walk
   collapses: that is decide-then-append-fresh, and the one rule it must keep is to read the head
-  before the boundary, so everything at or below the presented head was visible to the read that
-  decided.
+  (EventSource.head()) before the boundary and bound the boundary read at it, so everything at or
+  below the presented head was visible to the read that decided.
 
   Same corpus as large-tier-writes, so nothing re-provisions; same drift reasoning, same warning
   about the estimate: the per-trial restore of ten million rows dominates the wall clock, so expect

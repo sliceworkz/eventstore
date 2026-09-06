@@ -379,6 +379,33 @@ public interface EventStorage extends AutoCloseable {
 	Optional<StoredEvent> getEventById ( EventId eventId );
 
 	/**
+	 * The reference of the newest stored event of the given stream, or of the whole storage when no
+	 * stream is given, or empty when there is none.
+	 * <p>
+	 * The stream-level counterpart is {@link org.sliceworkz.eventstore.stream.EventSource#head()},
+	 * whose javadoc carries the contract. For a backend the two halves that matter are:
+	 * <ul>
+	 *   <li>The answer must be exactly the last element {@link #query} would return for a match-all
+	 *       query over the same stream at the same instant — the same visibility rules, the same
+	 *       {@code (tx, position)} order. A head that can run ahead of a read is unsound as a boundary.</li>
+	 *   <li>Nothing but the reference is needed, so a backend should read nothing else: no payload, no
+	 *       tags. The default below is correct but reads a whole stored event to discard it.</li>
+	 * </ul>
+	 * The wildcard stream ({@code EventStreamId.anyContext().anyPurpose()}) and an absent stream both
+	 * mean the storage-wide head.
+	 *
+	 * @param stream the stream whose head to return, or empty for the storage-wide head
+	 * @return the reference of the newest stored event, or empty when there is none
+	 * @throws EventStorageException if an error occurs during retrieval
+	 * @throws EventStorageClosedException if the storage has been closed
+	 */
+	default Optional<EventReference> head ( Optional<EventStreamId> stream ) {
+		return query(EventQuery.matchAll(), stream, null, Limit.to(1), QueryDirection.BACKWARD)
+				.findFirst()
+				.map(StoredEvent::reference);
+	}
+
+	/**
 	 * Registers a listener to receive notifications about storage events.
 	 * <p>
 	 * Listeners are notified synchronously when:

@@ -51,7 +51,8 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
  * </ul>
  *
  * @param items the list of query items to match against (null for match-all, empty for match-none, populated for specific criteria)
- * @param until the reference to match up to (null for no boundary, or a specific reference to stop at that point in history)
+ * @param until the reference to match up to (null for no boundary, or a specific reference to stop at that point in history);
+ *              a boundary over stored events, so every event the stored event at the boundary upcasts into is at or before it
  *
  * @see EventQuery
  * @see EventFilterItem
@@ -83,9 +84,17 @@ public record EventFilter ( List<EventFilterItem> items, EventReference until ) 
 	 * Tests whether an event with the given attributes matches this filter.
 	 * An event matches if:
 	 * <ul>
-	 *   <li>Its reference is before or at the "until" reference (if specified)</li>
+	 *   <li>Its stored event is before or at the "until" reference (if specified)</li>
 	 *   <li>It matches at least one of the query items (or all items if match-all)</li>
 	 * </ul>
+	 * <p>
+	 * The "until" boundary is over <em>stored</em> events, compared through
+	 * {@link EventReference#storedEventHappenedAfter(EventReference)}: a reference names a stored event,
+	 * and every event that stored event upcasts into is at or before it, whatever its index. That is
+	 * the only comparison a storage can make — it sees stored events, never the events they upcast
+	 * into — and it is what lets a reference obtained without upcasting (a stream's head, a bookmark
+	 * read back from a store that keeps no index) bound a typed read without cutting the stored event
+	 * at the boundary in pieces.
 	 *
 	 * @param eventType the type of the event
 	 * @param tags the tags of the event
@@ -94,7 +103,7 @@ public record EventFilter ( List<EventFilterItem> items, EventReference until ) 
 	 */
 	public boolean matches ( EventType eventType, Tags tags, EventReference reference ) {
 		boolean match = true;
-		if ( until == null || !reference.happenedAfter(until) ) {
+		if ( until == null || !reference.storedEventHappenedAfter(until) ) {
 			if ( items != null ) {
 				if ( !items.isEmpty() ) { // null items = all match, empty items is none match
 					// if any query item matches the event, we keep it

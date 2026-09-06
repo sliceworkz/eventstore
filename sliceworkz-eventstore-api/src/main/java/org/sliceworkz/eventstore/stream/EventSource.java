@@ -41,6 +41,7 @@ import org.sliceworkz.eventstore.query.Limit;
  *   <li>Flexible querying with {@link EventQuery} for filtering by event types and tags</li>
  *   <li>Forward and backward iteration through events</li>
  *   <li>Pagination support via {@link Limit} and {@link EventReference}</li>
+ *   <li>The stream {@link #head() head}, to pin a consistency boundary before a decision is read</li>
  *   <li>Event subscriptions for reactive processing</li>
  *   <li>Bookmarking for tracking read positions</li>
  * </ul>
@@ -303,6 +304,44 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 *         a typed stream chokes on
 	 */
 	List<Event<DOMAIN_EVENT_TYPE>> getEventById ( EventId eventId );
+
+	/**
+	 * The reference of the newest stored event of this stream, or empty for an empty stream.
+	 * <p>
+	 * The head exists to <em>pin a consistency boundary before a decision is read</em>: take the head,
+	 * bound every read with {@link EventQuery#until(EventReference)} (or
+	 * {@link org.sliceworkz.eventstore.projection.Projector#runUntil(EventReference)}) at it, and hand
+	 * the same reference to {@link AppendCriteria} as the expected last event. Several reads then share
+	 * one boundary, so nothing can land between them unseen, and the optimistic-locking check has a
+	 * cursor at the stream head rather than at the boundary's own newest event — which on PostgreSQL
+	 * turns a walk over every stream event since that event into a walk over the few appended during
+	 * the decision. The event at the head need not match the boundary's filter: the reference is a
+	 * cursor for the check, and only matching events after it count.
+	 * <p>
+	 * Three properties make that sound, and the compliance suite holds every backend to them:
+	 * <ul>
+	 *   <li><b>It is what a query would see</b>, not what has been committed. Everything a later query
+	 *       sees that a query taken with the head could not is strictly after the head in the total
+	 *       {@code (tx, position)} order. On PostgreSQL the head sits behind the same visibility barrier
+	 *       as every read, so during a visibility stall it lags the newest committed row exactly as reads
+	 *       do — deliberately, since a head that ran ahead of the reads it bounds would let the reads and
+	 *       the check disagree.</li>
+	 *   <li><b>It never deserializes, upcasts or decrypts.</b> This stream's type mappings are irrelevant:
+	 *       a typed stream and a raw stream over the same id answer identically, and a head this stream
+	 *       cannot map, one that upcasts into nothing, or one holding a
+	 *       {@link org.sliceworkz.eventstore.shredding.Shreddable} under a key store that is down cannot
+	 *       make it fail or lie. The typed {@code query(matchAll().backwards().limit(1))} idiom fails on
+	 *       all three, which is why this is a method rather than a convenience over a query.</li>
+	 *   <li><b>It names a stored event, whole.</b> Its {@code index} is 0, and a boundary at the head
+	 *       includes every event the stored event at the head upcasts into — {@code until} bounds stored
+	 *       events, never a fragment of one.</li>
+	 * </ul>
+	 * Counted on {@code sliceworkz.eventstore.head}, not on the query meters.
+	 *
+	 * @return the reference of the newest stored event of this stream, or empty for an empty stream
+	 * @throws org.sliceworkz.eventstore.spi.EventStorageClosedException if the store this stream came from is closed
+	 */
+	Optional<EventReference> head ( );
 
 
 	/**

@@ -382,4 +382,33 @@ public class EventReferenceTest {
 		assertThrows(IllegalArgumentException.class, () -> EventReference.fromString("my-id:10:42:-1"));
 	}
 
+	// --- storedEventHappenedAfter: the (tx, position) order, index ignored --------------------------
+
+	@Test
+	void storedEventHappenedAfterIgnoresTheIndexWithinOneStoredEvent (  ) {
+		EventReference stored = EventReference.of(EventId.of("row"), 10, 42);
+		EventReference firstPiece = stored.withIndex(0);
+		EventReference thirdPiece = stored.withIndex(2);
+
+		// the pieces one stored event upcasts into are ordered among themselves...
+		assertTrue(thirdPiece.happenedAfter(firstPiece));
+		assertFalse(firstPiece.happenedAfter(thirdPiece));
+
+		// ...but none of them is after the stored event they came from, nor after each other's stored event
+		assertFalse(thirdPiece.storedEventHappenedAfter(stored));
+		assertFalse(thirdPiece.storedEventHappenedAfter(firstPiece));
+		assertFalse(stored.storedEventHappenedAfter(thirdPiece));
+		assertFalse(firstPiece.storedEventHappenedAfter(thirdPiece));
+	}
+
+	@Test
+	void storedEventHappenedAfterFollowsTheTxThenPositionOrder (  ) {
+		EventReference reference = EventReference.of(EventId.of("row"), 10, 42, 3);
+
+		assertTrue(EventReference.of(EventId.of("next"), 11, 42).storedEventHappenedAfter(reference), "a later position in the same transaction");
+		assertTrue(EventReference.of(EventId.of("later"), 5, 43).storedEventHappenedAfter(reference), "a later transaction wins over an earlier position");
+		assertFalse(EventReference.of(EventId.of("earlier"), 9, 42).storedEventHappenedAfter(reference));
+		assertFalse(EventReference.of(EventId.of("earlier-tx"), 100, 41).storedEventHappenedAfter(reference), "an earlier transaction loses whatever its position");
+	}
+
 }

@@ -143,6 +143,27 @@ public record EventReference ( EventId id, long position, long tx, int index )
 	}
 
 	/**
+	 * Checks if the <em>stored</em> event this reference points into happened after the stored event
+	 * the other reference points into.
+	 * <p>
+	 * The comparison is over {@code (tx, position)} only: the index distinguishes the events one stored
+	 * event upcasts into, and those all belong to the same stored event. So two references into the same
+	 * stored event are never after each other here, whatever their indexes, while
+	 * {@link #happenedAfter(EventReference)} orders them. This is the comparison a boundary over stored
+	 * events wants — the {@code until} of an {@link org.sliceworkz.eventstore.query.EventFilter}, which
+	 * a storage can only ever apply to stored events and which a reference obtained without upcasting
+	 * (a stream's head, a bookmark read back) can therefore bound without cutting a stored event in
+	 * pieces.
+	 *
+	 * @param other the event reference to compare against
+	 * @return true if this reference's stored event happened after the other's stored event
+	 */
+	public boolean storedEventHappenedAfter ( EventReference other ) {
+		if ( this.tx != other.tx ) return this.tx > other.tx;
+		return this.position > other.position;
+	}
+
+	/**
 	 * Creates an EventReference from an existing event ID, position, transaction, and index.
 	 *
 	 * @param id the event ID

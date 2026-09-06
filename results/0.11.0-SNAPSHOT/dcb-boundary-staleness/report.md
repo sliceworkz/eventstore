@@ -1,29 +1,34 @@
 # Benchmark run: dcb-boundary-staleness
 
-What cursor age does to the DCB check, over the large-tier corpus. The check's shape is derived from the criteria -- the ordered probe walking the position index forward from the cursor when one is present, the custom-planned tag path when not -- and cursor age is the one variable the probe pays for: every stream event after the cursor is a row it walks past to prove absence. This profile pins the age at the three points that bracket the regime:
+What cursor age does to the DCB check, over the large-tier corpus. The check's shape is derived from the criteria -- the ordered probe walking the position index forward from the cursor when one is present, the custom-planned tag path when not -- and cursor age is the one variable the probe pays for: every stream event after the cursor is a row it walks past to prove absence. This profile pins the age at the points that bracket the regime:
 
-  append-type-and-tag     the boundary read at append time -- fresh-ish, the ordinary decider
-  append-stale-boundary   a cursor half the stream old, filter matching nothing, so every
-                          invocation proves absence over the full walk -- the probe's bad case
-  append-empty-boundary   no cursor at all -- routed to the tag path, so this row is what the
-                          uniqueness pattern ("this basket was never checked out") costs
+  append-type-and-tag       the boundary as the traffic-weighted walk presents it -- cursors as
+                            fresh or as stale as the corpus's own write mix makes them
+  decide-then-append-fresh  the recommended decider: boundary read bounded, and the append
+                            presents the freshest reference the read observed (the stream head,
+                            read before the boundary), so the probe starts where the reader
+                            stopped -- the cursor path's floor
+  append-stale-boundary     a cursor pinned half the stream old, filter matching nothing, so
+                            every invocation proves absence over the full walk -- the ceiling
+  append-empty-boundary     no cursor at all -- routed to the tag path, so this row is what the
+                            uniqueness pattern ("this basket was never checked out") costs
 
-What the validation runs of this profile established, and the report record holds: fresh ~12ms/op (the probe finding ~170 rows after the cursor), stale ~605ms/op (2.75M rows walked at ~0.22us each -- linear, predictable, error bars under 3%), empty ~2.4ms/op (a tag-index miss planned from its bound values, plus per-execution planning and a fresh GIN key per insert). The rejected alternative -- one uniform NOT EXISTS check left to the plan cache -- measures 66ms at 117% error, 1164ms and 1164ms on the same three rows: the plan cache settles on a whole-table sequential scan for the stale and empty boundaries while a 0.06ms custom plan sits unused, which is the measurement behind deriving the check's shape from the criteria instead.
-The stale row is the check's one accepted cost, and it is the caller's to avoid: a decider that re-reads its boundary before appending -- the ordinary decide-then-append cycle -- has a fresh cursor by construction. A process manager holding an hour-old reference on a busy stream pays the walk; re-reading is both the fix and what a conflict-retry loop does anyway.
+The measured curve, from this profile's published run (external PG18, one thread, append-none at 0.32ms/op as the floor): empty ~2.3ms/op, traffic mix ~26ms/op, pinned-stale ~590ms/op at 0.7% relative error -- 2.75M rows walked at ~0.215us each, linear and predictable. The traffic-mix row is also a renewal identity made visible: under any stationary write mix the mean probe walk is about one event per entity active in the stream, so it lands at ~0.22us times the entity count (100k here) whatever the skew. The rejected alternative -- one uniform NOT EXISTS check left to the plan cache -- measures 66ms at 117% error, 1164ms and 1164ms on comparable rows: the plan cache settles on a whole-table sequential scan for the stale and empty boundaries while a 0.06ms custom plan sits unused, which is the measurement behind deriving the check's shape from the criteria instead.
+The stale row is the check's one accepted cost, and how a caller avoids it depends on why the cursor is old. A decider whose entity has been moving gets a fresh cursor by re-reading the boundary, which a conflict-retry loop does anyway. A decider whose entity is long idle does not -- its last matching event simply is old, and re-reading cannot advance a cursor past events that do not exist. What the read does establish is that nothing matching sits between that old cursor and the head it read at, so presenting the head claims exactly what was proven and the probe walk collapses: that is decide-then-append-fresh, and the one rule it must keep is to read the head before the boundary, so everything at or below the presented head was visible to the read that decided.
 Same corpus as large-tier-writes, so nothing re-provisions; same drift reasoning, same warning about the estimate: the per-trial restore of ten million rows dominates the wall clock, so expect around triple the estimate for the twelve trials.
 
 | | |
 |---|---|
 | suite version | 0.11.0-SNAPSHOT |
-| started | 2026-09-05T20:20:18.252019702Z |
-| finished | 2026-09-05T20:57:19.568727731Z |
+| started | 2026-09-06T05:08:27.392144029Z |
+| finished | 2026-09-06T05:54:24.555414263Z |
 | targets | postgres:external/metrics=off |
 | corpus restore | restored once per trial; intra-trial drift measured |
-| store drift | 0.76% during the run, against the 10% this profile allows |
+| store drift | 0.74% during the run, against the 10% this profile allows |
 
 > **Not suitable as a published baseline.**
 >
-> - 2 measurements are too noisy to compare against anything, past the 10% this report calls uncomparable: append-type-and-tag (postgres:external/metrics=off, 1 thread) at 13%, append-empty-boundary (postgres:external/metrics=off, 1 thread) at 21%
+> - 2 measurements are too noisy to compare against anything, past the 10% this report calls uncomparable: append-type-and-tag (postgres:external/metrics=off, 1 thread) at 23%, append-empty-boundary (postgres:external/metrics=off, 1 thread) at 21%
 
 ## Environment
 
@@ -104,8 +109,8 @@ These are the settings the numbers below depend on. Two runs whose environments 
 
 | append | throughput | relative |
 |---|---|---|
-| no criteria | 3.159 ± 0.117 ops/ms | 1.00x |
-| one type set and one tag | 0.038 ± 0.005 ops/ms | 82.58x slower |
+| no criteria | 3.089 ± 0.155 ops/ms | 1.00x |
+| one type set and one tag | 0.039 ± 0.009 ops/ms | 79.78x slower |
 
 On PostgreSQL the unconditional append is also the only one that takes no advisory lock, so this gap is the whole DCB mechanism rather than just the extra predicate.
 
@@ -118,46 +123,46 @@ The reconstructed statements below describe the run's first PostgreSQL target. T
 ### stream page (unfiltered, limit 500)
 
 ```
-Limit  (cost=0.56..61.63 rows=500 width=312) (actual time=0.028..0.165 rows=500.00 loops=1)
+Limit  (cost=0.56..61.35 rows=500 width=313) (actual time=0.026..0.172 rows=500.00 loops=1)
   Buffers: shared hit=32
-  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..664271.67 rows=5439137 width=312) (actual time=0.027..0.141 rows=500.00 loops=1)
+  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..668892.75 rows=5502057 width=313) (actual time=0.025..0.148 rows=500.00 loops=1)
         Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))
         Index Searches: 1
         Buffers: shared hit=32
 Planning:
-  Buffers: shared hit=74
-Planning Time: 0.315 ms
-Execution Time: 0.193 ms
+  Buffers: shared hit=72
+Planning Time: 0.284 ms
+Execution Time: 0.199 ms
 ```
 
 ### tag needle (~10 matches)
 
 ```
-Sort  (cost=872.63..874.44 rows=725 width=312) (actual time=0.410..0.410 rows=10.00 loops=1)
+Sort  (cost=883.28..885.12 rows=734 width=313) (actual time=0.390..0.391 rows=10.00 loops=1)
   Sort Key: event_tx, event_position
   Sort Method: quicksort  Memory: 27kB
   Buffers: shared hit=83
-  ->  Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=21.90..838.18 rows=725 width=312) (actual time=0.371..0.398 rows=10.00 loops=1)
+  ->  Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=21.94..848.34 rows=734 width=313) (actual time=0.352..0.377 rows=10.00 loops=1)
         Recheck Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{campaign:needle}'::text[]))
         Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))
         Heap Blocks: exact=10
         Buffers: shared hit=75
-        ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..21.72 rows=725 width=0) (actual time=0.360..0.360 rows=10.00 loops=1)
+        ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..21.76 rows=734 width=0) (actual time=0.340..0.340 rows=10.00 loops=1)
               Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{campaign:needle}'::text[]))
               Index Searches: 1
               Buffers: shared hit=65
 Planning:
   Buffers: shared hit=12
-Planning Time: 0.075 ms
-Execution Time: 0.438 ms
+Planning Time: 0.083 ms
+Execution Time: 0.422 ms
 ```
 
 ### tag swathe (~1% of the store)
 
 ```
-Limit  (cost=0.56..5925.28 rows=500 width=312) (actual time=0.016..5.526 rows=500.00 loops=1)
+Limit  (cost=0.56..5727.69 rows=500 width=313) (actual time=0.019..5.351 rows=500.00 loops=1)
   Buffers: shared hit=1444
-  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..650948.51 rows=54935 width=312) (actual time=0.016..5.503 rows=500.00 loops=1)
+  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..655423.71 rows=57221 width=313) (actual time=0.019..5.328 rows=500.00 loops=1)
         Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))
         Filter: (event_tags @> '{campaign:swathe}'::text[])
         Rows Removed by Filter: 26973
@@ -165,8 +170,8 @@ Limit  (cost=0.56..5925.28 rows=500 width=312) (actual time=0.016..5.526 rows=50
         Buffers: shared hit=1444
 Planning:
   Buffers: shared hit=3
-Planning Time: 0.054 ms
-Execution Time: 5.547 ms
+Planning Time: 0.058 ms
+Execution Time: 5.372 ms
 ```
 
 ### one entity's whole history (hot) — **JIT 3ms**
@@ -174,35 +179,35 @@ Execution Time: 5.547 ms
 > PostgreSQL compiled this query before running it, which it does when the estimated cost is high. On a query that turns out to be short the compilation is most of the wait, and jit_above_cost is the knob.
 
 ```
-Sort  (cost=226470.51..227077.43 rows=242767 width=312) (actual time=557.465..568.466 rows=455092.00 loops=1)
+Sort  (cost=231123.88..231746.53 rows=249060 width=313) (actual time=555.617..566.643 rows=455092.00 loops=1)
   Sort Key: event_tx, event_position
   Sort Method: quicksort  Memory: 126338kB
-  Buffers: shared hit=188197
-  ->  Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=1400.53..204755.96 rows=242767 width=312) (actual time=122.078..421.638 rows=455092.00 loops=1)
+  Buffers: shared hit=188180
+  ->  Bitmap Heap Scan on bm_n3tx9gechuj9_events  (cost=1437.25..208800.47 rows=249060 width=313) (actual time=124.465..420.160 rows=455092.00 loops=1)
         Recheck Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-000000}'::text[]))
         Filter: (event_tx < pg_snapshot_xmin(pg_current_snapshot()))
         Heap Blocks: exact=184595
-        Buffers: shared hit=188197
-        ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..1339.84 rows=242790 width=0) (actual time=99.646..99.646 rows=455092.00 loops=1)
+        Buffers: shared hit=188180
+        ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..1374.98 rows=249083 width=0) (actual time=101.612..101.613 rows=455092.00 loops=1)
               Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-000000}'::text[]))
               Index Searches: 1
-              Buffers: shared hit=3602
+              Buffers: shared hit=3585
 Planning:
   Buffers: shared hit=3
-Planning Time: 0.059 ms
+Planning Time: 0.067 ms
 JIT:
   Functions: 6
   Options: Inlining false, Optimization false, Expressions true, Deforming true
-  Timing: Generation 0.271 ms (Deform 0.122 ms), Inlining 0.000 ms, Optimization 0.227 ms, Emission 2.276 ms, Total 2.774 ms
-Execution Time: 592.098 ms
+  Timing: Generation 0.261 ms (Deform 0.122 ms), Inlining 0.000 ms, Optimization 0.223 ms, Emission 2.272 ms, Total 2.756 ms
+Execution Time: 590.186 ms
 ```
 
 ### most recent event, backwards limit 1
 
 ```
-Limit  (cost=0.56..3.25 rows=1 width=312) (actual time=0.024..0.025 rows=1.00 loops=1)
+Limit  (cost=0.56..3.20 rows=1 width=313) (actual time=0.026..0.026 rows=1.00 loops=1)
   Buffers: shared hit=6
-  ->  Index Scan Backward using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..651887.67 rows=242767 width=312) (actual time=0.024..0.024 rows=1.00 loops=1)
+  ->  Index Scan Backward using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..656382.90 rows=249060 width=313) (actual time=0.025..0.025 rows=1.00 loops=1)
         Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())))
         Filter: (event_tags @> '{sku:SKU-000000}'::text[])
         Rows Removed by Filter: 17
@@ -210,8 +215,8 @@ Limit  (cost=0.56..3.25 rows=1 width=312) (actual time=0.024..0.025 rows=1.00 lo
         Buffers: shared hit=6
 Planning:
   Buffers: shared hit=11
-Planning Time: 0.178 ms
-Execution Time: 0.037 ms
+Planning Time: 0.159 ms
+Execution Time: 0.039 ms
 ```
 
 ### cursor page from the midpoint (limit 500)
@@ -219,16 +224,16 @@ Execution Time: 0.037 ms
 > the cursor boundary is an Index Cond here, so the scan starts at the boundary rather than filtering its way to it.
 
 ```
-Limit  (cost=0.56..77.91 rows=500 width=312) (actual time=0.021..0.157 rows=500.00 loops=1)
+Limit  (cost=0.56..77.19 rows=500 width=313) (actual time=0.022..0.169 rows=500.00 loops=1)
   Buffers: shared hit=32
-  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..606438.51 rows=3920144 width=312) (actual time=0.021..0.134 rows=500.00 loops=1)
+  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events  (cost=0.56..612460.32 rows=3996551 width=313) (actual time=0.021..0.146 rows=500.00 loops=1)
         Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tx < pg_snapshot_xmin(pg_current_snapshot())) AND (ROW(event_tx, event_position) > ROW('3087567'::xid8, '2750000'::bigint)))
         Index Searches: 1
         Buffers: shared hit=32
 Planning:
   Buffers: shared hit=14
-Planning Time: 0.127 ms
-Execution Time: 0.190 ms
+Planning Time: 0.123 ms
+Execution Time: 0.201 ms
 ```
 
 > **The plans below do not describe the store's own execution.** They inline the tag arrays 
@@ -244,17 +249,17 @@ Execution Time: 0.190 ms
 > the cursor boundary is an Index Cond here, so the scan starts at the boundary rather than filtering its way to it.
 
 ```
-Limit  (cost=0.56..0.60 rows=1 width=4) (actual time=0.034..0.034 rows=1.00 loops=1)
+Limit  (cost=0.56..0.60 rows=1 width=4) (actual time=0.055..0.056 rows=1.00 loops=1)
   Buffers: shared hit=5
-  ->  Index Only Scan using bm_n3tx9gechuj9_idx_events_stream_type_position on bm_n3tx9gechuj9_events  (cost=0.56..39204.27 rows=977822 width=4) (actual time=0.033..0.033 rows=1.00 loops=1)
+  ->  Index Only Scan using bm_n3tx9gechuj9_idx_events_stream_type_position on bm_n3tx9gechuj9_events  (cost=0.56..39137.23 rows=976901 width=4) (actual time=0.054..0.054 rows=1.00 loops=1)
         Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_type = ANY ('{StockReserved,StockPicked}'::text[])) AND (ROW(event_tx, event_position) > ROW('3088944'::xid8, '5499988'::bigint)))
         Heap Fetches: 0
         Index Searches: 1
         Buffers: shared hit=5
 Planning:
   Buffers: shared hit=2
-Planning Time: 0.122 ms
-Execution Time: 0.047 ms
+Planning Time: 0.210 ms
+Execution Time: 0.081 ms
 ```
 
 ### DCB check: four types scoped to one SKU (append-type-and-tag) -- boundary 12 events back
@@ -262,9 +267,9 @@ Execution Time: 0.047 ms
 > the cursor boundary is an Index Cond here, so the scan starts at the boundary rather than filtering its way to it.
 
 ```
-Limit  (cost=0.56..8.79 rows=1 width=4) (actual time=0.059..0.060 rows=0.00 loops=1)
+Limit  (cost=0.56..8.76 rows=1 width=4) (actual time=0.061..0.061 rows=0.00 loops=1)
   Buffers: shared hit=23
-  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_type_position on bm_n3tx9gechuj9_events  (cost=0.56..484509.34 rows=58881 width=4) (actual time=0.059..0.059 rows=0.00 loops=1)
+  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_type_position on bm_n3tx9gechuj9_events  (cost=0.56..487776.44 rows=59481 width=4) (actual time=0.060..0.061 rows=0.00 loops=1)
         Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_type = ANY ('{StockReceived,StockReserved,StockReleased,StockPicked}'::text[])) AND (ROW(event_tx, event_position) > ROW('3088944'::xid8, '5499988'::bigint)))
         Filter: (event_tags @> '{sku:SKU-000000}'::text[])
         Rows Removed by Filter: 12
@@ -272,8 +277,8 @@ Limit  (cost=0.56..8.79 rows=1 width=4) (actual time=0.059..0.060 rows=0.00 loop
         Buffers: shared hit=23
 Planning:
   Buffers: shared hit=3
-Planning Time: 0.080 ms
-Execution Time: 0.067 ms
+Planning Time: 0.052 ms
+Execution Time: 0.066 ms
 ```
 
 ### DCB check: one item carrying three AND-ed tags (append-multi-tag) -- boundary 12 events back
@@ -281,9 +286,9 @@ Execution Time: 0.067 ms
 > the cursor boundary is an Index Cond here, so the scan starts at the boundary rather than filtering its way to it.
 
 ```
-Limit  (cost=0.56..73.59 rows=1 width=4) (actual time=0.041..0.042 rows=0.00 loops=1)
+Limit  (cost=0.56..73.36 rows=1 width=4) (actual time=0.020..0.020 rows=0.00 loops=1)
   Buffers: shared hit=23
-  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_type_position on bm_n3tx9gechuj9_events  (cost=0.56..484509.34 rows=6634 width=4) (actual time=0.041..0.041 rows=0.00 loops=1)
+  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_type_position on bm_n3tx9gechuj9_events  (cost=0.56..487776.44 rows=6700 width=4) (actual time=0.020..0.020 rows=0.00 loops=1)
         Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_type = ANY ('{StockReceived,StockReserved,StockReleased,StockPicked}'::text[])) AND (ROW(event_tx, event_position) > ROW('3088944'::xid8, '5499988'::bigint)))
         Filter: (event_tags @> '{sku:SKU-000000,channel:web,warehouse:WH-1}'::text[])
         Rows Removed by Filter: 12
@@ -291,8 +296,8 @@ Limit  (cost=0.56..73.59 rows=1 width=4) (actual time=0.041..0.042 rows=0.00 loo
         Buffers: shared hit=23
 Planning:
   Buffers: shared hit=3
-Planning Time: 0.069 ms
-Execution Time: 0.289 ms
+Planning Time: 0.051 ms
+Execution Time: 0.024 ms
 ```
 
 ### DCB check: 2 OR-ed filter items (append-or-groups-2) -- boundary 12 events back
@@ -300,9 +305,9 @@ Execution Time: 0.289 ms
 > the cursor boundary is an Index Cond here, so the scan starts at the boundary rather than filtering its way to it.
 
 ```
-Limit  (cost=0.56..8.82 rows=1 width=4) (actual time=0.034..0.034 rows=0.00 loops=1)
+Limit  (cost=0.56..8.79 rows=1 width=4) (actual time=0.056..0.056 rows=0.00 loops=1)
   Buffers: shared hit=23
-  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_type_position on bm_n3tx9gechuj9_events  (cost=0.56..487807.36 rows=59049 width=4) (actual time=0.034..0.034 rows=0.00 loops=1)
+  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_type_position on bm_n3tx9gechuj9_events  (cost=0.56..491061.50 rows=59649 width=4) (actual time=0.055..0.055 rows=0.00 loops=1)
         Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_type = ANY ('{StockReceived,StockReserved,StockReleased,StockPicked}'::text[])) AND (ROW(event_tx, event_position) > ROW('3088944'::xid8, '5499988'::bigint)))
         Filter: ((event_tags @> '{sku:SKU-000000}'::text[]) OR (event_tags @> '{sku:SKU-012501}'::text[]))
         Rows Removed by Filter: 12
@@ -310,8 +315,8 @@ Limit  (cost=0.56..8.82 rows=1 width=4) (actual time=0.034..0.034 rows=0.00 loop
         Buffers: shared hit=23
 Planning:
   Buffers: shared hit=6
-Planning Time: 0.080 ms
-Execution Time: 0.041 ms
+Planning Time: 0.165 ms
+Execution Time: 0.068 ms
 ```
 
 ### DCB check: 5 OR-ed filter items (append-or-groups-5) -- boundary 12 events back
@@ -319,9 +324,9 @@ Execution Time: 0.041 ms
 > the cursor boundary is an Index Cond here, so the scan starts at the boundary rather than filtering its way to it.
 
 ```
-Limit  (cost=0.56..8.92 rows=1 width=4) (actual time=0.029..0.029 rows=0.00 loops=1)
+Limit  (cost=0.56..8.89 rows=1 width=4) (actual time=0.021..0.021 rows=0.00 loops=1)
   Buffers: shared hit=23
-  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_type_position on bm_n3tx9gechuj9_events  (cost=0.56..497701.45 rows=59553 width=4) (actual time=0.028..0.028 rows=0.00 loops=1)
+  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_type_position on bm_n3tx9gechuj9_events  (cost=0.56..500916.67 rows=60150 width=4) (actual time=0.021..0.021 rows=0.00 loops=1)
         Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_type = ANY ('{StockReceived,StockReserved,StockReleased,StockPicked}'::text[])) AND (ROW(event_tx, event_position) > ROW('3088944'::xid8, '5499988'::bigint)))
         Filter: ((event_tags @> '{sku:SKU-000000}'::text[]) OR (event_tags @> '{sku:SKU-012501}'::text[]) OR (event_tags @> '{sku:SKU-012502}'::text[]) OR (event_tags @> '{sku:SKU-012503}'::text[]) OR (event_tags @> '{sku:SKU-012504}'::text[]))
         Rows Removed by Filter: 12
@@ -329,8 +334,8 @@ Limit  (cost=0.56..8.92 rows=1 width=4) (actual time=0.029..0.029 rows=0.00 loop
         Buffers: shared hit=23
 Planning:
   Buffers: shared hit=12
-Planning Time: 0.090 ms
-Execution Time: 0.035 ms
+Planning Time: 0.074 ms
+Execution Time: 0.026 ms
 ```
 
 ### DCB check: 10 OR-ed filter items (append-or-groups-10) -- boundary 12 events back
@@ -338,9 +343,9 @@ Execution Time: 0.035 ms
 > the cursor boundary is an Index Cond here, so the scan starts at the boundary rather than filtering its way to it.
 
 ```
-Limit  (cost=0.56..9.07 rows=1 width=4) (actual time=0.037..0.037 rows=0.00 loops=1)
+Limit  (cost=0.56..9.04 rows=1 width=4) (actual time=0.024..0.024 rows=0.00 loops=1)
   Buffers: shared hit=23
-  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_type_position on bm_n3tx9gechuj9_events  (cost=0.56..514191.58 rows=60392 width=4) (actual time=0.037..0.037 rows=0.00 loops=1)
+  ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_type_position on bm_n3tx9gechuj9_events  (cost=0.56..517341.96 rows=60986 width=4) (actual time=0.023..0.024 rows=0.00 loops=1)
         Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_type = ANY ('{StockReceived,StockReserved,StockReleased,StockPicked}'::text[])) AND (ROW(event_tx, event_position) > ROW('3088944'::xid8, '5499988'::bigint)))
         Filter: ((event_tags @> '{sku:SKU-000000}'::text[]) OR (event_tags @> '{sku:SKU-012501}'::text[]) OR (event_tags @> '{sku:SKU-012502}'::text[]) OR (event_tags @> '{sku:SKU-012503}'::text[]) OR (event_tags @> '{sku:SKU-012504}'::text[]) OR (event_tags @> '{sku:SKU-012505}'::text[]) OR (event_tags @> '{sku:SKU-012506}'::text[]) OR (event_tags @> '{sku:SKU-012507}'::text[]) OR (event_tags @> '{sku:SKU-012508}'::text[]) OR (event_tags @> '{sku:SKU-012509}'::text[]))
         Rows Removed by Filter: 12
@@ -348,8 +353,8 @@ Limit  (cost=0.56..9.07 rows=1 width=4) (actual time=0.037..0.037 rows=0.00 loop
         Buffers: shared hit=23
 Planning:
   Buffers: shared hit=22
-Planning Time: 0.118 ms
-Execution Time: 0.044 ms
+Planning Time: 0.106 ms
+Execution Time: 0.028 ms
 ```
 
 > **These are the store's own statements, explained by the server.** Captured by running each 
@@ -390,7 +395,7 @@ Execution Time: 0.044 ms
 > **falls** as facts are added while the custom plan's rises -- and once it drops below, the 
 > server switches to a plan that scans the whole table for a row that is not there.
 
-### DCB check as issued: append-type-and-tag @ postgres:external/metrics=off (collision=spread, generic plan) — measured 26.14 ms/op
+### DCB check as issued: append-type-and-tag @ postgres:external/metrics=off (collision=spread, generic plan) — measured 25.83 ms/op
 
 > the cursor boundary is an Index Cond here, so the scan starts at the boundary rather than filtering its way to it.
 
@@ -399,24 +404,24 @@ Execution Time: 0.044 ms
 		SELECT event_position FROM bm_n3tx9gechuj9_events
 		WHERE 1=1 AND stream_context = $8 AND stream_purpose = $9 AND (event_tx, event_position) > ($10::xid8, $11) AND ((event_type IN ($12, $13, $14, $15) AND event_tags @> ARRAY[$16]::text[])) ORDER BY event_tx, event_position LIMIT 1) IS NULL RETURNING event_position, event_timestamp, event_tx::text, event_id::text
 	Query Parameters: $1 = NULL, $2 = 'inventory', $3 = 'default', $4 = 'StockReserved', $5 = '{"sku":"SKU-046045","quantity":1,"orderId":"ORD-benchmark"}', $6 = NULL, $7 = '{sku:SKU-046045,warehouse:WH-1,channel:web}', $8 = 'inventory', $9 = 'default', $10 = '3088820', $11 = '5250421', $12 = 'StockReleased', $13 = 'StockReserved', $14 = 'StockPicked', $15 = 'StockReceived', $16 = 'sku:SKU-046045'
-	Insert on bm_n3tx9gechuj9_events  (cost=165.92..165.94 rows=1 width=264) (actual time=50.036..50.038 rows=1.00 loops=1)
+	Insert on bm_n3tx9gechuj9_events  (cost=166.70..166.72 rows=1 width=264) (actual time=50.514..50.517 rows=1.00 loops=1)
 	  Buffers: shared hit=12317
 	  InitPlan 1
-	    ->  Limit  (cost=0.56..165.92 rows=1 width=16) (actual time=49.941..49.942 rows=0.00 loops=1)
+	    ->  Limit  (cost=0.56..166.70 rows=1 width=16) (actual time=50.414..50.414 rows=0.00 loops=1)
 	          Buffers: shared hit=12299
-	          ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events bm_n3tx9gechuj9_events_1  (cost=0.56..500359.94 rows=3026 width=16) (actual time=49.940..49.941 rows=0.00 loops=1)
+	          ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events bm_n3tx9gechuj9_events_1  (cost=0.56..503901.01 rows=3033 width=16) (actual time=50.413..50.413 rows=0.00 loops=1)
 	                Index Cond: ((stream_context = ($8)::text) AND (stream_purpose = ($9)::text) AND (ROW(event_tx, event_position) > ROW(($10)::xid8, $11)))
 	                Filter: ((event_tags @> ARRAY[($16)::text]) AND (event_type = ANY (ARRAY[($12)::text, ($13)::text, ($14)::text, ($15)::text])))
 	                Rows Removed by Filter: 249587
 	                Index Searches: 1
 	                Buffers: shared hit=12299
-	  ->  Result  (cost=0.00..0.02 rows=1 width=264) (actual time=49.977..49.977 rows=1.00 loops=1)
+	  ->  Result  (cost=0.00..0.02 rows=1 width=264) (actual time=50.451..50.451 rows=1.00 loops=1)
 	        One-Time Filter: ((InitPlan 1).col1 IS NULL)
 	        Buffers: shared hit=12300
 	        ->  Values Scan on "*VALUES*"  (cost=0.00..0.01 rows=1 width=240) (actual time=0.025..0.025 rows=1.00 loops=1)
 ```
 
-### DCB check as issued: append-stale-boundary @ postgres:external/metrics=off (collision=spread, generic plan) — measured 550.24 ms/op
+### DCB check as issued: append-stale-boundary @ postgres:external/metrics=off (collision=spread, generic plan) — measured 544.85 ms/op
 
 > the cursor boundary is an Index Cond here, so the scan starts at the boundary rather than filtering its way to it.
 
@@ -425,24 +430,24 @@ Execution Time: 0.044 ms
 		SELECT event_position FROM bm_n3tx9gechuj9_events
 		WHERE 1=1 AND stream_context = $8 AND stream_purpose = $9 AND (event_tx, event_position) > ($10::xid8, $11) AND ((event_type IN ($12, $13, $14, $15) AND event_tags @> ARRAY[$16]::text[])) ORDER BY event_tx, event_position LIMIT 1) IS NULL RETURNING event_position, event_timestamp, event_tx::text, event_id::text
 	Query Parameters: $1 = NULL, $2 = 'inventory', $3 = 'default', $4 = 'StockReserved', $5 = '{"sku":"SKU-001135","quantity":1,"orderId":"ORD-benchmark"}', $6 = NULL, $7 = '{warehouse:WH-1,channel:web,sku:SKU-001135}', $8 = 'inventory', $9 = 'default', $10 = '3087567', $11 = '2750000', $12 = 'StockReleased', $13 = 'StockReserved', $14 = 'StockPicked', $15 = 'StockReceived', $16 = 'sku:SKU-STALE-PROBE'
-	Insert on bm_n3tx9gechuj9_events  (cost=165.92..165.94 rows=1 width=264) (actual time=534.368..534.371 rows=1.00 loops=1)
+	Insert on bm_n3tx9gechuj9_events  (cost=166.70..166.72 rows=1 width=264) (actual time=529.552..529.555 rows=1.00 loops=1)
 	  Buffers: shared hit=141858
 	  InitPlan 1
-	    ->  Limit  (cost=0.56..165.92 rows=1 width=16) (actual time=534.246..534.246 rows=0.00 loops=1)
+	    ->  Limit  (cost=0.56..166.70 rows=1 width=16) (actual time=529.440..529.440 rows=0.00 loops=1)
 	          Buffers: shared hit=141840
-	          ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events bm_n3tx9gechuj9_events_1  (cost=0.56..500359.94 rows=3026 width=16) (actual time=534.244..534.245 rows=0.00 loops=1)
+	          ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_position on bm_n3tx9gechuj9_events bm_n3tx9gechuj9_events_1  (cost=0.56..503901.01 rows=3033 width=16) (actual time=529.438..529.439 rows=0.00 loops=1)
 	                Index Cond: ((stream_context = ($8)::text) AND (stream_purpose = ($9)::text) AND (ROW(event_tx, event_position) > ROW(($10)::xid8, $11)))
 	                Filter: ((event_tags @> ARRAY[($16)::text]) AND (event_type = ANY (ARRAY[($12)::text, ($13)::text, ($14)::text, ($15)::text])))
 	                Rows Removed by Filter: 2750017
 	                Index Searches: 1
 	                Buffers: shared hit=141840
-	  ->  Result  (cost=0.00..0.02 rows=1 width=264) (actual time=534.300..534.301 rows=1.00 loops=1)
+	  ->  Result  (cost=0.00..0.02 rows=1 width=264) (actual time=529.486..529.486 rows=1.00 loops=1)
 	        One-Time Filter: ((InitPlan 1).col1 IS NULL)
 	        Buffers: shared hit=141841
-	        ->  Values Scan on "*VALUES*"  (cost=0.00..0.01 rows=1 width=240) (actual time=0.039..0.040 rows=1.00 loops=1)
+	        ->  Values Scan on "*VALUES*"  (cost=0.00..0.01 rows=1 width=240) (actual time=0.033..0.033 rows=1.00 loops=1)
 ```
 
-### DCB check as issued: append-stale-boundary @ postgres:external/metrics=off (collision=spread, custom plan, first executions only) — measured 550.24 ms/op
+### DCB check as issued: append-stale-boundary @ postgres:external/metrics=off (collision=spread, custom plan, first executions only) — measured 544.85 ms/op
 
 > the cursor boundary is an Index Cond here, so the scan starts at the boundary rather than filtering its way to it.
 
@@ -451,70 +456,70 @@ Execution Time: 0.044 ms
 		SELECT event_position FROM bm_n3tx9gechuj9_events
 		WHERE 1=1 AND stream_context = $8 AND stream_purpose = $9 AND (event_tx, event_position) > ($10::xid8, $11) AND ((event_type IN ($12, $13, $14, $15) AND event_tags @> ARRAY[$16]::text[])) ORDER BY event_tx, event_position LIMIT 1) IS NULL RETURNING event_position, event_timestamp, event_tx::text, event_id::text
 	Query Parameters: $1 = NULL, $2 = 'inventory', $3 = 'default', $4 = 'StockReserved', $5 = '{"sku":"SKU-053343","quantity":1,"orderId":"ORD-benchmark"}', $6 = NULL, $7 = '{warehouse:WH-1,channel:web,sku:SKU-053343}', $8 = 'inventory', $9 = 'default', $10 = '3087567', $11 = '2750000', $12 = 'StockReleased', $13 = 'StockReserved', $14 = 'StockPicked', $15 = 'StockReceived', $16 = 'sku:SKU-STALE-PROBE'
-	Insert on bm_n3tx9gechuj9_events  (cost=838.99..839.01 rows=1 width=264) (actual time=0.082..0.084 rows=1.00 loops=1)
+	Insert on bm_n3tx9gechuj9_events  (cost=849.17..849.19 rows=1 width=264) (actual time=0.065..0.066 rows=1.00 loops=1)
 	  Buffers: shared hit=34
 	  InitPlan 1
-	    ->  Limit  (cost=838.99..838.99 rows=1 width=16) (actual time=0.039..0.040 rows=0.00 loops=1)
+	    ->  Limit  (cost=849.17..849.17 rows=1 width=16) (actual time=0.034..0.034 rows=0.00 loops=1)
 	          Buffers: shared hit=16
-	          ->  Sort  (cost=838.99..839.68 rows=276 width=16) (actual time=0.039..0.039 rows=0.00 loops=1)
+	          ->  Sort  (cost=849.17..849.88 rows=285 width=16) (actual time=0.034..0.034 rows=0.00 loops=1)
 	                Sort Key: bm_n3tx9gechuj9_events_1.event_tx, bm_n3tx9gechuj9_events_1.event_position
 	                Sort Method: quicksort  Memory: 25kB
 	                Buffers: shared hit=16
-	                ->  Bitmap Heap Scan on bm_n3tx9gechuj9_events bm_n3tx9gechuj9_events_1  (cost=23.14..837.61 rows=276 width=16) (actual time=0.038..0.038 rows=0.00 loops=1)
+	                ->  Bitmap Heap Scan on bm_n3tx9gechuj9_events bm_n3tx9gechuj9_events_1  (cost=23.18..847.75 rows=285 width=16) (actual time=0.032..0.033 rows=0.00 loops=1)
 	                      Recheck Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-STALE-PROBE}'::text[]))
 	                      Filter: ((ROW(event_tx, event_position) > ROW('3087567'::xid8, '2750000'::bigint)) AND (event_type = ANY ('{StockReleased,StockReserved,StockPicked,StockReceived}'::text[])))
 	                      Buffers: shared hit=16
-	                      ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..23.07 rows=725 width=0) (actual time=0.035..0.035 rows=0.00 loops=1)
+	                      ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..23.11 rows=734 width=0) (actual time=0.030..0.030 rows=0.00 loops=1)
 	                            Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-STALE-PROBE}'::text[]))
 	                            Index Searches: 1
 	                            Buffers: shared hit=16
-	  ->  Result  (cost=0.00..0.02 rows=1 width=264) (actual time=0.051..0.051 rows=1.00 loops=1)
+	  ->  Result  (cost=0.00..0.02 rows=1 width=264) (actual time=0.042..0.043 rows=1.00 loops=1)
 	        One-Time Filter: ((InitPlan 1).col1 IS NULL)
 	        Buffers: shared hit=17
-	        ->  Values Scan on "*VALUES*"  (cost=0.00..0.01 rows=1 width=240) (actual time=0.007..0.007 rows=1.00 loops=1)
+	        ->  Values Scan on "*VALUES*"  (cost=0.00..0.01 rows=1 width=240) (actual time=0.005..0.005 rows=1.00 loops=1)
 ```
 
-### DCB check as issued: append-empty-boundary @ postgres:external/metrics=off (collision=spread, generic plan) — measured 2.31 ms/op
+### DCB check as issued: append-empty-boundary @ postgres:external/metrics=off (collision=spread, generic plan) — measured 2.39 ms/op
 
 ```
 	Query Text: INSERT INTO bm_n3tx9gechuj9_events (event_id, idempotency_key, stream_context, stream_purpose, event_type, event_data, event_erasable_data, event_tags) SELECT * FROM ( VALUES (uuidv7(), $1, $2, $3, $4, $5::jsonb, $6::jsonb, $7) ) AS new_events WHERE NOT EXISTS (
 		SELECT 1 FROM bm_n3tx9gechuj9_events
 		WHERE 1=1 AND stream_context = $8 AND stream_purpose = $9 AND ((event_type IN ($10, $11, $12, $13) AND event_tags @> ARRAY[$14]::text[]))) RETURNING event_position, event_timestamp, event_tx::text, event_id::text
 	Query Parameters: $1 = NULL, $2 = 'inventory', $3 = 'default', $4 = 'StockReserved', $5 = '{"sku":"SKU-N0-8","quantity":1,"orderId":"ORD-benchmark"}', $6 = NULL, $7 = '{warehouse:WH-1,channel:web,sku:SKU-N0-8}', $8 = 'inventory', $9 = 'default', $10 = 'StockReleased', $11 = 'StockReserved', $12 = 'StockPicked', $13 = 'StockReceived', $14 = 'sku:SKU-N0-8'
-	Insert on bm_n3tx9gechuj9_events  (cost=55.95..55.97 rows=1 width=264) (actual time=1847.745..1847.747 rows=1.00 loops=1)
+	Insert on bm_n3tx9gechuj9_events  (cost=56.21..56.23 rows=1 width=264) (actual time=1812.357..1812.359 rows=1.00 loops=1)
 	  Buffers: shared hit=892807
 	  InitPlan 1
-	    ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_type_position on bm_n3tx9gechuj9_events bm_n3tx9gechuj9_events_1  (cost=0.56..502843.44 rows=9078 width=0) (actual time=1847.629..1847.629 rows=0.00 loops=1)
+	    ->  Index Scan using bm_n3tx9gechuj9_idx_events_stream_type_position on bm_n3tx9gechuj9_events bm_n3tx9gechuj9_events_1  (cost=0.56..506318.88 rows=9098 width=0) (actual time=1812.242..1812.243 rows=0.00 loops=1)
 	          Index Cond: ((stream_context = ($8)::text) AND (stream_purpose = ($9)::text) AND (event_type = ANY (ARRAY[($10)::text, ($11)::text, ($12)::text, ($13)::text])))
 	          Filter: (event_tags @> ARRAY[($14)::text])
 	          Rows Removed by Filter: 5334833
 	          Index Searches: 1
 	          Buffers: shared hit=892789
-	  ->  Result  (cost=0.00..0.02 rows=1 width=264) (actual time=1847.678..1847.679 rows=1.00 loops=1)
+	  ->  Result  (cost=0.00..0.02 rows=1 width=264) (actual time=1812.293..1812.294 rows=1.00 loops=1)
 	        One-Time Filter: (NOT (InitPlan 1).col1)
 	        Buffers: shared hit=892790
-	        ->  Values Scan on "*VALUES*"  (cost=0.00..0.01 rows=1 width=240) (actual time=0.036..0.036 rows=1.00 loops=1)
+	        ->  Values Scan on "*VALUES*"  (cost=0.00..0.01 rows=1 width=240) (actual time=0.036..0.037 rows=1.00 loops=1)
 ```
 
-### DCB check as issued: append-empty-boundary @ postgres:external/metrics=off (collision=spread, custom plan, first executions only) — measured 2.31 ms/op
+### DCB check as issued: append-empty-boundary @ postgres:external/metrics=off (collision=spread, custom plan, first executions only) — measured 2.39 ms/op
 
 ```
 	Query Text: INSERT INTO bm_n3tx9gechuj9_events (event_id, idempotency_key, stream_context, stream_purpose, event_type, event_data, event_erasable_data, event_tags) SELECT * FROM ( VALUES (uuidv7(), $1, $2, $3, $4, $5::jsonb, $6::jsonb, $7) ) AS new_events WHERE NOT EXISTS (
 		SELECT 1 FROM bm_n3tx9gechuj9_events
 		WHERE 1=1 AND stream_context = $8 AND stream_purpose = $9 AND ((event_type IN ($10, $11, $12, $13) AND event_tags @> ARRAY[$14]::text[]))) RETURNING event_position, event_timestamp, event_tx::text, event_id::text
 	Query Parameters: $1 = NULL, $2 = 'inventory', $3 = 'default', $4 = 'StockReserved', $5 = '{"sku":"SKU-N0-17","quantity":1,"orderId":"ORD-benchmark"}', $6 = NULL, $7 = '{warehouse:WH-1,channel:web,sku:SKU-N0-17}', $8 = 'inventory', $9 = 'default', $10 = 'StockReleased', $11 = 'StockReserved', $12 = 'StockPicked', $13 = 'StockReceived', $14 = 'sku:SKU-N0-17'
-	Insert on bm_n3tx9gechuj9_events  (cost=25.28..25.30 rows=1 width=264) (actual time=0.090..0.091 rows=1.00 loops=1)
+	Insert on bm_n3tx9gechuj9_events  (cost=25.30..25.32 rows=1 width=264) (actual time=0.083..0.084 rows=1.00 loops=1)
 	  Buffers: shared hit=39
 	  InitPlan 1
-	    ->  Bitmap Heap Scan on bm_n3tx9gechuj9_events bm_n3tx9gechuj9_events_1  (cost=23.16..834.01 rows=383 width=0) (actual time=0.032..0.032 rows=0.00 loops=1)
+	    ->  Bitmap Heap Scan on bm_n3tx9gechuj9_events bm_n3tx9gechuj9_events_1  (cost=23.21..844.10 rows=393 width=0) (actual time=0.033..0.033 rows=0.00 loops=1)
 	          Recheck Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-N0-17}'::text[]))
 	          Filter: (event_type = ANY ('{StockReleased,StockReserved,StockPicked,StockReceived}'::text[]))
 	          Buffers: shared hit=16
-	          ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..23.07 rows=725 width=0) (actual time=0.030..0.030 rows=0.00 loops=1)
+	          ->  Bitmap Index Scan on bm_n3tx9gechuj9_idx_events_stream_tags  (cost=0.00..23.11 rows=734 width=0) (actual time=0.031..0.031 rows=0.00 loops=1)
 	                Index Cond: ((stream_context = 'inventory'::text) AND (stream_purpose = 'default'::text) AND (event_tags @> '{sku:SKU-N0-17}'::text[]))
 	                Index Searches: 1
 	                Buffers: shared hit=16
-	  ->  Result  (cost=0.00..0.02 rows=1 width=264) (actual time=0.040..0.040 rows=1.00 loops=1)
+	  ->  Result  (cost=0.00..0.02 rows=1 width=264) (actual time=0.041..0.041 rows=1.00 loops=1)
 	        One-Time Filter: (NOT (InitPlan 1).col1)
 	        Buffers: shared hit=17
 	        ->  Values Scan on "*VALUES*"  (cost=0.00..0.01 rows=1 width=240) (actual time=0.005..0.005 rows=1.00 loops=1)
@@ -524,9 +529,10 @@ Execution Time: 0.044 ms
 
 | target | workload | mode | threads | score | unit | error | useful ops/s | ok | conflicts |
 |---|---|---|---|---|---|---|---|---|---|
-| postgres:external/metrics=off | append-empty-boundary | thrpt | 1 | 0.432 | ops/ms | 21.1% | 432 | 20,749 | 0 |
-| postgres:external/metrics=off | append-none | thrpt | 1 | 3.159 | ops/ms | 3.7% | 3,159 | 152,030 | 0 |
-| postgres:external/metrics=off | append-stale-boundary | thrpt | 1 | 0.002 | ops/ms | 0.7% | 2 | 96 | 0 |
-| postgres:external/metrics=off | append-type-and-tag | thrpt | 1 | 0.038 | ops/ms | 13.0% | 38 | 1,880 | 0 |
+| postgres:external/metrics=off | append-empty-boundary | thrpt | 1 | 0.419 | ops/ms | 21.4% | 419 | 20,132 | 0 |
+| postgres:external/metrics=off | append-none | thrpt | 1 | 3.089 | ops/ms | 5.0% | 3,089 | 148,283 | 0 |
+| postgres:external/metrics=off | append-stale-boundary | thrpt | 1 | 0.002 | ops/ms | 0.9% | 2 | 96 | 0 |
+| postgres:external/metrics=off | append-type-and-tag | thrpt | 1 | 0.039 | ops/ms | 23.1% | 39 | 1,870 | 0 |
+| postgres:external/metrics=off | decide-then-append-fresh | thrpt | 1 | 0.249 | ops/ms | 6.6% | 249 | 11,995 | 0 |
 
 A relative error above about 10% means the measurement is too noisy to compare against anything; raise the iteration count or quieten the machine.

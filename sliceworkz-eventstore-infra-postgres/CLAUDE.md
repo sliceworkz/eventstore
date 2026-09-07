@@ -23,7 +23,7 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   - **The DBA-installs-it-once split is the recommended answer, and it costs the application role
     nothing afterwards.** `ensure-schema.sql` pre-checks `pg_extension` and skips the statement
     entirely when the extension is present, so an unprivileged role starts against it indefinitely —
-    not even a `NOTICE`. (A bare `CREATE EXTENSION IF NOT EXISTS` would also have worked, since
+    not even a `NOTICE`. (A bare `CREATE EXTENSION IF NOT EXISTS` would also work, since
     PostgreSQL's `IF NOT EXISTS` short-circuit precedes its privilege check, but it puts a `NOTICE` in
     every startup log and issues DDL a `VALIDATE`-style deployment has no business issuing.)
   - **The remaining failure names its remedies.** A `RAISE` in the `insufficient_privilege` handler
@@ -156,7 +156,7 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     self-clearing, and `ConcurrentAppendVisibilityTest` is written to tolerate it (it re-polls). The
     same mechanism, with a blocker that lasts minutes instead of milliseconds, is the hazard above.
   - **A consequence for anything that would hold the store's *own* connections in a transaction.**
-    Reads currently run on autocommit, which is what keeps the store out of its own blast radius. Moving
+    Reads run on autocommit, which is what keeps the store out of its own blast radius. Moving
     `query()` to a cursor-based, autocommit-off streaming read would make a long-running read a
     long-running transaction — and while a purely read-only one still assigns no transaction id and so
     still pins nothing, that safety rests entirely on the streaming connection never writing. Any design
@@ -243,15 +243,13 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
 - **Oldest supported PostgreSQL is 16** (`Builder.OLDEST_SUPPORTED_MAJOR_VERSION`). The schema itself only
   needs 13 — `xid8`, `pg_current_xact_id()` — but 16 is both the oldest version with a support life worth
   committing to (13 went end-of-life in November 2025, 14 follows in November 2026, 15 in November 2027)
-  and the oldest this library has ever actually worked on. The docs previously promised 13+ while the
-  compliance run covered 17 and 18 only, and adding a floor backend showed the claim had never held: the
-  conditional append's `SELECT * FROM ( VALUES … )` carried no alias, which PostgreSQL only made optional
-  for FROM-clause subqueries in 16, so **every** conditional append — every DCB consistency check — failed
-  on 15 and older with `VALUES in FROM must have an alias`. The alias (`AS new_events`) is there now and is
-  kept even though 16 does not need it. An older server is **warned about, not rejected**: a hard failure
-  would turn a library upgrade into an outage, and the warning names the version. `Postgres16Backend` is in
-  the TCK service file so the floor is actually exercised — that is what an untested support claim is worth,
-  and why the floor backend earns its CI minute
+  and the oldest the compliance run exercises: `Postgres16Backend` is in the TCK service file, because a
+  support claim is worth exactly the versions the TCK runs against, and that is why the floor backend earns
+  its CI minute. The conditional append's `SELECT * FROM ( VALUES … ) AS new_events` keeps its alias even
+  though 16 does not need one — PostgreSQL only made it optional for FROM-clause subqueries in 16, and
+  without it every DCB consistency check fails on 15 and older with `VALUES in FROM must have an alias`.
+  An older server is **warned about, not rejected**: a hard failure would turn a library upgrade into an
+  outage, and the warning names the version
 - **`ENSURE` brings functions and triggers up to date; tables, columns and indexes are only ever created.**
   The functions are `CREATE OR REPLACE`d and each trigger is compared against the shape this release wants
   (`tgtype` plus target function, in a `DO $$` block) and recreated only when it differs — so wrong timing,
@@ -260,15 +258,16 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   REPLACE TRIGGER` would be simpler but is PG14+ *and* rewrites unconditionally, taking `ACCESS EXCLUSIVE`
   on every start of every instance. `drop-schema.sql` drops the two functions as well as the tables, which
   is what makes `INITIALIZE` mean what it says: the triggers go with the tables via `CASCADE`, the functions
-  do not, so before this a stale body survived the "drop and recreate from scratch" mode and the freshly
-  created trigger was wired straight back to it — the store then reported a validated schema with its
-  notifications dead
+  do not, so dropping the tables alone would leave a stale body to survive the "drop and recreate from
+  scratch" mode, with the freshly created trigger wired straight back to it — a store reporting a validated
+  schema with its notifications dead
 - **Schema scripts run as one transaction under a per-prefix advisory lock** (`executeSqlScripts`, keyed on
   a SHA-256 of the prefix and a scope no stream can produce, sharing `advisoryLockKey` with the append lock).
-  `CREATE TABLE / INDEX / EXTENSION IF NOT EXISTS` is not atomic against a concurrent creator, so before this
-  several instances starting together on a database without the schema raced on the system catalogs and 64 of
-  80 failed to start, on PG17 and PG18 alike. One transaction across *all* scripts also makes `INITIALIZE`'s
-  drop-then-ensure indivisible, so a second instance cannot drop what the first has just recreated
+  `CREATE TABLE / INDEX / EXTENSION IF NOT EXISTS` is not atomic against a concurrent creator, so without
+  the lock several instances starting together on a database without the schema race on the system catalogs
+  (measured: 64 of 80 fail to start, on PG17 and PG18 alike). One transaction across *all* scripts also
+  makes `INITIALIZE`'s drop-then-ensure indivisible, so a second instance cannot drop what the first has just
+  recreated
 - **What is still missing: a version marker, and validation of an object's shape.** `checkDatabase()` checks
   that named tables, columns (type + nullability), functions and indexes *exist*, and that each trigger
   exists with the expected `action_orientation`; it does not check
@@ -276,22 +275,22 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   wrong kind, or the idempotency index silently made non-unique, passes validation — and a `VALIDATE`/`NONE`
   deployment, where a DBA applies DDL, never gets the function repair either. A change needing `ALTER TABLE`
   still has to be applied by hand (see the manual migrations below). `PostgresSchemaDriftTest` pins down both
-  halves per backend: what `ENSURE` now repairs, and what it still does not. See
+  halves per backend: what `ENSURE` repairs, and what it does not. See
   `sliceworkz-eventstore-infra-postgres/SCHEMA-MIGRATION.md` for the measurements and the recommended
   version-table design
 - **Append notifications are emitted once per stream per statement, not once per row.** The trigger on
   `<prefix>events` is `AFTER INSERT ... REFERENCING NEW TABLE AS inserted FOR EACH STATEMENT`, and the
   function emits one `pg_notify` per distinct `(stream_context, stream_purpose)` in the transition table,
-  carrying that stream's maximum over the total `(event_tx, event_position)` order. It was `FOR EACH ROW`,
-  which meant a 1000-event append queued 1000 notifications and an import chunk queued 5000 — all but one
-  per stream discarded by `OptimizingAppendListenerDecorator` after being built as JSON, written to the
-  cluster-wide async queue, sent over the wire, parsed by Jackson and fanned out to every listener.
-  Measured on the PG16 floor, a 100k-row insert: the notification count falls from 100.000 to exactly 1,
-  and trigger time roughly halves — 1230ms to 460ms on one run, 808ms to 369ms on another (the absolute
-  numbers move a lot between runs; the ratio is the stable part). The remaining cost is the transition
-  table, which is materialised as a tuplestore and then sorted, so this is not free — just far cheaper
-  than a plpgsql invocation and a queued notification per row. This also matches the in-memory backends,
-  which have always notified once per stream per append. Things to keep in mind when touching this:
+  carrying that stream's maximum over the total `(event_tx, event_position)` order. The alternative — a
+  `FOR EACH ROW` trigger — queues one notification per row, 1000 for a 1000-event append and 5000 for an
+  import chunk, all but one per stream discarded by `OptimizingAppendListenerDecorator` after being built
+  as JSON, written to the cluster-wide async queue, sent over the wire, parsed by Jackson and fanned out to
+  every listener. Measured against it on the PG16 floor, a 100k-row insert: the notification count falls
+  from 100.000 to exactly 1, and trigger time roughly halves — 1230ms to 460ms on one run, 808ms to 369ms
+  on another (the absolute numbers move a lot between runs; the ratio is the stable part). The remaining
+  cost is the transition table, which is materialised as a tuplestore and then sorted, so this is not free
+  — just far cheaper than a plpgsql invocation and a queued notification per row. It also matches the
+  in-memory backends, which notify once per stream per append. Things to keep in mind when touching this:
   - **The aggregation is `DISTINCT ON (stream_context, stream_purpose) ... ORDER BY event_tx DESC,
     event_position DESC`, not `max(event_position)`.** The two orders genuinely disagree (see the
     `(tx, position)` note above), and `DISTINCT ON` returns the whole winning row, so `event_id` belongs
@@ -301,14 +300,13 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   - **One notification per *distinct stream*, never a single collapsed "something happened".**
     `AppendsToEventStoreNotification.isRelevantFor` matches through `EventStreamId.canRead`, so the
     notification has to name a concrete stream or no concrete subscriber matches it.
-  - The payload shape is unchanged — `eventTx` is still rendered as a JSON *string* by
-    `jsonb_build_object` — so the Java side needed no change.
-  - **The trigger's expected `tgtype` is 4** (`INSERT` with the `ROW` bit clear), where the row-level
-    version was 5. That is what makes an un-migrated database fail the shape compare and get repaired by
-    `ENSURE`. `tgnewtable = 'inserted'` is compared too: the function reads the transition table, so a
+  - `eventTx` is rendered as a JSON *string* by `jsonb_build_object`; the Java side parses it as one.
+  - **The trigger's expected `tgtype` is 4** (`INSERT` with the `ROW` bit clear); a row-level trigger's is
+    5, so a database still carrying one fails the shape compare and is repaired by `ENSURE`.
+    `tgnewtable = 'inserted'` is compared too: the function reads the transition table, so a
     statement-level trigger declared without `REFERENCING` would fail at runtime rather than at startup.
-  - The bookmark trigger is deliberately still `FOR EACH ROW`: `bookmark()` is a single-row upsert, so
-    per-row and per-statement are the same count there.
+  - The bookmark trigger is deliberately `FOR EACH ROW`: `bookmark()` is a single-row upsert, so per-row
+    and per-statement are the same count there.
   - `EventAppendNotificationGranularityTest` in the TCK pins the granularity and the reference down for
     every backend.
 - **`checkTrigger` validates `action_orientation`, not just the trigger's name.** A `VALIDATE`/`NONE`
@@ -317,18 +315,21 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   function body does *not* raise in PostgreSQL — `NEW` is unassigned, so it emits a notification with
   every field null, which becomes a wildcard stream with a zero reference that every concrete
   subscriber's `canRead` rejects. Live updates would stop with nothing thrown and nothing logged.
-- **The async notification queue was never the binding constraint.** Measured on PG16, 100.000 pending
-  notifications occupy 0.217% of it, so it holds ~46 million and a single transaction would need that many
-  events to hit `NOTIFY queue is full` (SQLSTATE 53200) — far past where the in-memory `List<EventToImport>`
-  would OOM first. `EventStoreImporter` also commits one transaction per `batchSize` (default 1000), so a
-  million-event migration is a thousand commits, not one. The queue is cluster-wide and only recycled once
-  every listener has consumed, so a stalled listener does make usage accumulate monotonically across
-  transactions — but from a base low enough that the amplification was a throughput and latency problem,
-  not a correctness-of-operation one.
+- **The async notification queue is not a binding constraint, even per row.** Measured on PG16, 100.000
+  pending notifications occupy 0.217% of it, so it holds ~46 million and a single transaction would need
+  that many events to hit `NOTIFY queue is full` (SQLSTATE 53200) — far past where the in-memory
+  `List<EventToImport>` would OOM first. `EventStoreImporter` also commits one transaction per `batchSize`
+  (default 1000), so a million-event migration is a thousand commits, not one. The queue is cluster-wide
+  and only recycled once every listener has consumed, so a stalled listener does make usage accumulate
+  monotonically across transactions — but from a base low enough that per-row notification would be a
+  throughput and latency problem, not a correctness-of-operation one.
 - `stream_purpose` defaults to `'default'` in the DDL, matching `EventStreamId.DEFAULT_PURPOSE` — a public
   constant, so an interop layer can bind the same value the library does rather than copy the literal out
-  of this file. On a database created before this alignment (default was `''`), operators doing raw SQL inserts should run `ALTER TABLE <prefix>events ALTER COLUMN stream_purpose SET DEFAULT 'default';` — no data migration is needed since all events written through the library bind the purpose explicitly
-- **Idempotency keys are scoped per event stream (context + purpose), not per storage/table.** Uniqueness is enforced by the partial unique index `idx_events_stream_idempotency` on `(stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL` (schema validation requires it), so the same key used on two unrelated streams does not collide and dedup behaviour does not depend on how storage instances / prefixes are wired at runtime. The `idempotency_key` is persisted and surfaced on `StoredEvent` when reading (it is not exposed on the public `Event` record). A duplicate append is still silently ignored (returns an empty result). On a database created before this change (when `idempotency_key` had a table-wide `UNIQUE`), migrate with: `ALTER TABLE <prefix>events DROP CONSTRAINT <prefix>events_idempotency_key_key; CREATE UNIQUE INDEX <prefix>idx_events_stream_idempotency ON <prefix>events (stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL;` — no data migration is needed
+  of this file. A database created by an older release may carry `''` as that default; operators doing raw
+  SQL inserts against one should run `ALTER TABLE <prefix>events ALTER COLUMN stream_purpose SET DEFAULT
+  'default';` — no data migration is needed, since every event written through the library binds the purpose
+  explicitly
+- **Idempotency keys are scoped per event stream (context + purpose), not per storage/table.** Uniqueness is enforced by the partial unique index `idx_events_stream_idempotency` on `(stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL` (schema validation requires it), so the same key used on two unrelated streams does not collide and dedup behaviour does not depend on how storage instances / prefixes are wired at runtime. The `idempotency_key` is persisted and surfaced on `StoredEvent` when reading (it is not exposed on the public `Event` record). A duplicate append is silently ignored (returns an empty result). A database created by an older release may still carry a table-wide `UNIQUE` on `idempotency_key`; migrate it with: `ALTER TABLE <prefix>events DROP CONSTRAINT <prefix>events_idempotency_key_key; CREATE UNIQUE INDEX <prefix>idx_events_stream_idempotency ON <prefix>events (stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL;` — no data migration is needed
   - **The duplicate is recognised by the index the server names, never by the message text.** Both the
     append and the import path go through `isIdempotencyKeyViolation`, which pairs SQLSTATE 23505 with
     `PSQLException.getServerErrorMessage().getConstraint()` — populated with the *index* name for a bare
@@ -348,7 +349,7 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     61 characters, so it cannot happen. Raising that cap needs this comparison revisited — and, more
     urgently, would let two of the schema's index names truncate to the same string, at which point
     `CREATE UNIQUE INDEX IF NOT EXISTS` silently does nothing and idempotency uniqueness stops existing
-- **Importing needed no DDL change**: `event_id` is already a plain `UUID NOT NULL UNIQUE` and `event_timestamp` is nullable with a `CURRENT_TIMESTAMP` default, so both can be supplied explicitly. `importEvents` binds them per row, chunks statements at 5000 rows (9 params/row against the 65535-parameter wire ceiling) inside a single transaction, and matches `RETURNING` rows **by event_id** rather than by row order — with `ON CONFLICT` the returned rows are a subset of the input, so position in the result set means nothing. Conflicts are routed by constraint name from `PSQLException.getServerErrorMessage().getConstraint()`, not by matching message text
+- **Importing needs no DDL of its own**: `event_id` is a plain `UUID NOT NULL UNIQUE` and `event_timestamp` is nullable with a `CURRENT_TIMESTAMP` default, so both can be supplied explicitly. `importEvents` binds them per row, chunks statements at 5000 rows (9 params/row against the 65535-parameter wire ceiling) inside a single transaction, and matches `RETURNING` rows **by event_id** rather than by row order — with `ON CONFLICT` the returned rows are a subset of the input, so position in the result set means nothing. Conflicts are routed by constraint name from `PSQLException.getServerErrorMessage().getConstraint()`, not by matching message text
 - **Imported event ids must be UUIDs** (the `::uuid` cast); `importEvents` validates this up front to give a clear error rather than an opaque cast failure
 - **`timestamptz` keeps microseconds and rounds anything finer**, so a nanosecond-precision timestamp (as an in-memory store produces) lands up to half a microsecond away from where it started. This is the only lossy part of an inmem → Postgres → inmem round trip; `EventImportRoundTripTest` pins it down
 - **A `db.properties` *value* never reaches an error message or a log line — only the key does.** Every

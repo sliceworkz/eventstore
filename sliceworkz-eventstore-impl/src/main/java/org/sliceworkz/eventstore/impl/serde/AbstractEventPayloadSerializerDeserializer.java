@@ -30,7 +30,6 @@ import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.json.JsonMapper;
-import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Base class for event payload serializers, holding the single Jackson mapper every event is written
@@ -40,19 +39,12 @@ import tools.jackson.databind.node.ObjectNode;
  * An event is serialized to a single JSON document. Personal data is not held apart from the rest of
  * the payload; it sits in place, encrypted, as a sealed envelope written by {@link ShreddableModule}.
  * <p>
- * This replaces an earlier design that split every payload across two documents — one for
- * {@code @Erasable} fields, one for everything else — reconciled on read by a deep merge, with erasure
- * performed by an operator nulling the erasable column. That design had three problems the split itself
- * caused: the merge replaced JSON arrays wholesale, so a collection of partly-personal elements silently
- * lost its non-personal fields on every ordinary read; nulling the column left validating records
- * permanently unreadable; and "erased" was indistinguishable from "never held any personal data".
- *
- * <h2>Legacy reads</h2>
- * Events written under that design are still readable. When a stored event carries a non-null erasable
- * payload, both documents are parsed and {@link #deepMerge(ObjectNode, ObjectNode) deep-merged} before
- * being bound to the record, exactly as before. Nothing writes a second document any more, so the
- * merge path only ever sees events that predate this change — including ones whose erasable data an
- * operator has already nulled, which still read back with those fields absent.
+ * The alternative — splitting every payload across two documents, one for annotated personal fields
+ * and one for everything else, reconciled on read by a deep merge, with erasure performed by nulling
+ * the second column — loses on three counts the split itself causes: a merge that replaces JSON arrays
+ * wholesale drops the non-personal fields of partly-personal collection elements on every ordinary
+ * read; nulling the column leaves a record whose constructor rejects nulls permanently unreadable; and
+ * "erased" becomes indistinguishable from "never held any personal data".
  *
  * @see ShreddableModule
  * @see TypedEventPayloadSerializerDeserializer
@@ -112,10 +104,8 @@ public abstract class AbstractEventPayloadSerializerDeserializer implements Even
 		EventType eventType = payload == null ? null : EventType.of(payload);
 		ShreddableModule.beginCollectingSealedKeys();
 		try {
-			// The second payload is always null: nothing writes the immutable/erasable split any more.
-			// The column stays for the events that were written with it.
 			String json = objectMapper.writeValueAsString(payload);
-			return new TypeAndSerializedPayload(eventType, json, null, ShreddableModule.collectedSealedKeys());
+			return new TypeAndSerializedPayload(eventType, json, ShreddableModule.collectedSealedKeys());
 
 		} catch (Exception e) {
 			// The payload class is named explicitly rather than left to the cause: a Jackson failure
@@ -132,33 +122,6 @@ public abstract class AbstractEventPayloadSerializerDeserializer implements Even
 		}
 	}
 
-	/**
-	 * Merges a legacy erasable document into its immutable counterpart.
-	 * <p>
-	 * Only reached for events written before payloads became a single document. Note the array
-	 * behaviour, which is the defect that made the split untenable: an array in the source replaces the
-	 * one in the target wholesale rather than merging element by element, so a collection whose elements
-	 * held both personal and non-personal fields came back with the non-personal ones gone. It is kept
-	 * exactly as it was, because changing it now would read historical events differently from the way
-	 * they have always been read.
-	 *
-	 * @param target the immutable document, mutated in place
-	 * @param source the erasable document to merge into it
-	 */
-	protected void deepMerge ( ObjectNode target, ObjectNode source ) {
-		source.properties().forEach(entry -> {
-			String key = entry.getKey();
-			var value = entry.getValue();
-
-			if ( value.isObject() && target.has(key) && target.get(key).isObject() ) {
-				// Recursively merge nested objects
-				deepMerge((ObjectNode) target.get(key), (ObjectNode) value);
-			} else {
-				// Replace or add the field
-				target.set(key, value);
-			}
-		});
-	}
 
 	/**
 	 * Whether an event class holds personal data anywhere in its payload, and therefore needs a

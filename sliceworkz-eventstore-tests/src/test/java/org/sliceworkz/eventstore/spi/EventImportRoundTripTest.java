@@ -18,7 +18,6 @@
 package org.sliceworkz.eventstore.spi;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
@@ -70,9 +69,9 @@ class EventImportRoundTripTest {
 
 		try {
 			origin.append(AppendCriteria.none(), Optional.of(stream), List.of(
-					new EventToStore(stream, EventType.ofType("Plain"), "{\"a\":1}", null, Tags.of("kind", "plain"), null),
-					new EventToStore(stream, EventType.ofType("Keyed"), "{\"b\":2}", null, Tags.none(), "the-key"),
-					new EventToStore(stream, EventType.ofType("Erasable"), "{\"keep\":true}", "{\"secret\":\"pii\"}", Tags.of("kind", "erasable"), null)));
+					new EventToStore(stream, EventType.ofType("Plain"), "{\"a\":1}", Tags.of("kind", "plain"), null),
+					new EventToStore(stream, EventType.ofType("Keyed"), "{\"b\":2}", Tags.none(), "the-key"),
+					new EventToStore(stream, EventType.ofType("Nested"), "{\"keep\":true,\"inner\":{\"n\":[1,2,3]}}", Tags.of("kind", "nested"), null)));
 
 			List<StoredEvent> originals = allEventsIn(origin);
 			assertEquals(3, originals.size());
@@ -98,20 +97,12 @@ class EventImportRoundTripTest {
 
 				// PostgreSQL normalises JSONB (key order, whitespace), so compare semantically
 				assertEquals(JSONMAPPER.readTree(original.immutableData()), JSONMAPPER.readTree(copy.immutableData()));
-				if ( original.erasableData() == null ) {
-					assertEquals(null, copy.erasableData());
-				} else {
-					assertEquals(JSONMAPPER.readTree(original.erasableData()), JSONMAPPER.readTree(copy.erasableData()));
-				}
 
 				// timestamptz keeps microseconds and rounds anything finer, so a nanosecond-precision
 				// source timestamp can come back up to half a microsecond away from where it started
 				assertTrue(Duration.between(original.timestamp(), copy.timestamp()).abs().compareTo(ONE_MICROSECOND) < 0,
 						"timestamp must survive to microsecond resolution, was %s and came back %s".formatted(original.timestamp(), copy.timestamp()));
 			}
-
-			// the erasable payload really made the trip rather than being merged away
-			assertNotNull(returned.get(2).erasableData());
 		} finally {
 			postgres.close();
 			PostgresContainer.close(PostgresContainer.IMAGE_PG18);

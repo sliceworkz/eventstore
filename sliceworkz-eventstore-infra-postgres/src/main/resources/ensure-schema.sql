@@ -55,7 +55,6 @@ CREATE TABLE IF NOT EXISTS PREFIX_events (
 
       -- Event payload
       event_data JSONB NOT NULL,
-      event_erasable_data JSONB,
 
       -- Tags as string array
       event_tags TEXT[] DEFAULT '{}'

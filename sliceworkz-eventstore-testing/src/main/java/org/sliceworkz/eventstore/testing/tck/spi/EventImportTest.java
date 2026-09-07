@@ -98,7 +98,7 @@ public class EventImportTest extends AbstractEventStoreTest {
 	// --- helpers ---
 
 	private EventToStore event ( EventStreamId stream, String type, String payload, String idempotencyKey ) {
-		return new EventToStore(stream, EventType.ofType(type), payload, null, Tags.of("kind", type), idempotencyKey);
+		return new EventToStore(stream, EventType.ofType(type), payload, Tags.of("kind", type), idempotencyKey);
 	}
 
 	private List<StoredEvent> appendTo ( EventStorage storage, EventToStore... events ) {
@@ -171,19 +171,6 @@ public class EventImportTest extends AbstractEventStoreTest {
 			assertTrue(imported.get(i - 1).reference().happenedBefore(imported.get(i).reference()));
 		}
 		assertEquals(4, allEventsIn(target).size());
-	}
-
-	@ForEachBackend(requires = Capability.IMPORT)
-	void testImportPreservesErasableData ( ) {
-		appendTo(source, new EventToStore(stream, EventType.ofType("WithErasable"), "{\"keep\":1}", "{\"secret\":\"x\"}", Tags.none(), null));
-		List<StoredEvent> sourceEvents = allEventsIn(source);
-
-		target.importEvents(toImport(sourceEvents), ImportMode.FAIL_ON_EXISTING_ID);
-
-		StoredEvent copy = allEventsIn(target).getFirst();
-		assertTrue(copy.immutableData().contains("keep"));
-		assertNotNull(copy.erasableData());
-		assertTrue(copy.erasableData().contains("secret"));
 	}
 
 	@ForEachBackend(requires = Capability.IMPORT)

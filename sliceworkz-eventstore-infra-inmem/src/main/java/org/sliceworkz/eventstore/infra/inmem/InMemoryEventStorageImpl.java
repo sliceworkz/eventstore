@@ -333,12 +333,6 @@ public class InMemoryEventStorageImpl implements EventStorage {
 				Class<?> clz = e.immutableData().getClass();
 				String s = jsonMapper.writeValueAsString(e.immutableData());
 				jsonMapper.readValue(s, clz);
-
-				if ( e.erasableData() != null ) {
-					clz = e.erasableData().getClass();
-					s = jsonMapper.writeValueAsString(e.erasableData());
-					jsonMapper.readValue(s, clz);
-				}
 			}
 		} catch (DatabindException e) {
 			throw new RuntimeException("json mapping roundtrip test failed", e);
@@ -464,9 +458,6 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		try {
 			if ( jsonMapper.readTree(event.immutableData()).isMissingNode() ) {
 				throw new EventStorageException("event %s to import carries an empty immutable payload".formatted(event.id().value()));
-			}
-			if ( event.erasableData() != null && jsonMapper.readTree(event.erasableData()).isMissingNode() ) {
-				throw new EventStorageException("event %s to import carries an empty erasable payload".formatted(event.id().value()));
 			}
 		} catch (JacksonException e) {
 			throw new EventStorageException("event %s to import does not carry valid JSON".formatted(event.id().value()), e);

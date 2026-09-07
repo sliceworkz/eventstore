@@ -69,9 +69,8 @@ public interface EventPayloadSerializerDeserializer {
 	 * the key held for its data subject, and written as a sealed envelope.
 	 *
 	 * @param payload the domain event object to serialize
-	 * @return the serialized event; its erasable payload is always null, and exists only for events
-	 *         written before payloads became a single document. Its {@code shreddingKeys} name every
-	 *         key the payload was sealed under, so the append path can tag the event with them
+	 * @return the serialized event. Its {@code shreddingKeys} name every key the payload was sealed
+	 *         under, so the append path can tag the event with them
 	 * @see org.sliceworkz.eventstore.shredding.Shreddable
 	 */
 	TypeAndSerializedPayload serialize(Object payload);
@@ -79,7 +78,6 @@ public interface EventPayloadSerializerDeserializer {
 	/**
 	 * Deserializes a JSON representation back to zero or more domain event objects.
 	 * <p>
-	 * Merges immutable and erasable data (if present) to reconstruct the complete event object(s).
 	 * For typed mode, the event type name is used to determine the target Java class.
 	 * For raw mode, returns a Jackson JsonNode wrapped in a singleton list.
 	 * <p>
@@ -91,7 +89,7 @@ public interface EventPayloadSerializerDeserializer {
 	 *   <li><b>Standard deserialization:</b> One stored event becomes one current event</li>
 	 * </ul>
 	 *
-	 * @param serialized the serialized event including type and separated payloads
+	 * @param serialized the serialized event including its type
 	 * @return a list of deserialized event types and data objects (may be empty, never null)
 	 * @throws RuntimeException if deserialization fails or type mapping is not found
 	 */
@@ -213,16 +211,13 @@ public interface EventPayloadSerializerDeserializer {
 	public record TypeAndPayload ( EventType type, Object eventData ) { }
 
 	/**
-	 * Container for an event type and its serialized JSON payloads.
-	 * <p>
-	 * The payload is split into immutable and erasable parts to support GDPR compliance.
-	 * The erasable payload may be null if the event contains no erasable fields.
+	 * Container for an event type and its serialized JSON payload.
 	 *
 	 * @param type the event type
-	 * @param immutablePayload the JSON string for immutable event data
-	 * @param erasablePayload the JSON string for erasable event data (may be null)
+	 * @param immutablePayload the JSON document the event is stored as
+	 * @param shreddingKeys every key the payload was sealed under; empty when read back
 	 */
-	public record TypeAndSerializedPayload ( EventType type, String immutablePayload, String erasablePayload, Set<KeyId> shreddingKeys ) {
+	public record TypeAndSerializedPayload ( EventType type, String immutablePayload, Set<KeyId> shreddingKeys ) {
 
 		/**
 		 * Defensively copies the key set, and treats a null one as empty.
@@ -236,10 +231,9 @@ public interface EventPayloadSerializerDeserializer {
 		 *
 		 * @param type the event type
 		 * @param immutablePayload the serialized payload
-		 * @param erasablePayload the legacy second document, or null
 		 */
-		public TypeAndSerializedPayload ( EventType type, String immutablePayload, String erasablePayload ) {
-			this(type, immutablePayload, erasablePayload, Set.of());
+		public TypeAndSerializedPayload ( EventType type, String immutablePayload ) {
+			this(type, immutablePayload, Set.of());
 		}
 
 	}

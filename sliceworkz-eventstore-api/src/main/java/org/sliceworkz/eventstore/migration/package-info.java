@@ -26,8 +26,7 @@
  * <h2>Why it works at the storage level</h2>
  * The importer reads {@link org.sliceworkz.eventstore.spi.EventStorage.StoredEvent}s and writes
  * {@link org.sliceworkz.eventstore.spi.EventToImport}s, so payloads move as opaque JSON. That means no
- * domain classes on the classpath, no serialization round-trip, no upcasting, and no re-splitting of
- * erasable data against annotations that may since have changed. Going through
+ * domain classes on the classpath, no serialization round-trip, and no upcasting. Going through
  * {@link org.sliceworkz.eventstore.stream.EventStream} instead would rewrite legacy events into current
  * ones and lose the idempotency key, which the public {@link org.sliceworkz.eventstore.events.Event}
  * record does not carry.

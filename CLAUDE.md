@@ -785,7 +785,7 @@ ImportReport report = EventStoreImporter.from(sourceStorage).to(targetStorage)
 ```
 
 **What survives, what does not:**
-- **Preserved**: `EventId`, timestamp, idempotency key, event type, tags, immutable and erasable payloads
+- **Preserved**: `EventId`, timestamp, idempotency key, event type, tags and payload
 - **Reassigned by the target**: `position` and `tx`. An import reproduces the source *order*, never its
   ordering numbers. `index` is a read-time upcasting artifact and is always 0 at rest.
 
@@ -1052,12 +1052,10 @@ than reporting stale data as readable.
 envelope as stored, which is what lets `EventStoreImporter` copy events with no keys and no domain
 classes.
 
-**Events written with a second, erasable document are still readable.** A stored event carrying an
-`event_erasable_data` document is deep-merged with its immutable one on read. The serde never produces
-one — `append` stores null there — and only an import copies one, verbatim from its source. A component
-stored bare in that document and now declared `Shreddable` cannot be read off such events — the stored
-value carries no subject, so nothing can say whose data it is — and fails with a message saying to
-migrate via `EventStoreImporter.transform` or to read the old shape through a `@LegacyEvent` upcaster.
+**A component that was a plain field when its events were written cannot be read as a `Shreddable`.**
+The stored value is bare, so nothing can say whose data it is, and the read fails with a message saying
+to migrate the events via `EventStoreImporter.transform` or to read the old shape through a
+`@LegacyEvent` upcaster. Guessing a subject would leave old personal data unprotected and unerasable.
 
 `ShreddableEventDataTest` in the TCK pins all of this per backend, against *that backend's* key store:
 the two-subject erasure, the collection case, a record whose constructor rejects nulls surviving erasure,

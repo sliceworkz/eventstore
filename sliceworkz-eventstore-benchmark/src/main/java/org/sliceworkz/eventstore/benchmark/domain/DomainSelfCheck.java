@@ -183,12 +183,12 @@ public final class DomainSelfCheck {
 				new EventToImport(id, EventType.of(LegacySalesEvent.OrderPlacedV1.class), EventId.create(),
 						"""
 						{"orderId":"o-1","basketId":"b-1","customerId":"c-1","totalCents":4200}""",
-						null, Tags.of(TagKeys.ORDER, "o-1"), when, null),
+						Tags.of(TagKeys.ORDER, "o-1"), when, null),
 				new EventToImport(id, EventType.of(LegacySalesEvent.BasketCheckedOut.class), EventId.create(),
 						"""
 						{"orderId":"o-2","basketId":"b-2","customerId":"c-2","totalCents":3300,\
 						"couponCode":"SUMMER","discountCents":300}""",
-						null, Tags.of(TagKeys.ORDER, "o-2"), when.plusSeconds(1), null)),
+						Tags.of(TagKeys.ORDER, "o-2"), when.plusSeconds(1), null)),
 				EventStorage.ImportMode.FAIL_ON_EXISTING_ID);
 
 		EventStream<SalesEvent> reader = store.getEventStream(id, SalesEvent.class, LegacySalesEvent.class);

@@ -33,7 +33,6 @@
  *   <li>Automatic event type registration and discovery</li>
  *   <li>Legacy event upcasting via {@link org.sliceworkz.eventstore.events.LegacyEvent} annotation</li>
  *   <li>GDPR compliance through {@link org.sliceworkz.eventstore.shredding.Shreddable} values, encrypted per data subject</li>
- *   <li>Separation of immutable and erasable data in storage</li>
  * </ul>
  *
  * <h2>Personal Data Handling:</h2>
@@ -43,9 +42,6 @@
  * key held for its data subject, and written as a sealed envelope. Erasure destroys the key rather than
  * touching the event, so the stored bytes never change and every copy of them — replicas, write-ahead
  * logs, backups — becomes unreadable at the same instant.
- * <p>
- * Events written before this, when payloads were split across an immutable and an erasable document,
- * are still read by merging the two.
  *
  * @see org.sliceworkz.eventstore.shredding.Shreddable
  * @see ShreddableModule

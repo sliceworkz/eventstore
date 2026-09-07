@@ -413,7 +413,6 @@ public final class CorpusGenerator {
 					EventType.of(payload.getClass()),
 					ids.idOf(sequence),
 					mapper.writeValueAsString(payload),
-					null,
 					tags,
 					ids.timestampOf(sequence),
 					null));

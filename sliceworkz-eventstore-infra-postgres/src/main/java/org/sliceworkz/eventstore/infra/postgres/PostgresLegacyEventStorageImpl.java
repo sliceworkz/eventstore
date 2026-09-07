@@ -56,7 +56,7 @@ public class PostgresLegacyEventStorageImpl extends PostgresEventStorageImpl {
 
 	@Override
 	protected String appendValuesRowFragment ( ) {
-		return "(?::uuid, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?) ";
+		return "(?::uuid, ?, ?, ?, ?, ?::jsonb, ?) ";
 	}
 
 	@Override

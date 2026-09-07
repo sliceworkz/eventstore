@@ -18,12 +18,13 @@ provisioned once and reused. See that module's README for the full picture; what
   about the two numbers says so. `report --baseline` diffs the same configuration over time and
   refuses when the corpus, targets or environment differ; `compare --a --b` diffs two configurations
   measured here and refuses when the *environment* differs.
-- **Curated runs are committed** under `results/<version>/<profile>/`, so a figure quoted here or in
-  a README has something behind it that a pull request can review. Two such trees exist: the module's
-  own `sliceworkz-eventstore-benchmark/results/` (the external large-tier runs and the `-not-exists`
-  baselines) and the repository-root `results/` (the remaining profiles, several of them
-  Testcontainers runs). Publishing refuses a Testcontainers run, a run whose store drifted over 2%,
-  and — under any flag — a run that failed a correctness check.
+- **Curated runs are committed** to `sliceworkz-eventstore-benchmark/results/<version>/<profile>/`,
+  one directory per profile, so a figure quoted here or in a README has something behind it that a
+  pull request can review. Publishing refuses a Testcontainers run, a run whose store drifted over 2%,
+  and — under any flag — a run that failed a correctness check; `--force` keeps a caveated run, with
+  the reasons recorded in its report. Publish from the module directory: `report --publish` writes
+  relative to the working directory, so a publish issued from the repository root lands in a second
+  `results/` tree at the root.
 - **The profiles are mostly pairs.** `stream-design-tagged` against `stream-design-per-entity`,
   `read-shapes` against `crowded-store` and `crowded-database`, the three `write-contention-*`
   collision modes. Each pair differs in one property, which is what makes the difference between them

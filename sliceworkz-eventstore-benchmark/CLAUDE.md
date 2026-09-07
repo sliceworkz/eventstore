@@ -19,24 +19,27 @@ provisioned once and reused. See that module's README for the full picture; what
   refuses when the corpus, targets or environment differ; `compare --a --b` diffs two configurations
   measured here and refuses when the *environment* differs.
 - **Curated runs are committed** to `sliceworkz-eventstore-benchmark/results/<version>/<profile>/`,
-  so a figure quoted here or in a README has something behind it that a pull request can review.
-  Publishing refuses a Testcontainers run, a run whose store drifted over 2%, and — under any flag —
-  a run that failed a correctness check.
+  one directory per profile, so a figure quoted here or in a README has something behind it that a
+  pull request can review. Publishing refuses a Testcontainers run, a run whose store drifted over 2%,
+  and — under any flag — a run that failed a correctness check; `--force` keeps a caveated run, with
+  the reasons recorded in its report. Publish from the module directory: `report --publish` writes
+  relative to the working directory, so a publish issued from the repository root lands in a second
+  `results/` tree at the root.
 - **The profiles are mostly pairs.** `stream-design-tagged` against `stream-design-per-entity`,
   `read-shapes` against `crowded-store` and `crowded-database`, the three `write-contention-*`
   collision modes. Each pair differs in one property, which is what makes the difference between them
   attributable.
 
-**The figures quoted in this document are not yet reproduced by that suite.** They were measured ad
-hoc while the behaviour they describe was being fixed, and the code that produced them is gone — which
-is the reason the suite exists. Treat each as a recorded observation rather than a current
-measurement, and where one matters, run the profile that would replace it:
+**Four figures quoted in the root and postgres `CLAUDE.md` files are not produced by this suite.**
+They were measured ad hoc, outside it, with nothing that can reproduce them. Treat each as a recorded
+observation rather than a current measurement, and where one matters, run the profile that would
+replace it:
 
-| figure in this document | profile that would re-derive it |
+| figure | profile that would re-derive it |
 |---|---|
 | `~5%` for the append advisory lock | not covered — that is the lock's *uncontended* overhead, which needs a build without it. What the suite measures is the sentence after it, the hot-stream ceiling: see "What a shared append lock costs" below |
-| `~175µs / 139KB` vs `~36µs / 69KB` for a fresh vs shared serde | not covered — the suite always shares, since that is what the store does now |
-| `15 meters / ~5.5 KB` per distinct purpose | the heap figure has no workload and stays a recorded observation; the *throughput* half is now measured — see the metrics section in the root `CLAUDE.md`, and it is nil |
+| `~175µs / 139KB` vs `~36µs / 69KB` for a fresh vs shared serde | not covered — the suite always shares, since that is what the store does |
+| `15 meters / ~5.5 KB` per distinct purpose | the heap figure has no workload and stays a recorded observation; the *throughput* half is measured — see the metrics section in the root `CLAUDE.md`, and it is nil |
 | `1230ms → 460ms` for the statement-level append trigger | `ingest-saturation`, and only as a total — the trigger is not timed separately |
 
 Two of those four have no profile behind them, deliberately: a per-meter heap figure and a per-trigger
@@ -186,7 +189,7 @@ the one to keep in mind is the `pg_snapshot_xmin` stall documented in the postgr
 long-running **writing** transaction in a neighbouring store — or in another database of the same
 cluster — freezes what this store can read, and no amount of table separation prevents it.
 
-### Reading at ten million events, and what the writes run got wrong
+### Reading and writing at ten million events
 
 `large-tier` is the first profile whose numbers are publishable — an external, deliberately
 configured PG18 rather than a container — and it is compared against `read-shapes-ext` on the same
@@ -216,14 +219,13 @@ The three shapes that do scale each have a cause, and two are in the plans:
   than hit. The right plan on a table far past 160 MB of `shared_buffers`.
 - **`query-by-multi-tag` (0.18×) is unexplained**, and no plan in the report covers it.
 
-**External runs now capture plans, and the first one that did overturned a finding.** Both
-`ReadPlanCapture` and `AppendPlanCapture` used to read a Testcontainers log, so they were inert on
-`EXTERNAL` — the only target the publisher accepts — and every plan in every publishable baseline was
-a *reconstruction*. `ServerLog` reads the server's own log file through `pg_read_binary_file` instead,
-with `AutoExplain` turning the module on for the run, so an external target's plans are the store's own
-statements. What it costs is a privilege chain on the benchmark host, and `doctor` now fetches a plan
-end to end rather than checking the links, so a missing piece is named before an hour-long run rather
-than after one:
+**External runs capture the server's own plans.** `ServerLog` reads the server's log file through
+`pg_read_binary_file`, with `AutoExplain` turning the module on for the run, so the plans
+`ReadPlanCapture` and `AppendPlanCapture` attach to an external target's report are the store's own
+statements. The alternative — reading a Testcontainers log — is inert on `EXTERNAL`, the only target the
+publisher accepts, so every plan in a publishable baseline would be a *reconstruction*. What the server
+log costs is a privilege chain on the benchmark host, and `doctor` fetches a plan end to end rather than
+checking the links, so a missing piece is named before an hour-long run rather than after one:
 
 ```sql
 GRANT pg_monitor TO <role>;                                    -- pg_current_logfile()
@@ -241,25 +243,25 @@ for function pg_read_binary_file` without the `EXECUTE` grants. And `auto_explai
 GUCs until the module loads, so each needs its own `GRANT SET ON PARAMETER`; granting
 `session_preload_libraries` alone gets you as far as the next refusal.
 
-**`large-tier-writes` as first published was not a measurement, for two independent reasons**, both
-since fixed — the figures below come from the re-run:
+**Two properties of the harness that only the writes tier exercises**, because a trial there
+completes tens of operations rather than tens of thousands:
 
-- Three of its six rows sit past the 10% the report calls uncomparable — `append-type-and-tag` at
-  **121%** and 55%, `decide-then-append` at 24%. Publishing now refuses this; it did not then.
-- **Its one-thread against eight-thread comparison was measuring the entity distribution, not
-  concurrency.** `WorkloadContext.rotation` was a field on a context JMH rebuilds per iteration, so
-  the entity walk restarted at the head of a steeply skewed corpus twelve times a trial. At one
-  thread `decide-then-append` completed **39 operations across twelve iterations** — three each, so
-  entities 0, 1 and 2 nearly every time, and entity 0 holds 455.092 events at ~1.6 s a read. At eight
-  threads the same budget covered entities 0–7 and beyond, diluting the hot entity from about a third
-  of operations to about 1/185th. That ratio *is* the 71× the report shows between one thread and
-  eight; eight threads cannot make one operation seventy times faster. The counter now has the
-  lifetime of the trial (`ThreadContext`), so a slow workload samples the distribution instead of
-  re-drawing its head. The defect only bites where a trial completes tens of operations rather than
-  tens of thousands, which is why the medium tier never showed it.
+- **Publishing refuses a run with a row past the 10% relative error the report calls uncomparable.**
+  A slow workload on a skewed corpus produces exactly such rows when its sampling is off
+  (`append-type-and-tag` at 121%, `decide-then-append` at 24%), and a published run carrying them
+  is not a measurement.
+- **The entity walk's counter has the lifetime of the trial** (`ThreadContext`), not of the
+  `WorkloadContext` JMH rebuilds per iteration. Restarted per iteration, the walk would re-draw the
+  head of a steeply skewed corpus twelve times a trial: a one-thread `decide-then-append` completing
+  **39 operations across twelve iterations** draws entities 0, 1 and 2 nearly every time, and entity
+  0 holds 455.092 events at ~1.6 s a read, while eight threads on the same budget cover entities 0–7
+  and beyond, diluting the hot entity from about a third of operations to about 1/185th. A
+  one-thread against eight-thread comparison then measures the entity distribution, not concurrency
+  — a spurious 71×, where eight threads cannot make one operation seventy times faster. Carried
+  across iterations, a slow workload samples the distribution instead of re-drawing its head.
 
-**Drift came in at 1.12%**, under even the default 2%, so the 10% cap the profile declares has never
-been needed — it was sized against an assumed ~25 ops/ms at eight writers where the real figure is 4.7.
+**Drift is 1.12%**, under even the default 2%, so the 10% cap the profile declares is slack: it is
+sized for ~25 ops/ms at eight writers where the measured figure is 4.7.
 And `append-none` scales only 3.01 → 4.69 ops/ms from one writer to eight (1.56×) against 11.3 → 33.5
 (3×) at 100.000 on a container. An unconditional append takes no advisory lock, so that ceiling is GIN
 maintenance and WAL at ten million rows — the most interesting thing in the writes profile, and it
@@ -327,8 +329,8 @@ same day's `large-tier-writes` and staleness runs). The traffic-mix figure is a 
 made visible: under *any* stationary write mix, entities recur at the rate they are written to, so
 the mean probe walk is about one event per entity active in the stream — **~0.2 µs × the entity
 count, whatever the skew and whatever the volume**. Entity count, not event count, prices the
-average check on a `TAGGED` stream. (An earlier figure of ~37× was measured under the rank-ordered
-walk, whose draws were all head entities with near-fresh cursors — a lower bound, not the mix.)
+average check on a `TAGGED` stream. (A rank-ordered walk, whose draws are all head entities with
+near-fresh cursors, measures ~37× — a lower bound, not the mix.)
 
 **How a caller avoids the stale walk depends on why the cursor is old.** An entity that has been
 moving gets a fresh cursor from re-reading its boundary, which a conflict-retry loop does anyway.
@@ -376,14 +378,13 @@ Two findings that are about the workload rather than the check:
 - **The walk draws entities with the corpus's own Zipf skew** (`WorkloadContext.nextWeightedRank`):
   a stateless draw positioned by the rotation counter, snapped to the thread's own residue class so
   `spread` slices stay disjoint and `one-stream` still draws exactly the boundaries `spread` draws,
-  never landing on a reserved companion. The alternatives each measured the wrong thing: a
-  rank-ordered walk reads only the head (a slow trial's every draw was a giant entity, and the 71×
-  1-vs-8-thread gap in the first published run was that coverage, not threads), and a *uniform*
-  draw — measured once, on the run between the two fixes — reads mostly the tail, whose boundaries
-  sit millions of events back, so `append-type-and-tag` came out at 124 ms/op ("393×") with the
-  probe walking ~500k rows per check: the staleness cost of a mix no real traffic produces, dressed
-  up as the check's price. Weighted, the mix is the one that wrote the store — and the measured
-  26 ms/op confirmed the renewal prediction made before the run. The deliberately-stale case is
+  never landing on a reserved companion. The alternatives each measure the wrong thing: a
+  rank-ordered walk reads only the head (every draw of a slow trial is a giant entity, which turns a
+  1-vs-8-thread comparison into a coverage comparison — the spurious 71× above), and a *uniform*
+  draw reads mostly the tail, whose boundaries sit millions of events back, so `append-type-and-tag`
+  measures 124 ms/op ("393×") with the probe walking ~500k rows per check: the staleness cost of a
+  mix no real traffic produces, dressed up as the check's price. Weighted, the mix is the one that
+  wrote the store — and the measured 26 ms/op is the renewal identity above. The deliberately-stale case is
   measured with its cursor age pinned in `dcb-boundary-staleness` instead of being blended into a
   mean. The snap is exact at one thread and dilutes only the very head at T threads (each rank is
   owned by one thread with its T-wide bucket's weight) — the price of never manufacturing
@@ -394,7 +395,7 @@ Two findings that are about the workload rather than the check:
 The question every application author has to answer first — a stream per bounded context with
 entities told apart by tags (`inventory/default`, every event tagged `sku:`), or a stream per entity
 with the id as the purpose (`inventory/WIDGET-42`). Both are ordinary uses of `EventStreamId`, and
-until now the answer here was a guess. `stream-design-tagged` and `stream-design-per-entity` are the
+the answer is measured rather than guessed. `stream-design-tagged` and `stream-design-per-entity` are the
 same corpus in every property but that one — 100.000 events, `CLEAN`, `REALISTIC`, 2000 entities,
 one seed — so the difference between them is attributable.
 
@@ -478,15 +479,15 @@ move (11.3 / 11.6 / 10.9 at one thread; 33.5 / 34.2 / 33.6 at eight — it does 
   writers go 5.45 → 24.06 from one to eight threads (4.4×, saturating at sixteen); writers sharing
   one stream's lock go 1.30 → 1.39 (1.07×) across the same sixteen-fold increase. That flatness is
   the ceiling the advisory-lock note above warns about, and it is the half of that note the suite
-  can now put a number on. The `~5%` in it is a different quantity — what the lock costs when
+  puts a number on. The `~5%` in it is a different quantity — what the lock costs when
   nothing contends for it — and measuring that needs a build with the lock removed, which is why it
   stays a recorded observation.
 - **Read the one-thread ordering as the arrangement, not the lock** — with one writer nothing
   contends, so what separates 1.30 from 5.45 from 8.15 ops/ms is *where each profile addresses its
-  append*, and the captured plans now say so directly rather than by elimination. Each profile
-  explains the append it actually issues (the capture used to be hardwired to `spread`, so all three
-  came back byte-identical while their throughputs differed fourfold — a harness fault, now fixed;
-  a plan heading names the mode it was captured under). The plans here show the `NOT EXISTS`
+  append*, and the captured plans say so directly rather than by elimination. Each profile explains
+  the append it actually issues, and a plan heading names the mode it was captured under — a capture
+  that ignored the mode would return three byte-identical plans for throughputs differing fourfold,
+  which is what the heading exists to make visible. The plans here show the `NOT EXISTS`
   spelling of the check; the shipped probe reads the same predicate from the same cursor, so the
   arrangement story is identical — what separates the three is where the scan starts relative to
   the cursor, not how the check is spelled:
@@ -503,13 +504,12 @@ move (11.3 / 11.6 / 10.9 at one thread; 33.5 / 34.2 / 33.6 at eight — it does 
   - **`one-boundary`** — stream, tag and cursor are all the hot entity, and the cursor is the
     boundary the writer itself just wrote, so it sits at the head of the index (`7349218/100008`, not
     the corpus midpoint). Nothing to walk, nothing removed, **0.027ms**. That is why it is *faster*
-    than `spread` at one thread despite dumping into one stream, and it is what the earlier write-up
-    called unestablished.
+    than `spread` at one thread despite dumping into one stream.
   - **`decide-then-append` is a read cost, not an append cost.** On `one-boundary` at one thread,
     where nothing conflicts, it measures **22.30 ms/op** against an append statement the server
     executes in **0.223ms** — so ~99% of it is the decide read. That is what "it re-reads the
     boundary every writer is growing" costs when the writer growing it is you.
-- **The trio was re-run against the fixed capture and reproduces**: `append-type-and-tag` at
+- **A second run of the trio reproduces it**: `append-type-and-tag` at
   1/4/8/16 threads came back 5.77 / 16.91 / 23.91 / 23.44 (`spread`), 1.36 / 1.37 / 1.42 / 1.34
   (`one-stream`) and 8.85 / 6.30 / 4.76 / 1.23 (`one-boundary`), with the control flat and the
   one-boundary conflict rate again 0% → 5.0% → 13.4% → 82%. The table above is the first run; the

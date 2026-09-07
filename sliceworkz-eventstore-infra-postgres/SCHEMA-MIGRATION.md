@@ -269,11 +269,12 @@ functions are replaced with this release's bodies, the triggers are verified and
 their shape differs, and objects a newer release added (`idx_events_stream_tags`,
 `idx_events_stream_idempotency`) are created.
 
-**What it does not do** is anything needing `ALTER TABLE` — still the manual list in `CLAUDE.md`. Two
-of those survive an upgrade: the pre-alignment `stream_purpose DEFAULT ''`, and the old table-wide
-`UNIQUE (idempotency_key)`. The second is worth knowing before upgrading: the new per-stream partial
-unique index is created *alongside* the old constraint, so idempotency ends up correct but stricter
-than intended until the constraint is dropped — a key reused on a different stream is still rejected.
+**What it does not do** is anything needing `ALTER TABLE` — still the manual list in `CLAUDE.md`. Three
+of those survive an upgrade: the pre-alignment `stream_purpose DEFAULT ''`, the old table-wide
+`UNIQUE (idempotency_key)`, and the unused nullable `event_erasable_data` column. The second is worth
+knowing before upgrading: the new per-stream partial unique index is created *alongside* the old
+constraint, so idempotency ends up correct but stricter than intended until the constraint is dropped —
+a key reused on a different stream is still rejected. The third is harmless either way.
 
 **Two caveats:**
 

@@ -57,8 +57,8 @@ import org.sliceworkz.eventstore.testing.ForEachBackend;
  * Each backend runs these against its own key store — the SQL table on PostgreSQL, the file-backed one
  * on inmem-fs, in-memory otherwise — so the key storage itself is under test, not just the codec.
  * <p>
- * Several scenarios here pin down behaviour that the previous {@code @Erasable} design got wrong, and
- * they are the reason it was replaced. They are marked as such.
+ * Several scenarios here pin down what the design buys over the alternative of splitting personal data
+ * into a second, erasable document — see {@code AbstractEventPayloadSerializerDeserializer} — and say so.
  */
 public class ShreddableEventDataTest extends AbstractEventStoreTest {
 
@@ -125,10 +125,9 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 	}
 
 	/**
-	 * The defect that made the previous design untenable: with the payload split across two documents
-	 * and reconciled by a deep merge, a collection whose elements held both personal and non-personal
-	 * fields came back with the non-personal ones gone — on every ordinary read, with no erasure
-	 * involved at all.
+	 * What a split payload cannot do: with personal data in a second document reconciled by a deep
+	 * merge, a collection whose elements hold both personal and non-personal fields comes back with the
+	 * non-personal ones gone — on every ordinary read, with no erasure involved at all.
 	 */
 	@ForEachBackend
 	void aCollectionOfProtectedValuesKeepsEveryElementAndErasesOnlyTheRightOne ( ) {

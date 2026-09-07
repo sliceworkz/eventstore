@@ -150,7 +150,7 @@ public class PostgresLockCheckOrderingTest {
 		}
 
 		private EventToStore event ( EventStreamId stream, String type, Tags tags ) {
-			return new EventToStore(stream, new EventType(type), "{}", null, tags, null);
+			return new EventToStore(stream, new EventType(type), "{}", tags, null);
 		}
 
 		/**

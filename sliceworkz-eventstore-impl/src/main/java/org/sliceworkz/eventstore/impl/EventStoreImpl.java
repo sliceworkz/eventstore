@@ -728,9 +728,9 @@ public class EventStoreImpl implements EventStore {
 		private Stream<Event<EVENT_TYPE>> enrich ( StoredEvent storedEvent, QueryDirection direction ) {
 			List<TypeAndPayload> results;
 			try {
-				results = serde.deserialize(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.immutableData(), storedEvent.erasableData()));
+				results = serde.deserialize(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.immutableData()));
 			} catch (EventDeserializationException e) {
-				// The serde is handed a type and two JSON strings, so it cannot say *which* stored event
+				// The serde is handed a type and a JSON string, so it cannot say *which* stored event
 				// failed -- and that is the one fact a caller needs to dead-letter or skip a poison event.
 				// This is the only layer that knows both.
 				throw e.withReference(storedEvent.reference());
@@ -756,7 +756,7 @@ public class EventStoreImpl implements EventStore {
 			meterRegistry.counter("sliceworkz.eventstore.append.event", baseTags.and("eventtype", event.type().name())).increment();
 			TypeAndSerializedPayload data = serde.serialize(event.data());
 			Tags tags = withShreddingKeyTags(event.tags(), data.shreddingKeys());
-			return new EventToStore(streamToAppendTo, data.type(), data.immutablePayload(), data.erasablePayload(), tags, event.idempotencyKey());
+			return new EventToStore(streamToAppendTo, data.type(), data.immutablePayload(), tags, event.idempotencyKey());
 		}
 
 		/**

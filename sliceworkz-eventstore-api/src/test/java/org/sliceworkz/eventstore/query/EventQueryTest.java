@@ -617,7 +617,7 @@ public class EventQueryTest {
 
 	private StoredEvent storedEvent ( Event<?> e ) {
 		try {
-			return new StoredEvent(e.stream(), EventType.of(e.data()), e.reference(), JsonMapper.builder().build().writeValueAsString(e.data()), null, e.tags(), e.timestamp() );
+			return new StoredEvent(e.stream(), EventType.of(e.data()), e.reference(), JsonMapper.builder().build().writeValueAsString(e.data()), e.tags(), e.timestamp() );
 		} catch (JacksonException ex) {
 			throw new RuntimeException(ex);
 		}

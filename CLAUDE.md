@@ -7,14 +7,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This is a Java-based EventStore library implementing the Dynamic Consistency Boundary (DCB) specification. The codebase is organized as a Maven multi-module project providing event storage abstractions with multiple backend implementations.
 
 **Core Modules:**
-- `sliceworkz-eventstore-api`: Core API interfaces and contracts
-- `sliceworkz-eventstore-impl`: Implementation of the EventStore
+- `sliceworkz-eventstore-api`: Core API interfaces and contracts, plus the SPI (`EventStorage`) a backend implements
+- `sliceworkz-eventstore-impl`: Implementation of the EventStore (streams, serde, upcasting, shredding, meters)
+- `sliceworkz-eventstore-serialization-json`: JSON codecs for stored events and bookmarks, used by the file-backed store
 - `sliceworkz-eventstore-infra-inmem`: In-memory storage backend (for development/testing)
+- `sliceworkz-eventstore-infra-inmem-fs`: The in-memory backend persisted to JSON files, for local development that must survive a restart
 - `sliceworkz-eventstore-infra-postgres`: PostgreSQL storage backend (production-ready)
-- `sliceworkz-eventstore-tests`: Shared test scenarios
-- `sliceworkz-eventstore-testing`: Backend harness, the shared TCK, and the application-author fixture
+- `sliceworkz-eventstore-testing`: Backend harness, the shared TCK, and the application-author fixture (published, for third-party backends too)
+- `sliceworkz-eventstore-tests`: Runs the TCK against every in-tree backend, plus the repo-internal tests
 - `sliceworkz-eventstore-examples`: Example usage code
 - `sliceworkz-eventstore-benchmark`: Capacity-characterisation suite (nothing runs during a build)
+- `sliceworkz-eventstore-parent-pom` / `sliceworkz-eventstore-bom`: Build parent and the bill of materials consumers import
 
 ## Build Commands
 
@@ -102,7 +105,9 @@ mvn clean install -DskipTests
     reads at the source head through the same method
 
 **Event:**
-- Record type containing: `stream`, `type`, `reference`, `data`, `tags`, `timestamp`
+- Record type containing: `stream`, `type`, `storedType`, `reference`, `data`, `tags`, `timestamp`
+- `type` is the type of `data`; `storedType` is the name under which the event sits in storage. They differ only
+  for an upcast event, where `storedType` names the legacy type it was read from
 - Data is the actual domain event (typically a sealed interface with record implementations)
 - Tags enable dynamic querying and consistency boundaries
 - Created via `Event.of(data, tags)` for ephemeral events or full constructor for persisted events
@@ -132,8 +137,8 @@ mvn clean install -DskipTests
   `Tag.parse` splits on the **first** `':'`, strips both halves and maps an empty half to `null` —
   so `toString`/`parse` is only a round trip for tags whose key has no colon and whose halves are
   neither empty nor padded. The in-memory backends flatten nothing and match on the `Tag` record,
-  so they cannot fail this way, which is exactly why it stayed invisible: a store that behaves in
-  tests and diverges in production
+  so they cannot fail this way — a tag that does not survive the rendering behaves in a test against
+  the in-memory store and diverges on Postgres, which is why the rejection below lives in `Tag` itself
 - **Construction therefore rejects the shapes that do not survive it**, rather than escaping the
   stored form — existing rows cannot be rewritten, so the encoding has to stay as it is.
   `IllegalArgumentException` for: a `':'` in the **key** (`Tag.of("a:b","c")` rendered as `"a:b:c"`,
@@ -145,7 +150,7 @@ mvn clean install -DskipTests
   untrusted input should `strip()` first. `Tag.of(null, "v")` stays legal, because `Tag.parse(":v")`
   still produces it from history
 - **What that buys: `toString` is injective, so `parse(tag.toString())` is the identity** for every
-  constructible tag. Two distinct tags on one event can no longer be stored as one array element,
+  constructible tag. Two distinct tags on one event cannot be stored as one array element,
   and a tag read off an `Event` is the tag that was appended — which matters because re-tagging a
   new event with a tag read back from an old one is an ordinary pattern
 - **`Tag.parse` and `Tags.parse` stay lenient, deliberately.** They are the read path for tags
@@ -218,9 +223,8 @@ mvn clean install -DskipTests
 - Use `AppendCriteria.none()` for simple appends without locking
 - Use `AppendCriteria.of(eventQuery, reference)` or `AppendCriteria.of(eventFilter, reference)` for conditional appends
 - **`expectedLastEventReference()` is never null**, whichever factory or constructor produced the criteria — the
-  compact constructor normalises a null to `Optional.empty()`. `none()` used to put a literal null there, so the
-  most common criteria in the library threw an NPE on `.isPresent()` and both in-tree backends carried their own
-  null guard; a third-party `EventStorage` had to guess the same one
+  compact constructor normalises a null to `Optional.empty()`, so a backend can call `.isPresent()` on it
+  without a null guard of its own
 - **"No criteria" and "an empty expected reference" are different things, and only `isNone()` distinguishes
   them.** `isNone()` is derived from the filter being `matchNone`, independently of the reference. An empty
   reference under a *real* filter means "I decided on an empty stream", which is still a consistency boundary:
@@ -240,25 +244,21 @@ mvn clean install -DskipTests
   come lives in the event store. There is no transaction across the two, so the ordering is the whole
   guarantee: **the batch is committed first and bookmarked second**, which makes a crash in that window
   cost a re-projection and never a silent skip. At-least-once, deliberately, in that direction
-- **The bookmark is placed after every batch, not once per run.** It used to be written after the whole
-  `run()` loop, so a catch-up that committed 2000 batches and then died replayed all of them — the window
-  was the entire run rather than the 500 events the batch boundary suggests. The cost of the change is one
-  bookmark upsert per batch during a replay, which is what the bookmark is for
+- **The bookmark is placed after every batch, not once per run.** The re-projection window after a crash
+  is therefore one batch (500 events by default), not the whole catch-up. Bookmarking once at the end of
+  `run()` would be cheaper — one upsert instead of one per batch — but a catch-up that commits 2000 batches
+  and then dies would replay all of them; one upsert per batch during a replay is what the bookmark is for
 - **A batch that fails takes the projector's cursor back with it.** `afterBatch` is called inside the
-  try, not from a `finally`: a commit that throws now rolls `lastEventReference` back to where the batch
-  started and is reported as a `ProjectorException` like any other projection failure. Before, it escaped
-  the projector as a bare `RuntimeException` **past** the bookmark placement while the in-memory cursor
-  stayed advanced — so the rolled-back batch's events were skipped for good, and a later successful batch
-  bookmarked over the hole. Nothing threw where anyone would see it, and downstream the untyped throwable
-  missed the `catch ( ProjectorException )` that would have stopped the processor, landing in a catch-all
-  that immediately looped: a projection whose commits kept failing re-queried and re-projected at full
-  thread speed
+  try, not from a `finally`: a commit that throws rolls `lastEventReference` back to where the batch
+  started and is reported as a `ProjectorException` like any other projection failure. Both halves
+  matter. A cursor left advanced past a rolled-back batch skips its events for good, and a later
+  successful batch bookmarks over the hole. An untyped throwable misses the `catch ( ProjectorException )`
+  that stops a processor and lands in a catch-all that loops, so a projection whose commits keep
+  failing would re-query and re-project at full thread speed
 - **A batch is ended exactly once.** `cancelBatch` is not called after an `afterBatch` that threw — that
   projection has already released what it held — and a `cancelBatch` that throws is logged and attached
-  to the original failure as a **suppressed** exception rather than replacing it. It used to replace it,
-  so a poison event whose rollback also failed was reported as a rollback problem, sending whoever read
-  the log to the wrong store. `BatchAwareProjection.cancelBatch` had always documented the containment;
-  only now does it happen
+  to the original failure as a **suppressed** exception rather than replacing it, so a poison event whose
+  rollback also fails is still reported as a poison event, not as a rollback problem in the wrong store
 - **Where a re-projection would duplicate rather than merely repeat, the projection should hold its own
   position.** `afterBatch` is handed the batch's last `EventReference` for exactly this: write it into the
   same store, in the same transaction, and resume from it. Two stores that cannot share a transaction
@@ -323,8 +323,8 @@ PostgreSQL requires a `db.properties` file with connection settings. The DataSou
 `build()` finishes by starting the two LISTEN/NOTIFY monitors and waiting for them to register. That wait
 is **bounded** (10s by default) because the monitors have no failure mode: on a `SQLException` they log,
 back off and retry for as long as the storage lives. Waiting on them without a deadline is waiting on
-something that may never happen — which is exactly what an unreachable database used to do to
-`build()`: hang forever, with no exception, no timeout and nothing logged above DEBUG.
+something that may never happen: against an unreachable database, `build()` would hang forever, with no
+exception and nothing logged above DEBUG.
 
 **Expiry is fatal, and there is deliberately no mode that starts anyway.** An event-sourced application
 that is not told when events are appended has read models that quietly stop advancing: nothing wakes a
@@ -370,8 +370,8 @@ EventStorage storage = PostgresEventStorage.newBuilder()
   returning quietly. The alternative — restore the flag and return — hands back a storage nobody can tell
   is unstarted, with two monitor threads still retrying behind it.
 - **`close()` releases a caller still inside `start()`.** It counts the readiness latches down itself,
-  because the monitors it stopped never will. Without that, closing a storage whose `start()` was still
-  waiting left that thread parked forever.
+  because the monitors it stopped never will; otherwise a thread still waiting in `start()` would stay
+  parked forever.
 
 ### Lifecycle: closing a store
 
@@ -432,9 +432,9 @@ stream owns is its subscriptions.
             .subscribe(reference -> { ...; return reference; });
   ```
   The cost of that guarantee is that nothing releases it on your behalf. A subscribed stream that is
-  never closed is retained for the lifetime of the storage — deliberately a leak you can find, rather
-  than a subscription that dies at an unpredictable GC with no error and no log, which is what holding
-  listeners weakly used to give.
+  never closed is retained for the lifetime of the storage — deliberately a leak you can find. The
+  alternative — holding listeners weakly — loses because a subscription then dies at an unpredictable
+  GC with no error and no log.
 - **Close what you subscribe to**, or close the store, which closes them all:
   ```java
   try ( EventStream<CustomerEvent> stream = eventStore.getEventStream(streamId, CustomerEvent.class) ) {
@@ -456,9 +456,9 @@ stream owns is its subscriptions.
   mapping. Building one costs ~20µs and ~40KB, but the construction is the smaller half of the story —
   Jackson caches its per-type serializers **inside the mapper**, so a serde per call gives every stream a
   cold type cache and re-runs bean introspection on the first serialize of each record type. Measured on
-  a 24-record sealed hierarchy, a serde per call made a query through a freshly obtained stream
-  **~175µs / 139KB against ~36µs / 69KB** through a stream that was kept — four times the work, for a
-  call the documentation calls cheap. With the serde shared the two are the same.
+  a 24-record sealed hierarchy, a serde per call puts a query through a freshly obtained stream at
+  **~175µs / 139KB against ~36µs / 69KB** through a stream that is kept — four times the work, for a
+  call this document calls cheap. With the serde shared the two are the same.
   - **The cache key is the root class sets, never the `EventStreamId`.** The same stream can legitimately
     be opened with different type mappings, and two streams with the same mapping can share a serde
     whatever their ids.
@@ -473,11 +473,12 @@ stream owns is its subscriptions.
   the other stream meters (`context`, `purpose`, `typed`, `storage`), and reads `NaN` until something is
   appended. Its state is held **per tag set on the store**, not per stream, and registered once — because
   a gauge cannot be re-registered (Micrometer keeps the first registration and ignores the rest) and
-  because Micrometer holds gauge state *weakly*. With a per-stream holder only the first stream ever
-  created for a tag set was wired to the series, and the series went permanently `NaN` as soon as that
-  stream was collected — which, in the per-operation usage recommended above, is almost immediately.
-  Nothing failed; the metric was just stuck. `AppendPositionGaugeTest` covers it. The tag set it is held
-  per is bounded — see the metrics section below for why that matters and what it costs when it is not.
+  because Micrometer holds gauge state *weakly*. Held per stream instead, only the first stream ever
+  created for a tag set would be wired to the series, and the series would go permanently `NaN` as soon
+  as that stream was collected — which, in the per-operation usage recommended above, is almost
+  immediately, with nothing failing to say so. `AppendPositionGaugeTest` covers it. The tag set it is
+  held per is bounded — see the metrics section below for why that matters and what it costs when it is
+  not.
 
 For backends: `EventStorage.unsubscribe(EventStoreListener)` is the SPI counterpart, and `subscribe` must
 hold listeners **strongly** and be idempotent per listener. `unsubscribe` has a no-op `default` so a
@@ -500,17 +501,17 @@ by the time anything is notified, the events are durable and every other reader 
 notification is an announcement, never a vote.
 
 **A listener failure is never anybody else's failure, and never silent.** Each subscriber's exception is
-contained, logged at ERROR, and the next subscriber still gets the notification.
+contained, logged at ERROR, and the next subscriber still gets the notification. Bookmark listeners get the
+same containment, and the storage backends do the same with their own listeners (`notifyQuietly` in
+`InMemoryEventStorageImpl`, and the Postgres LISTEN/NOTIFY monitors).
 
-- **The bystanders are the other subscribers.** An escaping throwable used to end the whole notification
-  task, so every subscriber after the failing one missed that append too.
-- **It used to be invisible as well.** The throwable surfaced on the virtual thread's uncaught-exception
-  handler: a bare stack trace on `System.err`, at no level, under no logger name, attributed to nothing.
-  `Projector.eventsAppended` calls `run()`, which rethrows a `ProjectorException`, so the ordinary case — a
-  projection that throws — was a read model that stopped advancing with nothing in the application's own
-  logs to say why. Bookmark listeners get the same containment.
-- This is what the storage backends have always done with their own listeners (`notifyQuietly` in
-  `InMemoryEventStorageImpl`, and the Postgres LISTEN/NOTIFY monitors), after the same bug there.
+- **Why contained:** a throwable escaping the notification task would end it, so every subscriber after the
+  failing one would miss that append too.
+- **Why logged, at ERROR, by the library:** an exception left to a virtual thread's uncaught-exception
+  handler is a bare stack trace on `System.err`, at no level, under no logger name, attributed to nothing.
+  The ordinary failure is a projection that throws — `Projector.eventsAppended` calls `run()`, which
+  rethrows a `ProjectorException` — and left unlogged that is a read model that stops advancing with
+  nothing in the application's own logs to say why.
 - **Nothing replays what a failing listener missed.** It is notified again on the next append; the
   notification it failed on is gone. A listener that must not lose progress belongs behind a `Projector`
   reading from a bookmark.
@@ -518,19 +519,18 @@ contained, logged at ERROR, and the next subscriber still gets the notification.
   behind it, and notifications keep arriving for both afterwards.
 
 **A listener that returns null is caught up, not asking to be told again.** `OptimizingAppendListenerDecorator`
-keeps delivering until the listener has reached the target it was notified about, and it used to learn that
-only from a non-null return — so a null left it with nothing to compare against and nothing to reach, and it
-re-delivered the same target without pausing: ~700.000 deliveries a second on one pinned virtual thread.
+keeps delivering until the listener has reached the target it was notified about, and a null return counts as
+reached, exactly like a reference *behind* the target. Nothing is lost by that: the next append carries a
+later reference, which is after this one and so still delivered.
 
-- **The ordinary listener hits this, not an exotic one.** `Projector.eventsAppended` returns
+- **The ordinary listener returns null, not an exotic one.** `Projector.eventsAppended` returns
   `run().lastEventReference()`, which is null whenever the query matched no events — so *any* subscribed
-  projector whose event type had not occurred yet burned a core from the first unrelated append to its
-  stream until the first matching one. Nothing threw, nothing was logged, and it cleared itself the moment
-  one matching event arrived, which is why it survived: it looks like load, not like a bug.
-- Null and a reference *behind* the target now mean the same thing — caught up to the target. Nothing is
-  lost by that: the next append carries a later reference, which is after this one and so still delivered.
-- The interface has always documented the return as "never null"; `Projector` has always violated it, so
-  null is given a defined meaning rather than left to whoever reads the contract more carefully.
+  projector whose event type has not occurred yet answers null to every unrelated append on its stream.
+  Treating null as "not caught up" would leave the decorator with nothing to compare against and re-deliver
+  the same target without pausing: ~700.000 deliveries a second on one pinned virtual thread, with nothing
+  thrown or logged, indistinguishable from load until the first matching event clears it.
+- The interface documents the return as "never null"; `Projector` does not honour that, so null is given a
+  defined meaning rather than left to whoever reads the contract more carefully.
 - `AppendListenerFailureTest.testListenerReportingNoProgressIsNotRedeliveredTo` pins it per backend.
 
 ### Bookmarks: a cursor that must name a stored event, and a foreign key that never cascades
@@ -541,9 +541,8 @@ re-delivered the same target without pausing: ~700.000 deliveries a second on on
   poison the reader's cursor silently. Postgres enforces it with the `fk_bookmarks_event_id` foreign key
   (recognised by the constraint name the server reports, like the idempotency index — never by message
   text); the in-memory store checks its log under the same monitor that guards `append`. The contract is
-  documented on `EventStorage.bookmark`, and `BookmarksTest` in the TCK pins it per backend — before
-  this, the backends genuinely diverged: Postgres rejected, in-memory accepted anything, and no TCK
-  scenario said which was intended
+  documented on `EventStorage.bookmark`, and `BookmarksTest` in the TCK pins it per backend, so a backend
+  that accepts any reference fails compliance rather than diverging quietly
 - **The check is on the event id alone, matching the foreign key.** The `(tx, position)` pair that
   cursor comparisons actually order by is not cross-validated — a bookmark carrying a stored id with a
   wrong position still passes. Keep that in mind before reading the constraint as "the bookmark is
@@ -570,8 +569,9 @@ re-delivered the same target without pausing: ~700.000 deliveries a second on on
 instance of a deployment holds a lease and processes; the others stand by and take over when it
 expires or is released. Three optional SPI methods on `EventStorage` (`UnsupportedOperationException`
 defaults, the `importEvents` precedent; `Capability.LEASE` gates the TCK scenarios, and its
-`supports()` default answers **false**, so a backend written before leases existed skips them —
-which is also why `supports()` is now an exhaustive switch rather than "true for anything new"):
+`supports()` default answers **false**, so a backend written before leases existed skips them.
+`supports()` is an exhaustive switch rather than "true for anything unknown" so that a new capability
+whose SPI methods default to throwing cannot be claimed by accident):
 
 - **`requestLease(LeaseRequest)` is acquisition, renewal and contender registration in one call**,
   made periodically by every contender (a third of the ttl is a sensible interval). It answers
@@ -586,8 +586,8 @@ which is also why `supports()` is now an exhaustive switch rather than "true for
   clock before the ttl", and it holds up to a caller paused beyond its ttl, which no lease can
   prevent and the fencing token exists to expose
 - **The fencing token strictly increases on every ownership change and never resets** — a release
-  *backdates the heartbeat* rather than deleting the row, precisely so the token survives (the TCK
-  caught the delete-based version minting token 1 twice). Renewals keep the token
+  *backdates the heartbeat* rather than deleting the row, precisely so the token survives: deleting the
+  row would let the next acquisition mint token 1 again. Renewals keep the token
 - **In-memory backends contend for real within one storage instance** (the same `synchronized` that
   gives them DCB atomicity), so a single process trivially wins everything while a test can genuinely
   elect between two contenders on any backend. The fs decorator forwards explicitly and deliberately
@@ -603,8 +603,8 @@ which is also why `supports()` is now an exhaustive switch rather than "true for
   modelled as events: event reads sit behind the xmin barrier, and one long writing transaction
   anywhere in the cluster would make every lease look expired at once). All timestamps compare via
   `now()` in SQL only. `checkDatabase()` validates both tables, so `VALIDATE`/`NONE` deployments
-  notice an un-migrated database; the README's privilege table carries the grants (the leases table
-  needs no `DELETE` — releases update; contender rows are pruned, so that table does)
+  notice an un-migrated database; the postgres module README's privilege table carries the grants (the
+  leases table needs no `DELETE` — releases update; contender rows are pruned, so that table does)
 - `LeaseTest` in the TCK pins the state machine per backend: acquire/renew/expire/release, the
   step-down protocol and its lapse with a dead contender, fencing monotonicity across takeovers and
   releases, independence of distinct leases, post-close behaviour — and, load-bearing above all,
@@ -623,28 +623,27 @@ secondary identifier … (e.g. customer ID, order number)", and half the example
   Dropping the stream handle — the per-operation usage this document recommends — releases none of it.
 - **Measured, per distinct purpose** (in-memory store, two event types, `SimpleMeterRegistry`):
   **15 meters** (+2 per further event type), **~5.5 KB of heap**, **18 Prometheus series** and ~2.4 KB
-  of scrape body. At 10.000 purposes that was 150.000 meters, 53 MB and a 23 MB scrape; at 100.000 it
+  of scrape body. Uncapped, 10.000 purposes is 150.000 meters, 53 MB and a 23 MB scrape; 100.000
   extrapolates to ~550 MB and 1.8M series. Nothing fails — the numbers stay correct and the process just
-  gets heavier for as long as it runs, which is why this survived so long.
+  gets heavier for as long as it runs, so the growth looks like an ordinary leak rather than a metrics
+  problem.
 - **So the `purpose` tag is capped.** A store tags the first `MeterOptions.maxPurposeTagValues()`
   distinct purposes it sees (**default 1000**) and reports every purpose after that as `_other`, logging
   one WARN naming the purpose that tripped it. Below the cap nothing changes — that is exactly the case
   where a per-purpose breakdown is worth having — and above it the meters stay flat while the events are
-  still counted, pooled under `_other`. Re-measured at 10.000 purposes: 15.015 meters instead of 150.000,
+  still counted, pooled under `_other`. Measured at 10.000 purposes: 15.015 meters instead of 150.000,
   and a 2.3 MB scrape instead of 23 MB.
-- **The cost is heap and scrape size, not speed — and that half is now measured.** The
+- **The cost is heap and scrape size, not speed — and that half is measured.** The
   `metrics-cost` profile runs one corpus (100.000 events, `PER_ENTITY`, 2000 entities, so twice the
   default cap) against three stores that differ only in this setting: no meters, capped, uncapped.
   On PG18 all three land within about 1% of each other on unconditional appends, the canonical DCB
   check, an entity read and the savepoint probe — and capped against unlimited flips sign between
   runs, which is what no effect looks like. So a store past the cap is not paying for it in
   throughput, and neither is an instrumented store against an uninstrumented one; what an uncapped
-  store spends is the memory and the series above, for as long as the process runs.
-  - **Reading that profile taught the suite something about itself.** Run with the uninstrumented
-    store first it reported the *instrumented* ones 8% faster, which meters cannot do: the corpus is
-    generated inside the first fork of the first target, so whichever target runs first is measured
-    against a colder server. Reversing the order reversed the ranking. The figures above are the
-    ones that survive both orders; a cross-target percentage that does not is measuring the harness.
+  store spends is the memory and the series above, for as long as the process runs. (One caveat on
+  reading that profile: the corpus is generated inside the first fork of the first target, so whichever
+  target runs first is measured against a colder server. The figures above are the ones that survive
+  running the targets in both orders; a cross-target percentage that does not is measuring the harness.)
 - **Admission is first-come-first-served and permanent.** A purpose that got its own tag value keeps it
   for the life of the store, so a dashboard built on that series does not lose it when traffic widens.
   The flip side is that *which* purposes get through is arrival order and not stable across restarts —
@@ -662,8 +661,8 @@ secondary identifier … (e.g. customer ID, order number)", and half the example
   // same thing through the storage builders' buildStore()
   InMemoryEventStorage.newBuilder().meterOptions(MeterOptions.withoutPurposeBreakdown()).buildStore();
   ```
-  `MeterOptions.withUnlimitedPurposeTagValues()` restores the old unbounded behaviour, which is only safe
-  where purpose is low-cardinality by construction.
+  `MeterOptions.withUnlimitedPurposeTagValues()` removes the cap, which is only safe where purpose is
+  low-cardinality by construction.
 - **A Micrometer `MeterFilter` is not a substitute**, which is why this lives in the library. A filter
   runs at registration, and the store keys its `append.position` gauge state on the tags it *asked* for —
   so with `MeterFilter.denyNameStartsWith("sliceworkz")`, a registry holding **zero** meters still leaves
@@ -786,7 +785,7 @@ ImportReport report = EventStoreImporter.from(sourceStorage).to(targetStorage)
 ```
 
 **What survives, what does not:**
-- **Preserved**: `EventId`, timestamp, idempotency key, event type, tags, immutable and erasable payloads
+- **Preserved**: `EventId`, timestamp, idempotency key, event type, tags and payload
 - **Reassigned by the target**: `position` and `tx`. An import reproduces the source *order*, never its
   ordering numbers. `index` is a read-time upcasting artifact and is always 0 at rest.
 
@@ -837,10 +836,9 @@ guarantees.
 ### When a payload cannot be converted
 
 The serde layer throws two named types, both unchecked, both in the **api** module
-(`org.sliceworkz.eventstore.events`) so a caller never imports from `...impl.serde` to catch one. It used to
-throw a bare `RuntimeException` in fourteen places, several with no message of their own and two with no
-cause, which left "the event cannot be read" and "the database is down" distinguishable only by matching on
-message text.
+(`org.sliceworkz.eventstore.events`) so a caller never imports from `...impl.serde` to catch one. Named
+types are what let a caller tell "the event cannot be read" from "the database is down" without matching on
+message text; a bare `RuntimeException` from the serde would leave only the message to go on.
 
 - **`EventSerializationException`** — from `append`, for a payload that cannot be written. Nothing is stored.
 - **`EventDeserializationException`** — for a stored event this stream's type mappings cannot read. Carries
@@ -875,10 +873,9 @@ apart either retries forever on a poison event or gives up on a blip.
 **Misconfiguration is `IllegalArgumentException`, not a serde type.** A `@LegacyEvent` on a class registered
 as current, a current class registered as legacy, and an upcaster that cannot be instantiated are all
 properties of the `Class` handed to `getEventStream`; they fail at stream creation, before anything is read
-or written, and there is no recovery but to fix the code. Two checks in the same method were already typed
-that way (duplicate event name, non-sealed interface), so this is consistency rather than new surface. The
-messages now name the upcaster *and* the event class and keep the reflective cause — a bare
-`RuntimeException(NoSuchMethodException)` said neither.
+or written, and there is no recovery but to fix the code — the same type the duplicate-event-name and
+non-sealed-interface checks in that method throw. The messages name the upcaster *and* the event class and
+keep the reflective cause, since a bare `NoSuchMethodException` says neither.
 
 **Why there is no common root for everything the library throws.** A root only pays for itself if catching
 "anything from this library" is useful, and it is not: the failures need opposite responses
@@ -891,19 +888,17 @@ directly and nothing depends on that, so a root stays cheap to add if a caller e
 
 `SerdeFailureTest` in the TCK pins all of this down per backend: the reference that comes back really does
 identify the offending stored event (it is fetched again in raw mode), an upcaster that throws is reported as
-an upcaster rather than as a parse failure, and the exception is wrapped exactly once — the typed serde used
-to catch its own exception and re-wrap it, so the message naming the missing type only ever reached a user as
-the cause of a second, vaguer one.
+an upcaster rather than as a parse failure, and the exception is wrapped exactly once — so the message naming
+the missing type is the one the caller sees, not the cause of a second, vaguer one.
 
 ### Every exception here survives a process boundary, and names the event it failed on
 
 A `Throwable` is `Serializable`, so a field on one that is not makes the whole exception unserializable —
-and the symptom is uniquely unhelpful, because whatever was carrying it across a process boundary reports
-a `NotSerializableException` **instead of** the failure. The real error is not logged, not wrapped, not
-chained: it is replaced. That is how this survived unnoticed in `OptimisticLockingException`, the single
-most commonly thrown type in the library, which held an `Optional` and an `EventFilter` and could not be
-serialized at all. A forked JMH benchmark hitting a genuine DCB conflict died with a serialization
-complaint and exit code 1, naming nothing about the conflict.
+and the symptom is uniquely unhelpful, because whatever was carrying it across a process boundary (a forked
+JMH benchmark, a remote test runner, a job scheduler) reports a `NotSerializableException` **instead of**
+the failure. The real error is not logged, not wrapped, not chained: it is replaced. An
+`OptimisticLockingException` that could not be serialized would turn a genuine DCB conflict into a
+serialization complaint naming nothing about the conflict, so every exception here is kept serializable.
 
 - **`EventReference`, `EventId` and `EventType` are `Serializable`**, so the exceptions that exist to name
   a failing event — `ProjectorException`, `EventDeserializationException` — arrive with that name intact.
@@ -916,8 +911,8 @@ complaint and exit code 1, naming nothing about the conflict.
   already names it in text. So `getFilter()` reads null on a deserialized instance — the one documented
   exception to its "never null".
 - **`getExpectedLastEventReference()` keeps its "never null" contract on the far side**, because the field
-  is held as a nullable `EventReference` and wrapped in the getter. A serialized `Optional` field would
-  have arrived as null and turned a conflict report into an NPE at the point of reading it.
+  is held as a nullable `EventReference` and wrapped in the getter. An `Optional` field is not serializable,
+  and would arrive as null and turn a conflict report into an NPE at the point of reading it.
 - `ExceptionSerializationTest` in the api module pins all four down. It is a cheap test for a failure mode
   otherwise only ever discovered inside a harness nobody suspects.
 
@@ -948,15 +943,17 @@ transfer.from().map(PartyDetails::name).orElse("[erased]");
 
 - **The stored event never changes.** Its bytes stay identical forever, so an erasure needs no UPDATE,
   produces no new tuple to VACUUM, does not decorrelate the BRIN index on `event_position`, and reaches
-  the ciphertext already sitting in WAL, on replicas and in every backup — all of which the previous
-  `UPDATE ... SET event_erasable_data = null` did not. The log stays genuinely append-only.
+  the ciphertext already sitting in WAL, on replicas and in every backup. The alternative — nulling a
+  separate erasable column with an `UPDATE` — reaches none of those copies and makes the log no longer
+  append-only.
 - **A shredded value is never null**, which is what keeps erasure from creating poison events: a record
   whose compact constructor rejects nulls still builds after its data is gone. Nor can "erased" be
   confused with "never held any", and a `Shreddable<Integer>` reads as shredded rather than as `0`.
 - **A `Shreddable` anywhere works** — nested records, `List` elements, `Map` values — because it is one
-  Jackson serializer on one document. The old `@Erasable`/`@PartlyErasable` split reconciled two
-  documents with a deep merge that replaced JSON arrays wholesale, so a collection of partly-personal
-  elements silently lost its non-personal fields on every ordinary read, erasure or not.
+  Jackson serializer on one document. The alternative — annotating personal components and splitting them
+  into a second document — loses because reconciling the two on read takes a deep merge, and a merge that
+  replaces JSON arrays wholesale silently drops the non-personal fields of partly-personal collection
+  elements on every ordinary read, erasure or not.
 - **Two subjects in one event each get their own key**, which no per-field annotation or per-event key
   can express. Keys are scoped to `(type, id, category)`, so "erase marketing, retain financial" is a
   category away.
@@ -967,7 +964,6 @@ transfer.from().map(PartyDetails::name).orElse("[erased]");
   a tombstone that says an erasure touched the event without saying what it took.
 - **Erasure notifies nothing.** Read models, caches, search indexes and downstream systems keep their
   copies, and projections hold bookmarks so they never re-read. Re-projecting is the application's job.
-  This is the one part of the old design's problems that shredding does not fix.
 - **Without a codec configured, registering an event type that declares a `Shreddable` fails** at
   `getEventStream` — before anything is read or written — rather than storing personal data in the clear.
 
@@ -1056,15 +1052,13 @@ than reporting stale data as readable.
 envelope as stored, which is what lets `EventStoreImporter` copy events with no keys and no domain
 classes.
 
-**Legacy `@Erasable` events are still readable.** The annotations, the two Jackson mappers, the view
-introspector and the erasable *write* path are gone; `event_erasable_data` is still read, and a stored
-event carrying one is still deep-merged exactly as before. Nothing writes a second document any more.
-A component that used to be `@Erasable` and is now `Shreddable` cannot be read off old events — the
-stored value is bare, so nothing can say whose data it is — and fails with a message saying to migrate
-via `EventStoreImporter.transform` or to read the old shape through a `@LegacyEvent` upcaster.
+**A component that was a plain field when its events were written cannot be read as a `Shreddable`.**
+The stored value is bare, so nothing can say whose data it is, and the read fails with a message saying
+to migrate the events via `EventStoreImporter.transform` or to read the old shape through a
+`@LegacyEvent` upcaster. Guessing a subject would leave old personal data unprotected and unerasable.
 
 `ShreddableEventDataTest` in the TCK pins all of this per backend, against *that backend's* key store:
-the two-subject erasure, the collection case, the validating record that used to become a poison event,
+the two-subject erasure, the collection case, a record whose constructor rejects nulls surviving erasure,
 category independence, idempotent erasure and a fresh key afterwards, the `dek:` tags, the audit view
 (including, reflectively, that `KeyRecord` cannot carry key material), and — load-bearing — that an
 unreachable key store throws instead of reporting the data as erased.
@@ -1099,9 +1093,10 @@ storage deliberately will not close.
 
 **Running against every backend:**
 Annotate scenarios `@ForEachBackend` instead of `@Test`. Each runs once per registered
-`EventStoreBackend`, reported under its own name (`testQueryOneEvent [postgres:18]`). This replaces
-the hand-written `@Nested OnInMem / OnPostgres17 / OnPostgres18` triples that used to be copy-pasted
-into every scenario class.
+`EventStoreBackend`, reported under its own name (`testQueryOneEvent [postgres:18]`). The alternative —
+a hand-written `@Nested` class per backend in every scenario — loses because adding a backend then
+means touching every scenario, and a scenario that forgets one runs against fewer backends without
+anything saying so.
 
 Backends are discovered with the `ServiceLoader`. In this repository the set is declared in
 `sliceworkz-eventstore-tests/src/test/resources/META-INF/services/org.sliceworkz.eventstore.testing.EventStoreBackend`
@@ -1111,18 +1106,18 @@ and covers **all five in-tree storages**: `inmem`, `inmem-fs`, `postgres:16`, `p
 - Narrow a local run with `-Deventstore.testing.backends=inmem` to skip the containers entirely.
 - Scenarios needing an optional part of the contract declare it —
   `@ForEachBackend(requires = Capability.IMPORT)` — and are *skipped*, not failed, on backends that do
-  not support it. Capabilities: `IMPORT`, `TABLE_PREFIX`, `RESULT_LIMIT`, `RAW_STORAGE_ACCESS`.
+  not support it. Capabilities: `IMPORT`, `TABLE_PREFIX`, `RESULT_LIMIT`, `RAW_STORAGE_ACCESS`, `LEASE`.
+  The `supports()` default answers true for the first three and false for the last two.
 - `@ForEachBackend(excludingBackends = "inmem-fs")` opts a backend out **for cost, not capability** —
   reported as skipped, so the gap stays visible. Not allowed inside the TCK: a compliance scenario
   that skips a backend proves nothing about it, so use `requires` there instead. **Nothing in the
-  repository uses it**: its only user was `EventStorePerformanceTest`, which excluded `inmem-fs`
-  because 10.000 appends against a file-backed store dominated CI time, and that test is gone — a
-  benchmark pretending to be a test, printing an unread number on every build and asserting only what
-  the TCK already asserts. Measurement lives in `sliceworkz-eventstore-benchmark` now.
+  repository uses it.** The one thing that would want it — a test doing thousands of appends against
+  the file-backed store to print a throughput number — is a benchmark, and belongs in
+  `sliceworkz-eventstore-benchmark`, not in a build.
 - `TckBackendCoverageTest` fails the build if a TCK scenario is annotated `@Test` (so it would run
   against one backend only), if one opts a backend out with `excludingBackends`, or if a backend goes
-  missing from the service file. All three are silent failures otherwise — that is exactly how three
-  scenario classes came to run in-memory only.
+  missing from the service file. All three are silent otherwise: a scenario quietly running against
+  fewer backends than intended fails nothing.
 
 Backends run one after another in a single JVM, and in-JVM parallelism
 (`junit.jupiter.execution.parallel.enabled`) is not an option without changing how isolation works
@@ -1131,18 +1126,20 @@ for the store's prefix, so two scenarios sharing a backend concurrently would dr
 tables mid-test. To split a run anyway, `-Deventstore.testing.backends=...` partitions it across
 separate JVMs.
 
-The Postgres backends are `Postgres17Backend` and `Postgres18Backend`; the shared base
-`AbstractPostgresBackend` is abstract on purpose, so no class name can be read as "PostgreSQL,
-unspecified version". `AbstractPostgresBackend.forImage("postgres:15")` covers a version with no
+The Postgres backends are `Postgres16Backend`, `Postgres17Backend` and `Postgres18Backend`; the shared
+base `AbstractPostgresBackend` is abstract on purpose, so no class name can be read as "PostgreSQL,
+unspecified version". `AbstractPostgresBackend.forImage("postgres:19")` covers a version with no
 dedicated class (the image tag becomes the backend name, so the version still shows in reports).
 
 **Test Structure:**
 `sliceworkz-eventstore-tests` runs the TCK against every in-tree backend — via surefire's
 `dependenciesToScan`, which is the same one line a third-party `EventStorage` adds — plus the few
-tests that are repo-internal rather than part of the storage contract (`EventImportRoundTripTest`,
-`TckBackendCoverageTest`). Postgres containers are managed by
-`PostgresContainer`, started once per JVM per image; per-test isolation comes from
-`initializeDatabase()` dropping and recreating the schema, not from a fresh container.
+tests that are repo-internal rather than part of the storage contract: `TckBackendCoverageTest`,
+`EventImportRoundTripTest`, and the store-level tests of the impl module's meters and serde sharing
+(`MeterPurposeCardinalityTest`, `AppendPositionGaugeTest`, `QueryTimerTest`,
+`EventStreamSerdeSharingTest`). Postgres containers are managed by `PostgresContainer`, started once
+per JVM per image; per-test isolation comes from `initializeDatabase()` dropping and recreating the
+schema, not from a fresh container.
 
 **Testing application code:**
 `EventStoreFixture` gives application authors a `given/when/then` over an in-memory store — seed
@@ -1156,6 +1153,7 @@ not bind `event_timestamp` on append at all and lets the DDL default (`CURRENT_T
 clock) apply. There is no `Clock` seam anywhere. Assert on timestamps only with a tolerance window, as
 `EventTimestampUtcTest` does. The one path that writes a chosen timestamp is `importEvents`, which
 bypasses `append()`.
+
 ## Benchmarking
 
 Measurement lives in **`sliceworkz-eventstore-benchmark`** and never runs during a build: JMH for
@@ -1216,8 +1214,8 @@ sealed interface CustomerEvent {
 
 ### Event type names are wire format
 
-**An event class's simple name is stored data.** `EventType.of(Class)` is `Class.getSimpleName()`
-(`EventType.java:83`) — there is no annotation, registry or builder hook to override it. That one string is
+**An event class's simple name is stored data.** `EventType.of(Class)` is `Class.getSimpleName()` —
+there is no annotation, registry or builder hook to override it. That one string is
 what goes into the `event_type` column, what `EventTypesFilter` matches on, and what keys the deserializer
 (`TypedEventPayloadSerializerDeserializer.deserializers`, a `Map<String, EventDeserializer>`).
 
@@ -1256,9 +1254,9 @@ type's identity. Two classes with the same simple name in different contexts wri
 `event_type` values into one table:
 
 - **On one stream this fails loudly.** Registering both throws
-  `IllegalArgumentException: duplicate event name Created`
-  (`TypedEventPayloadSerializerDeserializer.java:95`). The message names the string only, not the two
-  classes, so grep for the name to find them.
+  `IllegalArgumentException: duplicate event name Created` (from
+  `TypedEventPayloadSerializerDeserializer`). The message names the string only, not the two classes,
+  so grep for the name to find them.
 - **Across streams nothing catches it.** No exception, no warning, at registration or at write time.
 
 **And a read spanning both contexts does not fail cleanly.** A wildcard stream
@@ -1344,6 +1342,7 @@ one boundary from a common start signal, and exactly one must win while the rest
 `OptimisticLockingException`. Note that the rest of `OptimisticLockingTest` is single-threaded, so it
 proves the check *reads* correctly and says nothing about whether it is atomic — which is why a backend
 can pass all of it and still violate the boundary in production.
+
 ## PostgreSQL Specific Notes
 
 The deep operational notes — schema and trigger repair, migrations, advisory-lock keying, the

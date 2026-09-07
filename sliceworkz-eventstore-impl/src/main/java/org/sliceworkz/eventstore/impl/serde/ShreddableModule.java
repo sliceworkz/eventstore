@@ -258,9 +258,9 @@ public final class ShreddableModule extends SimpleModule {
 			JsonNode node = context.readTree(parser);
 
 			if ( !node.isObject() || !node.has(FIELD_ALGORITHM) || !node.has(FIELD_CIPHERTEXT) ) {
-				// Not a sealed envelope. The realistic cause is a record component that used to be a plain
-				// (or @Erasable) field and is now declared Shreddable: events written before the change
-				// hold the bare value here. Nothing can be inferred from it -- least of all whose data it
+				// Not a sealed envelope. The realistic cause is a record component that was a plain field
+				// when the event was written and is declared Shreddable now: such events hold the bare
+				// value here. Nothing can be inferred from it -- least of all whose data it
 				// is -- so this fails rather than guessing a subject and quietly leaving old personal data
 				// unprotected and unerasable.
 				throw new IllegalStateException(

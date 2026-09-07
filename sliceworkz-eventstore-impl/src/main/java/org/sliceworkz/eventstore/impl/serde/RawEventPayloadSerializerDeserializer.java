@@ -25,7 +25,6 @@ import org.sliceworkz.eventstore.events.EventType;
 
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Raw mode implementation of {@link EventPayloadSerializerDeserializer} that works with JSON strings directly.
@@ -51,19 +50,7 @@ public class RawEventPayloadSerializerDeserializer extends AbstractEventPayloadS
 	public List<TypeAndPayload> deserialize ( TypeAndSerializedPayload serialized ) {
 		JsonNode object;
 		try {
-
-			if ( serialized.erasablePayload() == null ) {
-				object = objectMapper.readTree(serialized.immutablePayload());
-			} else {
-				// A legacy event, written when payloads were split across two documents.
-				ObjectNode nodeImmutableData = (ObjectNode) objectMapper.readTree(serialized.immutablePayload());
-				ObjectNode nodeErasableData = (ObjectNode) objectMapper.readTree(serialized.erasablePayload());
-
-				deepMerge(nodeImmutableData, nodeErasableData);
-
-				object = nodeImmutableData; // with erasable merged in
-			}
-
+			object = objectMapper.readTree(serialized.immutablePayload());
 		} catch (JacksonException e) {
 			// One catch, not two: DatabindException is a JacksonException, and naming which of the two
 			// it was added nothing the cause does not already say.

@@ -44,7 +44,6 @@
  *   <li>Event reference assignment (ID and position)</li>
  *   <li>Bookmark management for event processors</li>
  *   <li>Listener notifications for new events and bookmarks</li>
- *   <li>GDPR-compliant data separation (immutable vs erasable)</li>
  * </ul>
  *
  * <h2>Example Storage Usage:</h2>
@@ -71,7 +70,6 @@
  *   <li>Ensure thread safety for concurrent operations</li>
  *   <li>Implement proper optimistic locking validation</li>
  *   <li>Notify registered listeners of new events and bookmarks</li>
- *   <li>Separate immutable and erasable data for GDPR compliance</li>
  * </ol>
  *
  * <h2>Thread Safety Requirements:</h2>

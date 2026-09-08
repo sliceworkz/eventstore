@@ -48,7 +48,6 @@ import tools.jackson.databind.node.ObjectNode;
  *   "type":          "...",
  *   "reference":     { "id": ..., "position": ..., "tx": ..., "index": ... },
  *   "immutableData": { ... } | null,
- *   "erasableData":  { ... } | null,
  *   "tags":          [ { "key": ..., "value": ... }, ... ],
  *   "timestamp":     "ISO-8601 LocalDateTime",
  *   "idempotencyKey": "..." | null
@@ -109,11 +108,6 @@ public final class JsonEventCodec {
 			} else {
 				node.putNull("immutableData");
 			}
-			if ( event.erasableData() != null ) {
-				node.set("erasableData", objectMapper.readTree(event.erasableData()));
-			} else {
-				node.putNull("erasableData");
-			}
 
 			ArrayNode tagsArray = objectMapper.createArrayNode();
 			for ( Tag tag : event.tags().tags() ) {
@@ -158,9 +152,6 @@ public final class JsonEventCodec {
 			String immutableData = node.has("immutableData") && !node.get("immutableData").isNull()
 					? node.get("immutableData").toString()
 					: null;
-			String erasableData = node.has("erasableData") && !node.get("erasableData").isNull()
-					? node.get("erasableData").toString()
-					: null;
 
 			Set<Tag> tagSet = new HashSet<>();
 			JsonNode tagsNode = node.get("tags");
@@ -186,7 +177,7 @@ public final class JsonEventCodec {
 					? node.get("idempotencyKey").asText()
 					: null;
 
-			return new StoredEvent(stream, type, reference, immutableData, erasableData, tags, timestamp, idempotencyKey);
+			return new StoredEvent(stream, type, reference, immutableData, tags, timestamp, idempotencyKey);
 		} catch ( JacksonException e ) {
 			throw new JsonCodecException("failed to deserialize event", e);
 		}

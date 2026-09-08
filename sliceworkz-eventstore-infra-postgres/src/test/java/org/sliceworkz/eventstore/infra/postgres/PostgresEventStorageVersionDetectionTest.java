@@ -52,7 +52,6 @@ class PostgresEventStorageVersionDetectionTest {
 			EventStreamId.forContext("version-detection").withPurpose("smoke"),
 			EventType.ofType("Smoke"),
 			"{}",
-			null,
 			Tags.none(),
 			"idem-" + UUID.randomUUID()
 		);

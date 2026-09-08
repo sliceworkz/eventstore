@@ -44,7 +44,6 @@ public class PostgresHeadStatementTest {
 		assertTrue(sql.contains("event_tx"), sql);
 		assertTrue(sql.contains("event_id"), sql);
 		assertFalse(sql.contains("event_data"), "the head must not read the payload: " + sql);
-		assertFalse(sql.contains("event_erasable_data"), "the head must not read the payload: " + sql);
 		assertFalse(sql.contains("event_tags"), "the head must not read the tags: " + sql);
 		assertFalse(sql.contains("event_type"), "the head must not read the type: " + sql);
 	}

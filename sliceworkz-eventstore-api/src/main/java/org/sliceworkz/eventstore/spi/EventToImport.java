@@ -44,7 +44,7 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  *
  * <h2>Import versus append</h2>
  * Importing bypasses {@link EventStorage#append(org.sliceworkz.eventstore.stream.AppendCriteria, java.util.Optional, java.util.List)}
- * entirely: no optimistic locking, no serialization, no upcasting, no re-splitting of erasable data.
+ * entirely: no optimistic locking, no serialization, no upcasting.
  * The payload moves as opaque JSON, so an import needs no domain classes on the classpath and legacy
  * event types survive as legacy event types.
  *
@@ -71,15 +71,14 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  * @param stream the event stream the event belongs to (required)
  * @param type the event type name (required)
  * @param id the globally unique event identifier to persist (required)
- * @param immutableData serialized event data that must be retained permanently (required, must be valid JSON)
- * @param erasableData serialized event data that may be erased for privacy compliance (optional, may be null)
+ * @param immutableData the serialized event payload (required, must be valid JSON)
  * @param tags key-value pairs for dynamic event retrieval and consistency boundaries (required, use {@link Tags#none()})
  * @param timestamp the moment the event was stored, always in UTC (required)
  * @param idempotencyKey the idempotency key to persist, or {@code null} for none
  * @see EventStorage#importEvents(java.util.List, EventStorage.ImportMode)
  * @see StoredEvent
  */
-public record EventToImport ( EventStreamId stream, EventType type, EventId id, String immutableData, String erasableData, Tags tags, LocalDateTime timestamp, String idempotencyKey ) {
+public record EventToImport ( EventStreamId stream, EventType type, EventId id, String immutableData, Tags tags, LocalDateTime timestamp, String idempotencyKey ) {
 
 	/**
 	 * Constructs an EventToImport, validating everything the storage backends require.
@@ -93,8 +92,7 @@ public record EventToImport ( EventStreamId stream, EventType type, EventId id, 
 	 * @param stream the event stream (required)
 	 * @param type the event type (required)
 	 * @param id the event identifier (required)
-	 * @param immutableData the immutable payload (required)
-	 * @param erasableData the erasable payload (optional)
+	 * @param immutableData the payload (required)
 	 * @param tags the tags (required, use {@link Tags#none()} if none)
 	 * @param timestamp the storage timestamp in UTC (required)
 	 * @param idempotencyKey the idempotency key (optional)
@@ -140,7 +138,6 @@ public record EventToImport ( EventStreamId stream, EventType type, EventId id, 
 				storedEvent.type(),
 				storedEvent.reference() == null ? null : storedEvent.reference().id(),
 				storedEvent.immutableData(),
-				storedEvent.erasableData(),
 				storedEvent.tags(),
 				storedEvent.timestamp(),
 				storedEvent.idempotencyKey());
@@ -159,7 +156,7 @@ public record EventToImport ( EventStreamId stream, EventType type, EventId id, 
 	 * @return a StoredEvent with the preserved identity and the newly assigned reference
 	 */
 	public StoredEvent positionAt ( long position, long tx ) {
-		return new StoredEvent(stream, type, EventReference.of(id, position, tx), immutableData, erasableData, tags, timestamp, idempotencyKey);
+		return new StoredEvent(stream, type, EventReference.of(id, position, tx), immutableData, tags, timestamp, idempotencyKey);
 	}
 
 	/**
@@ -173,7 +170,7 @@ public record EventToImport ( EventStreamId stream, EventType type, EventId id, 
 	 * @return a new EventToImport for the specified stream
 	 */
 	public EventToImport withStream ( EventStreamId stream ) {
-		return new EventToImport(stream, type, id, immutableData, erasableData, tags, timestamp, idempotencyKey);
+		return new EventToImport(stream, type, id, immutableData, tags, timestamp, idempotencyKey);
 	}
 
 	/**
@@ -183,7 +180,7 @@ public record EventToImport ( EventStreamId stream, EventType type, EventId id, 
 	 * @return a new EventToImport with the specified type
 	 */
 	public EventToImport withType ( EventType type ) {
-		return new EventToImport(stream, type, id, immutableData, erasableData, tags, timestamp, idempotencyKey);
+		return new EventToImport(stream, type, id, immutableData, tags, timestamp, idempotencyKey);
 	}
 
 	/**
@@ -196,27 +193,17 @@ public record EventToImport ( EventStreamId stream, EventType type, EventId id, 
 	 * @return a new EventToImport with the specified id
 	 */
 	public EventToImport withId ( EventId id ) {
-		return new EventToImport(stream, type, id, immutableData, erasableData, tags, timestamp, idempotencyKey);
+		return new EventToImport(stream, type, id, immutableData, tags, timestamp, idempotencyKey);
 	}
 
 	/**
-	 * Creates a copy of this event with a different immutable payload.
+	 * Creates a copy of this event with a different payload.
 	 *
-	 * @param immutableData the JSON payload to store as immutable data
-	 * @return a new EventToImport with the specified immutable payload
+	 * @param immutableData the JSON payload to store
+	 * @return a new EventToImport with the specified payload
 	 */
 	public EventToImport withImmutableData ( String immutableData ) {
-		return new EventToImport(stream, type, id, immutableData, erasableData, tags, timestamp, idempotencyKey);
-	}
-
-	/**
-	 * Creates a copy of this event with a different erasable payload.
-	 *
-	 * @param erasableData the JSON payload to store as erasable data, or null for none
-	 * @return a new EventToImport with the specified erasable payload
-	 */
-	public EventToImport withErasableData ( String erasableData ) {
-		return new EventToImport(stream, type, id, immutableData, erasableData, tags, timestamp, idempotencyKey);
+		return new EventToImport(stream, type, id, immutableData, tags, timestamp, idempotencyKey);
 	}
 
 	/**
@@ -226,7 +213,7 @@ public record EventToImport ( EventStreamId stream, EventType type, EventId id, 
 	 * @return a new EventToImport with the specified tags
 	 */
 	public EventToImport withTags ( Tags tags ) {
-		return new EventToImport(stream, type, id, immutableData, erasableData, tags, timestamp, idempotencyKey);
+		return new EventToImport(stream, type, id, immutableData, tags, timestamp, idempotencyKey);
 	}
 
 	/**
@@ -239,7 +226,7 @@ public record EventToImport ( EventStreamId stream, EventType type, EventId id, 
 	 * @return a new EventToImport with the specified timestamp
 	 */
 	public EventToImport withTimestamp ( LocalDateTime timestamp ) {
-		return new EventToImport(stream, type, id, immutableData, erasableData, tags, timestamp, idempotencyKey);
+		return new EventToImport(stream, type, id, immutableData, tags, timestamp, idempotencyKey);
 	}
 
 	/**
@@ -249,7 +236,7 @@ public record EventToImport ( EventStreamId stream, EventType type, EventId id, 
 	 * @return a new EventToImport with the specified idempotency key
 	 */
 	public EventToImport withIdempotencyKey ( String idempotencyKey ) {
-		return new EventToImport(stream, type, id, immutableData, erasableData, tags, timestamp, idempotencyKey);
+		return new EventToImport(stream, type, id, immutableData, tags, timestamp, idempotencyKey);
 	}
 
 }

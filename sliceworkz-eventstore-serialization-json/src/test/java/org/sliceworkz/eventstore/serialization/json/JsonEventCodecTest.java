@@ -44,7 +44,6 @@ class JsonEventCodecTest {
 				EventType.ofType("CustomerRegistered"),
 				EventReference.of(EventId.of("id-1"), 1L, 1L, 0),
 				"{\"name\":\"John\"}",
-				null,
 				new Tags(Set.of(Tag.of("customer", "123"))),
 				LocalDateTime.parse("2026-04-19T12:34:56.789"));
 
@@ -61,7 +60,6 @@ class JsonEventCodecTest {
 				EventType.ofType("CustomerRegistered"),
 				EventReference.of(EventId.of("id-1"), 1L, 1L, 0),
 				"{\"name\":\"John Doe\"}",
-				null,
 				new Tags(Set.of(Tag.of("customer", "42"))),
 				LocalDateTime.parse("2026-04-19T12:34:56.789"));
 
@@ -80,7 +78,6 @@ class JsonEventCodecTest {
 				EventType.ofType("CustomerRegistered"),
 				EventReference.of(EventId.of("id-1"), 1L, 1L, 0),
 				"{\"name\":\"John\"}",
-				null,
 				new Tags(Set.of(Tag.of("customer", "123"))),
 				LocalDateTime.parse("2026-04-19T12:34:56.789"),
 				"idem-key-1");
@@ -99,7 +96,6 @@ class JsonEventCodecTest {
 				EventType.ofType("NoKey"),
 				EventReference.of(EventId.of("id-3"), 3L, 3L, 0),
 				"{}",
-				null,
 				new Tags(Set.of()),
 				LocalDateTime.parse("2026-04-19T00:00:00"));
 
@@ -109,12 +105,11 @@ class JsonEventCodecTest {
 	}
 
 	@Test
-	void preservesNullImmutableAndErasableData ( ) {
+	void preservesNullImmutableData ( ) {
 		StoredEvent event = new StoredEvent(
 				EventStreamId.forContext("ctx").withPurpose("p"),
 				EventType.ofType("NoData"),
 				EventReference.of(EventId.of("id-2"), 2L, 2L, 0),
-				null,
 				null,
 				new Tags(Set.of()),
 				LocalDateTime.parse("2026-04-19T00:00:00"));
@@ -122,7 +117,6 @@ class JsonEventCodecTest {
 		StoredEvent restored = codec.read(codec.write(event));
 
 		assertNull(restored.immutableData());
-		assertNull(restored.erasableData());
 	}
 
 }

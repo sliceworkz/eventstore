@@ -546,7 +546,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 		checkColumn(connection, tableName, "event_type", "text", false);
 		checkColumn(connection, tableName, "event_timestamp", "timestamp with time zone", true);
 		checkColumn(connection, tableName, "event_data", "jsonb", false);
-		checkColumn(connection, tableName, "event_erasable_data", "jsonb", true);
 		checkColumn(connection, tableName, "event_tags", "ARRAY", true);
 
 		LOGGER.debug("Table {} validated successfully", tableName);
@@ -1069,7 +1068,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		StringBuilder sqlBuilder = new StringBuilder();
 		sqlBuilder.append(
 			"""
-				SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags, idempotency_key
+				SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_tags, idempotency_key
 				FROM %sevents
 				WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 			""".formatted(prefix)
@@ -1336,7 +1335,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * Internal extension point — override only in version-gated subclasses in this package.
 	 */
 	protected String appendValuesRowFragment ( ) {
-		return "(uuidv7(), ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?) ";
+		return "(uuidv7(), ?, ?, ?, ?, ?::jsonb, ?) ";
 	}
 
 	/**
@@ -1595,7 +1594,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 			// Build conditional insert with optimistic locking check
 			StringBuilder sqlBuilder = new StringBuilder();
-			sqlBuilder.append("INSERT INTO %sevents (event_id, idempotency_key, stream_context, stream_purpose, event_type, event_data, event_erasable_data, event_tags) SELECT * FROM ( VALUES ".formatted(prefix));
+			sqlBuilder.append("INSERT INTO %sevents (event_id, idempotency_key, stream_context, stream_purpose, event_type, event_data, event_tags) SELECT * FROM ( VALUES ".formatted(prefix));
 			String valuesRowFragment = appendValuesRowFragment();
 			for ( int i = 0; i < events.size(); i++ ) {
 				if ( i > 0 ) {
@@ -1623,7 +1622,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 				parameters.add(event.type().name());
 
 				parameters.add(event.immutableData());
-				parameters.add(event.erasableData());
 
 				// Convert tags to array
 				// sized from the string set, not from tags(): a set sized larger than its contents leaves a
@@ -1787,8 +1785,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 	/**
 	 * Number of events bound into a single INSERT statement.
 	 * <p>
-	 * Bounded by the wire protocol: each row binds 9 parameters against a hard ceiling of 65535 per
-	 * statement, so roughly 7200 rows would fit. 5000 leaves headroom. This is a <em>statement</em>
+	 * Bounded by the wire protocol: each row binds 8 parameters against a hard ceiling of 65535 per
+	 * statement, so roughly 8000 rows would fit. 5000 leaves headroom. This is a <em>statement</em>
 	 * boundary only — every statement of one {@code importEvents} call runs in the same transaction,
 	 * so the call stays all-or-nothing however many chunks it takes.
 	 */
@@ -1868,12 +1866,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private List<StoredEvent> importChunk ( Connection writeConnection, List<EventToImport> chunk, ImportMode mode ) throws SQLException {
 
 		StringBuilder sqlBuilder = new StringBuilder();
-		sqlBuilder.append("INSERT INTO %sevents (event_id, idempotency_key, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags) VALUES ".formatted(prefix));
+		sqlBuilder.append("INSERT INTO %sevents (event_id, idempotency_key, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_tags) VALUES ".formatted(prefix));
 		for ( int i = 0; i < chunk.size(); i++ ) {
 			if ( i > 0 ) {
 				sqlBuilder.append(", ");
 			}
-			sqlBuilder.append("(?::uuid, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?)");
+			sqlBuilder.append("(?::uuid, ?, ?, ?, ?, ?, ?::jsonb, ?)");
 		}
 
 		if ( mode == ImportMode.SKIP_EXISTING_ID ) {
@@ -1884,7 +1882,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 		sqlBuilder.append(" RETURNING event_position, event_tx::text, event_id::text");
 
-		List<Object> parameters = new ArrayList<>(chunk.size() * 9);
+		List<Object> parameters = new ArrayList<>(chunk.size() * 8);
 		Map<String,EventToImport> byId = new HashMap<>(chunk.size());
 
 		for ( EventToImport event : chunk ) {
@@ -1901,7 +1899,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 			// nanosecond-precision source timestamp lands up to half a microsecond off.
 			parameters.add(OffsetDateTime.of(event.timestamp(), ZoneOffset.UTC));
 			parameters.add(event.immutableData());
-			parameters.add(event.erasableData());
 			parameters.add(event.tags().toStrings().toArray(new String[0]));
 		}
 
@@ -2164,7 +2161,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		checkNotClosed();
 		if ( eventId != null ) {
 			String sql = """
-				SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_erasable_data, event_tags, idempotency_key
+				SELECT event_position, event_tx::text, event_id, stream_context, stream_purpose, event_type, event_timestamp, event_data, event_tags, idempotency_key
 				FROM %sevents
 				WHERE event_id = ?::uuid
 			""".formatted(prefix);
@@ -2198,7 +2195,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 		String eventTypeName = rs.getString("event_type");
 		Timestamp timestamp = rs.getTimestamp("event_timestamp", Calendar.getInstance(TimeZone.getTimeZone("UTC")));
 		String eventDataJson = rs.getString("event_data");
-		String eventErasableDataJson = rs.getString("event_erasable_data");
 		String[] tagsArray = null;
 		if (rs.getArray("event_tags") != null) {
 			tagsArray = (String[]) rs.getArray("event_tags").getArray();
@@ -2216,7 +2212,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		// Create Tags from tag array
 		Tags tags = Tags.parse(tagsArray);
 
-		return new StoredEvent(streamId, EventType.ofType(eventTypeName), eventReference, eventDataJson, eventErasableDataJson, tags, timestamp.toInstant().atOffset(ZoneOffset.UTC).toLocalDateTime(), idempotencyKey);
+		return new StoredEvent(streamId, EventType.ofType(eventTypeName), eventReference, eventDataJson, tags, timestamp.toInstant().atOffset(ZoneOffset.UTC).toLocalDateTime(), idempotencyKey);
 	}
 
 	

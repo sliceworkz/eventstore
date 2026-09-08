@@ -36,7 +36,6 @@ import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.shredding.ShreddingException;
 
 import tools.jackson.core.JacksonException;
-import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Typed mode implementation of {@link EventPayloadSerializerDeserializer} that maps events to/from Java objects.
@@ -45,7 +44,7 @@ import tools.jackson.databind.node.ObjectNode;
  * <ul>
  *   <li>Sealed interfaces for discovering event types automatically</li>
  *   <li>Event upcasting from historical/legacy events using {@link LegacyEvent} annotations</li>
- *   <li>GDPR compliance via separate storage of erasable fields</li>
+ *   <li>Personal data protected in place as {@link org.sliceworkz.eventstore.shredding.Shreddable} values</li>
  * </ul>
  * <p>
  * Event types must be registered via {@link #registerEventTypes(Class)} before they can be serialized or deserialized.
@@ -90,7 +89,7 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		}
 
 		try {
-			return deserializer.deserialize(serialized.immutablePayload(), serialized.erasablePayload());
+			return deserializer.deserialize(serialized.immutablePayload());
 		} catch (EventDeserializationException e) {
 			// already precise about what failed -- wrapping it again would only bury the message
 			throw e;
@@ -256,7 +255,7 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 	
 	
 	interface EventDeserializer {
-		List<TypeAndPayload> deserialize ( String immutablePayload, String erasablePayload );
+		List<TypeAndPayload> deserialize ( String payload );
 	}
 	
 	class InstantiationEventDeserializer implements EventDeserializer {
@@ -270,24 +269,10 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		}
 
 		@Override
-		public List<TypeAndPayload> deserialize ( String immutablePayload, String erasablePayload ) {
+		public List<TypeAndPayload> deserialize ( String payload ) {
 			Object object;
 			try {
-
-				if ( erasablePayload == null ) {
-					object = objectMapper.readValue(immutablePayload, eventClass);
-				} else {
-					// A legacy event, written when payloads were split across two documents. Nothing
-					// writes the second one any more; see AbstractEventPayloadSerializerDeserializer.
-					ObjectNode nodeImmutableData = (ObjectNode) objectMapper.readTree(immutablePayload);
-					ObjectNode nodeErasableData = (ObjectNode) objectMapper.readTree(erasablePayload);
-
-					deepMerge(nodeImmutableData, nodeErasableData);
-
-					// Directly convert the merged JsonNode to the target class without string roundtrip
-					object = objectMapper.treeToValue(nodeImmutableData, eventClass);
-				}
-
+				object = objectMapper.readValue(payload, eventClass);
 			} catch (JacksonException e) {
 				if ( e.getCause() instanceof ShreddingException shredding ) {
 					// Jackson wraps whatever a ValueDeserializer throws. Unwrap so that "the key store is
@@ -320,8 +305,8 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		}
 
 		@Override
-		public List<TypeAndPayload> deserialize ( String immutablePayload, String erasablePayload ) {
-			TypeAndPayload historical = deser.deserialize(immutablePayload, erasablePayload).getFirst();
+		public List<TypeAndPayload> deserialize ( String payload ) {
+			TypeAndPayload historical = deser.deserialize(payload).getFirst();
 			List<Object> upcastedEvents;
 			try {
 				upcastedEvents = upcaster.upcast(historical.eventData());

@@ -304,7 +304,7 @@ public interface EventStorage extends AutoCloseable {
 	 * <ul>
 	 *   <li>Assigning a unique {@link EventReference} (ID and position)</li>
 	 *   <li>Recording the current timestamp</li>
-	 *   <li>Persisting the event data (both immutable and erasable portions)</li>
+	 *   <li>Persisting the event payload</li>
 	 * </ul>
 	 *
 	 * @param appendCriteria criteria defining optimistic locking constraints (or none for simple append)
@@ -329,7 +329,7 @@ public interface EventStorage extends AutoCloseable {
 	 * <p>
 	 * What is preserved and what is not:
 	 * <ul>
-	 *   <li><b>Preserved</b> — event id, timestamp, idempotency key, type, tags, immutable and erasable payloads</li>
+	 *   <li><b>Preserved</b> — event id, timestamp, idempotency key, type, tags and payload</li>
 	 *   <li><b>Reassigned</b> — position and transaction, which are always allocated by this storage. An import
 	 *       reproduces the source <em>order</em>, never the source ordering numbers. Events are inserted in
 	 *       list order.</li>
@@ -920,23 +920,19 @@ public interface EventStorage extends AutoCloseable {
 	 * to storage, each {@code EventToStore} is converted to a {@link StoredEvent} with
 	 * an assigned {@link EventReference} and timestamp.
 	 * <p>
-	 * Event data is separated into two categories:
-	 * <ul>
-	 *   <li><b>Immutable data:</b> Core event information that must never be deleted (GDPR-compliant)</li>
-	 *   <li><b>Erasable data:</b> the second document of the superseded immutable/erasable split; written only
- *       by versions before personal data moved into the payload as encrypted
- *       {@link org.sliceworkz.eventstore.shredding.Shreddable} values, and read for those events still</li>
-	 * </ul>
+	 * The payload is one JSON document that is never rewritten. Personal data in it is protected by
+	 * being encrypted in place as a {@link org.sliceworkz.eventstore.shredding.Shreddable} value, and
+	 * erased by destroying its key, so nothing in storage needs to be erasable.
 	 *
 	 * @param stream the event stream this event belongs to
 	 * @param type the event type identifying the kind of event
-	 * @param immutableData serialized event data that must be retained permanently
-	 * @param erasableData serialized event data that may be erased for privacy compliance
+	 * @param immutableData the serialized event payload
 	 * @param tags key-value pairs for dynamic event retrieval and consistency boundaries
+	 * @param idempotencyKey the idempotency key the event is appended with, or {@code null} if none
 	 * @see StoredEvent
 	 * @see #append(AppendCriteria, Optional, List)
 	 */
-	public record EventToStore ( EventStreamId stream, EventType type, String immutableData, String erasableData, Tags tags, String idempotencyKey ) {
+	public record EventToStore ( EventStreamId stream, EventType type, String immutableData, Tags tags, String idempotencyKey ) {
 
 		/**
 		 * Converts this event to a stored event by assigning a reference and timestamp.
@@ -950,7 +946,7 @@ public interface EventStorage extends AutoCloseable {
 		 * @see StoredEvent
 		 */
 		public StoredEvent positionAt ( EventReference reference, LocalDateTime timestamp) {
-			return new StoredEvent(stream, type, reference, immutableData, erasableData, tags, timestamp, idempotencyKey);
+			return new StoredEvent(stream, type, reference, immutableData, tags, timestamp, idempotencyKey);
 		}
 	}
 
@@ -966,15 +962,11 @@ public interface EventStorage extends AutoCloseable {
 	 *   <li><b>Event ID:</b> Unique identifier for the event</li>
 	 *   <li><b>Position:</b> Sequential position within the event stream</li>
 	 * </ul>
-	 * <p>
-	 * Event data is separated into immutable and erasable portions to support privacy
-	 * regulations like GDPR while maintaining event sourcing integrity.
 	 *
 	 * @param stream the event stream this event belongs to
 	 * @param type the event type identifying the kind of event
 	 * @param reference the unique reference (ID and position) of this event
-	 * @param immutableData serialized event data that must be retained permanently
-	 * @param erasableData serialized event data that may be erased for privacy compliance
+	 * @param immutableData the serialized event payload, as stored
 	 * @param tags key-value pairs for dynamic event retrieval and consistency boundaries
 	 * @param timestamp the moment this event was stored, always in UTC
 	 * @param idempotencyKey the idempotency key the event was appended with, or {@code null} if none;
@@ -983,7 +975,7 @@ public interface EventStorage extends AutoCloseable {
 	 * @see EventReference
 	 * @see #query(EventQuery, Optional, EventReference, Limit, QueryDirection)
 	 */
-	public record StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String immutableData, String erasableData, Tags tags, LocalDateTime timestamp, String idempotencyKey ) {
+	public record StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String immutableData, Tags tags, LocalDateTime timestamp, String idempotencyKey ) {
 
 		/**
 		 * Convenience constructor for stored events without an idempotency key.
@@ -994,13 +986,12 @@ public interface EventStorage extends AutoCloseable {
 		 * @param stream the event stream this event belongs to
 		 * @param type the event type identifying the kind of event
 		 * @param reference the unique reference (ID and position) of this event
-		 * @param immutableData serialized event data that must be retained permanently
-		 * @param erasableData serialized event data that may be erased for privacy compliance
+		 * @param immutableData the serialized event payload, as stored
 		 * @param tags key-value pairs for dynamic event retrieval and consistency boundaries
 		 * @param timestamp the moment this event was stored, always in UTC
 		 */
-		public StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String immutableData, String erasableData, Tags tags, LocalDateTime timestamp ) {
-			this(stream, type, reference, immutableData, erasableData, tags, timestamp, null);
+		public StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String immutableData, Tags tags, LocalDateTime timestamp ) {
+			this(stream, type, reference, immutableData, tags, timestamp, null);
 		}
 
 	}

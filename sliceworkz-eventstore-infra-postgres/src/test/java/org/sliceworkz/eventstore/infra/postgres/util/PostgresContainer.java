@@ -225,9 +225,12 @@ public class PostgresContainer {
 	 * writing a {@code db.properties} for it and setting {@code eventstore.db.config}.
 	 * <p>
 	 * Needed to exercise the path where the builder creates the connection pools itself — the path
-	 * where nobody but the storage has a handle on them.
+	 * where nobody but the storage has a handle on them. The file is returned as well, for a test that
+	 * would rather hand it to one builder's {@code configuration(Path)} than to the whole JVM.
+	 *
+	 * @return the file written
 	 */
-	public static void writeDbProperties ( String image ) {
+	public static Path writeDbProperties ( String image ) {
 		PostgreSQLContainer container = CONTAINERS.get(image);
 		if ( container == null ) {
 			throw new IllegalStateException("PostgresContainer.start(\"" + image + "\") was not called");
@@ -252,6 +255,7 @@ public class PostgresContainer {
 				db.nonpooled.datasource.ApplicationName=%2$s-nonpooled
 				""".formatted(url, SELF_BUILT_POOL_MARKER, container.getUsername(), container.getPassword()));
 			System.setProperty("eventstore.db.config", file.toString());
+			return file;
 		} catch ( IOException e ) {
 			throw new IllegalStateException("could not write a db.properties for " + image, e);
 		}

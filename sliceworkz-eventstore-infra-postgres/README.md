@@ -4,7 +4,41 @@
 Create a database schema with the DDL scripts found in 'ensure-schema.sql',
 removing "PREFIX_" or replacing it to manage different stores next to each other.
 Use 'drop-schema.sql' to drop existing schema objects before recreating.
- 
+
+## Connecting
+
+The builder needs two connections: a pooled one for reads and appends, and a direct one for the
+LISTEN/NOTIFY monitors, which do not work through a transaction pooler such as PgBouncer. Either build
+the pools yourself and pass them in, or describe them in a `db.properties` file
+(template: `src/main/quickstart/db.properties`):
+
+```properties
+db.pooled.url=jdbc:postgresql://host/db
+db.pooled.username=...
+db.pooled.password=...
+db.pooled.maximumPoolSize=25
+
+db.nonpooled.url=jdbc:postgresql://host/db
+db.nonpooled.username=...
+db.nonpooled.password=...
+db.nonpooled.maximumPoolSize=2
+```
+
+Keys inside a section are HikariCP properties; keys under `datasource.` (`db.pooled.datasource.sslmode`)
+go to the JDBC driver. The builder takes the first of these that is present:
+
+1. a `DataSource` passed to `.dataSource(...)` (and `.monitoringDataSource(...)`)
+2. `Properties` or a file passed to `.configuration(...)`
+3. the file named by the system property `eventstore.db.config`
+4. the file named by the environment variable `EVENTSTORE_DB_CONFIG`
+5. `./db.properties` in the working directory of the process
+6. `db.properties` at the root of the classpath (`src/main/resources` in a Maven project)
+
+The lookup never walks into parent directories. When nothing is found, `build()` throws an
+`EventStorageException` naming every location it tried. Several stores in one process are configured
+by giving each builder its own `.configuration(...)`, or by sharing one pool between them through
+`.dataSource(...)` when they live in one database under different prefixes.
+
 
 
 ## Database privileges

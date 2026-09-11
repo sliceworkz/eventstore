@@ -41,23 +41,26 @@
  *
  * <h2>Configuration:</h2>
  * <p>
- * Create a {@code db.properties} file in your project root or specify its location via:
+ * Put a {@code db.properties} file in the working directory of the process or on the classpath
+ * ({@code src/main/resources}), or name its location via:
  * <ul>
  *   <li>System property: {@code -Deventstore.db.config=/path/to/db.properties}</li>
  *   <li>Environment variable: {@code EVENTSTORE_DB_CONFIG=/path/to/db.properties}</li>
+ *   <li>The builder: {@code PostgresEventStorage.newBuilder().configuration(Path.of("/path/to/db.properties"))}</li>
  * </ul>
+ * A framework that already manages the connection pool passes it in with {@code .dataSource(...)} instead.
  *
  * <p>
  * Example {@code db.properties}:
  * <pre>
  * # Pooled connection (for queries and appends)
- * db.pooled.jdbcUrl=jdbc:postgresql://localhost:5432/eventstore
+ * db.pooled.url=jdbc:postgresql://localhost:5432/eventstore
  * db.pooled.username=eventstore_user
  * db.pooled.password=secret
  * db.pooled.maximumPoolSize=10
  *
  * # Non-pooled connection (for LISTEN/NOTIFY)
- * db.nonpooled.jdbcUrl=jdbc:postgresql://localhost:5432/eventstore
+ * db.nonpooled.url=jdbc:postgresql://localhost:5432/eventstore
  * db.nonpooled.username=eventstore_user
  * db.nonpooled.password=secret
  * </pre>

@@ -17,9 +17,11 @@
  */
 package org.sliceworkz.eventstore.infra.postgres;
 
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Duration;
+import java.util.Objects;
 import java.util.Properties;
 
 import javax.sql.DataSource;
@@ -61,17 +63,20 @@ import io.micrometer.core.instrument.Metrics;
  * </ul>
  * <p>
  * <strong>Database Configuration:</strong><br>
- * When no custom DataSource is provided, PostgresEventStorage automatically loads configuration from a
- * {@code db.properties} file. The {@link DataSourceFactory} searches for this file in:
+ * The builder takes its connections from, in order of precedence: a {@link Builder#dataSource(DataSource)
+ * DataSource} you built; a {@link Builder#configuration(Properties) Properties} or a
+ * {@link Builder#configuration(Path) file} you name; or, when neither is given, the {@code db.properties}
+ * file {@link DataSourceFactory} finds at the first of these locations:
  * <ol>
- *   <li>System property {@code eventstore.db.config}</li>
- *   <li>Environment variable {@code EVENTSTORE_DB_CONFIG}</li>
- *   <li>Current working directory and up to 2 parent directories</li>
+ *   <li>the path in the system property {@code eventstore.db.config}</li>
+ *   <li>the path in the environment variable {@code EVENTSTORE_DB_CONFIG}</li>
+ *   <li>{@code ./db.properties} in the working directory</li>
+ *   <li>{@code db.properties} at the root of the classpath</li>
  * </ol>
  * <p>
- * The properties file should contain connection settings prefixed with {@code db.pooled.} for the main
- * connection pool and {@code db.nonpooled.} for monitoring connections. See {@link DataSourceFactory}
- * for details on the expected format.
+ * The properties file holds connection settings prefixed with {@code db.pooled.} for the main
+ * connection pool and {@code db.nonpooled.} for the monitoring connections. See {@link DataSourceFactory}
+ * for the format and the lookup.
  * <p>
  * <strong>Table Prefixing:</strong><br>
  * Table prefixes enable multiple isolated event stores within the same database schema. The prefix must:
@@ -214,6 +219,7 @@ public interface PostgresEventStorage {
 		private String name = "psql";
 		private DataSource dataSource;
 		private DataSource monitoringDataSource;
+		private Properties configuration;
 		private DatabaseInitMode databaseInitMode = DatabaseInitMode.ENSURE;
 		private Duration notificationStartupTimeout = PostgresEventStorageImpl.DEFAULT_NOTIFICATION_STARTUP_TIMEOUT;
 		private Limit limit = Limit.none();
@@ -251,9 +257,9 @@ public interface PostgresEventStorage {
 		 * monitoring queries. The monitoring DataSource will also be set to this DataSource
 		 * unless explicitly overridden with {@link #monitoringDataSource(DataSource)}.
 		 * <p>
-		 * If no DataSource is provided, the builder will automatically create one using
-		 * {@link DataSourceFactory#fromConfiguration(String)} with configuration loaded
-		 * from a {@code db.properties} file.
+		 * If no DataSource is provided, the builder creates one — and a separate one for monitoring —
+		 * from the {@link #configuration(Properties) configuration} given to it, or from the
+		 * {@code db.properties} file {@link DataSourceFactory#loadProperties()} finds.
 		 * <p>
 		 * The DataSource should be configured with connection pooling (e.g., HikariCP) for
 		 * optimal performance.
@@ -282,8 +288,8 @@ public interface PostgresEventStorage {
 		 *   <li>Listening for bookmark update notifications</li>
 		 * </ul>
 		 * <p>
-		 * If not set explicitly, defaults to the main DataSource. When using automatic configuration
-		 * from {@code db.properties}, a separate non-pooled DataSource is created automatically.
+		 * If not set explicitly, defaults to the main DataSource. When the builder creates the DataSources
+		 * itself from {@code db.properties}, the {@code db.nonpooled.} section becomes this one.
 		 *
 		 * @param monitoringDataSource the JDBC DataSource for monitoring operations
 		 * @return this Builder for method chaining
@@ -292,6 +298,42 @@ public interface PostgresEventStorage {
 		public Builder monitoringDataSource ( DataSource monitoringDataSource ) {
 			this.monitoringDataSource = monitoringDataSource;
 			return this;
+		}
+
+		/**
+		 * Supplies the database configuration directly, in the {@code db.properties} format, instead of
+		 * having it looked up.
+		 * <p>
+		 * The builder creates its own pools from the {@code db.pooled.} and {@code db.nonpooled.} sections,
+		 * exactly as it does from a file it finds itself, and closes them with the storage. This is the
+		 * seam for configuration that lives somewhere other than a file — a framework's environment, a
+		 * secrets manager — and for a process running several stores, each handed its own properties.
+		 * Ignored when a {@link #dataSource(DataSource)} is set.
+		 *
+		 * @param configuration the connection properties, holding a {@code db.pooled.} section and a
+		 *        {@code db.nonpooled.} section
+		 * @return this Builder for method chaining
+		 * @see DataSourceFactory
+		 */
+		public Builder configuration ( Properties configuration ) {
+			this.configuration = Objects.requireNonNull(configuration, "configuration");
+			return this;
+		}
+
+		/**
+		 * Names the {@code db.properties} file to read, consulting none of the default locations.
+		 * <p>
+		 * Where {@code -Deventstore.db.config} points the whole JVM at one file, this points one
+		 * builder at one file, so two stores in one process can be configured from two files. Ignored
+		 * when a {@link #dataSource(DataSource)} is set.
+		 *
+		 * @param configurationFile the properties file
+		 * @return this Builder for method chaining
+		 * @throws EventStorageException if the file does not exist or cannot be read
+		 * @see DataSourceFactory#loadProperties(Path)
+		 */
+		public Builder configuration ( Path configurationFile ) {
+			return configuration(DataSourceFactory.loadProperties(configurationFile));
 		}
 
 		/**
@@ -517,8 +559,9 @@ public interface PostgresEventStorage {
 		 * Builds and returns the configured {@link EventStorage} implementation.
 		 * <p>
 		 * This method creates a {@link PostgresEventStorageImpl} instance with all configured
-		 * settings. If no custom DataSource was provided, it will be automatically created from
-		 * the {@code db.properties} file using {@link DataSourceFactory}.
+		 * settings. If no custom DataSource was provided, the pools are created from the
+		 * {@link #configuration(Properties) configuration} given, or else from the {@code db.properties}
+		 * file {@link DataSourceFactory#loadProperties()} finds.
 		 * <p>
 		 * The configured {@link DatabaseInitMode} determines how the database schema is handled:
 		 * <ul>
@@ -537,7 +580,7 @@ public interface PostgresEventStorage {
 		 * closing the storage is then the only thing that will ever close them.
 		 *
 		 * @return a configured EventStorage instance backed by PostgreSQL
-		 * @throws RuntimeException if database configuration cannot be loaded or schema operations fail
+		 * @throws EventStorageException if no database configuration can be found, or schema operations fail
 		 * @see #buildStore()
 		 * @see EventStoreFactory#eventStore(EventStorage)
 		 */
@@ -609,12 +652,13 @@ public interface PostgresEventStorage {
 			// one the caller passed in stays the caller's, and is never touched
 			boolean createdDataSources = false;
 			if ( dataSource == null ) {
-				Properties dbProperties = DataSourceFactory.loadProperties();
+				Properties dbProperties = configuration != null ? configuration : DataSourceFactory.loadProperties();
+				dataSource = DataSourceFactory.fromConfiguration(dbProperties, "pooled");
 				if ( dataSource == null ) {
-					dataSource = DataSourceFactory.fromConfiguration(dbProperties, "pooled");
-					monitoringDataSource = DataSourceFactory.fromConfiguration(dbProperties, "nonpooled");
-					createdDataSources = true;
+					throw new EventStorageException("database configuration holds no 'db.pooled.' section");
 				}
+				monitoringDataSource = DataSourceFactory.fromConfiguration(dbProperties, "nonpooled");
+				createdDataSources = true;
 				if ( monitoringDataSource == null ) {
 					monitoringDataSource = dataSource;
 				}

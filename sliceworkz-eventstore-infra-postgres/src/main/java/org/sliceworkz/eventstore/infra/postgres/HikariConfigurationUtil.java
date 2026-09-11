@@ -39,7 +39,7 @@ db.pooled.datasource.cachePrepStmts=true
 db.pooled.datasource.prepStmtCacheSize=250
 db.pooled.datasource.prepStmtCacheSqlLimit=2048
 
-db.pooled.url=jdbc:postgresql://hos.domain.com/db
+db.nonpooled.url=jdbc:postgresql://host.domain.com/db
 db.nonpooled.username=username
 db.nonpooled.password=password
 db.nonpooled.leakDetectionThreshold=60000

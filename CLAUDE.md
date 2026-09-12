@@ -1057,6 +1057,65 @@ than reporting stale data as readable.
 envelope as stored, which is what lets `EventStoreImporter` copy events with no keys and no domain
 classes.
 
+**Not every reader may read everything, and a reader that may not gets a third state: `Withheld`.**
+Access to a protected value is the ability to resolve its key, so who may read what is decided on the
+key seams and never in the read path. `Shreddable` is `Present`, `Shredded` or `Withheld`; a withheld
+value exists, may well still have its key, and this reader does not get it. It carries the subject and
+key id like `Shredded`, cannot be appended (this process never held the plaintext), and says nothing
+about erasure — a reader that may not decrypt a value cannot tell whether it was erased, and is not
+told; `ShreddingAudit` stays the account of erasures.
+
+- **Why a third state rather than either existing answer.** Reported as `Shredded`, a projection renders
+  "erased" for data that is not and writes that into its read model for good. Reported as a
+  `ShreddingException`, it means "retry later", so a `Projector` that is merely not entitled fails the
+  batch and never advances. Withheld is neither: the read completes, the projection decides how to
+  render the gap, and everything the reader *is* entitled to still gets projected. Adding a case to the
+  sealed interface breaks every exhaustive `switch` at compile time, which is the point — each renderer
+  has to decide what a withheld value looks like. `orElse("[erased]")` call sites are the ones to review,
+  since the fallback now covers both cases.
+- **The seams carry it as sealed results, not exceptions.** `ShreddingKeyStore.resolveKey` answers
+  `KeyResolution.Resolved | Erased | Denied`, and `ShreddingCodec.open` answers
+  `Unsealed.Plaintext | Erased | Withheld`; both have defaults deriving the first two answers from the
+  older two-answer methods, so a key store or codec written before them keeps working and never denies.
+  A sealed type rather than a `ShreddingException` subtype because the difference between "erased",
+  "denied" and "down" is the most important contract in this subsystem, and a `catch (ShreddingException)`
+  retry loop would swallow a refusal by accident. The two-answer methods on the shipped
+  implementations *throw* for a denial rather than report it as erased — nothing in the library calls
+  them any more.
+- **Three ways a reader is limited, from cheap to hard:**
+  ```java
+  // a reporting service: typed events, none of the personal data. Without a codec it could not open
+  // the stream at all -- registering a type that declares a Shreddable fails on a store with none
+  PostgresEventStorage.newBuilder().shredding(ShreddingCodec.withholdingAll()).buildStore();
+
+  // a service that reads names and never addresses: an in-process policy on the category
+  PostgresEventStorage.newBuilder().shredding(AesGcmShreddingCodec.over(keyStore).restrictedTo(Set.of("identity"))).buildStore();
+
+  // the hard boundary: a key store that refuses keys this role is not granted
+  KeyResolution resolveKey ( KeyId key ) { ... return new KeyResolution.Denied("vault: 403"); }
+  ```
+  `restrictedTo` decides on the category the envelope carries in the clear, before any key lookup, so a
+  denied category costs no key-store traffic. It is symmetric — the codec seals nothing outside its
+  categories either, and such an append fails as an `EventSerializationException` with nothing stored —
+  and it passes erasure and audit through whole, because an erasure that silently left another category
+  readable while reporting success is the worst outcome an erasure can have. It is a data-minimisation
+  boundary a deployment declares for itself, not a security boundary: the process still holds the codec.
+  The security boundary is the key store's refusal — a KMS policy per service role, or on Postgres a
+  role granted every column of `shredding_keys` *except* `key_material`, which `PostgresShreddingKeyStore`
+  recognises by SQLSTATE 42501 and reports as `Denied` (cached for the key ttl). Row-level security on
+  that table does **not** produce a denial: a hidden row reads as erased. The two compose.
+- **The unit of access is the unit of encryption: the `Shreddable` value, partitioned by `category`.**
+  "Name but not address" is two wrapped values under two categories, chosen when the event is written,
+  not one `Shreddable<ContactDetails>` holding both. Nothing inside one sealed value can be handed out on
+  its own — the alternative, decrypting and blanking fields, leaves the plaintext in the reader's memory
+  and needs the annotation-plus-split design already rejected above. A category is forward-only: a
+  value sealed under `default` cannot be re-categorised without re-sealing, which means rewriting the
+  event. Each category is one more key row per subject and one more `keyFor` query per append that
+  carries it, so a handful per subject is the intended scale, not one per field.
+- **A withheld reader still sees the pseudonymous subject id, the category, and the `dek:` tags.** That
+  is unchanged and by design, and it is why the rule that subject ids and tags must not themselves be
+  personal data is load-bearing for the PII-less reader.
+
 **A component that was a plain field when its events were written cannot be read as a `Shreddable`.**
 The stored value is bare, so nothing can say whose data it is, and the read fails with a message saying
 to migrate the events via `EventStoreImporter.transform` or to read the old shape through a
@@ -1065,8 +1124,13 @@ to migrate the events via `EventStoreImporter.transform` or to read the old shap
 `ShreddableEventDataTest` in the TCK pins all of this per backend, against *that backend's* key store:
 the two-subject erasure, the collection case, a record whose constructor rejects nulls surviving erasure,
 category independence, idempotent erasure and a fresh key afterwards, the `dek:` tags, the audit view
-(including, reflectively, that `KeyRecord` cannot carry key material), and — load-bearing — that an
-unreachable key store throws instead of reporting the data as erased.
+(including, reflectively, that `KeyRecord` cannot carry key material), that an unreachable key store
+throws instead of reporting the data as erased — and, for entitlement, that a withholding codec reads the
+typed events with every value withheld, that a restricted codec reads its categories and withholds the
+rest without a key lookup, seals nothing outside them and erases everything, that a withheld value says
+nothing about erasure, that a key store's `Denied` reads as withheld and a projector advances over it,
+and that a withheld value cannot be appended again. `ReaderEntitlementTest` in the api module pins the
+seams below the store.
 
 ## Testing
 

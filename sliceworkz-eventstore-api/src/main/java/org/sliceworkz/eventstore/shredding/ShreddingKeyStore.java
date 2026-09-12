@@ -38,6 +38,10 @@ import javax.crypto.SecretKey;
  *       appended after an erasure is readable again — the old ciphertext stays unreadable.</li>
  *   <li><b>{@link #resolve} answers empty only for a destroyed key.</b> See below; this is the one
  *       contract that must not be got wrong.</li>
+ *   <li><b>{@link #resolveKey} is the same lookup with a third answer</b>, {@link KeyResolution.Denied}:
+ *       the key exists and this caller may not have it. Its default derives the other two answers from
+ *       {@link #resolve}, so a store written before it existed keeps working; a store that can tell a
+ *       refusal from an outage overrides it, see below.</li>
  *   <li><b>{@link #shred} is idempotent</b> and returns what it actually destroyed, so a second erasure
  *       for the same subject reports an empty list rather than failing.</li>
  *   <li><b>Key material is never resurrected.</b> Destroying a key means the bytes are gone; keep the
@@ -57,6 +61,25 @@ import javax.crypto.SecretKey;
  * an exception, the read fails loudly, the bookmark does not move, and the projection recovers by
  * itself once the key store is back.
  *
+ * <h2>Denied is a third answer, and it is not an outage either</h2>
+ * A key store fronting a KMS or a database with per-role privileges will meet a caller that is not
+ * entitled to a key: a 403 from Vault, {@code insufficient_privilege} from PostgreSQL. That is neither an
+ * erasure nor a failure. Reported as empty, the value reads as {@link Shreddable.Shredded} and a
+ * projection renders "erased" for data that is not. Reported as a {@link ShreddingException}, it means
+ * "retry later", and a projector that is simply not entitled fails its batch and never advances. So
+ * {@link #resolveKey} has {@link KeyResolution.Denied} for it, which the read path turns into
+ * {@link Shreddable.Withheld}: the reader sees whose data it is not shown and carries on.
+ * <p>
+ * The three answers are a sealed type rather than an exception hierarchy so that an implementation has
+ * to name which one it means, and so that a {@code catch (ShreddingException)} retry loop cannot swallow
+ * a refusal by accident. {@link #resolve} keeps its two-answer contract and is what older codecs call;
+ * a store that overrides {@link #resolveKey} should make {@link #resolve} throw for a denial, since a
+ * caller of the old method cannot represent one.
+ * <p>
+ * This is where the <em>hard</em> boundary lives. A key store's refusal is enforced by whatever holds
+ * the keys — a KMS policy per service role, column privileges on the key table — and cannot be argued
+ * with from inside the JVM. The in-process alternative, {@link ShreddingCodec#restrictedTo(java.util.Set)},
+ * is a data-minimisation boundary a deployment declares for itself; the two compose.
  * <h2>Ordering, when the key store is not transactional with the events</h2>
  * The default key stores that ship with a SQL backend write keys on the same {@code DataSource} as the
  * events, so a key mint and the append that needs it commit together. An external key store cannot do
@@ -107,6 +130,23 @@ public interface ShreddingKeyStore extends AutoCloseable {
 	Optional<SecretKey> resolve ( KeyId key );
 
 	/**
+	 * The key material for a key id, or why this caller does not get it.
+	 * <p>
+	 * The read path calls this, not {@link #resolve}. The default answers {@link KeyResolution.Resolved}
+	 * or {@link KeyResolution.Erased} from {@link #resolve} and never {@link KeyResolution.Denied}, so a
+	 * store that has no notion of entitlement need not override it. One that has — a KMS, a database role
+	 * without the privilege — overrides this to return {@code Denied} for a refusal, and keeps throwing
+	 * {@link ShreddingException} for everything that a retry might fix.
+	 *
+	 * @param key the key id taken from a sealed envelope
+	 * @return the key, or why it is not available: destroyed, or not for this caller
+	 * @throws ShreddingException if the key store cannot be reached — never for a destroyed or denied key
+	 */
+	default KeyResolution resolveKey ( KeyId key ) {
+		return resolve(key).<KeyResolution>map(KeyResolution.Resolved::new).orElse(KeyResolution.Erased.INSTANCE);
+	}
+
+	/**
 	 * Destroys every key held for a subject, recording why.
 	 *
 	 * @param subject whose keys to destroy
@@ -138,6 +178,67 @@ public interface ShreddingKeyStore extends AutoCloseable {
 	@Override
 	default void close ( ) {
 		// nothing to release by default
+	}
+
+	/**
+	 * The three answers a key lookup can have.
+	 * <p>
+	 * A sealed type rather than an {@code Optional} plus an exception, so that an implementation names
+	 * which one it means and a caller has to handle all three. The difference between them is the most
+	 * important contract in this subsystem: {@link Erased} is the mechanism working, {@link Denied} is a
+	 * reader that is not entitled, and an outage is neither — that one throws.
+	 *
+	 * @see ShreddingKeyStore#resolveKey(KeyId)
+	 */
+	sealed interface KeyResolution permits KeyResolution.Resolved, KeyResolution.Erased, KeyResolution.Denied {
+
+		/**
+		 * The key exists and this caller may use it.
+		 *
+		 * @param key the key material
+		 */
+		record Resolved ( SecretKey key ) implements KeyResolution {
+
+			/**
+			 * @throws IllegalArgumentException if the key is null
+			 */
+			public Resolved {
+				if ( key == null ) {
+					throw new IllegalArgumentException("Resolved key must not be null; use Erased for a destroyed key");
+				}
+			}
+
+		}
+
+		/**
+		 * The key has been destroyed, or never existed. The value sealed under it is gone for everyone.
+		 */
+		record Erased ( ) implements KeyResolution {
+
+			/**
+			 * The one instance; a record with no components has nothing to distinguish two.
+			 */
+			public static final Erased INSTANCE = new Erased();
+
+		}
+
+		/**
+		 * The key exists, and this caller is not entitled to it. The value reads as
+		 * {@link Shreddable.Withheld}.
+		 *
+		 * @param reason what refused it, for a log line; never key material, and never personal data
+		 */
+		record Denied ( String reason ) implements KeyResolution {
+
+			/**
+			 * Normalises a null reason to an empty string.
+			 */
+			public Denied {
+				reason = reason == null ? "" : reason;
+			}
+
+		}
+
 	}
 
 	/**

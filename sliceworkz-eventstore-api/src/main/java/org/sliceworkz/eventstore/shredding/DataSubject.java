@@ -33,14 +33,24 @@ package org.sliceworkz.eventstore.shredding;
  * This is the same discipline the library already asks for when tagging events: {@code Tag.of("customer",
  * customerId)} is safe to store and index precisely because {@code customerId} is pseudonymous.
  *
- * <h2>Category: what one erasure erases</h2>
+ * <h2>Category: the unit of erasure, and the unit of access</h2>
  * Keys are held per {@code (type, id, category)}, not per subject, so a subject's data can be erased
  * in parts. "Erase marketing data, retain financial records for the statutory period" is an ordinary
  * request, and a single key per subject makes it impossible to honour: shredding would take the
  * financial history with it.
  * <p>
+ * The same partition is what a reader can be given or refused. A category is written in the clear on
+ * every sealed envelope, so a codec can decide on it before looking up any key
+ * ({@link ShreddingCodec#restrictedTo(java.util.Set)}), and a key store that holds keys per category
+ * can refuse them per role ({@link ShreddingKeyStore.KeyResolution.Denied}). "This service reads names
+ * and never addresses" is therefore a modelling decision made when the event is written: the name and
+ * the address are two {@link Shreddable} values under two categories, not one value holding both.
+ * Nothing finer than a value is addressable — the value is what is encrypted — and a category chosen at
+ * write time cannot be changed afterwards without re-sealing, which would mean rewriting the event.
+ * <p>
  * Most events need only {@link #DEFAULT_CATEGORY}, which {@link #of(String, String)} applies. Reach for
- * a category when parts of a subject's data are governed by different retention rules:
+ * a category when parts of a subject's data are governed by different retention rules, or read by
+ * different systems:
  * <pre>{@code
  * DataSubject marketing = DataSubject.of("customer", "alice-42").withCategory("marketing");
  * DataSubject financial = DataSubject.of("customer", "alice-42").withCategory("financial");
@@ -48,6 +58,8 @@ package org.sliceworkz.eventstore.shredding;
  * // erases the marketing data only; the financial history keeps decrypting
  * eventStore.erase(marketing, ErasureReason.of("GDPR art.17 request #4711"));
  * }</pre>
+ * Each category a subject uses is one more key row and, on append, one more key lookup per event that
+ * carries it — a handful per subject is the intended scale, not one per field.
  *
  * <h2>Examples</h2>
  * <pre>{@code
@@ -66,6 +78,7 @@ package org.sliceworkz.eventstore.shredding;
  *
  * @see Shreddable
  * @see ShreddingKeyStore
+ * @see ShreddingCodec#restrictedTo(java.util.Set)
  * @see org.sliceworkz.eventstore.EventStore#erase(DataSubject, ErasureReason)
  */
 public record DataSubject ( String type, String id, String category ) {

@@ -112,7 +112,7 @@ import java.util.function.Supplier;
  * @see ShreddingCodec
  * @see org.sliceworkz.eventstore.EventStore#erase(DataSubject, ErasureReason)
  */
-public sealed interface Shreddable<T> permits Shreddable.Present, Shreddable.Shredded {
+public sealed interface Shreddable<T> permits Shreddable.Present, Shreddable.Shredded, Shreddable.Withheld {
 
 	/**
 	 * Whose data this is. Available whether or not the value is still readable — a shredded value still
@@ -129,21 +129,26 @@ public sealed interface Shreddable<T> permits Shreddable.Present, Shreddable.Shr
 	boolean isShredded ( );
 
 	/**
-	 * @return true if the value is still readable
+	 * @return true if this reader is not entitled to the value; whether it still exists is not known here
+	 */
+	boolean isWithheld ( );
+
+	/**
+	 * @return true if the value is readable by this reader — neither shredded nor withheld
 	 */
 	default boolean isPresent ( ) {
-		return !isShredded();
+		return !isShredded() && !isWithheld();
 	}
 
 	/**
-	 * The value if it is still readable, empty if it has been shredded.
+	 * The value if this reader can read it, empty if it has been shredded or withheld.
 	 *
 	 * @return the value as an {@link Optional}
 	 */
 	Optional<T> toOptional ( );
 
 	/**
-	 * Applies a function to the value if it is still readable, keeping the subject and key otherwise.
+	 * Applies a function to the value if this reader can read it, keeping the subject and key otherwise.
 	 * <p>
 	 * The usual way to read one field out of a protected value:
 	 * <pre>{@code
@@ -157,13 +162,13 @@ public sealed interface Shreddable<T> permits Shreddable.Present, Shreddable.Shr
 	<R> Shreddable<R> map ( Function<? super T, ? extends R> fn );
 
 	/**
-	 * @param fallback what to return when the value has been shredded; may be null
+	 * @param fallback what to return when the value has been shredded or withheld; may be null
 	 * @return the value, or the fallback
 	 */
 	T orElse ( T fallback );
 
 	/**
-	 * @param supplier produces the replacement when the value has been shredded
+	 * @param supplier produces the replacement when the value has been shredded or withheld
 	 * @return the value, or the supplied replacement
 	 */
 	T orElseGet ( Supplier<? extends T> supplier );
@@ -209,6 +214,11 @@ public sealed interface Shreddable<T> permits Shreddable.Present, Shreddable.Shr
 
 		@Override
 		public boolean isShredded ( ) {
+			return false;
+		}
+
+		@Override
+		public boolean isWithheld ( ) {
 			return false;
 		}
 
@@ -266,6 +276,11 @@ public sealed interface Shreddable<T> permits Shreddable.Present, Shreddable.Shr
 		}
 
 		@Override
+		public boolean isWithheld ( ) {
+			return false;
+		}
+
+		@Override
 		public Optional<T> toOptional ( ) {
 			return Optional.empty();
 		}
@@ -274,6 +289,69 @@ public sealed interface Shreddable<T> permits Shreddable.Present, Shreddable.Shr
 		@Override
 		public <R> Shreddable<R> map ( Function<? super T, ? extends R> fn ) {
 			// nothing to map -- a Shredded holds no value, so the same instance serves every element type
+			return (Shreddable<R>) this;
+		}
+
+		@Override
+		public T orElse ( T fallback ) {
+			return fallback;
+		}
+
+		@Override
+		public T orElseGet ( Supplier<? extends T> supplier ) {
+			return supplier.get();
+		}
+
+	}
+
+	/**
+	 * A value this reader is not entitled to. The ciphertext is in the event and the key may well still
+	 * exist; the codec or key store this reader goes through declined to unseal it.
+	 * <p>
+	 * The subject and key id are kept, as on {@link Shredded}, so a projection can still say whose data it
+	 * is not showing. Nothing here says whether the value has been erased: a reader that may not decrypt
+	 * it is not told, and the {@link ShreddingAudit} remains the account of erasures.
+	 * <p>
+	 * Cannot be appended, for the same reason a {@link Shredded} cannot: there is no plaintext to seal, and
+	 * a placeholder would be indistinguishable from real data on a later, entitled read.
+	 *
+	 * @param <T>     the type the value has
+	 * @param subject whose data it is
+	 * @param key     the key it is sealed under
+	 */
+	record Withheld<T> ( DataSubject subject, KeyId key ) implements Shreddable<T> {
+
+		/**
+		 * @throws IllegalArgumentException if the subject or the key is null
+		 */
+		public Withheld {
+			if ( subject == null ) {
+				throw new IllegalArgumentException("Shreddable subject must not be null");
+			}
+			if ( key == null ) {
+				throw new IllegalArgumentException("Withheld key must not be null");
+			}
+		}
+
+		@Override
+		public boolean isShredded ( ) {
+			return false;
+		}
+
+		@Override
+		public boolean isWithheld ( ) {
+			return true;
+		}
+
+		@Override
+		public Optional<T> toOptional ( ) {
+			return Optional.empty();
+		}
+
+		@SuppressWarnings("unchecked")
+		@Override
+		public <R> Shreddable<R> map ( Function<? super T, ? extends R> fn ) {
+			// nothing to map -- a Withheld holds no value, so the same instance serves every element type
 			return (Shreddable<R>) this;
 		}
 

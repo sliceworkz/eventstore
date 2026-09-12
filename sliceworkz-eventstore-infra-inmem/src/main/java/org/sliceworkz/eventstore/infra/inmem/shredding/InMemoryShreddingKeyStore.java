@@ -196,8 +196,42 @@ public class InMemoryShreddingKeyStore implements ShreddingKeyStore {
 			}
 		}
 
+		@Override
+		public List<CategoryTotals> categories ( ) {
+			synchronized ( InMemoryShreddingKeyStore.this ) {
+				// insertion order of first sight, then re-sorted as the contract says: most live
+				// subjects first, category name as the tie-breaker
+				Map<String, long[]> counts = new LinkedHashMap<>();
+				Map<String, java.util.Set<String>> liveSubjects = new java.util.HashMap<>();
+				for ( StoredKey stored : keys.values() ) {
+					String category = stored.subject().category();
+					long[] count = counts.computeIfAbsent(category, c -> new long[2]);
+					if ( stored.isShredded() ) {
+						count[1]++;
+					} else {
+						count[0]++;
+						liveSubjects.computeIfAbsent(category, c -> new java.util.HashSet<>())
+								.add(stored.subject().type() + "/" + stored.subject().id());
+					}
+				}
+				List<CategoryTotals> categories = new ArrayList<>();
+				counts.forEach(( category, count ) -> categories.add(new CategoryTotals(
+						category,
+						liveSubjects.getOrDefault(category, java.util.Set.of()).size(),
+						count[0],
+						count[1])));
+				categories.sort(java.util.Comparator
+						.comparingLong(CategoryTotals::subjectsWithLiveKeys).reversed()
+						.thenComparing(CategoryTotals::category));
+				return List.copyOf(categories);
+			}
+		}
+
 		private boolean matches ( StoredKey stored, KeyAuditQuery query ) {
 			if ( query.shreddedOnly() && !stored.isShredded() ) {
+				return false;
+			}
+			if ( query.keys() != null && !query.keys().contains(stored.id()) ) {
 				return false;
 			}
 			DataSubject subject = stored.subject();

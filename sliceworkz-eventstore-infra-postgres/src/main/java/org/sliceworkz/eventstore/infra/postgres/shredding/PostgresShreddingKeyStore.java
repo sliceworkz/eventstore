@@ -413,9 +413,14 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 					 WHERE 1 = 1
 					""".formatted(tableName));
 
+			// Every predicate here is on a column the reporting role is granted. "Shredded" is judged on
+			// shredded_at, never on key_material IS NULL: PostgreSQL checks SELECT privilege on every
+			// column a statement references, a WHERE or FILTER clause included, so a predicate on
+			// key_material would fail the whole audit for the role the README recommends -- the one
+			// granted every column but that one. The two are always stamped together by shred().
 			List<String> parameters = new ArrayList<>();
 			if ( query.shreddedOnly() ) {
-				sql.append(" AND key_material IS NULL");
+				sql.append(" AND shredded_at IS NOT NULL");
 			}
 			if ( query.subjectType() != null ) {
 				sql.append(" AND subject_type = ?");
@@ -429,6 +434,10 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 				sql.append(" AND subject_category = ?");
 				parameters.add(query.category());
 			}
+			if ( query.keys() != null ) {
+				// a primary-key lookup, however many keys a page of events carries
+				sql.append(" AND key_id = ANY(?)");
+			}
 			// key_id breaks the tie so that paging is stable when several keys share a creation instant,
 			// which two subjects minted inside one append genuinely do.
 			sql.append(" ORDER BY created_at DESC, key_id DESC LIMIT ?");
@@ -439,6 +448,10 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 				int index = 1;
 				for ( String parameter : parameters ) {
 					statement.setString(index++, parameter);
+				}
+				if ( query.keys() != null ) {
+					String[] keyIds = query.keys().stream().map(KeyId::value).toArray(String[]::new);
+					statement.setArray(index++, connection.createArrayOf("text", keyIds));
 				}
 				statement.setInt(index, query.limit());
 
@@ -460,11 +473,13 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 			// One pass over the table rather than three: the counts are always reported together, and the
 			// live-subject count has to see the same snapshot as the key counts or the summary contradicts
 			// itself while an erasure is running.
+			// Live is judged on shredded_at, not on key_material: see keys() for why the audit must not
+			// reference that column at all.
 			String sql = """
-					SELECT count(*) FILTER (WHERE key_material IS NOT NULL) AS live_keys,
-					       count(*) FILTER (WHERE key_material IS NULL) AS shredded_keys,
+					SELECT count(*) FILTER (WHERE shredded_at IS NULL) AS live_keys,
+					       count(*) FILTER (WHERE shredded_at IS NOT NULL) AS shredded_keys,
 					       count(DISTINCT (subject_type, subject_id, subject_category))
-					           FILTER (WHERE key_material IS NOT NULL) AS live_subjects
+					           FILTER (WHERE shredded_at IS NULL) AS live_subjects
 					  FROM %s
 					""".formatted(tableName);
 
@@ -482,6 +497,40 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 
 			} catch (SQLException e) {
 				throw new ShreddingException("failed to summarise the shredding keys in %s".formatted(tableName), e);
+			}
+		}
+
+		@Override
+		public List<CategoryTotals> categories ( ) {
+			// The same pass as totals(), grouped. One row per subject per category makes this a scan of
+			// the key table, which totals() already is; a store for which that is too slow has more
+			// categories than anyone can read off a screen anyway.
+			String sql = """
+					SELECT subject_category,
+					       count(*) FILTER (WHERE shredded_at IS NULL) AS live_keys,
+					       count(*) FILTER (WHERE shredded_at IS NOT NULL) AS shredded_keys,
+					       count(DISTINCT (subject_type, subject_id)) FILTER (WHERE shredded_at IS NULL) AS live_subjects
+					  FROM %s
+					 GROUP BY subject_category
+					 ORDER BY live_subjects DESC, subject_category ASC
+					""".formatted(tableName);
+
+			try ( Connection connection = dataSource.getConnection();
+					PreparedStatement statement = connection.prepareStatement(sql);
+					ResultSet resultSet = statement.executeQuery() ) {
+
+				List<CategoryTotals> categories = new ArrayList<>();
+				while ( resultSet.next() ) {
+					categories.add(new CategoryTotals(
+							resultSet.getString("subject_category"),
+							resultSet.getLong("live_subjects"),
+							resultSet.getLong("live_keys"),
+							resultSet.getLong("shredded_keys")));
+				}
+				return List.copyOf(categories);
+
+			} catch (SQLException e) {
+				throw new ShreddingException("failed to summarise the shredding keys in %s by category".formatted(tableName), e);
 			}
 		}
 

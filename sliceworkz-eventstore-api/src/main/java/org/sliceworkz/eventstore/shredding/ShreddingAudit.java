@@ -52,6 +52,10 @@ import java.util.Optional;
  * }
  * }</pre>
  *
+ * The other direction is answered here: an event carries its keys, and {@link KeyAuditQuery#forKeys}
+ * says whether those keys still exist, so a reader holding an event can tell "protected" from "erased"
+ * without a key of its own.
+ *
  * @see ShreddingKeyStore#audit()
  * @see KeyId#TAG_KEY
  */
@@ -77,6 +81,36 @@ public interface ShreddingAudit {
 	 * @throws ShreddingException if the key store cannot be reached
 	 */
 	ShreddingTotals totals ( );
+
+	/**
+	 * The same totals, broken down by {@link DataSubject#category() category}: which categories of
+	 * personal data this store holds at all, and how much sits under each.
+	 * <p>
+	 * A category is the unit of erasure and the unit of access — what {@code EventStore.erase} takes
+	 * and what a reader is granted through {@code ShreddingCodec.restrictedTo} — and nothing but the
+	 * key store knows which categories exist: they are chosen by whoever writes an event, and the
+	 * events carry them only inside sealed envelopes. So this is the inventory an operator reads before
+	 * deciding which categories each service may open, and the only way to learn a category name
+	 * without already knowing it. Computing it from {@link #keys} instead is wrong on any store that
+	 * holds more keys than the query's limit.
+	 * <p>
+	 * A category with no keys left at all cannot appear: erasure keeps the row, so a category every
+	 * key of which has been destroyed is reported with zero live keys rather than dropped.
+	 *
+	 * <p>
+	 * The shipped key stores all answer it. The default throws, as the optional SPI methods on
+	 * {@code EventStorage} do, so an audit written before it existed keeps compiling and a caller
+	 * learns that it cannot answer rather than reading an empty inventory as "no personal data here".
+	 *
+	 * @return one entry per category that holds or has held a key, most live subjects first, then by
+	 *         category name; never null
+	 * @throws ShreddingException if the key store cannot be reached
+	 * @throws UnsupportedOperationException if this audit cannot break its totals down by category
+	 */
+	default List<CategoryTotals> categories ( ) {
+		throw new UnsupportedOperationException(
+				"this ShreddingAudit (%s) does not report totals per category".formatted(getClass().getName()));
+	}
 
 	/**
 	 * One key, as far as anything that must not decrypt is allowed to see it.
@@ -137,5 +171,36 @@ public interface ShreddingAudit {
 	 * @param shreddedKeys         keys whose material has been destroyed
 	 */
 	record ShreddingTotals ( long subjectsWithLiveKeys, long liveKeys, long shreddedKeys ) { }
+
+	/**
+	 * The {@link ShreddingTotals} of one category.
+	 * <p>
+	 * Subjects are counted per {@code (type, id)} within the category, so a subject holding data in two
+	 * categories counts once in each — which is what "how many people's marketing data do we hold" asks.
+	 *
+	 * @param category             the {@link DataSubject#category() category}
+	 * @param subjectsWithLiveKeys distinct data subjects holding at least one key that still exists in it
+	 * @param liveKeys             keys in it that still exist
+	 * @param shreddedKeys         keys in it whose material has been destroyed
+	 */
+	record CategoryTotals ( String category, long subjectsWithLiveKeys, long liveKeys, long shreddedKeys ) {
+
+		/**
+		 * @throws IllegalArgumentException if the category is null or blank
+		 */
+		public CategoryTotals {
+			if ( category == null || category.isBlank() ) {
+				throw new IllegalArgumentException("CategoryTotals category must not be null or blank");
+			}
+		}
+
+		/**
+		 * @return the totals without the category, for a caller summing or comparing them
+		 */
+		public ShreddingTotals totals ( ) {
+			return new ShreddingTotals(subjectsWithLiveKeys, liveKeys, shreddedKeys);
+		}
+
+	}
 
 }

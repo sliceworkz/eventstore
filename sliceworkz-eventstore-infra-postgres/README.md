@@ -85,7 +85,16 @@ GRANT SELECT (key_id, subject_type, subject_id, subject_category, created_at, sh
 
 Resolving a key under that role fails with `insufficient_privilege`, which the key store reports as a
 denial rather than an outage: every protected value reads as `Shreddable.Withheld`, projections
-advance, and the audit still works since it never selects `key_material`. This is the database-enforced
+advance, and the audit still works. That last part rests on a detail of PostgreSQL worth knowing when
+writing anything else against this table: `SELECT` privilege is checked on *every* column a statement
+references, in a `WHERE` or `FILTER` clause as much as in the select list. The audit therefore never
+mentions `key_material` at all and judges "shredded" by `shredded_at`, which an erasure stamps in the
+same statement; a predicate on `key_material IS NULL` would fail the whole audit for exactly this role.
+`PostgresShreddingReportingRoleTest` pins both halves — every key denied, every audit statement
+answered — per supported version. One consequence for how such a role *starts* its store: the
+`information_schema` shows a role only the columns it has a privilege on, so schema validation would
+report `key_material` as missing. A store opened by the reporting role therefore uses
+`DatabaseInitMode.NONE`, which is the production recommendation anyway. This is the database-enforced
 boundary, and it is all-or-nothing per role. Per-category entitlement — a service that reads names
 and never addresses — is declared on the codec with `ShreddingCodec.restrictedTo(...)`, which decides
 on the category in the envelope and never reaches the table for a denied one. Row-level security on

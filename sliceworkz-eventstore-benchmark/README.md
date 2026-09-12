@@ -203,8 +203,8 @@ cluster stalls this store's reads outright, through `pg_snapshot_xmin`.
 machine and weak as a published number, because it is a container running stock defaults.
 
 `EXTERNAL` reaches a server configured outside the suite through `db.properties`, which the
-`DataSourceFactory` looks for in the working directory and up to two parents (or at
-`-Deventstore.db.config=<path>`). Published numbers come from there, because the settings that decide
+`DataSourceFactory` looks for in the working directory (the module directory, when launched as above)
+or at `-Deventstore.db.config=<path>`. Published numbers come from there, because the settings that decide
 them are then deliberate rather than inherited. The database needs the `btree_gin` extension, and
 creating it requires `CREATE` on the **database**, not on the schema — see the postgres module's
 README for the privilege table.

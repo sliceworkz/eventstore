@@ -366,3 +366,19 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   empty property name (a stray `db.pooled.=x` line) is rejected with that explanation rather than
   reaching `charAt(0)`. `HikariConfigurationUtilTest` asserts the value is absent from the whole
   exception chain, not just its top frame
+- **Finding `db.properties`.** Without a `DataSource`, the builder takes `.configuration(Properties | Path)`
+  first, and otherwise `DataSourceFactory.loadProperties()` reads the **first** of: the system property
+  `eventstore.db.config`, the environment variable `EVENTSTORE_DB_CONFIG`, `./db.properties` in the
+  working directory, `db.properties` at the root of the classpath. An explicitly configured path that
+  does not exist fails rather than falling through, and when nothing is found `build()` throws
+  `EventStorageException` naming every location tried. The order follows the convention frameworks
+  have settled on — an external file overrides a packaged one — so a jar can carry a default and a
+  deployment can replace it without rebuilding. The alternative — walking up from the working directory
+  into parent directories — loses because a library reading credentials from wherever the process was
+  started is not something anyone expects: it lets a store pick up another project's file two directories
+  up, or `/db.properties` in a container started from `/app`, with only an INFO line to say so. What that
+  walk would buy, a repo-root file found from a module directory, is a build concern: point
+  `-Deventstore.db.config` at it, or run from the directory that holds it. Several stores in one process
+  are configured per builder through `.configuration(...)`; two stores in one database under different
+  prefixes share one pool through `.dataSource(...)`. `DataSourceFactoryTest` pins the order, the
+  no-fall-through on a configured path, and the failure naming every location

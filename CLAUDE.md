@@ -316,7 +316,12 @@ EventStorage storage = PostgresEventStorage.newBuilder()
     .build();
 ```
 
-PostgreSQL requires a `db.properties` file with connection settings. The DataSourceFactory searches for this file in the current directory and up to 2 parent directories.
+Without a `DataSource`, the builder needs a `db.properties` file with connection settings. It takes
+`.configuration(Properties | Path)` first; otherwise `DataSourceFactory` reads the first of: the system
+property `eventstore.db.config`, the environment variable `EVENTSTORE_DB_CONFIG`, `./db.properties` in
+the working directory, `db.properties` on the classpath. It never walks into parent directories, and
+`build()` throws `EventStorageException` naming every location it tried when nothing is found. See
+"Finding `db.properties`" in `sliceworkz-eventstore-infra-postgres/CLAUDE.md` for the reasoning.
 
 ### Lifecycle: starting a store when the database is not there
 

@@ -44,6 +44,7 @@ import org.sliceworkz.eventstore.shredding.KeyId;
 import org.sliceworkz.eventstore.shredding.ShreddingAudit;
 import org.sliceworkz.eventstore.shredding.ShreddingException;
 import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
+import org.sliceworkz.eventstore.shredding.ShreddingKeyStore.KeyResolution;
 
 /**
  * A {@link ShreddingKeyStore} keeping data encryption keys in a SQL table beside the events.
@@ -89,6 +90,24 @@ import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
  * <h2>Privileges</h2>
  * Needs {@code SELECT}, {@code INSERT} and {@code UPDATE} on the table. It does not need {@code DELETE}:
  * erasure updates a row rather than removing it.
+ * <h2>A role without the privilege reads withheld, not erased</h2>
+ * A reader that must never decrypt anything can be given a role with {@code SELECT} on every column of
+ * the key table except {@code key_material}. Resolving a key then fails with
+ * {@code insufficient_privilege} (SQLSTATE 42501), which {@link #resolveKey} reports as
+ * {@link KeyResolution.Denied}, so the reader sees {@link org.sliceworkz.eventstore.shredding.Shreddable.Withheld}
+ * and its projections advance — rather than an outage to retry forever, which is what any other
+ * {@code SQLException} is. The audit statements never touch that column, so the same role can still
+ * report on erasures. This is the hard boundary the database enforces; it is all-or-nothing per role,
+ * because column privileges are. Per-category entitlement is the codec's
+ * {@link org.sliceworkz.eventstore.shredding.ShreddingCodec#restrictedTo(java.util.Set)}, which
+ * decides on the category in the envelope and never reaches this store for a denied one.
+ * <p>
+ * Row-level security on the key table does <em>not</em> give a denial: a row the policy hides is
+ * indistinguishable from a row that never existed, and reads as erased. Use column privileges for the
+ * hard boundary and the codec restriction for the per-category one.
+ * <p>
+ * A denial is cached for the same ttl as a key, since a role's privileges do not change per value; a
+ * grant made while a process runs is seen once the entry lapses.
  *
  * <h2>Ownership</h2>
  * The {@code DataSource} is never closed by this key store — it belongs to the storage, which closes
@@ -133,11 +152,17 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 	 * The expiry is what bounds an erasure performed by <em>another</em> instance: this one keeps
 	 * decrypting with a key it cached until the entry lapses and the next read finds the row shredded.
 	 */
-	private record CachedKey ( SecretKey key, Instant expiresAt ) {
+	private record CachedKey ( KeyResolution resolution, Instant expiresAt ) {
 		private boolean isLive ( Instant now ) {
 			return now.isBefore(expiresAt);
 		}
 	}
+
+	/**
+	 * PostgreSQL's SQLSTATE for {@code insufficient_privilege}: the one failure that is a reader's
+	 * entitlement rather than an outage.
+	 */
+	private static final String SQLSTATE_INSUFFICIENT_PRIVILEGE = "42501";
 
 	/**
 	 * @param dataSource the storage's data source; never closed by this key store
@@ -245,6 +270,20 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 
 	@Override
 	public Optional<SecretKey> resolve ( KeyId key ) {
+		return switch ( resolveKey(key) ) {
+			case KeyResolution.Resolved resolved -> Optional.of(resolved.key());
+			case KeyResolution.Erased erased -> Optional.empty();
+			// The two-answer method cannot say "denied", and reporting it as erased is the one thing this
+			// subsystem must never do. Nothing in the library calls this method; a caller that does is
+			// told through the exception.
+			case KeyResolution.Denied denied -> throw new ShreddingException(
+					"this role is not entitled to key %s in %s (%s); resolve it through resolveKey, which can say so"
+							.formatted(key, tableName, denied.reason()));
+		};
+	}
+
+	@Override
+	public KeyResolution resolveKey ( KeyId key ) {
 		if ( key == null ) {
 			throw new IllegalArgumentException("key cannot be null");
 		}
@@ -252,7 +291,7 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 		CachedKey cached = cache.get(key);
 		if ( cached != null ) {
 			if ( cached.isLive(Instant.now()) ) {
-				return Optional.of(cached.key());
+				return cached.resolution();
 			}
 			// lapsed rather than wrong: drop it and ask the database, which is where an erasure by
 			// another instance will have been recorded
@@ -270,23 +309,32 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 					// No such key. Reported as "erased" rather than thrown: a key id this store has never
 					// held cannot be produced by a retry either, and the only readings that reach here are
 					// an erasure whose row was pruned, or an envelope from another store.
-					return Optional.empty();
+					return KeyResolution.Erased.INSTANCE;
 				}
 				byte[] material = resultSet.getBytes("key_material");
 				if ( material == null ) {
 					// Shredded. This is the mechanism working, and must never be confused with the
 					// database being unreachable -- which throws, from the catch below.
-					return Optional.empty();
+					return KeyResolution.Erased.INSTANCE;
 				}
-				SecretKey secretKey = new SecretKeySpec(material, KEY_ALGORITHM);
-				cacheKey(key, secretKey);
-				return Optional.of(secretKey);
+				KeyResolution resolved = new KeyResolution.Resolved(new SecretKeySpec(material, KEY_ALGORITHM));
+				cacheResolution(key, resolved);
+				return resolved;
 			}
 
 		} catch (SQLException e) {
-			// Loudly, and never as an empty Optional: reported as erased, a database blip would make
-			// every protected value read as destroyed, and bookmarked projections would write those gaps
-			// into read models and never revisit them.
+			if ( SQLSTATE_INSUFFICIENT_PRIVILEGE.equals(e.getSQLState()) ) {
+				// This role may not read key_material: the database's own entitlement boundary, passed on
+				// as what it is. Recognised by SQLSTATE, never by message text, like every other
+				// server-reported condition in this backend.
+				KeyResolution denied = new KeyResolution.Denied(
+						"role is not granted SELECT on %s.key_material (SQLSTATE %s)".formatted(tableName, e.getSQLState()));
+				cacheResolution(key, denied);
+				return denied;
+			}
+			// Loudly, and never as erased: reported as erased, a database blip would make every
+			// protected value read as destroyed, and bookmarked projections would write those gaps into
+			// read models and never revisit them.
 			throw new ShreddingException("failed to resolve shredding key %s from %s".formatted(key, tableName), e);
 		}
 	}
@@ -455,10 +503,14 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 	}
 
 	private void cacheKey ( KeyId keyId, SecretKey material ) {
+		cacheResolution(keyId, new KeyResolution.Resolved(material));
+	}
+
+	private void cacheResolution ( KeyId keyId, KeyResolution resolution ) {
 		if ( cacheTtl.isZero() ) {
 			return;
 		}
-		cache.put(keyId, new CachedKey(material, Instant.now().plus(cacheTtl)));
+		cache.put(keyId, new CachedKey(resolution, Instant.now().plus(cacheTtl)));
 	}
 
 	private Optional<ActiveKey> selectActiveKey ( Connection connection, DataSubject subject ) throws SQLException {

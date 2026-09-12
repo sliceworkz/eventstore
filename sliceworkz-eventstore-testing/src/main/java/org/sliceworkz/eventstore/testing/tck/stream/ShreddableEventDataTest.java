@@ -26,14 +26,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import javax.crypto.SecretKey;
 
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.Event;
+import org.sliceworkz.eventstore.events.EventSerializationException;
 import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.projection.Projection;
+import org.sliceworkz.eventstore.projection.Projector;
+import org.sliceworkz.eventstore.projection.Projector.ProjectorMetrics;
 import org.sliceworkz.eventstore.query.EventQuery;
+import org.sliceworkz.eventstore.shredding.AesGcmShreddingCodec;
 import org.sliceworkz.eventstore.shredding.DataSubject;
 import org.sliceworkz.eventstore.shredding.ErasureReason;
 import org.sliceworkz.eventstore.shredding.ErasureReport;
@@ -41,8 +47,10 @@ import org.sliceworkz.eventstore.shredding.KeyAuditQuery;
 import org.sliceworkz.eventstore.shredding.KeyId;
 import org.sliceworkz.eventstore.shredding.Shreddable;
 import org.sliceworkz.eventstore.shredding.ShreddingAudit;
+import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.shredding.ShreddingException;
 import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
+import org.sliceworkz.eventstore.shredding.ShreddingKeyStore.KeyResolution;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -357,6 +365,192 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		assertEquals(2, audit(store).keys(KeyAuditQuery.all().withLimit(2)).size());
 	}
 
+	// ---- who may read what: withheld is a third state, decided on the key seams -------------------------
+
+	/**
+	 * A reader with no keys at all still gets the typed events. Without a codec it could not open the
+	 * stream, since registering a type that declares a Shreddable fails; with the withholding codec it
+	 * reads everything that is not personal data and is told, per value, that the rest is withheld.
+	 */
+	@ForEachBackend
+	void aReaderWithNoKeysReadsTheTypedEventsAndEveryProtectedValueIsWithheld ( ) {
+		eventStoreWithShredding().getEventStream(STREAM, PaymentEvent.class)
+				.append(AppendCriteria.none(), Event.of(transfer(), Tags.of("transfer", "t-9001")));
+
+		EventStore reader = eventStoreWithShredding(ShreddingCodec.withholdingAll());
+		EventStream<PaymentEvent> payments = reader.getEventStream(STREAM, PaymentEvent.class);
+
+		Event<PaymentEvent> read = payments.query(EventQuery.matchAll()).findFirst().orElseThrow();
+		TransferMade transfer = (TransferMade) read.data();
+
+		// the non-personal payload is all there
+		assertEquals("t-9001", transfer.transferId());
+		assertEquals(25000, transfer.cents());
+		assertEquals("alice-42", transfer.fromCustomerId());
+		assertTrue(read.tags().tags().contains(Tag.of("transfer", "t-9001")));
+
+		// and the personal data is withheld: not erased, not an error, and still says whose it is
+		Shreddable.Withheld<PartyDetails> from = assertInstanceOf(Shreddable.Withheld.class, transfer.from());
+		assertEquals(ALICE, from.subject());
+		assertNotNull(from.key());
+		assertTrue(transfer.from().isWithheld());
+		assertFalse(transfer.from().isShredded(), "withheld must never read as erased");
+		assertFalse(transfer.from().isPresent());
+		assertEquals(Optional.empty(), transfer.from().toOptional());
+		assertEquals("[withheld]", transfer.from().map(PartyDetails::name).orElse("[withheld]"));
+		assertTrue(transfer.to().isWithheld());
+
+		// it holds no keys, so it can neither seal nor erase, and has nothing to audit
+		assertThrows(EventSerializationException.class,
+				() -> payments.append(AppendCriteria.none(), Event.of(transfer(), Tags.none())));
+		assertThrows(UnsupportedOperationException.class, () -> reader.erase(ALICE, ErasureReason.of("art.17")));
+		assertEquals(Optional.empty(), reader.shreddingAudit());
+	}
+
+	/**
+	 * "Names but not addresses": two categories, and a reader restricted to one of them. The unit of
+	 * access is the Shreddable value, partitioned by the category chosen when the event was written.
+	 */
+	@ForEachBackend
+	void aReaderRestrictedToACategoryReadsThatCategoryAndIsWithheldTheRest ( ) {
+		DataSubject identity = ALICE.withCategory("identity");
+		DataSubject address = ALICE.withCategory("address");
+
+		// one key store, shared by the writer and the restricted reader, as in a deployment
+		CountingKeyStore keyStore = new CountingKeyStore(backend().shreddingKeyStore(eventStorage()));
+		eventStoreWithShredding(keyStore).getEventStream(STREAM, PaymentEvent.class).append(AppendCriteria.none(),
+				Event.of(new ContactRecorded("c-1", Shreddable.of("Alice Martin", identity), Shreddable.of("Rue Haute 1", address)), Tags.none()));
+		keyStore.resolutions.clear();
+
+		EventStream<PaymentEvent> namesOnly = eventStoreWithShredding(AesGcmShreddingCodec.over(keyStore).restrictedTo(Set.of("identity")))
+				.getEventStream(STREAM, PaymentEvent.class);
+
+		ContactRecorded read = (ContactRecorded) namesOnly.query(EventQuery.matchAll()).findFirst().orElseThrow().data();
+		assertEquals("Alice Martin", read.name().orElse(null));
+		Shreddable.Withheld<String> withheld = assertInstanceOf(Shreddable.Withheld.class, read.address());
+		assertEquals(address, withheld.subject());
+
+		// the denied category is decided on the envelope, before any key is looked up
+		assertEquals(Set.of(withheld.key()), keyStore.notAskedFor(), "a withheld category must not cost a key lookup");
+		assertEquals(1, keyStore.resolutions.size(), "exactly the permitted value's key was resolved");
+	}
+
+	/**
+	 * Withheld says nothing about erasure. A reader that may not decrypt a value cannot tell whether
+	 * it has been erased and is not told; a reader that may sees the erasure as before.
+	 */
+	@ForEachBackend
+	void aWithheldValueSaysNothingAboutErasureAndAPermittedOneStillReportsIt ( ) {
+		DataSubject identity = ALICE.withCategory("identity");
+		DataSubject address = ALICE.withCategory("address");
+
+		ShreddingKeyStore keyStore = backend().shreddingKeyStore(eventStorage());
+		EventStore full = eventStoreWithShredding(keyStore);
+		full.getEventStream(STREAM, PaymentEvent.class).append(AppendCriteria.none(),
+				Event.of(new ContactRecorded("c-1", Shreddable.of("Alice Martin", identity), Shreddable.of("Rue Haute 1", address)), Tags.none()));
+
+		full.erase(address, ErasureReason.of("address no longer needed"));
+		full.erase(identity, ErasureReason.of("art.17"));
+
+		ShreddingCodec restricted = AesGcmShreddingCodec.over(keyStore).restrictedTo(Set.of("identity"));
+		ContactRecorded read = (ContactRecorded) eventStoreWithShredding(restricted).getEventStream(STREAM, PaymentEvent.class)
+				.query(EventQuery.matchAll()).findFirst().orElseThrow().data();
+
+		assertTrue(read.address().isWithheld(), "an erased value outside the reader's categories is withheld, not reported erased");
+		assertTrue(read.name().isShredded(), "an erased value inside the reader's categories is reported erased");
+
+		ContactRecorded seenByFull = (ContactRecorded) full.getEventStream(STREAM, PaymentEvent.class)
+				.query(EventQuery.matchAll()).findFirst().orElseThrow().data();
+		assertTrue(seenByFull.address().isShredded());
+	}
+
+	/**
+	 * The restriction is symmetric: a process configured not to handle a category cannot seal it either,
+	 * and the append fails before anything is stored.
+	 */
+	@ForEachBackend
+	void aRestrictedCodecDoesNotSealOutsideItsCategoriesAndStoresNothing ( ) {
+		DataSubject identity = ALICE.withCategory("identity");
+		DataSubject address = ALICE.withCategory("address");
+
+		ShreddingCodec restricted = AesGcmShreddingCodec.over(backend().shreddingKeyStore(eventStorage())).restrictedTo(Set.of("identity"));
+		EventStream<PaymentEvent> namesOnly = eventStoreWithShredding(restricted).getEventStream(STREAM, PaymentEvent.class);
+
+		namesOnly.append(AppendCriteria.none(), Event.of(new StrictlyValidated("ok", Shreddable.of("Alice Martin", identity)), Tags.none()));
+
+		EventSerializationException thrown = assertThrows(EventSerializationException.class, () -> namesOnly.append(AppendCriteria.none(),
+				Event.of(new ContactRecorded("c-1", Shreddable.of("Alice Martin", identity), Shreddable.of("Rue Haute 1", address)), Tags.none())));
+		assertTrue(thrown.getMessage().contains("address"), thrown.getMessage());
+
+		assertEquals(1, namesOnly.query(EventQuery.matchAll()).count(), "a refused append must store nothing");
+	}
+
+	/**
+	 * Erasure is not a read. A restricted codec passes it through whole, because an erasure that
+	 * silently left another category readable while reporting success is the worst outcome an erasure
+	 * can have.
+	 */
+	@ForEachBackend
+	void erasingThroughARestrictedCodecErasesEveryCategory ( ) {
+		DataSubject address = ALICE.withCategory("address");
+		ShreddingKeyStore keyStore = backend().shreddingKeyStore(eventStorage());
+		eventStoreWithShredding(keyStore).getEventStream(STREAM, PaymentEvent.class).append(AppendCriteria.none(),
+				Event.of(new StrictlyValidated("a-1", Shreddable.of("Rue Haute 1", address)), Tags.none()));
+
+		EventStore namesOnly = eventStoreWithShredding(AesGcmShreddingCodec.over(keyStore).restrictedTo(Set.of("identity")));
+		assertEquals(1, namesOnly.erase(address, ErasureReason.of("art.17")).keysShredded());
+
+		StrictlyValidated read = (StrictlyValidated) eventStoreWithShredding(keyStore).getEventStream(STREAM, PaymentEvent.class)
+				.query(EventQuery.matchAll()).findFirst().orElseThrow().data();
+		assertTrue(read.email().isShredded());
+		assertEquals(1, namesOnly.shreddingAudit().orElseThrow().keys(KeyAuditQuery.all().onlyShredded()).size(), "the audit passes through too");
+	}
+
+	/**
+	 * The hard boundary: a key store that refuses a key this caller is not granted. The refusal is
+	 * neither an erasure nor an outage, and a projector that is merely not entitled keeps advancing.
+	 */
+	@ForEachBackend
+	void aKeyStoreThatDeniesAKeyReadsAsWithheldAndAProjectorAdvancesOverIt ( ) {
+		ShreddingKeyStore working = backend().shreddingKeyStore(eventStorage());
+		DenyingKeyStore denying = new DenyingKeyStore(working);
+
+		EventStream<PaymentEvent> writing = eventStoreWithShredding(denying).getEventStream(STREAM, PaymentEvent.class);
+		writing.append(AppendCriteria.none(), List.of(
+				Event.of(transfer(), Tags.none()),
+				Event.of(new StrictlyValidated("v-1", Shreddable.of("alice@example.org", ALICE)), Tags.none())));
+
+		denying.denying = true;
+
+		EventStream<PaymentEvent> reading = eventStoreWithShredding(denying).getEventStream(STREAM, PaymentEvent.class);
+		TransferMade transfer = (TransferMade) reading.query(EventQuery.matchAll()).findFirst().orElseThrow().data();
+		Shreddable.Withheld<PartyDetails> from = assertInstanceOf(Shreddable.Withheld.class, transfer.from());
+		assertEquals(ALICE, from.subject());
+		assertFalse(transfer.from().isShredded());
+
+		CountingProjection projection = new CountingProjection();
+		ProjectorMetrics metrics = Projector.from(reading).towards(projection).build().run();
+		assertEquals(2, projection.handled, "a reader that is not entitled must still project what it is entitled to");
+		assertEquals(2, metrics.eventsHandled());
+		assertEquals(3, projection.withheld, "every protected value came through as withheld");
+	}
+
+	@ForEachBackend
+	void aWithheldValueCannotBeAppendedAgain ( ) {
+		EventStore full = eventStoreWithShredding();
+		full.getEventStream(STREAM, PaymentEvent.class).append(AppendCriteria.none(),
+				Event.of(new StrictlyValidated("v-1", Shreddable.of("alice@example.org", ALICE)), Tags.none()));
+
+		StrictlyValidated withheld = (StrictlyValidated) eventStoreWithShredding(ShreddingCodec.withholdingAll())
+				.getEventStream(STREAM, PaymentEvent.class).query(EventQuery.matchAll()).findFirst().orElseThrow().data();
+		assertTrue(withheld.email().isWithheld(), "fixture");
+
+		// this reader never had the plaintext; a placeholder would read as real data to one that is entitled
+		EventStream<PaymentEvent> entitled = full.getEventStream(STREAM, PaymentEvent.class);
+		assertThrows(EventSerializationException.class, () -> entitled.append(AppendCriteria.none(), Event.of(withheld, Tags.none())));
+		assertEquals(1, entitled.query(EventQuery.matchAll()).count());
+	}
+
 	private ShreddingAudit audit ( EventStore store ) {
 		return store.shreddingAudit().orElseThrow();
 	}
@@ -399,6 +593,121 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		}
 
 	}
+
+	/**
+	 * Records which keys were asked for, so a scenario can assert that a withheld category never reached
+	 * the key store.
+	 */
+	private static final class CountingKeyStore implements ShreddingKeyStore {
+
+		private final ShreddingKeyStore delegate;
+		private final java.util.Set<KeyId> resolutions = new java.util.LinkedHashSet<>();
+		private final java.util.Set<KeyId> minted = new java.util.LinkedHashSet<>();
+
+		private CountingKeyStore ( ShreddingKeyStore delegate ) {
+			this.delegate = delegate;
+		}
+
+		@Override
+		public ActiveKey keyFor ( DataSubject subject ) {
+			ActiveKey key = delegate.keyFor(subject);
+			minted.add(key.id());
+			return key;
+		}
+
+		@Override
+		public Optional<SecretKey> resolve ( KeyId key ) {
+			resolutions.add(key);
+			return delegate.resolve(key);
+		}
+
+		@Override
+		public KeyResolution resolveKey ( KeyId key ) {
+			resolutions.add(key);
+			return delegate.resolveKey(key);
+		}
+
+		@Override
+		public List<KeyId> shred ( DataSubject subject, ErasureReason reason ) {
+			return delegate.shred(subject, reason);
+		}
+
+		/**
+		 * The keys this store knows about that were never resolved through it.
+		 */
+		private java.util.Set<KeyId> notAskedFor ( ) {
+			return delegate.audit().orElseThrow().keys(KeyAuditQuery.all()).stream()
+					.map(ShreddingAudit.KeyRecord::id)
+					.filter(id -> !resolutions.contains(id))
+					.collect(java.util.stream.Collectors.toSet());
+		}
+
+	}
+
+	/**
+	 * Stands in for a key store fronting a KMS or a database role that refuses this caller every key.
+	 */
+	private static final class DenyingKeyStore implements ShreddingKeyStore {
+
+		private final ShreddingKeyStore delegate;
+		private boolean denying;
+
+		private DenyingKeyStore ( ShreddingKeyStore delegate ) {
+			this.delegate = delegate;
+		}
+
+		@Override
+		public ActiveKey keyFor ( DataSubject subject ) {
+			return delegate.keyFor(subject);
+		}
+
+		@Override
+		public Optional<SecretKey> resolve ( KeyId key ) {
+			if ( denying ) {
+				throw new ShreddingException("a caller of the two-answer method cannot be told about a denial");
+			}
+			return delegate.resolve(key);
+		}
+
+		@Override
+		public KeyResolution resolveKey ( KeyId key ) {
+			if ( denying ) {
+				return new KeyResolution.Denied("simulated: this role is not granted key " + key);
+			}
+			return delegate.resolveKey(key);
+		}
+
+		@Override
+		public List<KeyId> shred ( DataSubject subject, ErasureReason reason ) {
+			return delegate.shred(subject, reason);
+		}
+
+	}
+
+	private static final class CountingProjection implements Projection<PaymentEvent> {
+
+		private int handled;
+		private int withheld;
+
+		@Override
+		public EventQuery eventQuery ( ) {
+			return EventQuery.matchAll();
+		}
+
+		@Override
+		public void when ( Event<PaymentEvent> event ) {
+			handled++;
+			switch ( event.data() ) {
+				case TransferMade t -> withheld += (t.from().isWithheld() ? 1 : 0) + (t.to().isWithheld() ? 1 : 0);
+				case StrictlyValidated v -> withheld += v.email().isWithheld() ? 1 : 0;
+				default -> { }
+			}
+		}
+
+	}
+
+	/** A name and an address under two categories, so a reader can be entitled to one and not the other. */
+	public record ContactRecorded ( String contactId, Shreddable<String> name, Shreddable<String> address ) implements PaymentEvent { }
 
 	/** A party to a transfer. Personal data, protected as a whole. */
 	public record PartyDetails ( String name, String iban ) { }

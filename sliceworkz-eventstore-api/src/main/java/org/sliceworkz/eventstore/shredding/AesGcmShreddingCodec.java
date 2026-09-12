@@ -30,6 +30,7 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
 import org.sliceworkz.eventstore.shredding.ShreddingKeyStore.ActiveKey;
+import org.sliceworkz.eventstore.shredding.ShreddingKeyStore.KeyResolution;
 
 /**
  * The shipped {@link ShreddingCodec}: AES-256-GCM over a pluggable {@link ShreddingKeyStore}.
@@ -62,6 +63,12 @@ import org.sliceworkz.eventstore.shredding.ShreddingKeyStore.ActiveKey;
  * failing outright. Tampering surfaces as a {@link ShreddingException}, never as a silently wrong value
  * and never as a spurious "erased".
  *
+ * <h2>A key store's refusal is passed on as withheld</h2>
+ * {@link #open} asks the key store through {@link ShreddingKeyStore#resolveKey}, and a
+ * {@link KeyResolution.Denied} becomes {@link Unsealed.Withheld} — the reader sees whose data it is not
+ * shown and carries on, rather than seeing an erasure that did not happen or an exception that would
+ * stop its projections. An in-process policy on categories is a decorator over this codec,
+ * {@link ShreddingCodec#restrictedTo(java.util.Set)}, and needs no support here.
  * <h2>Caching is the key store's business</h2>
  * This codec resolves a key per sealed value and holds nothing between calls, so erasure takes effect
  * here the instant the key store stops returning the key. Where resolving is expensive — a network call
@@ -160,6 +167,20 @@ public class AesGcmShreddingCodec implements ShreddingCodec {
 
 	@Override
 	public Optional<String> unseal ( Sealed sealed ) {
+		return switch ( open(sealed) ) {
+			case Unsealed.Plaintext plaintext -> Optional.of(plaintext.json());
+			case Unsealed.Erased erased -> Optional.empty();
+			// The two-answer method cannot say "withheld", and reporting it as erased is the one
+			// conflation this subsystem must never make. Nothing in the library calls this method; a
+			// caller that does is told through the exception rather than through a lie.
+			case Unsealed.Withheld withheld -> throw new ShreddingException(
+					"the value for subject %s under key %s is withheld (%s); read it through open(Sealed), which can say so"
+							.formatted(sealed.subject(), sealed.key(), withheld.reason()));
+		};
+	}
+
+	@Override
+	public Unsealed open ( Sealed sealed ) {
 		if ( sealed == null ) {
 			throw new IllegalArgumentException("sealed cannot be null");
 		}
@@ -172,22 +193,27 @@ public class AesGcmShreddingCodec implements ShreddingCodec {
 							.formatted(sealed.alg(), ALGORITHM));
 		}
 
-		Optional<SecretKey> key = keyStore.resolve(sealed.key());
-		if ( key.isEmpty() ) {
+		return switch ( keyStore.resolveKey(sealed.key()) ) {
 			// The key is gone, which is the mechanism working. Never conflate this with a key store that
 			// could not be reached -- that throws, from the key store itself.
-			return Optional.empty();
-		}
+			case KeyResolution.Erased erased -> Unsealed.Erased.INSTANCE;
+			// The key exists and this reader may not have it: the key store's own boundary, passed on as
+			// what it is rather than as an erasure or a retry.
+			case KeyResolution.Denied denied -> new Unsealed.Withheld(denied.reason());
+			case KeyResolution.Resolved resolved -> new Unsealed.Plaintext(decrypt(sealed, resolved.key()));
+		};
+	}
 
+	private static String decrypt ( Sealed sealed, SecretKey key ) {
 		try {
 			byte[] iv = decode(sealed.iv(), "iv", sealed);
 			byte[] ciphertext = decode(sealed.ciphertext(), "ct", sealed);
 
 			Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-			cipher.init(Cipher.DECRYPT_MODE, key.get(), new GCMParameterSpec(TAG_BITS, iv));
+			cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(TAG_BITS, iv));
 			cipher.updateAAD(additionalAuthenticatedData(sealed.key(), sealed.subject()));
 
-			return Optional.of(new String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8));
+			return new String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8);
 
 		} catch (GeneralSecurityException e) {
 			// An authentication failure here means the ciphertext, the iv or the authenticated metadata

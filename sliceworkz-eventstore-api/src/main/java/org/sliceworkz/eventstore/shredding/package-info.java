@@ -66,7 +66,31 @@
  *   <li>{@link org.sliceworkz.eventstore.shredding.ErasureReason} and
  *       {@link org.sliceworkz.eventstore.shredding.ErasureReport} — the audit trail, since the events
  *       themselves record nothing about the erasure</li>
+ *   <li>{@link org.sliceworkz.eventstore.shredding.CategoryRestrictedShreddingCodec} and
+ *       {@link org.sliceworkz.eventstore.shredding.ShreddingCodec#withholdingAll()} — a reader entitled
+ *       to some categories of personal data, or to none</li>
  * </ul>
+ * <h2>Not every reader may read everything</h2>
+ * Access to a protected value is the ability to resolve its key, so who may read what is decided on the
+ * key seams and never in the event store's read path. A reader that is not entitled to a value gets
+ * {@link org.sliceworkz.eventstore.shredding.Shreddable.Withheld}, a third state beside present and
+ * shredded: the value exists, and this reader does not get it. It is neither an erasure — a projection
+ * would render "erased" for data that is not — nor an exception, which would stop a reader that is
+ * merely not entitled from projecting what it is entitled to.
+ * <pre>{@code
+ * // a service that reads names and never addresses: an in-process policy on the category
+ * AesGcmShreddingCodec.over(keyStore).restrictedTo(Set.of("identity"))
+ *
+ * // a reporting service that reads the typed events and none of the personal data in them
+ * ShreddingCodec.withholdingAll()
+ *
+ * // the hard boundary: a key store that refuses keys this role is not granted
+ * KeyResolution resolveKey(KeyId key) { ... return new KeyResolution.Denied("vault: 403"); }
+ * }</pre>
+ * The unit of access is the unit of encryption, the {@code Shreddable} value, partitioned by the
+ * {@link org.sliceworkz.eventstore.shredding.DataSubject#category() category} chosen when the event is
+ * written. "Name but not address" is two wrapped values under two categories, decided at modelling
+ * time; nothing inside one sealed value can be given out on its own.
  *
  * <h2>Two rules that are easy to break</h2>
  * <ul>

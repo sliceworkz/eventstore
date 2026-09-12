@@ -18,6 +18,7 @@
 package org.sliceworkz.eventstore.shredding;
 
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Turns a {@link Shreddable} value into a sealed envelope and back, and destroys the keys that make
@@ -33,6 +34,21 @@ import java.util.Optional;
  * key store that cannot be reached, an expired credential, a timeout, a corrupt envelope or an
  * unsupported algorithm must throw {@link ShreddingException}. See {@link ShreddingKeyStore} for why
  * conflating the two turns a transient outage into permanent, silent loss in every read model.
+ * <h2>Withheld is a third answer, for a reader that is not entitled</h2>
+ * Not every reader of a log may read everything in it. {@link #open} is {@link #unseal} with one more
+ * answer, {@link Unsealed.Withheld}: the value exists and this codec will not unseal it for this reader.
+ * The read path calls {@code open}, and turns that answer into {@link Shreddable.Withheld} — never into
+ * {@link Shreddable.Shredded}, which would render a projection's "erased" for data that is not, and
+ * never into an exception, which would stop a projector that is merely not entitled from advancing over
+ * what it is entitled to.
+ * <p>
+ * Two things produce it. {@link #restrictedTo(Set)} wraps any codec in an in-process policy on the
+ * {@link DataSubject#category() category} an envelope carries in the clear, deciding before any key is
+ * looked up: cheap, explicit in configuration, and the data-minimisation boundary most services need.
+ * It is not a security boundary — the process still holds the codec. That boundary is the key store's
+ * refusal, {@link ShreddingKeyStore.KeyResolution.Denied}, which the shipped codec also reports as
+ * withheld; the two compose. {@link #withholdingAll()} is the degenerate case: a codec with no keys at
+ * all, for a reader that must see the typed events and none of the personal data in them.
  *
  * <h2>Algorithm agility is a requirement, not a nicety</h2>
  * The algorithm is recorded on every envelope rather than assumed globally, so one store can hold
@@ -90,6 +106,77 @@ public interface ShreddingCodec extends AutoCloseable {
 	Optional<String> unseal ( Sealed sealed );
 
 	/**
+	 * Decrypts a sealed envelope, reports that its key is gone, or declines to unseal it for this reader.
+	 * <p>
+	 * The read path calls this rather than {@link #unseal}. The default derives {@link Unsealed.Plaintext}
+	 * and {@link Unsealed.Erased} from {@link #unseal} and never answers {@link Unsealed.Withheld}, so a
+	 * codec written before it existed keeps working. The shipped codec overrides it to pass on a key
+	 * store's {@link ShreddingKeyStore.KeyResolution.Denied}.
+	 *
+	 * @param sealed the envelope read from the event
+	 * @return the value's JSON form, or why it is not available: erased, or withheld from this reader
+	 * @throws ShreddingException if the key store cannot be reached, the algorithm is not supported, or
+	 *                            the envelope is malformed — never for a destroyed or withheld value
+	 */
+	default Unsealed open ( Sealed sealed ) {
+		return unseal(sealed).<Unsealed>map(Unsealed.Plaintext::new).orElse(Unsealed.Erased.INSTANCE);
+	}
+
+	/**
+	 * This codec, unsealing and sealing only the given {@link DataSubject#category() categories}.
+	 * <p>
+	 * A value in any other category reads as {@link Shreddable.Withheld}, decided on the category the
+	 * envelope carries in the clear and before any key is resolved — so a denied category costs no key
+	 * store traffic, and against a KMS no refused call per value. Sealing is restricted the same way, so
+	 * "the categories this process handles" is one statement: an append carrying a value outside them
+	 * fails with {@link ShreddingException}, which the append path reports as an
+	 * {@code EventSerializationException}, before anything is stored.
+	 * <pre>{@code
+	 * // a service entitled to names, never to addresses
+	 * PostgresEventStorage.newBuilder()
+	 *         .shredding(AesGcmShreddingCodec.over(keyStore).restrictedTo(Set.of("identity")))
+	 *         .buildStore();
+	 * }</pre>
+	 * The granularity is the {@link Shreddable} value: the writer decides what is one value under which
+	 * category, and that is what a reader can be given or refused. "Name but not address" means two
+	 * wrapped values under two categories, decided when the event is modelled.
+	 * <p>
+	 * Erasure and audit pass through unchanged. Erasing a subject is not a read, and a process entitled to
+	 * erase is entitled to erase every category — a restricted codec that silently erased only its own
+	 * categories would report success for an erasure it had not performed.
+	 *
+	 * @param categories the categories this codec seals and unseals; must not be null or empty
+	 * @return a codec over this one, withholding everything outside those categories
+	 * @throws IllegalArgumentException if the set is null, empty, or holds a null or blank category
+	 */
+	default ShreddingCodec restrictedTo ( Set<String> categories ) {
+		return new CategoryRestrictedShreddingCodec(this, categories);
+	}
+
+	/**
+	 * A codec that holds no keys and unseals nothing: every protected value reads as
+	 * {@link Shreddable.Withheld}, and nothing can be sealed.
+	 * <p>
+	 * For a reader that needs the typed events and none of the personal data in them — a reporting or
+	 * analytics service projecting amounts and pseudonymous ids. Without a codec such a reader cannot open
+	 * a typed stream at all, since registering an event type that declares a {@code Shreddable} fails on
+	 * a store with none; with this one it opens the same streams and gets withheld values. Raw mode reads
+	 * without keys too, but hands back JSON, without types or upcasting.
+	 * <pre>{@code
+	 * PostgresEventStorage.newBuilder().shredding(ShreddingCodec.withholdingAll()).buildStore();
+	 * }</pre>
+	 * It is an explicit opt-in, on purpose: a store with no codec keeps failing registration, so personal
+	 * data is never quietly unreadable through a missing configuration. Appending a value that needs
+	 * sealing fails with {@link ShreddingException}; erasure throws {@link UnsupportedOperationException},
+	 * since there are no keys here to destroy; the audit is empty.
+	 *
+	 * @return a codec that withholds every protected value
+	 */
+	static ShreddingCodec withholdingAll ( ) {
+		return WithholdingShreddingCodec.INSTANCE;
+	}
+
+	/**
 	 * Destroys every key held for a subject, making all values sealed under them permanently unreadable.
 	 * <p>
 	 * Idempotent: erasing a subject twice reports an empty second run rather than failing.
@@ -120,6 +207,63 @@ public interface ShreddingCodec extends AutoCloseable {
 	@Override
 	default void close ( ) {
 		// nothing to release by default
+	}
+
+	/**
+	 * The three answers {@link #open} can give.
+	 * <p>
+	 * A sealed type so that a caller handles all three, and an implementation names which it means. The
+	 * fourth outcome — the key store is down, the envelope is corrupt, the algorithm is unknown — is not an
+	 * answer but a {@link ShreddingException}.
+	 */
+	sealed interface Unsealed permits Unsealed.Plaintext, Unsealed.Erased, Unsealed.Withheld {
+
+		/**
+		 * The value, decrypted.
+		 *
+		 * @param json the value's JSON form
+		 */
+		record Plaintext ( String json ) implements Unsealed {
+
+			/**
+			 * @throws IllegalArgumentException if the json is null
+			 */
+			public Plaintext {
+				if ( json == null ) {
+					throw new IllegalArgumentException("Plaintext json must not be null; use Erased for a destroyed key");
+				}
+			}
+
+		}
+
+		/**
+		 * The key has been destroyed. The value is gone for everyone.
+		 */
+		record Erased ( ) implements Unsealed {
+
+			/**
+			 * The one instance; a record with no components has nothing to distinguish two.
+			 */
+			public static final Erased INSTANCE = new Erased();
+
+		}
+
+		/**
+		 * This reader is not entitled to the value. Whether it still exists is not said.
+		 *
+		 * @param reason what withheld it, for a log line; never key material, and never personal data
+		 */
+		record Withheld ( String reason ) implements Unsealed {
+
+			/**
+			 * Normalises a null reason to an empty string.
+			 */
+			public Withheld {
+				reason = reason == null ? "" : reason;
+			}
+
+		}
+
 	}
 
 	/**

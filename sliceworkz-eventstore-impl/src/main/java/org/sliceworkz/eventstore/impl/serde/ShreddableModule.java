@@ -18,7 +18,6 @@
 package org.sliceworkz.eventstore.impl.serde;
 
 import java.util.LinkedHashSet;
-import java.util.Optional;
 import java.util.Set;
 
 import org.sliceworkz.eventstore.shredding.DataSubject;
@@ -26,6 +25,7 @@ import org.sliceworkz.eventstore.shredding.KeyId;
 import org.sliceworkz.eventstore.shredding.Shreddable;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec.Sealed;
+import org.sliceworkz.eventstore.shredding.ShreddingCodec.Unsealed;
 import org.sliceworkz.eventstore.shredding.ShreddingException;
 
 import tools.jackson.core.JsonGenerator;
@@ -52,8 +52,11 @@ import tools.jackson.databind.module.SimpleModule;
  *           "iv":  "yQ3mR1…",
  *           "ct":  "8Kd2vRhT…" }
  * }</pre>
- * Reading reverses it, and a key that no longer resolves yields {@link Shreddable.Shredded} rather than
- * a failure.
+ * Reading reverses it. A key that no longer resolves yields {@link Shreddable.Shredded} rather than a
+ * failure, and a value the codec declines to unseal for this reader — a category outside a
+ * {@link ShreddingCodec#restrictedTo(java.util.Set) restricted} codec's, a key the key store refuses this
+ * role — yields {@link Shreddable.Withheld}. Neither is an error: the read completes and the projection
+ * decides how to render the gap.
  * <p>
  * Because this is an ordinary Jackson serializer keyed on the {@code Shreddable} type, it applies
  * wherever one appears — a top-level record component, several levels down a nested record, inside a
@@ -175,19 +178,23 @@ public final class ShreddableModule extends SimpleModule {
 	 * A {@link Shreddable.Shredded} cannot be written: there is no plaintext left to seal, and inventing
 	 * one would replace erased personal data with a placeholder that later reads could not tell from the
 	 * real thing. Re-appending an event whose personal data has been erased is a programming error, and
-	 * it fails here rather than quietly writing a hole.
+	 * it fails here rather than quietly writing a hole. A {@link Shreddable.Withheld} cannot be written
+	 * for the same reason: this reader never had the plaintext, and a placeholder would read as real
+	 * data on a later, entitled read.
 	 */
 	private final class ShreddableSerializer extends ValueSerializer<Shreddable<?>> {
 
 		@Override
 		public void serialize ( Shreddable<?> value, JsonGenerator generator, SerializationContext context ) {
-			if ( value instanceof Shreddable.Shredded<?> shredded ) {
-				throw new IllegalArgumentException(
+			Shreddable.Present<?> present = switch ( value ) {
+				case Shreddable.Present<?> p -> p;
+				case Shreddable.Shredded<?> shredded -> throw new IllegalArgumentException(
 						"cannot append a value whose personal data has already been erased (subject %s, key %s). Reading an event, erasing its subject and appending it again would store a placeholder indistinguishable from real data; build the new event from data you still hold."
 								.formatted(shredded.subject(), shredded.key()));
-			}
-
-			Shreddable.Present<?> present = (Shreddable.Present<?>) value;
+				case Shreddable.Withheld<?> withheld -> throw new IllegalArgumentException(
+						"cannot append a value that was withheld from this reader (subject %s, key %s). This process never held the plaintext, and storing a placeholder would read as real data to a reader that is entitled to it; build the new event from data you hold."
+								.formatted(withheld.subject(), withheld.key()));
+			};
 			String plaintext = mapper().writeValueAsString(present.value());
 			Sealed sealed = codec.seal(plaintext, present.subject());
 			recordSealedKey(sealed.key());
@@ -275,16 +282,17 @@ public final class ShreddableModule extends SimpleModule {
 					node.get(FIELD_IV).asString(),
 					node.get(FIELD_CIPHERTEXT).asString());
 
-			Optional<String> plaintext = codec.unseal(sealed);
-			if ( plaintext.isEmpty() ) {
-				return new Shreddable.Shredded<>(sealed.subject(), sealed.key());
-			}
-
-			if ( valueType == null ) {
-				throw new IllegalStateException(
-						"cannot read a raw Shreddable: declare the component as Shreddable<YourType> so the decrypted value can be parsed");
-			}
-			return new Shreddable.Present<>(mapper().readValue(plaintext.get(), valueType), sealed.subject());
+			return switch ( codec.open(sealed) ) {
+				case Unsealed.Erased erased -> new Shreddable.Shredded<>(sealed.subject(), sealed.key());
+				case Unsealed.Withheld withheld -> new Shreddable.Withheld<>(sealed.subject(), sealed.key());
+				case Unsealed.Plaintext plaintext -> {
+					if ( valueType == null ) {
+						throw new IllegalStateException(
+								"cannot read a raw Shreddable: declare the component as Shreddable<YourType> so the decrypted value can be parsed");
+					}
+					yield new Shreddable.Present<>(mapper().readValue(plaintext.json(), valueType), sealed.subject());
+				}
+			};
 		}
 
 		private DataSubject subjectOf ( JsonNode node ) {

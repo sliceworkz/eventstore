@@ -31,6 +31,7 @@ import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.MeterOptions;
 import org.sliceworkz.eventstore.shredding.AesGcmShreddingCodec;
+import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
 import org.sliceworkz.eventstore.spi.EventStorage;
 
@@ -175,8 +176,20 @@ public abstract class AbstractEventStoreTest {
 	 * @return a store with shredding configured, over {@link #eventStorage()}
 	 */
 	protected EventStore eventStoreWithShredding ( ShreddingKeyStore shreddingKeyStore ) {
-		return EventStoreFactory.get().eventStore(eventStorage(), new SimpleMeterRegistry(), MeterOptions.defaults(),
-				AesGcmShreddingCodec.over(shreddingKeyStore));
+		return eventStoreWithShredding(AesGcmShreddingCodec.over(shreddingKeyStore));
+	}
+
+	/**
+	 * An event store over the same storage, with a codec of your choosing.
+	 * <p>
+	 * For scenarios about what a reader is entitled to: a codec restricted to some categories, or one
+	 * that withholds every protected value.
+	 *
+	 * @param shreddingCodec seals and unseals protected values
+	 * @return a store with shredding configured, over {@link #eventStorage()}
+	 */
+	protected EventStore eventStoreWithShredding ( ShreddingCodec shreddingCodec ) {
+		return EventStoreFactory.get().eventStore(eventStorage(), new SimpleMeterRegistry(), MeterOptions.defaults(), shreddingCodec);
 	}
 
 	/**

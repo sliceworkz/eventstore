@@ -75,6 +75,23 @@ what leaves the erasure an audit trail — the events themselves record nothing 
 lets a key id keep resolving to "erased" rather than to "unknown". Granting `DELETE` here would let
 an erasure be made untraceable.
 
+A role that must read the events but never the personal data in them is granted every column of the
+key table *except* `key_material`:
+
+```sql
+GRANT SELECT (key_id, subject_type, subject_id, subject_category, created_at, shredded_at, shredded_reason)
+    ON <prefix>shredding_keys TO <reporting_role>;
+```
+
+Resolving a key under that role fails with `insufficient_privilege`, which the key store reports as a
+denial rather than an outage: every protected value reads as `Shreddable.Withheld`, projections
+advance, and the audit still works since it never selects `key_material`. This is the database-enforced
+boundary, and it is all-or-nothing per role. Per-category entitlement — a service that reads names
+and never addresses — is declared on the codec with `ShreddingCodec.restrictedTo(...)`, which decides
+on the category in the envelope and never reaches the table for a denied one. Row-level security on
+the key table does *not* produce a denial: a hidden row is indistinguishable from an absent one and
+reads as erased.
+
 ### Migrating a database created before shredding existed
 
 `ENSURE` only ever creates tables, so it adds this one on the next start of an existing database and

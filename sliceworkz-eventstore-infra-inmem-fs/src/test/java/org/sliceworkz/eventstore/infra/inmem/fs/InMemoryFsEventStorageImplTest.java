@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
@@ -40,6 +41,7 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventQuery;
+import org.sliceworkz.eventstore.serialization.json.JsonBookmarkCodec;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorage.ImportMode;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
@@ -181,6 +183,38 @@ public class InMemoryFsEventStorageImplTest {
 			assertEquals(bookmarkRef.position(), loaded.get().position());
 			assertEquals(bookmarkRef.tx(), loaded.get().tx());
 		}
+	}
+
+	/**
+	 * A bookmark file is trusted for the event id it names and nothing else: the reference a reloaded
+	 * store answers is the loaded event's own. That is what keeps a bookmark valid beside a log whose
+	 * positions and transactions have been reassigned (an import preserves ids and reassigns both),
+	 * and it is the same contract the other backends keep — Postgres by joining the events row on every
+	 * read, the in-memory store by resolving at placement. The file here carries the right id under
+	 * coordinates no event has.
+	 */
+	@Test
+	void testBookmarkFileIsResolvedToTheLoadedEventOnLoad ( @TempDir Path tempDir ) throws IOException {
+		EventStreamId streamId = EventStreamId.forContext("orders").withPurpose("default");
+		EventReference real;
+		{
+			EventStorage storage = InMemoryFsEventStorage.newBuilder().directory(tempDir).name("resolve-test").build();
+			EventStore store = EventStoreFactory.get().eventStore(storage);
+			EventStream<TestEvent> stream = store.getEventStream(streamId, TestEvent.class);
+			stream.append(AppendCriteria.none(), List.of(Event.of(new TestEvent.CustomerRegistered("Alice"), Tags.none())));
+			real = stream.query(EventQuery.matchAll()).toList().get(0).reference();
+		}
+
+		EventReference stale = EventReference.of(real.id(), real.position() + 1_000_000, real.tx() + 1_000_000);
+		Files.createDirectories(tempDir.resolve("bookmarks"));
+		Files.writeString(tempDir.resolve("bookmarks/my-projection.json"),
+				new JsonBookmarkCodec().write("my-projection", stale, Tags.parse("k:v"), Instant.parse("2024-01-01T00:00:00Z")));
+
+		EventStorage reloaded = InMemoryFsEventStorage.newBuilder().directory(tempDir).name("resolve-test-2").build();
+		assertEquals(Optional.of(real), reloaded.getBookmark("my-projection"),
+				"the bookmark must resolve to the loaded event's own reference, not the coordinates in the file");
+		assertEquals(Tags.parse("k:v"), reloaded.getBookmarks().get(0).tags(), "the metadata in the file is kept");
+		assertEquals(Instant.parse("2024-01-01T00:00:00Z"), reloaded.getBookmarks().get(0).updatedAt());
 	}
 
 	@Test

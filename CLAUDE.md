@@ -560,19 +560,33 @@ later reference, which is after this one and so still delivered.
   text); the in-memory store checks its log under the same monitor that guards `append`. The contract is
   documented on `EventStorage.bookmark`, and `BookmarksTest` in the TCK pins it per backend, so a backend
   that accepts any reference fails compliance rather than diverging quietly
-- **The check is on the event id alone, matching the foreign key.** The `(tx, position)` pair that
-  cursor comparisons actually order by is not cross-validated — a bookmark carrying a stored id with a
-  wrong position still passes. Keep that in mind before reading the constraint as "the bookmark is
-  valid": it says the event exists, not that the cursor is coherent
+- **A bookmark stores the event id and nothing else about the event; its position and transaction
+  are answered from the event.** On Postgres the bookmarks table has no ordering columns, and
+  `getBookmark`/`getBookmarks` join the events row on the unique `event_id` index (one probe; the
+  bookmark trigger does the same for its notification payload). The in-memory store resolves the
+  reference from its log at placement and again when a persisted bookmark is loaded. So the reference
+  read back — and the one a `BookmarkPlacedNotification` carries — is always the store's own for that
+  event, whatever the caller passed: a bookmark cannot carry a cursor that disagrees with the event it
+  names, and a bookmarks table carried between stores by id (an import preserves ids and reassigns
+  both ordering columns) is valid as it stands. The alternative — storing the caller's `(tx, position)`
+  beside the id — loses because the foreign key never checks that copy, so a bookmark could pass
+  validation with a stored id and a wrong cursor, and because it makes every bookmark meaningless
+  outside the store it was taken from. `BookmarksTest.bookmarkIsResolvedToTheStoresOwnCoordinates`
+  and `bookmarkNotificationCarriesTheStoresOwnCoordinates` pin it per backend. A Postgres database
+  created while the columns existed needs a hand-applied migration — `ALTER TABLE <prefix>bookmarks
+  DROP COLUMN event_position, DROP COLUMN event_tx;` — which `checkDatabase()` reports under `VALIDATE`
+  and `ENSURE`, and the first placement names under `NONE`; see "Migrating the bookmarks table" in the
+  postgres module README
 - **The foreign key deliberately does not cascade.** An absent bookmark means "replay from the
   beginning" — for a dispatcher in the eventmodeling framework, duplicate publishing to an external
   system, the worst outcome it documents. `ON DELETE CASCADE` handed exactly that to the readers least
   able to afford it: an event deletion (retention pruning, surgically removing a poison event) cascades
   away the bookmarks of readers still pointing into the deleted range — the *lagging* ones — silently,
-  with no notification, since the bookmark trigger fires on INSERT/UPDATE only. A dangling cursor is
-  harmless by contrast: reads compare the stored `(event_tx, event_position)` and never join back to the
-  events row. With the default NO ACTION, deleting events out from under an outstanding bookmark fails
-  loudly, and whoever prunes decides explicitly what happens to the reader
+  with no notification, since the bookmark trigger fires on INSERT/UPDATE only. With the default NO
+  ACTION, deleting events out from under an outstanding bookmark fails loudly, and whoever prunes
+  decides explicitly what happens to the reader. The constraint carries the reads too: a bookmark
+  resolves to its event on every read (next bullet), so an event deleted from under one would leave
+  the reader with no position at all — the same "replay from the beginning"
 - **Migration for a database created while the cascade existed**: `ENSURE` only ever creates tables, so
   an existing database keeps its constraint until migrated by hand —
   `ALTER TABLE <prefix>bookmarks DROP CONSTRAINT fk_bookmarks_event_id; ALTER TABLE <prefix>bookmarks
@@ -839,8 +853,9 @@ still raises.
   `.after(...)` picks them up in O(new events).
 - **This is also how a store moves to another cluster.** A logical dump keeps the source's
   transaction ids and cannot be read on a younger cluster (see the PostgreSQL notes); an import lets
-  the target assign its own. Bookmarks do not travel with it — their stored coordinates are the
-  source's — so re-place them by `event_id` on the target, and carry the shredding keys across.
+  the target assign its own. Bookmarks are not part of an import, but since a bookmark stores only the
+  event id and the import preserves ids, the bookmarks table can be copied across as it stands and
+  resolves to the target's coordinates. Carry the shredding keys across too.
 - **One importer at a time per target** — the conflict check and the insert are not under a common lock.
 - **Listeners are notified** exactly as for appends, so a merge into a live store wakes its projections.
   Imported events arrive at new (high) positions carrying old timestamps, so "later position implies later
@@ -1484,7 +1499,7 @@ that bind everywhere:
   append sorts before all of history. `build()` refuses to start such a store (a bounded index walk
   over the stream heads, under every init mode). Physical backups keep the counter and need nothing;
   moving a store between clusters is `EventStoreImporter`'s job, which reassigns both ordering
-  columns — and bookmarks, keys and the `btree_gin` extension have to travel separately. The
+  columns — bookmarks copy across by id, keys and the `btree_gin` extension travel separately. The
   runbook, with the measured breakage and the `pg_resetwal` escape hatch, is "Backup and restore" in
   the postgres module README.
 - **The DCB check's SQL shape is derived from the criteria, not configured.** A criteria carrying an

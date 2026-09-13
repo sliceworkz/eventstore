@@ -176,7 +176,21 @@ public class InMemoryEventStorageImpl implements EventStorage {
 				.build();
 		this.absoluteLimit = absoluteLimit;
 		this.eventlog.addAll(initialEvents);
-		this.bookmarks.putAll(initialBookmarks);
+		// a persisted bookmark is trusted for its id only: the reference kept is the loaded event's own,
+		// so a bookmark file written beside a log that has since been re-imported (positions and
+		// transactions reassigned, ids preserved) still names the right event. One whose event is not
+		// in the log -- a file edited by hand, since nothing here prunes -- is kept as it stands rather
+		// than dropped, since an absent bookmark is "replay from the beginning"
+		Map<EventId, StoredEvent> loadedById = new HashMap<>();
+		for ( StoredEvent event : initialEvents ) {
+			loadedById.putIfAbsent(event.reference().id(), event);
+		}
+		initialBookmarks.forEach(( reader, bookmark ) -> {
+			StoredEvent bookmarked = loadedById.get(bookmark.reference().id());
+			this.bookmarks.put(reader, bookmarked == null
+				? bookmark
+				: new Bookmark(bookmark.reader(), bookmarked.reference(), bookmark.tags(), bookmark.updatedAt()));
+		});
 		this.txCounter = initialEvents.stream()
 				.mapToLong(e -> e.reference().tx())
 				.max()
@@ -526,14 +540,20 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		// identical across backends (BookmarksTest in the TCK pins both). Matching the foreign key,
 		// the check is on the event id alone, and a rejected bookmark leaves a previously placed one
 		// untouched.
-		if ( eventReference != null && !eventsById.containsKey(eventReference.id()) ) {
+		StoredEvent bookmarked = eventReference == null ? null : eventsById.get(eventReference.id());
+		if ( eventReference != null && bookmarked == null ) {
 			throw new EventStorageException(
 				"Cannot place bookmark for reader '%s': %s does not reference an event stored in this event storage"
 					.formatted(reader, eventReference));
 		}
+		// what is kept is the store's own reference for that event, never the caller's: a bookmark names
+		// an event by id, and its position and transaction are the event's to say. The Postgres backend
+		// gets the same by joining the events row on every read; here the log is immutable, so resolving
+		// once at placement is the same answer
+		EventReference resolved = bookmarked == null ? null : bookmarked.reference();
 		Tags effectiveTags = tags == null ? Tags.none() : tags;
-		bookmarks.put(reader, new Bookmark(reader, eventReference, effectiveTags, Instant.now()));
-		BookmarkPlacedNotification notification = new BookmarkPlacedNotification(reader, eventReference);
+		bookmarks.put(reader, new Bookmark(reader, resolved, effectiveTags, Instant.now()));
+		BookmarkPlacedNotification notification = new BookmarkPlacedNotification(reader, resolved);
 		listeners.forEach(l->notifyQuietly(l, notification));
 	}
 

@@ -27,11 +27,15 @@ import java.time.Instant;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
+
 import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventQuery;
+import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageException;
 import org.sliceworkz.eventstore.testing.AbstractEventStoreTest;
 import org.sliceworkz.eventstore.testing.ForEachBackend;
@@ -160,6 +164,50 @@ public class BookmarksTest extends AbstractEventStoreTest {
 		assertEquals(1, bookmarks.size());
 		assertEquals(real, bookmarks.get(0).reference(), "the previous bookmark must survive the rejected update");
 		assertEquals(Tags.parse("phase:before"), bookmarks.get(0).tags());
+	}
+
+	/**
+	 * A bookmark names a stored event by id, and the position and transaction read back are the
+	 * store's own for that event — never the caller's copy. The natural alternative, keeping the
+	 * reference as handed in, stores a cursor the id check never validates, so a bookmark could carry a
+	 * stored id and a wrong position; and it makes a bookmark meaningless in any store but the one it
+	 * was taken from, where resolving by id lets an imported bookmarks table stay valid as it stands.
+	 * The reference passed here carries the right id under coordinates no event has.
+	 */
+	@ForEachBackend
+	void bookmarkIsResolvedToTheStoresOwnCoordinates ( ) {
+		EventReference real = appendOne();
+		EventStream<MockDomainEvent> s = stream();
+
+		EventReference foreignCoordinates = EventReference.of(real.id(), real.position() + 1_000_000, real.tx() + 1_000_000);
+		s.placeBookmark("resolved-reader", foreignCoordinates, Tags.none());
+
+		assertEquals(Optional.of(real), s.getBookmark("resolved-reader"),
+				"the bookmark must read back as the store's own reference for the event it names");
+		assertEquals(real, s.getBookmarks().getFirst().reference());
+	}
+
+	/** The notification a placement raises carries the store's coordinates too, not the caller's. */
+	@ForEachBackend
+	void bookmarkNotificationCarriesTheStoresOwnCoordinates ( ) {
+		EventReference real = appendOne();
+		List<EventStorage.BookmarkPlacedNotification> notifications = new CopyOnWriteArrayList<>();
+		EventStorage.EventStoreListener listener = new EventStorage.EventStoreListener() {
+			@Override public void notify ( EventStorage.AppendsToEventStoreNotification newEventsInStore ) { }
+			@Override public void notify ( EventStorage.BookmarkPlacedNotification bookmarkPlaced ) { notifications.add(bookmarkPlaced); }
+		};
+		eventStorage().subscribe(listener);
+		try {
+			EventReference foreignCoordinates = EventReference.of(real.id(), real.position() + 1_000_000, real.tx() + 1_000_000);
+			stream().placeBookmark("notified-reader", foreignCoordinates, Tags.none());
+
+			waitBecauseOfEventualConsistency(() -> notifications.stream().anyMatch(n -> "notified-reader".equals(n.reader())));
+			EventStorage.BookmarkPlacedNotification notification = notifications.stream()
+					.filter(n -> "notified-reader".equals(n.reader())).findFirst().orElseThrow();
+			assertEquals(real, notification.bookmark(), "the notification must carry the store's reference for the bookmarked event");
+		} finally {
+			eventStorage().unsubscribe(listener);
+		}
 	}
 
 	@ForEachBackend

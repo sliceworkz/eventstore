@@ -30,7 +30,9 @@ import org.sliceworkz.eventstore.events.EventReference;
  * The notification occurs asynchronously after the append operation has completed, providing eventual consistency
  * guarantees. This means:
  * <ul>
- *   <li>The listener is invoked after the append operation completes</li>
+ *   <li>The listener is invoked after the append operation completes, and once the events up to the
+ *       reference it is handed are readable — a backend whose reads lag its commits holds the
+ *       notification back until they are, rather than wake a listener that would read nothing</li>
  *   <li>The listener receives only an event reference, not the actual events</li>
  *   <li>Processing occurs asynchronously, on a notification thread rather than the appending one</li>
  *   <li>Exceptions thrown by the listener do not affect the append operation: they are logged at ERROR by

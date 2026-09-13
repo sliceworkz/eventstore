@@ -92,10 +92,34 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   barrier above is `event_tx < pg_snapshot_xmin(pg_current_snapshot())`, and `pg_snapshot_xmin` is the
   oldest transaction id still running — a property of the whole PostgreSQL cluster, not of this store.
   Every event appended since the oldest open transaction took its id is invisible here until that
-  transaction ends. **Nothing fails and nothing is logged**: reads just stop advancing, projections go
-  quiet, bookmarks stop moving, `SELECT count(*)` in psql shows the events are there, and when the
-  blocker finally ends everything appears at once. `PostgresVisibilityStallTest` demonstrates it end to
-  end.
+  transaction ends. **Nothing fails**: reads just stop advancing, projections go quiet, bookmarks
+  stop moving, `SELECT count(*)` in psql shows the events are there, and when the blocker finally
+  ends everything appears at once. `PostgresVisibilityStallTest` demonstrates it end to end.
+  - **Subscribers are woken when the withheld events surface, not when they were appended.** A
+    `NOTIFY` is delivered at the appending transaction's commit, which during a stall is before its
+    events are readable. Delivered then, it would wake a subscribed projection that reads nothing —
+    and a listener that reads nothing counts as caught up (see `OptimizingAppendListenerDecorator`),
+    so nothing would wake it again when the blocker ends: it would sit exactly as many events behind
+    as were appended during the stall, until the next append to its stream, which on a quiet stream
+    is indefinitely. So the append monitor (`NewEventsAppendedMonitor`) parks a notification whose
+    `event_tx` is not yet below `pg_snapshot_xmin`, re-reads the barrier every poll slice while
+    anything is parked, and delivers what has become readable — coalesced to the latest reference per
+    stream, so a stall on a busy stream holds one entry per stream, not one per append. The cost
+    while nothing is parked is nothing; while something is, one `SELECT pg_snapshot_xmin(...)` on
+    the monitoring connection per slice. The rejected alternative — a listener reporting how far it
+    could read, and the store re-delivering until it reaches the target — loses because a listener
+    cannot tell "nothing readable yet" from "nothing matches my query", and re-delivering on either
+    is the busy loop the decorator exists to prevent. The bookmark monitor needs none of this: a
+    bookmark read is deliberately not behind the barrier.
+    `PostgresVisibilityStallTest.testAppendNotificationsAreWithheldUntilTheEventsAreReadable` pins
+    the deferral at the SPI, `testASubscribedProjectionCatchesUpWhenTheBlockerEnds` the symptom.
+  - **This is also the one place the library logs a stall.** A notification is withheld for the few
+    milliseconds an older append is still in flight on every busy store, which is not worth a line;
+    one withheld for longer than `WITHHELD_NOTIFICATION_WARN_MILLIS` (10s) is a WARN naming the
+    storage, how long, how many streams are affected and the diagnosis query, once per stall, and an
+    INFO when it clears. Only a store with an append during the stall sees it — a stall on a store
+    nobody is writing to withholds nothing and is still silent — so it complements the external
+    monitoring below rather than replacing it.
   - **Only transactions that have *written* count** — this is what makes the hazard narrow rather than
     severe, and it is worth being precise about. PostgreSQL assigns a transaction id lazily, at the
     first write, and only assigned ids enter a snapshot's xmin. A read-only transaction pins nothing,
@@ -134,7 +158,8 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     still selects the right rows for any role.)
   - **The library does not meter this**, and there is nothing in the `sliceworkz.eventstore.*` meters
     that reveals it — they count and time the calls the store makes, all of which keep succeeding
-    throughout a stall. Detection is therefore external, on the database, using the query above.
+    throughout a stall. Beyond the withheld-notification WARN above, detection is external, on the
+    database, using the query above.
     Two notes for whoever wires that up:
     - **Watch `pg_snapshot_xmin` standing still *while* something holds a transaction id**, not either
       alone. xmin also stops moving on a completely idle database, so "xmin has not advanced" on its own

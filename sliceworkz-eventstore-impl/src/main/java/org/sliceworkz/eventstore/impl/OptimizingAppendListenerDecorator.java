@@ -167,6 +167,12 @@ public class OptimizingAppendListenerDecorator implements EventStreamEventuallyC
                 // first unrelated append to its stream until the first matching one -- nothing failing,
                 // nothing logged, just a core gone. No notification is lost by advancing here: the next
                 // append carries a later reference, which is after this one and so still delivered.
+                // What this does rely on is that the target was readable when it was delivered -- a
+                // delegate that read nothing because the storage was still withholding the events would
+                // be marked caught up here, with nothing to wake it when they surface. That is the
+                // storage's side of the contract (EventStorage.subscribe): a backend whose reads lag its
+                // commits, Postgres behind its pg_snapshot_xmin barrier, holds a notification back until
+                // the event it names is readable, so a target reached here is a target that could be read.
                 lastNotifiedReference.set((lastSeenByDelegate != null) && lastSeenByDelegate.happenedAfter(target)? lastSeenByDelegate:target);
             } finally {
                 lock.lock();

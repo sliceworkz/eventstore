@@ -541,8 +541,16 @@ public interface EventStorage extends AutoCloseable {
 	 * <p>
 	 * Implementations must reject a reference that does not name an event stored in this storage,
 	 * throwing {@link EventStorageException} and leaving any previously stored bookmark for the
-	 * reader untouched. The check is on the event id alone — the position and transaction carried by
-	 * the reference are not cross-validated. The TCK's {@code BookmarksTest} pins this contract.
+	 * reader untouched. The check is on the event id, which is all a bookmark stores about the event.
+	 * <p>
+	 * <b>A bookmark names a stored event by id; its position and transaction are the event's.</b>
+	 * What {@link #getBookmark} and {@link #getBookmarks} answer, and what the
+	 * {@link BookmarkPlacedNotification} carries, is the reference <em>this storage</em> assigned to
+	 * that event — never the position and transaction the caller passed in, which are only its copy of
+	 * what the event already says. So a bookmark cannot carry a cursor that disagrees with the event it
+	 * names, and a bookmark carried between stores by event id (an import preserves ids and reassigns
+	 * both ordering columns) resolves to the target's own coordinates. The TCK's {@code BookmarksTest}
+	 * pins both halves of this contract.
 	 * <p>
 	 * Typical Usage:
 	 * <pre>{@code

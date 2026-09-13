@@ -101,6 +101,27 @@ on the category in the envelope and never reaches the table for a denied one. Ro
 the key table does *not* produce a denial: a hidden row is indistinguishable from an absent one and
 reads as erased.
 
+### Migrating the bookmarks table to store the event id only
+
+A bookmark names a stored event by id, and its position and transaction are read from that event
+(`<prefix>bookmarks` joined to `<prefix>events` on `event_id`, one probe on the unique index). A
+database created while the bookmarks table still carried its own `event_position` and `event_tx`
+columns has to drop them — nothing binds them any more, and they are `NOT NULL`, so the first
+placement would fail on them. `ENSURE` never drops a column, so this is a hand-applied migration
+under every mode:
+
+```sql
+ALTER TABLE <prefix>bookmarks DROP COLUMN event_position, DROP COLUMN event_tx;
+```
+
+No data migration: the columns were the caller's copy of what the events row says, and every read now
+answers from that row. `ENSURE` replaces the `notify_bookmark_placed` function itself; a `VALIDATE` or
+`NONE` deployment applies the current body from `ensure-schema.sql` by hand, since the function now looks
+the event up for the notification payload. `checkDatabase()` reports an un-migrated table under
+`VALIDATE` and `ENSURE` with this statement, and under `NONE` the first `placeBookmark` names it rather
+than failing on a bare not-null violation (`PostgresSchemaDriftTest` pins both). The grants are
+unchanged: the role already needs `SELECT` on the events table.
+
 ### Migrating a database created before shredding existed
 
 `ENSURE` only ever creates tables, so it adds this one on the next start of an existing database and
@@ -237,10 +258,10 @@ from ordinary ones any more — which is why it is worth catching on the first s
    - **The `btree_gin` extension** on the target database (a `pg_dump -t` of the tables does not
      include it, and the restore fails creating `idx_events_stream_tags` without it). Let `ENSURE`
      create the target schema, or install the extension first.
-   - **Bookmarks.** The rows in `<prefix>bookmarks` carry the *source's* `event_tx` and
-     `event_position`, which mean nothing on the target. Re-place each reader's bookmark by looking
-     up its `event_id` in the target and using the reference the target assigned; the foreign key on
-     `event_id` holds because ids are preserved.
+   - **Bookmarks.** Copy `<prefix>bookmarks` across after the events: a bookmark stores only the
+     `event_id`, the import preserves ids, and the store answers a bookmark's position and transaction
+     from the target's own events row — so the copied table is valid as it stands and the foreign key
+     holds.
    - **Shredding keys.** Copy `<prefix>shredding_keys` alongside, or every sealed value reads as erased.
    - **Leases** are deliberately not migrated; they expire.
    - **Anything outside the store holding event references** — an SQL read model's own bookmark and

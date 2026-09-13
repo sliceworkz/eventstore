@@ -376,6 +376,22 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   nullable `event_erasable_data` column, which nothing reads or writes and `checkDatabase()` does not
   validate; it may stay, or go with `ALTER TABLE <prefix>events DROP COLUMN event_erasable_data;` — no
   data migration is needed, since no release ever wrote to it
+- **A bookmark row holds the event id and nothing else about the event.** `<prefix>bookmarks` is
+  `(reader, event_id, updated_at, updated_tags)` under `fk_bookmarks_event_id`; `bookmarkSql` joins the
+  events row on the unique `event_id` index, so `getBookmark`/`getBookmarks` answer the store's own
+  `(event_tx, event_position)` for the event, and `notify_bookmark_placed` looks the same two columns up
+  for its payload. One probe per bookmark read, deliberately outside the `pg_snapshot_xmin` barrier — a
+  reader is entitled to its own position whatever else is in flight. What it buys: a bookmark cannot
+  carry a cursor that disagrees with the event it names (the foreign key checked only the id, so the two
+  ordering columns it used to carry were a copy nothing validated), and a bookmarks table copied from
+  another store by id — after an import, which preserves ids and reassigns both ordering columns —
+  is valid as it stands. A database created while the columns existed carries them `NOT NULL`, which
+  nothing binds any more; `ENSURE` never drops a column, so `checkBookmarksTable` reports them under
+  `VALIDATE` and `ENSURE` with the migration (`BOOKMARKS_ID_ONLY_MIGRATION`: `ALTER TABLE
+  <prefix>bookmarks DROP COLUMN event_position, DROP COLUMN event_tx;`), and under `NONE` the placement
+  recognises the not-null violation (SQLSTATE 23502 — the one way this insert can raise it) and names
+  the same migration. `PostgresSchemaDriftTest.testUnmigratedBookmarksTableIsReportedWithItsMigration`
+  pins all three paths; the TCK's `BookmarksTest` pins the resolution and the notification payload
 - **Idempotency keys are scoped per event stream (context + purpose), not per storage/table.** Uniqueness is enforced by the partial unique index `idx_events_stream_idempotency` on `(stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL` (schema validation requires it), so the same key used on two unrelated streams does not collide and dedup behaviour does not depend on how storage instances / prefixes are wired at runtime. The `idempotency_key` is persisted and surfaced on `StoredEvent` when reading (it is not exposed on the public `Event` record). A duplicate append is silently ignored (returns an empty result). A database created by an older release may still carry a table-wide `UNIQUE` on `idempotency_key`; migrate it with: `ALTER TABLE <prefix>events DROP CONSTRAINT <prefix>events_idempotency_key_key; CREATE UNIQUE INDEX <prefix>idx_events_stream_idempotency ON <prefix>events (stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL;` — no data migration is needed
   - **The duplicate is recognised by the index the server names, never by the message text.** Both the
     append and the import path go through `isIdempotencyKeyViolation`, which pairs SQLSTATE 23505 with

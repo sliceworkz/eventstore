@@ -1029,6 +1029,20 @@ PostgresEventStorage.newBuilder().shredding().buildStore();          // keys in 
 PostgresEventStorage.newBuilder().shredding(myKmsCodec).buildStore(); // take over encryption entirely
 ```
 
+- **The codec travels with the storage, so `build()` honours `.shredding(...)` as `buildStore()` does.**
+  `EventStorage.shreddingCodec()` answers the codec a builder was given (empty by default, so a backend
+  written before it keeps working), and `EventStoreFactory.eventStore(storage)` — every overload not
+  handed a codec of its own — uses it; a codec passed to the four-argument overload wins. The storage
+  never seals or unseals anything itself, which is what keeps raw mode, exports and imports seeing the
+  envelope as stored. The alternative — a codec living on the store alone, wired only by `buildStore()`
+  — loses because a caller taking the storage from `build()` then gets a store that refuses the very
+  event types the builder was configured for, and on Postgres cannot construct the key store the
+  no-arg `shredding()` stands for at all: it needs the `DataSource` the builder resolves, and one
+  loaded from `db.properties` is never handed out. `StorageShreddingCodecTest` pins the two in-memory
+  backends and the precedence rule; `PostgresShreddingBuilderTest` pins the no-arg case per Postgres
+  version. `MeterOptions` remains the one builder setting `build()` ignores, since it is a property of
+  the store's meters and nothing about the storage.
+
 - **`ShreddingKeyStore`** is the narrow seam: keep the shipped encryption, hold keys in Vault/KMS/an HSM.
 - **`ShreddingCodec`** is the outer seam: take over encryption too, so key material never enters the JVM.
 - **`unseal`/`resolve` returning empty means *erased*; anything else must throw `ShreddingException`.**

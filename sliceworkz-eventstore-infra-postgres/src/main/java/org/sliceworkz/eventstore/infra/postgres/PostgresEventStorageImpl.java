@@ -79,6 +79,7 @@ import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventFilterItem;
 import org.sliceworkz.eventstore.query.Limit;
+import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.spi.EventImportConflictException;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageClosedException;
@@ -184,6 +185,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private volatile CountDownLatch bookmarkMonitorReady;
 
 	private final MeterRegistry meterRegistry;
+	// Never used here: the storage stores sealed envelopes as opaque JSON. Held so that a store built on
+	// this storage through the factory finds the codec the builder was given (EventStorage.shreddingCodec()).
+	private final ShreddingCodec shreddingCodec;
 
 	/**
 	 * Whether the warning about being unable to keep a no-cursor check off the plan cache (see
@@ -304,6 +308,33 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * @see PostgresEventStorage.Builder#build()
 	 */
 	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources, MeterRegistry meterRegistry ) {
+		this(name, dataSource, monitoringDataSource, absoluteLimit, prefix, ownsDataSources, meterRegistry, null);
+	}
+
+	/**
+	 * Constructs a new PostgreSQL-backed event storage instance that also carries the codec protecting
+	 * its events' {@link org.sliceworkz.eventstore.shredding.Shreddable} values.
+	 * <p>
+	 * This constructor is used by {@link PostgresEventStorage.Builder} and should not be called directly.
+	 * The storage never seals or unseals anything itself; the codec is answered from
+	 * {@link #shreddingCodec()} so that a store built on this storage — through
+	 * {@link org.sliceworkz.eventstore.EventStoreFactory#eventStore(EventStorage)} as much as through
+	 * {@link PostgresEventStorage.Builder#buildStore()} — protects and erases personal data. A key
+	 * store the codec holds on this storage's own {@code DataSource} is not closed by {@link #close()}:
+	 * it holds no connection of its own, only a cache.
+	 *
+	 * @param name the logical name for this storage instance (used in logging and monitoring)
+	 * @param dataSource the main JDBC DataSource for event operations
+	 * @param monitoringDataSource the JDBC DataSource for LISTEN/NOTIFY operations
+	 * @param absoluteLimit the absolute limit on query results, or {@link Limit#none()} for no limit
+	 * @param prefix the table name prefix (validated, or empty string for no prefix)
+	 * @param ownsDataSources {@code true} if the DataSources were created for this storage and should
+	 *                        be closed by {@link #close()}; {@code false} if they belong to the caller
+	 * @param meterRegistry where to register the {@code sliceworkz.eventstore.notifications.*} meters
+	 * @param shreddingCodec seals and unseals protected values, or null for a storage without shredding
+	 * @see PostgresEventStorage.Builder#build()
+	 */
+	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources, MeterRegistry meterRegistry, ShreddingCodec shreddingCodec ) {
 		this.prefix = validatePrefix(prefix);
 		this.name = name;
 		this.dataSource = dataSource;
@@ -311,6 +342,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		this.absoluteLimit = absoluteLimit;
 		this.ownsDataSources = ownsDataSources;
 		this.meterRegistry = meterRegistry == null ? Metrics.globalRegistry : meterRegistry;
+		this.shreddingCodec = shreddingCodec;
 
 		this.executorService = Executors.newVirtualThreadPerTaskExecutor();
 
@@ -3096,6 +3128,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 		return result;
 	}
 	
+	@Override
+	public Optional<ShreddingCodec> shreddingCodec ( ) {
+		return Optional.ofNullable(shreddingCodec);
+	}
+
 	@Override
 	public String name() {
 		return name;

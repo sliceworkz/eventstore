@@ -27,6 +27,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.query.Limit;
+import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 
 /**
  * Legacy PostgreSQL-backed event storage implementation for PostgreSQL versions 13–17.
@@ -52,6 +53,10 @@ public class PostgresLegacyEventStorageImpl extends PostgresEventStorageImpl {
 
 	public PostgresLegacyEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources, MeterRegistry meterRegistry ) {
 		super(name, dataSource, monitoringDataSource, absoluteLimit, prefix, ownsDataSources, meterRegistry);
+	}
+
+	public PostgresLegacyEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources, MeterRegistry meterRegistry, ShreddingCodec shreddingCodec ) {
+		super(name, dataSource, monitoringDataSource, absoluteLimit, prefix, ownsDataSources, meterRegistry, shreddingCodec);
 	}
 
 	@Override

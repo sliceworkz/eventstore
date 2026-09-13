@@ -10,9 +10,8 @@ permissions:
 jobs:
   assign:
     runs-on: ubuntu-latest
-    if: github.actor == 'dependabot[bot]'
     steps:
-      - name: Assign Dependabot PR
+      - name: Assign PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

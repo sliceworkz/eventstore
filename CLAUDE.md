@@ -1017,6 +1017,20 @@ transfer.from().map(PartyDetails::name).orElse("[erased]");
 - **Two subjects in one event each get their own key**, which no per-field annotation or per-event key
   can express. Keys are scoped to `(type, id, category)`, so "erase marketing, retain financial" is a
   category away.
+- **`erase(DataSubject, reason)` erases one category; `eraseAllCategories(type, id, reason)` erases the
+  person.** A `DataSubject` always names a category — `DataSubject.of("customer", id)` is the `default`
+  one — and `erase` destroys the keys of that category only, reporting success because the erasure it
+  names was performed. So `erase(DataSubject.of("customer", id))` on a subject that also holds
+  `marketing` data leaves the marketing data readable, which is right for a per-category request and
+  wrong for an art.17 request. The whole-person erasure takes the type and id and no category, so it
+  cannot be narrowed by accident, and answers a `SubjectErasureReport` with one `ErasureReport` per
+  category that held live keys. It is a separate SPI method on `ShreddingKeyStore` and `ShreddingCodec`
+  (`shredAllCategories`), whose defaults throw `UnsupportedOperationException` so a key store written
+  before it is told rather than made to erase one category and report success; a restricted codec
+  passes it through whole. The alternative — having `erase` of the default category mean "every
+  category" — loses because it makes erasing only the default category inexpressible, and because a
+  category is what a subject's data is *written* under, so which one a caller happens to name is not a
+  statement about the others.
 - **The subject id must not itself be personal data.** It is stored in the clear in the envelope and
   survives erasure by construction — use a customer number, never an email address.
 - **`KeyId` values are random and land on the event as `dek:` tags**, so "every event holding data under
@@ -1206,7 +1220,8 @@ to migrate the events via `EventStoreImporter.transform` or to read the old shap
 
 `ShreddableEventDataTest` in the TCK pins all of this per backend, against *that backend's* key store:
 the two-subject erasure, the collection case, a record whose constructor rejects nulls surviving erasure,
-category independence, idempotent erasure and a fresh key afterwards, the `dek:` tags, the audit view
+category independence and the whole-person erasure across every category (through a restricted codec
+too), idempotent erasure and a fresh key afterwards, the `dek:` tags, the audit view
 (including, reflectively, that `KeyRecord` cannot carry key material), that an unreachable key store
 throws instead of reporting the data as erased — and, for entitlement, that a withholding codec reads the
 typed events with every value withheld, that a restricted codec reads its categories and withholds the

@@ -54,6 +54,7 @@ import org.sliceworkz.eventstore.shredding.ErasureReport;
 import org.sliceworkz.eventstore.shredding.KeyId;
 import org.sliceworkz.eventstore.shredding.ShreddingAudit;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec;
+import org.sliceworkz.eventstore.shredding.SubjectErasureReport;
 import org.sliceworkz.eventstore.impl.serde.EventPayloadSerializerDeserializer;
 import org.sliceworkz.eventstore.impl.serde.EventPayloadSerializerDeserializer.TypeAndPayload;
 import org.sliceworkz.eventstore.impl.serde.EventPayloadSerializerDeserializer.TypeAndSerializedPayload;
@@ -412,6 +413,31 @@ public class EventStoreImpl implements EventStore {
 		// events record nothing about it -- the key store row and this line are the whole trail.
 		STORE_LOGGER.info("erased data subject {} on storage '{}': {} key(s) shredded ({})",
 				subject, eventStorage.name(), report.keysShredded(), reason);
+
+		return report;
+	}
+
+	@Override
+	public SubjectErasureReport eraseAllCategories ( String subjectType, String subjectId, ErasureReason reason ) {
+		if ( subjectType == null || subjectType.isBlank() ) {
+			throw new IllegalArgumentException("subjectType cannot be null or blank");
+		}
+		if ( subjectId == null || subjectId.isBlank() ) {
+			throw new IllegalArgumentException("subjectId cannot be null or blank");
+		}
+		if ( reason == null ) {
+			throw new IllegalArgumentException("reason cannot be null");
+		}
+		if ( shreddingCodec == null ) {
+			throw new UnsupportedOperationException(
+					"event store on storage '%s' has no ShreddingCodec configured, so it holds no keys to destroy; configure shredding on the storage builder or via EventStoreFactory.eventStore(storage, registry, meterOptions, codec)"
+							.formatted(eventStorage.name()));
+		}
+		// Allowed on a closed store for the same reason erase is.
+		SubjectErasureReport report = shreddingCodec.shredAllCategories(subjectType, subjectId, reason);
+
+		STORE_LOGGER.info("erased data subject {}/{} across categories {} on storage '{}': {} key(s) shredded ({})",
+				subjectType, subjectId, report.categoriesErased(), eventStorage.name(), report.keysShredded(), reason);
 
 		return report;
 	}

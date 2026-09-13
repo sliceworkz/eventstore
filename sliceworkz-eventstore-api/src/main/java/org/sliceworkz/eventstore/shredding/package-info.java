@@ -44,8 +44,10 @@
  *                                Shreddable.of("alice@example.org", alice)),
  *         Tags.of("customer", "alice-42")));
  *
- * // later
- * eventStore.erase(alice, ErasureReason.of("GDPR art.17 request #4711"));
+ * // later: the person, under every category their data was ever written under
+ * eventStore.eraseAllCategories("customer", "alice-42", ErasureReason.of("GDPR art.17 request #4711"));
+ * // or one category only -- a DataSubject always names one, "default" unless set
+ * eventStore.erase(alice.withCategory("marketing"), ErasureReason.of("consent withdrawn"));
  *
  * // the event still reads; the personal data does not
  * event.data().customerId();              // "alice-42"

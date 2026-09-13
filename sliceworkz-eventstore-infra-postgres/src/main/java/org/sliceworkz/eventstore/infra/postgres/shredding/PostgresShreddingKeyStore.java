@@ -26,6 +26,7 @@ import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -39,6 +40,7 @@ import javax.sql.DataSource;
 
 import org.sliceworkz.eventstore.shredding.DataSubject;
 import org.sliceworkz.eventstore.shredding.ErasureReason;
+import org.sliceworkz.eventstore.shredding.ErasureReport;
 import org.sliceworkz.eventstore.shredding.KeyAuditQuery;
 import org.sliceworkz.eventstore.shredding.KeyId;
 import org.sliceworkz.eventstore.shredding.ShreddingAudit;
@@ -384,6 +386,66 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 		shredded.forEach(cache::remove);
 
 		return List.copyOf(shredded);
+	}
+
+	@Override
+	public List<ErasureReport> shredAllCategories ( String subjectType, String subjectId, ErasureReason reason ) {
+		if ( subjectType == null || subjectType.isBlank() ) {
+			throw new IllegalArgumentException("subjectType cannot be null or blank");
+		}
+		if ( subjectId == null || subjectId.isBlank() ) {
+			throw new IllegalArgumentException("subjectId cannot be null or blank");
+		}
+		if ( reason == null ) {
+			throw new IllegalArgumentException("reason cannot be null");
+		}
+
+		// The same statement as shred without the category predicate: one UPDATE, so every category
+		// goes in one transaction and no append can mint a fresh key for one of them between two
+		// erasures. The category comes back per row to be reported.
+		String sql = """
+				UPDATE %s
+				   SET key_material = NULL,
+				       shredded_at = CURRENT_TIMESTAMP,
+				       shredded_reason = ?
+				 WHERE subject_type = ? AND subject_id = ?
+				   AND key_material IS NOT NULL
+				RETURNING key_id, subject_category, shredded_at
+				""".formatted(tableName);
+
+		// insertion-ordered, so the report lists categories in the order the rows came back
+		Map<String, List<KeyId>> shreddedByCategory = new LinkedHashMap<>();
+		Instant shreddedAt = null;
+
+		try ( Connection connection = dataSource.getConnection();
+				PreparedStatement statement = connection.prepareStatement(sql) ) {
+
+			statement.setString(1, reason.value());
+			statement.setString(2, subjectType);
+			statement.setString(3, subjectId);
+
+			try ( ResultSet resultSet = statement.executeQuery() ) {
+				while ( resultSet.next() ) {
+					shreddedByCategory.computeIfAbsent(resultSet.getString("subject_category"), category -> new ArrayList<>())
+							.add(KeyId.of(resultSet.getString("key_id")));
+					Timestamp stamped = resultSet.getTimestamp("shredded_at");
+					shreddedAt = stamped == null ? Instant.now() : stamped.toInstant();
+				}
+			}
+
+		} catch (SQLException e) {
+			throw new ShreddingException("failed to shred the keys of subject %s/%s across categories in %s".formatted(subjectType, subjectId, tableName), e);
+		}
+
+		List<ErasureReport> reports = new ArrayList<>();
+		for ( Map.Entry<String, List<KeyId>> category : shreddedByCategory.entrySet() ) {
+			reports.add(new ErasureReport(new DataSubject(subjectType, subjectId, category.getKey()), reason, category.getValue(), shreddedAt));
+		}
+
+		// Only after the database has committed the erasure, as in shred.
+		shreddedByCategory.values().forEach(keys -> keys.forEach(cache::remove));
+
+		return List.copyOf(reports);
 	}
 
 	@Override

@@ -147,14 +147,51 @@ public interface ShreddingKeyStore extends AutoCloseable {
 	}
 
 	/**
-	 * Destroys every key held for a subject, recording why.
+	 * Destroys every key held for a subject under the subject's {@link DataSubject#category() category},
+	 * recording why.
+	 * <p>
+	 * A {@link DataSubject} always names one category — {@link DataSubject#DEFAULT_CATEGORY} unless set —
+	 * and this destroys the keys of that category only, which is what "erase marketing, retain financial"
+	 * needs. Keys the same person holds under other categories are untouched. Erasing a person outright
+	 * is {@link #shredAllCategories}, which takes the subject without a category precisely so that it
+	 * cannot be narrowed by accident.
 	 *
-	 * @param subject whose keys to destroy
+	 * @param subject whose keys to destroy, under which category
 	 * @param reason  the authority for the erasure, persisted alongside the shredded key
-	 * @return the keys destroyed by this call; empty if the subject held none
+	 * @return the keys destroyed by this call; empty if the subject held none under that category
 	 * @throws ShreddingException if the key store cannot be reached
 	 */
 	List<KeyId> shred ( DataSubject subject, ErasureReason reason );
+
+	/**
+	 * Destroys every key held for a subject under <em>every</em> category, recording why.
+	 * <p>
+	 * The whole-person erasure: an art.17 request names a person, not a retention category, and a
+	 * caller answering it must not have to know which categories the person's data was ever written
+	 * under. Nothing about a subject is left readable when this returns, whichever categories it held
+	 * keys under and however many keys each of them had accumulated across earlier erasures.
+	 * <p>
+	 * Answered per category, so the caller can see which slices of the data went. A category the
+	 * subject never held a key under, or whose keys were shredded already, gets no report.
+	 * <p>
+	 * The default throws {@link UnsupportedOperationException}, like the optional methods on
+	 * {@code EventStorage}: a key store written before this method existed is told, rather than made
+	 * to answer "erased" for one category while the others stay readable. Every shipped key store
+	 * implements it; a store that cannot enumerate a subject's categories cannot support it.
+	 *
+	 * @param subjectType what kind of subject, e.g. {@code "customer"}
+	 * @param subjectId   the pseudonymous identifier of the subject within that type
+	 * @param reason      the authority for the erasure, persisted alongside every shredded key
+	 * @return one report per category that held live keys; empty if the subject held none
+	 * @throws ShreddingException            if the key store cannot be reached
+	 * @throws UnsupportedOperationException if this key store cannot erase across categories
+	 * @throws IllegalArgumentException      if any argument is null or blank
+	 */
+	default List<ErasureReport> shredAllCategories ( String subjectType, String subjectId, ErasureReason reason ) {
+		throw new UnsupportedOperationException(
+				"%s cannot erase subject %s/%s across categories: it does not implement ShreddingKeyStore.shredAllCategories; erase each category through shred(DataSubject, ErasureReason)"
+						.formatted(getClass().getName(), subjectType, subjectId));
+	}
 
 	/**
 	 * Reading what this store holds, without the means to decrypt any of it.

@@ -75,16 +75,16 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
  * <h2>Querying with Tags:</h2>
  * <pre>{@code
  * // Find all events for a specific customer across all event types
- * EventQuery query = EventQuery.forEvents(
- *     EventTypesFilter.any(),
- *     Tags.of("customer", "123")
- * );
+ * EventQuery query = EventQuery.forTags(Tags.of("customer", "123"));
  * Stream<Event<CustomerEvent>> events = stream.query(query);
  *
  * // Find events matching multiple tags (EU customers with high priority)
+ * EventQuery query = EventQuery.forTags(Tags.of("region", "EU", "priority", "high"));
+ *
+ * // Restrict the types as well
  * EventQuery query = EventQuery.forEvents(
- *     EventTypesFilter.any(),
- *     Tags.of("region", "EU", "priority", "high")
+ *     EventTypesFilter.of(CustomerRegistered.class),
+ *     Tags.of("region", "EU")
  * );
  * }</pre>
  *
@@ -92,18 +92,22 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
  * <pre>{@code
  * // Define which events are relevant for our decision
  * Tags relevantTags = Tags.of("customer", "123");
- * EventQuery query = EventQuery.forEvents(EventTypesFilter.any(), relevantTags);
+ * EventQuery query = EventQuery.forTags(relevantTags);
  *
- * // Query relevant events and make a business decision
- * List<Event<CustomerEvent>> events = stream.query(query).toList();
- * EventReference lastRef = events.getLast().reference();
+ * // Pin the boundary before reading: the head is empty for an empty stream, which is a
+ * // valid boundary ("I decided on an empty stream"), so nothing here has to guard against
+ * // a missing history
+ * EventReference head = stream.head().orElse(null);
  *
- * // Append new events only if no new relevant events appeared
+ * // Query relevant events up to the boundary and make a business decision
+ * List<Event<CustomerEvent>> events = stream.query(query.until(head)).toList();
+ *
+ * // Append new events only if no new relevant events appeared after the boundary
  * stream.append(
- *     AppendCriteria.of(query, Optional.of(lastRef)),
+ *     AppendCriteria.of(query, head),
  *     Event.of(new CustomerUpdated("Jane"), relevantTags)
  * );
- * // If new events with matching tags were added after lastRef,
+ * // If new events with matching tags were added after the head,
  * // append fails with OptimisticLockingException
  * }</pre>
  *
@@ -228,15 +232,7 @@ public record Tags ( Set<Tag> tags ) {
 	}
 
 	/**
-	 * Convenience method to create Tags from alternating key-value pairs.
-	 * <p>
-	 * This method is particularly useful for creating tags inline with readable syntax.
-	 * The parameters should be provided as alternating key-value pairs. If an odd number
-	 * of arguments is provided, the last key will have a null value.
-	 * <p>
-	 * Note: Despite the method signature showing only two parameters, this is typically
-	 * used with overloaded versions or in combination with {@link #of(Tag...)} for
-	 * creating a single key-value tag.
+	 * Convenience method to create Tags holding a single key-value tag.
 	 * <p>
 	 * <b>Example:</b>
 	 * <pre>{@code
@@ -250,9 +246,52 @@ public record Tags ( Set<Tag> tags ) {
 	 * @param key the tag key
 	 * @param value the tag value
 	 * @return a new Tags instance containing a single tag with the specified key and value
+	 * @throws IllegalArgumentException for a key or value {@link Tag#of(String, String)} rejects
+	 * @see #of(String, String, String...) for several tags from alternating keys and values
 	 */
 	public static Tags of ( String key, String value ) {
 		return of(Tag.of(key, value));
+	}
+
+	/**
+	 * Convenience method to create Tags from alternating keys and values.
+	 * <p>
+	 * The arguments after the first pair are read as further {@code key, value} pairs, so the
+	 * total number of arguments must be even. An odd count is rejected rather than read as a
+	 * trailing bare-key flag: a missing value in a list of pairs is far more likely a mistake
+	 * that shifted every later pair than a deliberate flag, and a flag is spelled
+	 * {@code Tags.of(Tag.of("flag"))}. Each pair goes through {@link Tag#of(String, String)},
+	 * so the same constraints apply; duplicate pairs collapse into one tag.
+	 * <p>
+	 * <b>Example:</b>
+	 * <pre>{@code
+	 * Tags tags = Tags.of("customer", "123", "region", "EU", "priority", "high");
+	 *
+	 * // This is equivalent to:
+	 * Tags tags = Tags.of(Tag.of("customer", "123"), Tag.of("region", "EU"), Tag.of("priority", "high"));
+	 * }</pre>
+	 *
+	 * @param key the first tag key
+	 * @param value the first tag value
+	 * @param moreKeyValuePairs further keys and values, alternating, an even number of them
+	 * @return a new Tags instance containing one tag per key-value pair
+	 * @throws IllegalArgumentException if the trailing arguments are not pairs, or for a key or value
+	 *         {@link Tag#of(String, String)} rejects
+	 */
+	public static Tags of ( String key, String value, String... moreKeyValuePairs ) {
+		if ( moreKeyValuePairs == null || moreKeyValuePairs.length == 0 ) {
+			return of(key, value);
+		}
+		if ( moreKeyValuePairs.length % 2 != 0 ) {
+			throw new IllegalArgumentException("tags are built from key-value pairs, but " + (moreKeyValuePairs.length + 2)
+					+ " arguments were given; a bare key is spelled Tags.of(Tag.of(key))");
+		}
+		Set<Tag> tags = new HashSet<>();
+		tags.add(Tag.of(key, value));
+		for ( int i = 0; i < moreKeyValuePairs.length; i += 2 ) {
+			tags.add(Tag.of(moreKeyValuePairs[i], moreKeyValuePairs[i + 1]));
+		}
+		return new Tags(Set.copyOf(tags));
 	}
 
 	/**

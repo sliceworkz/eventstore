@@ -39,8 +39,8 @@ public class SubscribeToAppendsExample {
 		// we open a (readonly) eventstream that sees all events
 		EventStream<Object> stream = eventstore.getEventStream(EventStreamId.anyContext());
 		
-		// get a reference to the last Event in the stream as a starting point ...
-		Handle<EventReference> lastSeen = Handle.of(stream.query(EventQuery.matchAll().backwards().limit(1)).findFirst().map(Event::reference).orElse(null));
+		// get a reference to the last Event in the stream as a starting point (absent for an empty stream: follow from the beginning) ...
+		Handle<EventReference> lastSeen = Handle.of(stream.head().orElse(null));
 		
 		System.out.println("following all events as from " + lastSeen.get());
 		

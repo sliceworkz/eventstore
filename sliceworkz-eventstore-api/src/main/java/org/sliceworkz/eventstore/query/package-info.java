@@ -88,20 +88,18 @@
  * no new relevant facts have appeared since the decision was made:
  *
  * <pre>{@code
- * // 1. Query relevant events
- * EventQuery query = EventQuery.forEvents(
- *     EventTypesFilter.any(),
- *     Tags.of("account", "acc-123")
- * );
- * List<Event<AccountEvent>> events = stream.query(query).toList();
+ * // 1. Pin the boundary at the stream head, then query the relevant events up to it. An absent head
+ * //    is an empty stream, and a valid boundary, so an account with no history needs no special case
+ * EventQuery query = EventQuery.forTags(Tags.of("account", "acc-123"));
+ * EventReference head = stream.head().orElse(null);
+ * List<Event<AccountEvent>> events = stream.query(query.until(head)).toList();
  *
  * // 2. Make business decision based on events
  * BigDecimal balance = calculateBalance(events);
- * EventReference lastRef = events.getLast().reference();
  *
- * // 3. Append with same query to detect conflicts
+ * // 3. Append with the same query and the same boundary to detect conflicts
  * stream.append(
- *     AppendCriteria.of(query, Optional.of(lastRef)),
+ *     AppendCriteria.of(query, head),
  *     Event.of(new MoneyWithdrawn(amount), Tags.of("account", "acc-123"))
  * );
  * }</pre>

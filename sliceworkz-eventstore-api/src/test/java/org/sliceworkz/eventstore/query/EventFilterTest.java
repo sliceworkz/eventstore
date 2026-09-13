@@ -17,6 +17,7 @@
  */
 package org.sliceworkz.eventstore.query;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -39,6 +40,17 @@ public class EventFilterTest {
 
 	private static EventReference row ( String id, long position, long tx, int index ) {
 		return EventReference.of(EventId.of(id), position, tx, index);
+	}
+
+	@Test
+	void forTagsIsForEventsOfAnyType ( ) {
+		EventFilter filter = EventFilter.forTags(Tags.of("customer", "123"));
+		assertEquals(EventFilter.forEvents(EventTypesFilter.any(), Tags.of("customer", "123")), filter);
+
+		assertTrue(filter.matches(TYPE, Tags.of("customer", "123"), row("a", 1, 1, 0)));
+		assertTrue(filter.matches(EventType.ofType("SomethingElse"), Tags.of("customer", "123", "region", "EU"), row("b", 2, 2, 0)));
+		assertFalse(filter.matches(TYPE, Tags.of("customer", "124"), row("c", 3, 3, 0)));
+		assertFalse(filter.matches(TYPE, Tags.none(), row("d", 4, 4, 0)));
 	}
 
 	@Test

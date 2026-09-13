@@ -129,7 +129,8 @@ mvn clean install -DskipTests
 - Key-value pairs attached to events for dynamic retrieval
 - Enable querying events across different event types
 - Core to the Dynamic Consistency Boundary pattern
-- Created via `Tags.of("key", "value")` or `Tags.of(Tag.of("key", "value"))`
+- Created via `Tags.of("key", "value")`, `Tags.of("k1", "v1", "k2", "v2", ...)` (alternating keys and
+  values; an odd count is rejected rather than read as a trailing flag) or `Tags.of(Tag.of("key", "value"))`
 - **`Tag.toString()` is the wire format, not a debugging rendering.** A tag is flattened to
   `"key:value"` to be persisted and to be matched: the Postgres backend stores `Tags.toStrings()` in a
   `text[]` column and answers a tag query with `event_tags @> ARRAY[...]` built from the *same*
@@ -174,7 +175,8 @@ mvn clean install -DskipTests
 - Pure matching criteria: event types, tags, and an optional "until" temporal boundary
 - Does not carry traversal semantics (direction, limit) — those belong to `EventQuery`
 - Can match all (`EventFilter.matchAll()`), none (`EventFilter.matchNone()`), or specific criteria
-- Created via `EventFilter.forEvents(eventTypesFilter, tags)`
+- Created via `EventFilter.forEvents(eventTypesFilter, tags)`, or `EventFilter.forTags(tags)` for events of
+  any type carrying the tags
 - Used by `AppendCriteria` for optimistic locking (where direction/limit are irrelevant)
 - **`until` is an inclusive upper bound over *stored* events, in the `(tx, position)` order, and is
   direction-independent**: `.backwards()` returns the same events as forward, newest first. It is part of
@@ -200,7 +202,8 @@ mvn clean install -DskipTests
 - Use `EventQuery.filter()` to extract the pure matching criteria
 - Can match all (`EventQuery.matchAll()`), none (`EventQuery.matchNone()`), or specific criteria
 - Supports backward direction (`.backwards()`) and result limits (`.limit(n)`)
-- Created via `EventQuery.forEvents(eventTypesFilter, tags)`
+- Created via `EventQuery.forEvents(eventTypesFilter, tags)`, or `EventQuery.forTags(tags)` for events of
+  any type carrying the tags — the usual shape of a consistency boundary
 - **`.limit(n)` means "read n stored events", and it is pushed into the storage query** — a SQL
   `LIMIT` on Postgres, a short-circuiting `Stream.limit` in memory — not applied to the result. That
   is what makes it bound memory as well as output: a storage query materialises its whole result set
@@ -746,13 +749,15 @@ Stream<Event<CustomerEvent>> filtered = stream.query(
     EventQuery.forEvents(EventTypesFilter.of(CustomerRegistered.class), Tags.of("region", "EU"))
 );
 
-// 6. Conditional append with optimistic locking
-EventQuery customerQuery = EventQuery.forEvents(EventTypesFilter.any(), Tags.of("customer", "123"));
-List<Event<CustomerEvent>> existingEvents = stream.query(customerQuery).toList();
-EventReference lastRef = existingEvents.getLast().reference();
+// 6. Conditional append with optimistic locking: pin the boundary at the head BEFORE reading.
+//    An absent head is an empty stream, and a valid boundary, so a customer with no history yet
+//    needs no special case -- there is no getLast() to throw on an empty result
+EventQuery customerQuery = EventQuery.forTags(Tags.of("customer", "123"));
+EventReference head = stream.head().orElse(null);
+List<Event<CustomerEvent>> existingEvents = stream.query(customerQuery.until(head)).toList();
 
 stream.append(
-    AppendCriteria.of(customerQuery, lastRef),
+    AppendCriteria.of(customerQuery, head),
     Event.of(new CustomerNameChanged("Jane"), Tags.of("customer", "123"))
 );
 ```

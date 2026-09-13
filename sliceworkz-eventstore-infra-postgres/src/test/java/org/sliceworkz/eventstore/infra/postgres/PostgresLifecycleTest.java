@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Path;
 import java.util.List;
 
 import javax.sql.DataSource;
@@ -32,12 +33,14 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.EventStore;
+import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageClosedException;
+import org.sliceworkz.eventstore.spi.EventStorageException;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -204,6 +207,101 @@ class PostgresLifecycleTest {
 				"closing the EventStore must close the pools the builder created — there is no other handle on them, still open: "
 					+ PostgresContainer.backendsOfSelfBuiltPools(PostgresContainer.IMAGE_PG18));
 			assertThrows(EventStorageClosedException.class, () -> stream.query(EventQuery.matchAll()).count());
+		}
+
+		/**
+		 * A builder is reusable: each {@code build()} resolves its own pools rather than remembering the
+		 * ones it created. Otherwise the second build would find the first one's pool on the builder,
+		 * take it for a caller-supplied one it must not own, and start on a pool the first storage's
+		 * close() has already shut.
+		 */
+		@Test
+		void testABuilderBuildsAgainAfterTheStorageItBuiltWasClosed ( ) {
+			Path dbProperties = PostgresContainer.writeDbProperties(PostgresContainer.IMAGE_PG18);
+			PostgresEventStorage.Builder builder = PostgresEventStorage.newBuilder()
+					.name("lifecycle-rebuilt")
+					.prefix("rebuilt_")
+					.configuration(dbProperties)
+					.initializeDatabase();
+
+			EventStorage first = builder.build();
+			first.close();
+
+			EventStorage second = builder.build();
+			try {
+				EventStream<Ping> stream = EventStoreFactory.get().eventStore(second)
+						.getEventStream(EventStreamId.forContext("lifecycle"), Ping.class);
+				stream.append(AppendCriteria.none(), Event.of(new Ping("second build"), Tags.none()));
+				assertEquals(1, stream.query(EventQuery.matchAll()).count(),
+					"the second build must run on pools of its own, not on the ones the first storage closed");
+			} finally {
+				second.close();
+			}
+			assertTrue(awaitNoSelfBuiltBackends(),
+				"closing the second storage must close the pools its build created, still open: "
+					+ PostgresContainer.backendsOfSelfBuiltPools(PostgresContainer.IMAGE_PG18));
+		}
+
+		/**
+		 * A build that fails closes the pools it made; the next build on the same builder must make new
+		 * ones rather than start on the closed ones.
+		 */
+		@Test
+		void testABuilderBuildsAgainAfterAFailedBuild ( ) {
+			Path dbProperties = PostgresContainer.writeDbProperties(PostgresContainer.IMAGE_PG18);
+			PostgresEventStorage.Builder builder = PostgresEventStorage.newBuilder()
+					.name("lifecycle-retried")
+					.prefix("retried_" + System.nanoTime() + "_")
+					.configuration(dbProperties)
+					// nothing exists under a fresh prefix, so validating it is a failed build
+					.databaseInitMode(DatabaseInitMode.VALIDATE);
+
+			assertThrows(EventStorageException.class, builder::build);
+			assertTrue(awaitNoSelfBuiltBackends(), "a failed build must not strand the pools it created");
+
+			EventStorage storage = builder.initializeDatabase().build();
+			try {
+				EventStream<Ping> stream = EventStoreFactory.get().eventStore(storage)
+						.getEventStream(EventStreamId.forContext("lifecycle"), Ping.class);
+				stream.append(AppendCriteria.none(), Event.of(new Ping("after a failed build"), Tags.none()));
+				assertEquals(1, stream.query(EventQuery.matchAll()).count(),
+					"the build after a failed one must run on fresh pools, not on the ones the failure closed");
+			} finally {
+				storage.close();
+			}
+			assertTrue(awaitNoSelfBuiltBackends());
+		}
+
+		/**
+		 * Two storages from one builder each own their pools: closing one leaves the other running.
+		 */
+		@Test
+		void testTwoStoragesFromOneBuilderDoNotSharePools ( ) {
+			Path dbProperties = PostgresContainer.writeDbProperties(PostgresContainer.IMAGE_PG18);
+			PostgresEventStorage.Builder builder = PostgresEventStorage.newBuilder()
+					.name("lifecycle-twins")
+					.prefix("twins_")
+					.configuration(dbProperties)
+					.initializeDatabase();
+
+			EventStorage first = builder.build();
+			EventStorage second = builder.build();
+			try {
+				first.close();
+
+				assertFalse(PostgresContainer.backendsOfSelfBuiltPools(PostgresContainer.IMAGE_PG18).isEmpty(),
+					"the second storage's pools must survive the first storage closing its own");
+				EventStream<Ping> stream = EventStoreFactory.get().eventStore(second)
+						.getEventStream(EventStreamId.forContext("lifecycle"), Ping.class);
+				stream.append(AppendCriteria.none(), Event.of(new Ping("still open"), Tags.none()));
+				assertEquals(1, stream.query(EventQuery.matchAll()).count(),
+					"closing the first storage must not shut the pools the second one runs on");
+			} finally {
+				second.close();
+			}
+			assertTrue(awaitNoSelfBuiltBackends(),
+				"closing both storages must close both sets of pools, still open: "
+					+ PostgresContainer.backendsOfSelfBuiltPools(PostgresContainer.IMAGE_PG18));
 		}
 
 		private boolean awaitNoSelfBuiltBackends ( ) {

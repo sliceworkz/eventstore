@@ -110,6 +110,17 @@
 		    <scope>test</scope>
 		</dependency>
 
+		<!-- the store-level meter tests read a SimpleMeterRegistry -->
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-core</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>tools.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
 
 	<build>

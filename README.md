@@ -18,6 +18,12 @@ Supports all features described described by the [DCB Specification](https://dcb
 
 Step-by-step introduction with the [quickstart guide](https://sliceworkz.github.io/posts/eventstore-quickstart/) or the [documentation](https://sliceworkz.github.io/categories/eventstore-documentation/)
 
+What lands on your classpath: `sliceworkz-eventstore-api` brings Micrometer (the store's meters, with
+`Metrics.globalRegistry` as the default registry) and SLF4J, and no Jackson beyond the optional
+`jackson-annotations` artifact that Jackson 2 and 3 share. Jackson 3 (`tools.jackson.*`) comes with the
+impl and the backends; it is a different groupId and package from Jackson 2, so an application on
+Jackson 2 runs both side by side with no conflict.
+
 
 # Shutting a store down
 

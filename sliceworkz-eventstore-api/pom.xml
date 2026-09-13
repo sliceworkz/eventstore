@@ -41,7 +41,85 @@
 		<maven.deploy.skip>false</maven.deploy.skip>
 	</properties>
 	
-	<dependencies>
+	<!--
+		What the api artifact carries onto a consumer's classpath, and why:
 
+		  - Micrometer, at compile scope and never <optional>. MeterRegistry is in the signature of
+		    EventStoreFactory.eventStore and Metrics.globalRegistry is the default of every builder
+		    and of the one-argument factory method, so a store cannot be built without it. Marking
+		    it optional would not make a metrics-free consumer possible; it would only move the
+		    failure from dependency resolution to a NoClassDefFoundError on the first store built.
+		    The alternative - an internal meter facade with a no-op binding, Micrometer loaded only
+		    when present - is what a metrics-free api would take, and is not on offer.
+		  - SLF4J, at compile scope: Projector logs through it.
+		  - Jackson proper: nothing. The api has no serialization of its own; Jackson 3 (databind
+		    and core, groupId tools.jackson) arrives with the impl and the backends. jackson-databind
+		    is test scope here, for EventQueryTest, which is not transitive.
+		  - jackson-annotations, optional. EventQuery and EventFilter mark their derived getters
+		    @JsonIgnore so that a mapper renders a query by its components only; that is the whole
+		    use. This is the 2.x annotations artifact Jackson 2 and Jackson 3 share (Jackson 3's
+		    databind depends on it), so a consumer serializing anything already has it, and one with
+		    no Jackson at all resolves nothing and loses nothing: a JVM ignores an annotation whose
+		    type is absent at runtime. Never a second Jackson, and never the trigger for one.
+
+		The enforcer rule below fails the build if Jackson proper turns up on this module's compile
+		or runtime classpath, so a dependency added to the parent or to a helper cannot reach every
+		consumer through the api unnoticed.
+	-->
+	<dependencies>
+		<dependency>
+		    <groupId>io.micrometer</groupId>
+		    <artifactId>micrometer-core</artifactId>
+		</dependency>
+		<dependency>
+		    <groupId>org.slf4j</groupId>
+		    <artifactId>slf4j-api</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-annotations</artifactId>
+			<optional>true</optional>
+		</dependency>
+
+		<dependency>
+			<groupId>tools.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-enforcer-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>no-jackson-in-the-api</id>
+						<goals>
+							<goal>enforce</goal>
+						</goals>
+						<configuration>
+							<rules>
+								<bannedDependencies>
+									<message>The api artifact must not carry Jackson: consumers get it from the impl and the backends, not from the api. Declare it in the module that uses it. Only the shared jackson-annotations artifact is allowed here, and only as optional.</message>
+									<searchTransitive>true</searchTransitive>
+									<excludes>
+										<exclude>tools.jackson.*:*:*:*:compile</exclude>
+										<exclude>tools.jackson.*:*:*:*:runtime</exclude>
+										<exclude>com.fasterxml.jackson.*:*:*:*:compile</exclude>
+										<exclude>com.fasterxml.jackson.*:*:*:*:runtime</exclude>
+									</excludes>
+									<includes>
+										<include>com.fasterxml.jackson.core:jackson-annotations</include>
+									</includes>
+								</bannedDependencies>
+							</rules>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
 </project>

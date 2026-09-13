@@ -51,6 +51,20 @@
 			<artifactId>sliceworkz-eventstore-impl</artifactId>
 			<scope>runtime</scope>
 		</dependency>
+
+		<!-- payloads are round-tripped on append and parsed on import, so both backends refuse the same payloads -->
+		<dependency>
+			<groupId>tools.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-core</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.slf4j</groupId>
+			<artifactId>slf4j-api</artifactId>
+		</dependency>
 	</dependencies>
 	
 </project>

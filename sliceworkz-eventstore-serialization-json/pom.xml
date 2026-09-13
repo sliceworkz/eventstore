@@ -46,6 +46,12 @@
 			<groupId>org.sliceworkz</groupId>
 			<artifactId>sliceworkz-eventstore-api</artifactId>
 		</dependency>
+
+		<!-- the codecs are Jackson 3 -->
+		<dependency>
+			<groupId>tools.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+		</dependency>
 	</dependencies>
 
 </project>

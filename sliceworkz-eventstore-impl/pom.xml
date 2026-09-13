@@ -46,6 +46,20 @@
 			<groupId>org.sliceworkz</groupId>
 			<artifactId>sliceworkz-eventstore-api</artifactId>
 		</dependency>
+
+		<!-- payload serde is Jackson 3; the store's meters are Micrometer -->
+		<dependency>
+			<groupId>tools.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-core</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.slf4j</groupId>
+			<artifactId>slf4j-api</artifactId>
+		</dependency>
 	</dependencies>
 
 	<build>

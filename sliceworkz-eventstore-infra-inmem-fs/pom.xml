@@ -59,6 +59,16 @@
 			<artifactId>sliceworkz-eventstore-impl</artifactId>
 			<scope>runtime</scope>
 		</dependency>
+
+		<!-- the key store file is JSON -->
+		<dependency>
+			<groupId>tools.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-core</artifactId>
+		</dependency>
 	</dependencies>
 
 </project>

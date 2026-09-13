@@ -6,6 +6,8 @@ on:
   workflow_dispatch:
   push:
     branches: [ "develop", "feature/*", "release/*" ]
+  pull_request:
+    branches: [ "develop", "release/*" ]
 
 jobs:
   build:

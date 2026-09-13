@@ -48,6 +48,43 @@ public class TagsTest {
 	}
 	
 	@Test
+	void testOfKeyValuePairs ( ) {
+		Tags tags = Tags.of("customer", "123", "region", "EU", "priority", "high");
+		assertEquals(Tags.of(Tag.of("customer", "123"), Tag.of("region", "EU"), Tag.of("priority", "high")), tags);
+	}
+
+	@Test
+	void testOfKeyValuePairsWithoutFurtherPairsIsTheSingleTag ( ) {
+		assertEquals(Tags.of("customer", "123"), Tags.of("customer", "123", new String[0]));
+		assertEquals(Tags.of("customer", "123"), Tags.of("customer", "123", (String[]) null));
+	}
+
+	@Test
+	void testOfKeyValuePairsCollapsesDuplicates ( ) {
+		assertEquals(Tags.of("customer", "123"), Tags.of("customer", "123", "customer", "123"));
+	}
+
+	@Test
+	void testOfKeyValuePairsIsImmutable ( ) {
+		Tags tags = Tags.of("customer", "123", "region", "EU");
+		assertThrows(UnsupportedOperationException.class, () -> tags.tags().add(Tag.of("x", "y")));
+	}
+
+	@Test
+	void testOfKeyValuePairsRejectsAnOddNumberOfArguments ( ) {
+		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> Tags.of("customer", "123", "region"));
+		assertTrue(e.getMessage().contains("3 arguments"), e.getMessage());
+		assertThrows(IllegalArgumentException.class, () -> Tags.of("customer", "123", "region", "EU", "priority"));
+	}
+
+	@Test
+	void testOfKeyValuePairsAppliesTheTagConstraintsToEveryPair ( ) {
+		// a colon in a key is rejected by Tag.of, so it is rejected here too, whichever pair it sits in
+		assertThrows(IllegalArgumentException.class, () -> Tags.of("customer", "123", "a:b", "c"));
+		assertThrows(IllegalArgumentException.class, () -> Tags.of("customer", "123", "region", ""));
+	}
+
+	@Test
 	void testOfNull ( ) {
 		Tag[] t = null;
 		Tags tags = Tags.of(t);

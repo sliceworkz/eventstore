@@ -227,6 +227,19 @@ public record EventFilter ( List<EventFilterItem> items, EventReference until ) 
 	}
 
 	/**
+	 * Creates a filter for events of any type carrying the specified tags.
+	 * <p>
+	 * {@link #forEvents(EventTypesFilter, Tags)} with {@link EventTypesFilter#any()}, and
+	 * equivalent to it in every respect.
+	 *
+	 * @param tags the tags that events must contain (all tags must be present)
+	 * @return an EventFilter matching events of any type carrying the tags
+	 */
+	public static EventFilter forTags ( Tags tags ) {
+		return forEvents(EventTypesFilter.any(), tags);
+	}
+
+	/**
 	 * Creates a filter from a single query item.
 	 *
 	 * @param queryItem the query item defining the match criteria

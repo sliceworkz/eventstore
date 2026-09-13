@@ -556,38 +556,6 @@ public interface PostgresEventStorage {
 
 
 		/**
-		 * Builds and returns the configured {@link EventStorage} implementation.
-		 * <p>
-		 * This method creates a {@link PostgresEventStorageImpl} instance with all configured
-		 * settings. If no custom DataSource was provided, the pools are created from the
-		 * {@link #configuration(Properties) configuration} given, or else from the {@code db.properties}
-		 * file {@link DataSourceFactory#loadProperties()} finds.
-		 * <p>
-		 * The configured {@link DatabaseInitMode} determines how the database schema is handled:
-		 * <ul>
-		 *   <li>{@link DatabaseInitMode#NONE}: No schema operations</li>
-		 *   <li>{@link DatabaseInitMode#VALIDATE}: Schema validation only</li>
-		 *   <li>{@link DatabaseInitMode#ENSURE}: Create missing objects, then validate (default)</li>
-		 *   <li>{@link DatabaseInitMode#INITIALIZE}: Drop and recreate all objects, then validate</li>
-		 * </ul>
-		 * <p>
-		 * The returned EventStorage can be passed to {@link EventStoreFactory#eventStore(EventStorage)}
-		 * to create an EventStore instance. Shredding configured on this builder travels with the storage
-		 * ({@link EventStorage#shreddingCodec()}), so a store built that way protects and erases personal
-		 * data exactly as one from {@link #buildStore()} does; only {@link #meterOptions(MeterOptions)} is
-		 * a store-level setting that has to be passed to the factory again.
-		 * <p>
-		 * The returned storage is already started: its LISTEN/NOTIFY monitor threads are running and
-		 * holding connections. Close it with {@link EventStorage#close()} when done — and note that if no
-		 * {@link #dataSource(DataSource)} was supplied, this method also creates the connection pools, and
-		 * closing the storage is then the only thing that will ever close them.
-		 *
-		 * @return a configured EventStorage instance backed by PostgreSQL
-		 * @throws EventStorageException if no database configuration can be found, or schema operations fail
-		 * @see #buildStore()
-		 * @see EventStoreFactory#eventStore(EventStorage)
-		 */
-		/**
 		 * Protects the {@link org.sliceworkz.eventstore.shredding.Shreddable} values in this store's
 		 * events, keeping the keys in this store's own database.
 		 * <p>
@@ -600,7 +568,10 @@ public interface PostgresEventStorage {
 		 *         .shredding()
 		 *         .buildStore() ) {
 		 *     …
-		 *     store.erase(DataSubject.of("customer", "alice-42"), ErasureReason.of("art.17 request #4711"));
+		 *     // the person, under every category: art.17
+		 *     store.eraseAllCategories("customer", "alice-42", ErasureReason.of("art.17 request #4711"));
+		 *     // or one category only -- a DataSubject always names one, "default" unless set
+		 *     store.erase(DataSubject.of("customer", "alice-42").withCategory("marketing"), ErasureReason.of("consent withdrawn"));
 		 * }
 		 * }</pre>
 		 * Without shredding configured, registering an event type that declares a {@code Shreddable}
@@ -659,31 +630,80 @@ public interface PostgresEventStorage {
 			return this;
 		}
 
+		/**
+		 * Builds and returns the configured {@link EventStorage} implementation.
+		 * <p>
+		 * This method creates a {@link PostgresEventStorageImpl} instance with all configured
+		 * settings. If no custom DataSource was provided, the pools are created from the
+		 * {@link #configuration(Properties) configuration} given, or else from the {@code db.properties}
+		 * file {@link DataSourceFactory#loadProperties()} finds.
+		 * <p>
+		 * The configured {@link DatabaseInitMode} determines how the database schema is handled:
+		 * <ul>
+		 *   <li>{@link DatabaseInitMode#NONE}: No schema operations</li>
+		 *   <li>{@link DatabaseInitMode#VALIDATE}: Schema validation only</li>
+		 *   <li>{@link DatabaseInitMode#ENSURE}: Create missing objects, then validate (default)</li>
+		 *   <li>{@link DatabaseInitMode#INITIALIZE}: Drop and recreate all objects, then validate</li>
+		 * </ul>
+		 * <p>
+		 * The returned EventStorage can be passed to {@link EventStoreFactory#eventStore(EventStorage)}
+		 * to create an EventStore instance. Shredding configured on this builder travels with the storage
+		 * ({@link EventStorage#shreddingCodec()}), so a store built that way protects and erases personal
+		 * data exactly as one from {@link #buildStore()} does; only {@link #meterOptions(MeterOptions)} is
+		 * a store-level setting that has to be passed to the factory again.
+		 * <p>
+		 * The returned storage is already started: its LISTEN/NOTIFY monitor threads are running and
+		 * holding connections. Close it with {@link EventStorage#close()} when done — and note that if no
+		 * {@link #dataSource(DataSource)} was supplied, this method also creates the connection pools, and
+		 * closing the storage is then the only thing that will ever close them.
+		 *
+		 * @return a configured EventStorage instance backed by PostgreSQL
+		 * @throws EventStorageException if no database configuration can be found, or schema operations fail
+		 * @see #buildStore()
+		 * @see EventStoreFactory#eventStore(EventStorage)
+		 */
 		public EventStorage build ( ) {
+			return build(resolveDataSources());
+		}
+
+		/**
+		 * The pools one {@code build()} runs on, and whether it made them.
+		 * <p>
+		 * Resolved per call and never written back to the builder, which is what keeps the builder
+		 * reusable: a second {@code build()} after a failed one must not find the pool the first one
+		 * created and then closed, mistake it for a caller-supplied one, and start on it; and two
+		 * successful builds must not share pools that only the first storage would ever close.
+		 */
+		private record ResolvedDataSources ( DataSource main, DataSource monitoring, boolean created ) { }
+
+		private ResolvedDataSources resolveDataSources ( ) {
 			// a DataSource we create here belongs to the storage, and is closed by EventStorage.close();
 			// one the caller passed in stays the caller's, and is never touched
-			boolean createdDataSources = false;
-			if ( dataSource == null ) {
-				Properties dbProperties = configuration != null ? configuration : DataSourceFactory.loadProperties();
-				dataSource = DataSourceFactory.fromConfiguration(dbProperties, "pooled");
-				if ( dataSource == null ) {
-					throw new EventStorageException("database configuration holds no 'db.pooled.' section");
-				}
-				monitoringDataSource = DataSourceFactory.fromConfiguration(dbProperties, "nonpooled");
-				createdDataSources = true;
-				if ( monitoringDataSource == null ) {
-					monitoringDataSource = dataSource;
-				}
+			if ( dataSource != null ) {
+				return new ResolvedDataSources(dataSource, monitoringDataSource, false);
 			}
+			Properties dbProperties = configuration != null ? configuration : DataSourceFactory.loadProperties();
+			DataSource main = DataSourceFactory.fromConfiguration(dbProperties, "pooled");
+			if ( main == null ) {
+				throw new EventStorageException("database configuration holds no 'db.pooled.' section");
+			}
+			DataSource monitoring = DataSourceFactory.fromConfiguration(dbProperties, "nonpooled");
+			return new ResolvedDataSources(main, monitoring != null ? monitoring : main, true);
+		}
 
-			if ( dataSource != null && dataSource instanceof HikariDataSource hds ) {
+		private EventStorage build ( ResolvedDataSources dataSources ) {
+			DataSource dataSource = dataSources.main();
+			DataSource monitoringDataSource = dataSources.monitoring();
+			boolean createdDataSources = dataSources.created();
+
+			if ( dataSource instanceof HikariDataSource hds ) {
 				try {
 					hds.setMetricRegistry(meterRegistry);
 				} catch (IllegalStateException e) {
 					// already set
 				}
 			}
-			if ( monitoringDataSource != null && monitoringDataSource instanceof HikariDataSource hds ) {
+			if ( monitoringDataSource instanceof HikariDataSource hds ) {
 				try {
 					hds.setMetricRegistry(meterRegistry);
 				} catch (IllegalStateException e) {

@@ -72,6 +72,13 @@ final class WithholdingShreddingCodec implements ShreddingCodec {
 	}
 
 	@Override
+	public SubjectErasureReport shredAllCategories ( String subjectType, String subjectId, ErasureReason reason ) {
+		throw new UnsupportedOperationException(
+				"this store's codec holds no keys (ShreddingCodec.withholdingAll()), so it cannot erase subject %s/%s; erase through a store whose codec holds the keys"
+						.formatted(subjectType, subjectId));
+	}
+
+	@Override
 	public String toString ( ) {
 		return "WithholdingShreddingCodec";
 	}

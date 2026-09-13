@@ -41,18 +41,20 @@ package org.sliceworkz.eventstore.events;
  *
  * <h2>Example Usage:</h2>
  * <pre>{@code
- * // Query events and get the last reference
- * List<Event<CustomerEvent>> events = stream.query(
- *     EventQuery.forEvents(EventTypesFilter.any(), Tags.of("customer", "123"))
- * ).toList();
+ * // The stream head is the reference of its newest stored event: take it before reading, bound
+ * // the read with it, and use the same reference for optimistic locking. It is absent for an
+ * // empty stream, which is a valid boundary
+ * EventQuery customer = EventQuery.forTags(Tags.of("customer", "123"));
+ * EventReference head = stream.head().orElse(null);
+ * List<Event<CustomerEvent>> events = stream.query(customer.until(head)).toList();
  *
- * EventReference lastRef = events.getLast().reference();
- *
- * // Use the reference for optimistic locking
  * stream.append(
- *     AppendCriteria.of(someQuery, Optional.of(lastRef)),
+ *     AppendCriteria.of(customer, head),
  *     newEvent
  * );
+ *
+ * // Every event carries its own reference too
+ * EventReference lastRead = events.getLast().reference();
  * }</pre>
  *
  * @param id the globally unique event identifier

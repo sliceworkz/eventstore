@@ -55,8 +55,6 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 
 import tools.jackson.core.JacksonException;
-import tools.jackson.databind.DatabindException;
-import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -193,12 +191,9 @@ public class InMemoryEventStorageImpl implements EventStorage {
 			throw new IllegalArgumentException("name must not be empty");
 		}
 		this.name = name;
-		// Jackson 3.x: immutable mapper built via builder; modules (incl. java.time) auto-register.
-		// FAIL_ON_UNKNOWN_PROPERTIES is re-enabled (Jackson 2.x default) so the round-trip
-		// validation in verifyPersistableJson keeps rejecting non-round-trippable events.
-		this.jsonMapper = JsonMapper.builder()
-				.enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
-				.build();
+		// only ever parses payloads to check they are JSON documents (verifyPersistableJson,
+		// verifyImportableJson); nothing is bound to a class, so no binding features matter
+		this.jsonMapper = JsonMapper.builder().build();
 		this.absoluteLimit = absoluteLimit;
 		this.shreddingCodec = shreddingCodec;
 		this.eventlog.addAll(initialEvents);
@@ -367,17 +362,31 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		return result;
 	}
 	
+	/**
+	 * Rejects payloads the Postgres backend would refuse on its {@code ::jsonb} cast -- text that is not
+	 * a JSON document, a blank string, a null -- so an append accepted here is accepted there too, and
+	 * a raw-mode caller handing the SPI a payload that is not JSON finds out in a test rather than in
+	 * production. Checked for the whole batch before anything is added, so a batch with one bad payload
+	 * stores nothing, as a rolled-back multi-row insert stores nothing.
+	 * <p>
+	 * The alternative -- writing the string through the mapper and reading it back -- checks nothing:
+	 * the payload is already a {@code String}, and any string serialises to a JSON string literal
+	 * that reads back as itself. Whether a <em>domain</em> event round-trips through its mappings is
+	 * the stream layer's concern, which surfaces it from {@code append} returning the stored events
+	 * deserialized (see {@code InMemoryEventStorageImplTest.testUnparsableJsonNotAppendable}).
+	 */
 	private void verifyPersistableJson ( List<EventToStore> newEvents ) {
-		try {
-			for ( EventToStore e: newEvents ) {
-				Class<?> clz = e.immutableData().getClass();
-				String s = jsonMapper.writeValueAsString(e.immutableData());
-				jsonMapper.readValue(s, clz);
+		for ( EventToStore e : newEvents ) {
+			if ( e.immutableData() == null ) {
+				throw new EventStorageException("event of type %s to append on stream %s carries no payload".formatted(e.type().name(), e.stream()));
 			}
-		} catch (DatabindException e) {
-			throw new RuntimeException("json mapping roundtrip test failed", e);
-		} catch (JacksonException e) {
-			throw new RuntimeException("json mapping roundtrip test failed", e);
+			try {
+				if ( jsonMapper.readTree(e.immutableData()).isMissingNode() ) {
+					throw new EventStorageException("event of type %s to append on stream %s carries an empty payload".formatted(e.type().name(), e.stream()));
+				}
+			} catch (JacksonException ex) {
+				throw new EventStorageException("event of type %s to append on stream %s does not carry valid JSON".formatted(e.type().name(), e.stream()), ex);
+			}
 		}
 	}
 	

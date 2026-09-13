@@ -67,6 +67,21 @@ public class EventQueryTest {
 	}
 
 	@Test
+	void testForTagsIsForEventsOfAnyType ( ) {
+		EventQuery q = EventQuery.forTags(Tags.of("A", "1"));
+		assertEquals(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("A", "1")), q);
+		assertFalse(q.isMatchNone());
+		assertFalse(q.isMatchAll());
+
+		assertFalse(q.matches(e1_event1NoTags));
+		assertFalse(q.matches(e2_event2NoTags));
+		assertTrue(q.matches(e3_event1TagsA1));
+		assertTrue(q.matches(e4_event2TagsA1));
+		assertTrue(q.matches(e5_event1TagsA1B1));
+		assertFalse(q.matches(e6_event2TagsA2B1));
+	}
+
+	@Test
 	void testMatchAllUntil ( ) {
 		EventQuery q = EventQuery.matchAll().until(e4_event2TagsA1.reference());
 		assertFalse(q.isMatchNone());

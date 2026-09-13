@@ -52,19 +52,15 @@
  *     Event.of(new CustomerRegistered("John"), Tags.of("region", "EU"))
  * );
  *
- * // Conditional append with DCB pattern
- * List<Event<CustomerEvent>> relevantEvents = stream.query(
- *     EventQuery.forEvents(EventTypesFilter.any(), Tags.of("customer", "cust-123"))
- * ).toList();
- *
- * EventReference lastRef = relevantEvents.getLast().reference();
+ * // Conditional append with DCB pattern: pin the boundary at the head before reading. An absent
+ * // head is an empty stream, and a valid boundary, so a new customer needs no special case
+ * EventQuery customer = EventQuery.forTags(Tags.of("customer", "cust-123"));
+ * EventReference head = stream.head().orElse(null);
+ * List<Event<CustomerEvent>> relevantEvents = stream.query(customer.until(head)).toList();
  *
  * try {
  *     stream.append(
- *         AppendCriteria.of(
- *             EventQuery.forEvents(EventTypesFilter.any(), Tags.of("customer", "cust-123")),
- *             Optional.of(lastRef)
- *         ),
+ *         AppendCriteria.of(customer, head),
  *         Event.of(new CustomerNameChanged("Jane"), Tags.of("customer", "cust-123"))
  *     );
  * } catch (OptimisticLockingException e) {

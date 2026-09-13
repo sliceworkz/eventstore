@@ -23,7 +23,6 @@ import java.util.stream.Stream;
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
-import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.examples.OptimisticLockExample.CustomerEvent.CustomerChurned;
 import org.sliceworkz.eventstore.examples.OptimisticLockExample.CustomerEvent.CustomerNameChanged;
@@ -46,9 +45,9 @@ public class OptimisticLockExample {
 		EventStreamId streamId = EventStreamId.forContext("customers");  
 		EventStream<CustomerEvent> stream = eventstore.getEventStream(streamId, CustomerEvent.class);
 		
-		stream.append(AppendCriteria.none(), Event.of(new CustomerRegistered("123", "John"), Tags.of(Tag.of("customer", "123"))));
-		stream.append(AppendCriteria.none(), Event.of(new CustomerRegistered("124", "Jane"), Tags.of(Tag.of("customer", "124"))));
-		stream.append(AppendCriteria.none(), Event.of(new CustomerChurned("124"), Tags.of(Tag.of("customer", "124"))));
+		stream.append(AppendCriteria.none(), Event.of(new CustomerRegistered("123", "John"), Tags.of("customer", "123")));
+		stream.append(AppendCriteria.none(), Event.of(new CustomerRegistered("124", "Jane"), Tags.of("customer", "124", "region", "EU")));
+		stream.append(AppendCriteria.none(), Event.of(new CustomerChurned("124"), Tags.of("customer", "124")));
 
 		// Two registration events of different customers, queried by Event Type
 		Stream<Event<CustomerEvent>> registrations = 
@@ -62,26 +61,37 @@ public class OptimisticLockExample {
 		churns.forEach(System.out::println);
 		
 		
-		// Single event on the first customer, queried by Tag
-		List<Event<CustomerEvent>> singleCustomer = 
-				stream.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("customer", "123"))).toList();
-	
-		// Reference to the last known event
-		EventReference lastEventReference = singleCustomer.getLast().reference();
+		// The DCB loop: every fact about the first customer, whatever its type, is the consistency boundary
+		EventQuery customer123 = EventQuery.forTags(Tags.of("customer", "123"));
+		
+		// Pin the boundary BEFORE reading: the head is the newest stored event of the stream. It is absent
+		// for an empty stream, and an absent reference is a valid boundary ("I decided on an empty stream"),
+		// so nothing here needs to guard against a customer with no history yet
+		EventReference head = stream.head().orElse(null);
+		
+		// Read the facts up to the boundary and decide; nothing appended after the head is seen here
+		List<Event<CustomerEvent>> singleCustomer = stream.query(customer123.until(head)).toList();
+		singleCustomer.forEach(System.out::println);
 
-		// An extra (conditional) append is done, notice we still hold the same lastEventReference without changing it
-		stream.append(AppendCriteria.of(
-				EventQuery.forEvents(EventTypesFilter.any(), Tags.of("customer", "123")), 
-				lastEventReference),
-				Event.of(new CustomerNameChanged("123", "Marc"), Tags.of(Tag.of("customer", "123"))));
+		// A conditional append: only if no fact about this customer landed after the head
+		stream.append(AppendCriteria.of(customer123, head),
+				Event.of(new CustomerNameChanged("123", "Marc"), Tags.of("customer", "123")));
 
-		// Another conditional append is not possible using the (outdated) lastEventReference ...
+		// Another conditional append is not possible using the (outdated) head ...
 		try {
-			stream.append(AppendCriteria.of(
-								EventQuery.forEvents(EventTypesFilter.any(), Tags.of("customer", "123")), 
-								lastEventReference), Event.of(new CustomerNameChanged("123", "John"), Tags.of("customer", "123")));
+			stream.append(AppendCriteria.of(customer123, head),
+					Event.of(new CustomerNameChanged("123", "John"), Tags.of("customer", "123")));
 		} catch (OptimisticLockingException e) {
 			// ... as a new fact about this customer exists, that is found by the optimistic-lock query linked to the append AppendCriteria
+		}
+		
+		// A uniqueness check is the same loop over a customer that does not exist yet: the head bounds the
+		// read and feeds the check, and the read comes back empty
+		EventQuery customer125 = EventQuery.forTags(Tags.of("customer", "125"));
+		EventReference headBeforeRegistering = stream.head().orElse(null);
+		if ( stream.query(customer125.until(headBeforeRegistering)).findAny().isEmpty() ) {
+			stream.append(AppendCriteria.of(customer125, headBeforeRegistering),
+					Event.of(new CustomerRegistered("125", "Anne"), Tags.of("customer", "125")));
 		}
 		
 	}

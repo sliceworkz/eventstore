@@ -238,6 +238,21 @@ public class AesGcmShreddingCodec implements ShreddingCodec {
 	}
 
 	@Override
+	public SubjectErasureReport shredAllCategories ( String subjectType, String subjectId, ErasureReason reason ) {
+		if ( subjectType == null || subjectType.isBlank() ) {
+			throw new IllegalArgumentException("subjectType cannot be null or blank");
+		}
+		if ( subjectId == null || subjectId.isBlank() ) {
+			throw new IllegalArgumentException("subjectId cannot be null or blank");
+		}
+		if ( reason == null ) {
+			throw new IllegalArgumentException("reason cannot be null");
+		}
+		List<ErasureReport> categories = keyStore.shredAllCategories(subjectType, subjectId, reason);
+		return new SubjectErasureReport(subjectType, subjectId, reason, categories == null ? List.of() : categories);
+	}
+
+	@Override
 	public Optional<ShreddingAudit> audit ( ) {
 		return keyStore.audit();
 	}

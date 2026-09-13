@@ -31,6 +31,7 @@ import javax.crypto.SecretKey;
 
 import org.sliceworkz.eventstore.shredding.DataSubject;
 import org.sliceworkz.eventstore.shredding.ErasureReason;
+import org.sliceworkz.eventstore.shredding.ErasureReport;
 import org.sliceworkz.eventstore.shredding.KeyAuditQuery;
 import org.sliceworkz.eventstore.shredding.KeyId;
 import org.sliceworkz.eventstore.shredding.ShreddingAudit;
@@ -126,7 +127,48 @@ public class InMemoryShreddingKeyStore implements ShreddingKeyStore {
 			throw new IllegalArgumentException("reason cannot be null");
 		}
 
+		return shredLocked(subject, reason, Instant.now());
+	}
+
+	@Override
+	public synchronized List<ErasureReport> shredAllCategories ( String subjectType, String subjectId, ErasureReason reason ) {
+		if ( subjectType == null || subjectType.isBlank() ) {
+			throw new IllegalArgumentException("subjectType cannot be null or blank");
+		}
+		if ( subjectId == null || subjectId.isBlank() ) {
+			throw new IllegalArgumentException("subjectId cannot be null or blank");
+		}
+		if ( reason == null ) {
+			throw new IllegalArgumentException("reason cannot be null");
+		}
+
+		// Every category the subject has ever held a live key under, in order of first sight, then the
+		// same per-category erasure for each -- one monitor hold for all of them, so no append can slip
+		// a fresh key for one category in between two erasures.
 		Instant shreddedAt = Instant.now();
+		List<DataSubject> subjects = new ArrayList<>();
+		for ( StoredKey stored : keys.values() ) {
+			DataSubject subject = stored.subject();
+			if ( stored.material() != null && subject.type().equals(subjectType) && subject.id().equals(subjectId)
+					&& !subjects.contains(subject) ) {
+				subjects.add(subject);
+			}
+		}
+
+		List<ErasureReport> reports = new ArrayList<>();
+		for ( DataSubject subject : subjects ) {
+			List<KeyId> shredded = shredLocked(subject, reason, shreddedAt);
+			if ( !shredded.isEmpty() ) {
+				reports.add(new ErasureReport(subject, reason, shredded, shreddedAt));
+			}
+		}
+		return List.copyOf(reports);
+	}
+
+	/**
+	 * Destroys the subject's keys under its one category; the caller holds the monitor.
+	 */
+	private List<KeyId> shredLocked ( DataSubject subject, ErasureReason reason, Instant shreddedAt ) {
 		List<KeyId> shredded = new ArrayList<>();
 
 		// Every key ever minted for the subject, not just the active one: a subject appended for after

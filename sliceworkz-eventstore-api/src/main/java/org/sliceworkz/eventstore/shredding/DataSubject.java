@@ -22,7 +22,10 @@ package org.sliceworkz.eventstore.shredding;
  * <p>
  * A data subject is the unit of erasure: {@link org.sliceworkz.eventstore.EventStore#erase} takes one
  * and destroys the keys held for it, which makes every {@link Shreddable} sealed under those keys
- * unreadable everywhere at once — in the events table, in WAL, on replicas and in every backup.
+ * unreadable everywhere at once — in the events table, in WAL, on replicas and in every backup. A
+ * subject always names one {@link #category() category}, so that erasure is of one category; erasing a
+ * person outright, whichever categories their data was written under, is
+ * {@link org.sliceworkz.eventstore.EventStore#eraseAllCategories}, which takes the type and id only.
  *
  * <h2>The subject id must not itself be personal data</h2>
  * The id is stored in the sealed envelope in plaintext and is used to key the key store, so it
@@ -56,8 +59,14 @@ package org.sliceworkz.eventstore.shredding;
  * DataSubject financial = DataSubject.of("customer", "alice-42").withCategory("financial");
  *
  * // erases the marketing data only; the financial history keeps decrypting
- * eventStore.erase(marketing, ErasureReason.of("GDPR art.17 request #4711"));
+ * eventStore.erase(marketing, ErasureReason.of("consent withdrawn, ticket #4711"));
+ *
+ * // erases the person: every category, without having to know which ones exist
+ * eventStore.eraseAllCategories("customer", "alice-42", ErasureReason.of("GDPR art.17 request #4711"));
  * }</pre>
+ * Note that {@code DataSubject.of("customer", "alice-42")} is the subject under {@link #DEFAULT_CATEGORY},
+ * so erasing <em>it</em> erases the default category and leaves the others readable, exactly as erasing
+ * {@code marketing} above leaves {@code financial}.
  * Each category a subject uses is one more key row and, on append, one more key lookup per event that
  * carries it — a handful per subject is the intended scale, not one per field.
  *

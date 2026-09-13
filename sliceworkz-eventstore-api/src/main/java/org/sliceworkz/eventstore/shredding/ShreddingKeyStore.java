@@ -37,7 +37,8 @@ import javax.crypto.SecretKey;
  *       with one key, not two. A subject whose key was shredded gets a <em>new</em> key, so data
  *       appended after an erasure is readable again — the old ciphertext stays unreadable.</li>
  *   <li><b>{@link #resolve} answers empty only for a destroyed key.</b> See below; this is the one
- *       contract that must not be got wrong.</li>
+ *       contract that must not be got wrong. A key id this store has never held is not a destroyed
+ *       key: that throws too, see further below.</li>
  *   <li><b>{@link #resolveKey} is the same lookup with a third answer</b>, {@link KeyResolution.Denied}:
  *       the key exists and this caller may not have it. Its default derives the other two answers from
  *       {@link #resolve}, so a store written before it existed keeps working; a store that can tell a
@@ -46,7 +47,8 @@ import javax.crypto.SecretKey;
  *       for the same subject reports an empty list rather than failing.</li>
  *   <li><b>Key material is never resurrected.</b> Destroying a key means the bytes are gone; keep the
  *       row, with the material nulled and the reason and timestamp stamped, so the erasure remains
- *       auditable and the key id keeps resolving to "shredded" rather than to "unknown".</li>
+ *       auditable and the key id keeps resolving to "shredded" rather than to "unknown" — which, since
+ *       an unknown key throws, is also what keeps the erased subject's events readable at all.</li>
  * </ul>
  *
  * <h2>Empty means erased; unavailable means throw</h2>
@@ -80,6 +82,25 @@ import javax.crypto.SecretKey;
  * the keys — a KMS policy per service role, column privileges on the key table — and cannot be argued
  * with from inside the JVM. The in-process alternative, {@link ShreddingCodec#restrictedTo(java.util.Set)},
  * is a data-minimisation boundary a deployment declares for itself; the two compose.
+ *
+ * <h2>A key this store never held is not erased either</h2>
+ * A store keeps the row of every key it destroys, so it can tell a key it shredded from a key id it has
+ * never seen — and the two mean different things. "Erased" is the mechanism working: the value is gone
+ * for everyone, and reporting it lets a projection move on. An id the store has never held means the
+ * store is not the one the events were sealed against: a file-backed store pointed at the wrong
+ * directory, a SQL one at the wrong prefix or database, a KMS in the wrong account, events imported
+ * without their keys. Every protected value then looks erased at once, and reported that way it is the
+ * same permanent, silent gap in every read model as a mis-reported outage, on the whole store rather
+ * than a few values. So an unknown key id must throw {@link ShreddingException}, like an outage: the
+ * read fails, the bookmark stays, and the projection recovers when the store is pointed at its keys.
+ * <p>
+ * The alternative — a fourth {@link KeyResolution} answer — was turned down because there is nothing a
+ * reader could do with it but throw: the value is not erased, so it cannot be rendered as such, and
+ * it is not withheld from this reader in particular. What the rule costs is that a shredded row must
+ * stay, which the audit already requires: pruning one turns that subject's events from "erased" into
+ * unreadable, with an error naming the key. To move events without their keys deliberately, carry
+ * the key rows across shredded — material gone, reason stamped — so the values read as erased and
+ * the audit says why.
  * <h2>Ordering, when the key store is not transactional with the events</h2>
  * The default key stores that ship with a SQL backend write keys on the same {@code DataSource} as the
  * events, so a key mint and the append that needs it commit together. An external key store cannot do
@@ -124,8 +145,9 @@ public interface ShreddingKeyStore extends AutoCloseable {
 	 * expected to cache; see {@link ShreddingCodec} for what that costs in erasure latency.
 	 *
 	 * @param key the key id taken from a sealed envelope
-	 * @return the key material, or empty if the key was shredded or never existed
-	 * @throws ShreddingException if the key store cannot be reached — never for a destroyed key
+	 * @return the key material, or empty if the key was shredded
+	 * @throws ShreddingException if the key store cannot be reached, or holds no key of that id and never
+	 *                            has — never for a destroyed key
 	 */
 	Optional<SecretKey> resolve ( KeyId key );
 
@@ -140,7 +162,8 @@ public interface ShreddingKeyStore extends AutoCloseable {
 	 *
 	 * @param key the key id taken from a sealed envelope
 	 * @return the key, or why it is not available: destroyed, or not for this caller
-	 * @throws ShreddingException if the key store cannot be reached — never for a destroyed or denied key
+	 * @throws ShreddingException if the key store cannot be reached, or holds no key of that id and never
+	 *                            has — never for a destroyed or denied key
 	 */
 	default KeyResolution resolveKey ( KeyId key ) {
 		return resolve(key).<KeyResolution>map(KeyResolution.Resolved::new).orElse(KeyResolution.Erased.INSTANCE);
@@ -211,7 +234,9 @@ public interface ShreddingKeyStore extends AutoCloseable {
 		}
 
 		/**
-		 * The key has been destroyed, or never existed. The value sealed under it is gone for everyone.
+		 * The key has been destroyed. The value sealed under it is gone for everyone.
+		 * <p>
+		 * Only for a key the store once held: an id it has never seen is a miswiring, and throws.
 		 */
 		record Erased ( ) implements KeyResolution {
 

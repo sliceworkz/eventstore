@@ -844,8 +844,11 @@ idempotency key, which the public `Event` record does not carry.
 **Sealed values move as ciphertext, and the keys do not move with them.** A `Shreddable`'s envelope is
 opaque JSON like any other payload, so an import copies it verbatim without keys, domain classes, or the
 right to read the personal data. The consequence is the obvious one: a store imported into a deployment
-whose key store does not hold those keys reads every protected value as erased. Migrate the keys
-alongside the events, or accept the erasure.
+whose key store does not hold those keys cannot read any protected value — every read throws
+`ShreddingException` naming a key the store never held, since an unknown key is deliberately not
+reported as erased (see below). Migrate the keys alongside the events. To accept the erasure
+deliberately, carry the key rows across shredded — material gone, reason stamped — so the values read
+as erased and the audit says why.
 
 **Import modes** (`EventStorage.ImportMode`):
 - `FAIL_ON_EXISTING_ID` (default) — an already-present event id aborts the batch with `EventImportConflictException`
@@ -1037,6 +1040,16 @@ PostgresEventStorage.newBuilder().shredding(myKmsCodec).buildStore(); // take ov
   models permanently and never revisit them. `TypedEventPayloadSerializerDeserializer` rethrows a
   `ShreddingException` unwrapped (and unwraps one Jackson wrapped) precisely so that "retry later" does
   not arrive as `EventDeserializationException`, which means "never retry".
+- **A key id the store has never held is not erased either; it throws.** A shredded key keeps its row,
+  so every shipped key store can tell "destroyed" from "never seen", and the second means the store is
+  not the one the events were sealed against: the fs store pointed at the wrong directory, the Postgres
+  one at the wrong prefix or database, events imported without their keys. Reported as erased, that is
+  the outage failure above applied to the *whole* store at once. The alternative — a fourth
+  `KeyResolution` answer — loses because a reader could do nothing with it but throw: the value is not
+  erased, and not withheld from this reader in particular. The cost is that shredded rows must stay
+  (which the audit already requires): pruning one turns that subject's events from "erased" into
+  unreadable, with an error naming the key. `ShreddableEventDataTest.aKeyThisStoreNeverHeldThrowsRatherThanReadingAsErased`
+  pins it per backend, at the seam and through a projector.
 - **Nothing here needs post-quantum work.** The design uses no asymmetric cryptography, so Shor has no
   target; Grover leaves AES-256 at ~128 bits of effective security. Shredding is in fact a stronger
   position than encryption at rest generally is — the threat model is ciphertext recovered from a backup
@@ -1200,7 +1213,7 @@ to migrate the events via `EventStoreImporter.transform` or to read the old shap
 the two-subject erasure, the collection case, a record whose constructor rejects nulls surviving erasure,
 category independence, idempotent erasure and a fresh key afterwards, the `dek:` tags, the audit view
 (including, reflectively, that `KeyRecord` cannot carry key material), that an unreachable key store
-throws instead of reporting the data as erased — and, for entitlement, that a withholding codec reads the
+throws instead of reporting the data as erased and so does one asked for a key it never held — and, for entitlement, that a withholding codec reads the
 typed events with every value withheld, that a restricted codec reads its categories and withholds the
 rest without a key lookup, seals nothing outside them and erases everything, that a withheld value says
 nothing about erasure, that a key store's `Denied` reads as withheld and a projector advances over it,

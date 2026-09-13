@@ -67,7 +67,10 @@ import org.sliceworkz.eventstore.shredding.ShreddingKeyStore.KeyResolution;
  * the table, in the write-ahead log, on every replica and in every backup, and all of it becomes
  * unreadable at the moment the material goes. Keeping the row is what gives the erasure an audit trail —
  * nothing else records that it happened — and what lets a key id keep resolving to "erased" instead of
- * to "unknown".
+ * to "unknown": a key id with no row at all is one this store never minted, and resolving it throws
+ * {@link ShreddingException} rather than reporting an erasure. That is the store being pointed at the
+ * wrong prefix or database, or events imported without their keys, and reported as erased it would
+ * have every protected value read as destroyed, permanently, in every bookmarked read model.
  * <p>
  * Every key a subject has ever held is destroyed, not just the active one: a subject appended for after
  * an earlier erasure holds a second key, and missing it would leave that data readable while the
@@ -103,8 +106,8 @@ import org.sliceworkz.eventstore.shredding.ShreddingKeyStore.KeyResolution;
  * decides on the category in the envelope and never reaches this store for a denied one.
  * <p>
  * Row-level security on the key table does <em>not</em> give a denial: a row the policy hides is
- * indistinguishable from a row that never existed, and reads as erased. Use column privileges for the
- * hard boundary and the codec restriction for the per-category one.
+ * indistinguishable from a row that never existed, and fails to resolve as a key this store never held.
+ * Use column privileges for the hard boundary and the codec restriction for the per-category one.
  * <p>
  * A denial is cached for the same ttl as a key, since a role's privileges do not change per value; a
  * grant made while a process runs is seen once the entry lapses.
@@ -306,10 +309,15 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 			statement.setString(1, key.value());
 			try ( ResultSet resultSet = statement.executeQuery() ) {
 				if ( !resultSet.next() ) {
-					// No such key. Reported as "erased" rather than thrown: a key id this store has never
-					// held cannot be produced by a retry either, and the only readings that reach here are
-					// an erasure whose row was pruned, or an envelope from another store.
-					return KeyResolution.Erased.INSTANCE;
+					// No such key, which is not "erased": a shredded key keeps its row. An id with no row
+					// was minted by some other store -- this one is pointed at the wrong prefix or
+					// database, or the events were imported without their keys -- and reported as erased
+					// every protected value would read as destroyed, and bookmarked projections would
+					// write that into read models and never revisit it. Thrown, the read fails and the
+					// bookmark stays until the store is pointed at its keys.
+					throw new ShreddingException(
+							"key %s is not held in %s and never was: the value was sealed against another key store. Point this store at the keys the events were sealed with, or import the keys alongside the events."
+									.formatted(key, tableName));
 				}
 				byte[] material = resultSet.getBytes("key_material");
 				if ( material == null ) {

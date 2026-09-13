@@ -195,7 +195,7 @@ public class AesGcmShreddingCodec implements ShreddingCodec {
 
 		return switch ( keyStore.resolveKey(sealed.key()) ) {
 			// The key is gone, which is the mechanism working. Never conflate this with a key store that
-			// could not be reached -- that throws, from the key store itself.
+			// could not be reached, or one that never held the key -- both throw, from the key store itself.
 			case KeyResolution.Erased erased -> Unsealed.Erased.INSTANCE;
 			// The key exists and this reader may not have it: the key store's own boundary, passed on as
 			// what it is rather than as an erasure or a retry.

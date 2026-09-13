@@ -72,8 +72,9 @@ leases table needs no `DELETE`; contender rows are pruned, so that table does.
 The shredding key table needs no `DELETE` either, and deliberately: erasing a data subject *updates*
 the row, nulling `key_material` and stamping `shredded_at` and `shredded_reason`. Keeping the row is
 what leaves the erasure an audit trail — the events themselves record nothing about it — and what
-lets a key id keep resolving to "erased" rather than to "unknown". Granting `DELETE` here would let
-an erasure be made untraceable.
+lets a key id keep resolving to "erased" rather than to "unknown" — and an unknown key id fails the
+read, since it means the events were sealed against another store. Granting `DELETE` here would let
+an erasure be made untraceable, and turn the deleted subject's events unreadable.
 
 A role that must read the events but never the personal data in them is granted every column of the
 key table *except* `key_material`:
@@ -98,8 +99,8 @@ report `key_material` as missing. A store opened by the reporting role therefore
 boundary, and it is all-or-nothing per role. Per-category entitlement — a service that reads names
 and never addresses — is declared on the codec with `ShreddingCodec.restrictedTo(...)`, which decides
 on the category in the envelope and never reaches the table for a denied one. Row-level security on
-the key table does *not* produce a denial: a hidden row is indistinguishable from an absent one and
-reads as erased.
+the key table does *not* produce a denial: a hidden row is indistinguishable from an absent one, and
+an absent row is a key the store never held, which fails the read rather than reading as withheld.
 
 ### Migrating the bookmarks table to store the event id only
 
@@ -262,7 +263,9 @@ from ordinary ones any more — which is why it is worth catching on the first s
      `event_id`, the import preserves ids, and the store answers a bookmark's position and transaction
      from the target's own events row — so the copied table is valid as it stands and the foreign key
      holds.
-   - **Shredding keys.** Copy `<prefix>shredding_keys` alongside, or every sealed value reads as erased.
+   - **Shredding keys.** Copy `<prefix>shredding_keys` alongside — shredded rows included, so erased
+     values still read as erased. A key the target store never held fails the read rather than reading
+     as erased, so a store whose keys were left behind cannot read any protected value at all.
    - **Leases** are deliberately not migrated; they expire.
    - **Anything outside the store holding event references** — an SQL read model's own bookmark and
      freshness columns, say — holds the source's coordinates too. Rebuild such read models on the

@@ -213,8 +213,8 @@ public interface ShreddingCodec extends AutoCloseable {
 	 * The three answers {@link #open} can give.
 	 * <p>
 	 * A sealed type so that a caller handles all three, and an implementation names which it means. The
-	 * fourth outcome — the key store is down, the envelope is corrupt, the algorithm is unknown — is not an
-	 * answer but a {@link ShreddingException}.
+	 * fourth outcome — the key store is down, the envelope is corrupt, the algorithm is unknown, the key
+	 * is one the store never held — is not an answer but a {@link ShreddingException}.
 	 */
 	sealed interface Unsealed permits Unsealed.Plaintext, Unsealed.Erased, Unsealed.Withheld {
 

@@ -365,6 +365,84 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		assertEquals(2, audit(store).keys(KeyAuditQuery.all().withLimit(2)).size());
 	}
 
+	/**
+	 * The category inventory: which categories of personal data the store holds, and how much under
+	 * each. A category is what an erasure takes and what a reader is granted, and only the key store
+	 * knows which ones exist -- the events carry them inside sealed envelopes -- so this is what an
+	 * operator reads before deciding which categories a service may open.
+	 */
+	@ForEachBackend
+	void theAuditBreaksItsTotalsDownByCategory ( ) {
+		EventStore store = eventStoreWithShredding();
+		EventStream<PaymentEvent> payments = store.getEventStream(STREAM, PaymentEvent.class);
+
+		DataSubject marketing = ALICE.withCategory("marketing");
+		payments.append(AppendCriteria.none(), Event.of(
+				new StrictlyValidated("v-1", Shreddable.of("alice@example.org", marketing)), Tags.none()));
+		payments.append(AppendCriteria.none(), Event.of(transfer(), Tags.none()));
+
+		// default: Alice and Bob; marketing: Alice only. Most live subjects first.
+		assertEquals(List.of(
+				new ShreddingAudit.CategoryTotals("default", 2, 2, 0),
+				new ShreddingAudit.CategoryTotals("marketing", 1, 1, 0)),
+				audit(store).categories());
+
+		store.erase(marketing, ErasureReason.of("marketing consent withdrawn"));
+
+		// an erased category stays in the inventory with its erasure counted, rather than vanishing --
+		// "we held marketing data and destroyed it" is exactly what the inventory is for
+		assertEquals(List.of(
+				new ShreddingAudit.CategoryTotals("default", 2, 2, 0),
+				new ShreddingAudit.CategoryTotals("marketing", 0, 0, 1)),
+				audit(store).categories());
+
+		// and the breakdown sums to the totals
+		ShreddingAudit.ShreddingTotals totals = audit(store).totals();
+		assertEquals(totals.liveKeys(), audit(store).categories().stream().mapToLong(ShreddingAudit.CategoryTotals::liveKeys).sum());
+		assertEquals(totals.shreddedKeys(), audit(store).categories().stream().mapToLong(ShreddingAudit.CategoryTotals::shreddedKeys).sum());
+	}
+
+	/**
+	 * The join back from an event to the key store. An event says which keys it was sealed under and
+	 * nothing else; a reader holding one -- a dashboard rendering it, a support tool -- asks the audit
+	 * for exactly those keys to tell "protected" from "erased", without a key of its own.
+	 */
+	@ForEachBackend
+	void theKeysAnEventCarriesCanBeLookedUpToTellProtectedFromErased ( ) {
+		EventStore store = eventStoreWithShredding();
+		EventStream<PaymentEvent> payments = store.getEventStream(STREAM, PaymentEvent.class);
+
+		Event<PaymentEvent> stored = payments.append(AppendCriteria.none(), Event.of(transfer(), Tags.none())).getFirst();
+		Set<KeyId> keysOnTheEvent = stored.tags().tags().stream()
+				.filter(tag -> KeyId.TAG_KEY.equals(tag.key()))
+				.map(tag -> KeyId.of(tag.value()))
+				.collect(java.util.stream.Collectors.toSet());
+		assertEquals(2, keysOnTheEvent.size(), "two subjects, two keys");
+
+		List<ShreddingAudit.KeyRecord> records = audit(store).keys(KeyAuditQuery.forKeys(keysOnTheEvent));
+		assertEquals(keysOnTheEvent, records.stream().map(ShreddingAudit.KeyRecord::id).collect(java.util.stream.Collectors.toSet()));
+		assertTrue(records.stream().noneMatch(ShreddingAudit.KeyRecord::isShredded));
+
+		store.erase(ALICE, ErasureReason.of("GDPR art.17 request #4711"));
+
+		// the same lookup now says which of the two is gone, and whose it was
+		records = audit(store).keys(KeyAuditQuery.forKeys(keysOnTheEvent));
+		assertEquals(2, records.size());
+		List<ShreddingAudit.KeyRecord> erased = records.stream().filter(ShreddingAudit.KeyRecord::isShredded).toList();
+		assertEquals(1, erased.size());
+		assertEquals(ALICE, erased.getFirst().subject());
+		assertEquals(Optional.of(ErasureReason.of("GDPR art.17 request #4711")), erased.getFirst().reason());
+
+		// the key filter composes with the others rather than replacing them
+		assertEquals(1, audit(store).keys(KeyAuditQuery.forKeys(keysOnTheEvent).onlyShredded()).size());
+		assertEquals(1, audit(store).keys(KeyAuditQuery.forSubject(BOB).withKeys(keysOnTheEvent)).size());
+		assertEquals(0, audit(store).keys(KeyAuditQuery.forSubject(BOB).withKeys(keysOnTheEvent).onlyShredded()).size());
+
+		// a key this store never held answers nothing, rather than failing: an envelope from another
+		// store is a miswiring the caller can see from an empty answer
+		assertEquals(List.of(), audit(store).keys(KeyAuditQuery.forKey(KeyId.of("k-never-minted-here"))));
+	}
+
 	// ---- who may read what: withheld is a third state, decided on the key seams -------------------------
 
 	/**

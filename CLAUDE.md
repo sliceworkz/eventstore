@@ -1027,16 +1027,44 @@ ShreddingAudit audit = eventStore.shreddingAudit().orElseThrow();
 audit.totals();                                          // subjects with live keys, live keys, shredded keys
 audit.keys(KeyAuditQuery.forSubject("customer", "alice-42"));   // one person, every category
 audit.keys(KeyAuditQuery.all().onlyShredded());                 // the erasure log: what, when, on whose authority
+audit.categories();                                             // which categories exist, and how much under each
+audit.keys(KeyAuditQuery.forKeys(keysOnAnEvent));               // are the keys this event carries still live?
 ```
 
 - **`KeyRecord` carries no key material, and no method here returns any.** That separation is the whole
   reason this is a second interface rather than another method on the key store: a dashboard credential
   granted it can see *that* data is protected and *when* it was erased, and never *what* it was. The
   Postgres implementation does not merely refrain from reading `key_material` — the column is absent
-  from every statement it issues, so key bytes cannot reach a log or a heap dump through this path.
+  from every statement the audit issues, predicates included, so key bytes cannot reach a log or a heap
+  dump through this path. That absence is also what keeps the audit working for the reporting role the
+  postgres README recommends, which is granted every column *but* that one: PostgreSQL checks `SELECT`
+  privilege on every column a statement references, a `WHERE` or `FILTER` clause as much as the select
+  list, so "shredded" is judged by `shredded_at` — stamped by the same statement that nulls the material
+  — never by `key_material IS NULL`. `PostgresShreddingReportingRoleTest` pins every audit statement
+  under that role. The same privilege rule hides the column from `information_schema`, so such a role
+  starts its store with `DatabaseInitMode.NONE`; `VALIDATE` would report `key_material` as missing.
 - **Bounded, with no cursor.** `KeyAuditQuery` always carries a limit (default 500). A store running for
   years holds one row per subject per category and never prunes the shredded ones, and unlike an event
   query there is nothing to resume from — so an accidental full enumeration is not offered.
+- **`categories()` is the inventory: which categories of personal data the store holds, and how much
+  under each** (`CategoryTotals`: live subjects, live keys, shredded keys per category, most live
+  subjects first). A category is the unit of erasure *and* of access, and only the key store knows
+  which exist — writers choose them, and events carry them only inside sealed envelopes — so this is
+  what an operator reads before deciding which categories a service is `restrictedTo`. Deriving it
+  from `keys()` is wrong on any store holding more keys than the query's limit, which is why it is a
+  method rather than a recipe. An erased category stays listed with zero live keys and its erasures
+  counted. The default throws `UnsupportedOperationException`, like the optional SPI methods on
+  `EventStorage`, so an audit written before it compiles and a caller is told rather than shown an empty
+  inventory; the three shipped key stores all answer it.
+- **`KeyAuditQuery.forKeys(Set<KeyId>)` is the join back from an event.** An event carries its keys as
+  `dek:` tags and in each envelope, and nothing else; whether those keys still exist is the key store's
+  to say. A reader holding an event — a dashboard rendering it, a support tool — asks for exactly those
+  keys and can tell "protected" from "erased on … because …" without holding a key of its own. A
+  primary-key lookup on Postgres, however many keys a page of events carries; the limit defaults to the
+  number of keys asked for. It narrows the other parts rather than replacing them, an empty set is
+  refused (it could only mean "nothing"), and a key the store never held answers nothing rather than
+  failing — an envelope from another store is a miswiring the caller can see from the gap. The
+  five-argument constructor stays, meaning "any key".
 - **Which *events* hold data under a key is not answered here** — the key store has never seen an event.
   That is an ordinary tag query, since each event carries its keys as `dek:` tags:
   `EventQuery.forEvents(EventTypesFilter.any(), Tags.of(KeyId.TAG_KEY, record.id().value()))`.

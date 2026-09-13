@@ -32,7 +32,10 @@ import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
 import java.time.Duration;
+import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -47,8 +50,17 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
+import org.sliceworkz.eventstore.events.EventType;
+import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.Limit;
+import org.sliceworkz.eventstore.spi.EventStorage.AppendsToEventStoreNotification;
+import org.sliceworkz.eventstore.spi.EventStorage.BookmarkPlacedNotification;
+import org.sliceworkz.eventstore.spi.EventStorage.EventStoreListener;
+import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
+import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.spi.EventStorageException;
+import org.sliceworkz.eventstore.stream.AppendCriteria;
+import org.sliceworkz.eventstore.stream.EventStreamId;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -109,6 +121,13 @@ class PostgresNotificationStartupTest {
 		@Override public Logger getParentLogger ( ) throws SQLFeatureNotSupportedException { throw new SQLFeatureNotSupportedException(); }
 		@Override public <T> T unwrap ( Class<T> iface ) throws SQLException { return delegate.unwrap(iface); }
 		@Override public boolean isWrapperFor ( Class<?> iface ) throws SQLException { return delegate.isWrapperFor(iface); }
+	}
+
+	static class RecordingListener implements EventStoreListener {
+		final List<AppendsToEventStoreNotification> appends = new CopyOnWriteArrayList<>();
+		final List<BookmarkPlacedNotification> bookmarks = new CopyOnWriteArrayList<>();
+		@Override public void notify ( AppendsToEventStoreNotification newEventsInStore ) { appends.add(newEventsInStore); }
+		@Override public void notify ( BookmarkPlacedNotification bookmarkPlaced ) { bookmarks.add(bookmarkPlaced); }
 	}
 
 	/** a pool pointed at a port nothing is listening on: every {@code getConnection()} fails, quickly */
@@ -393,6 +412,55 @@ class PostgresNotificationStartupTest {
 
 				awaitTrue(storage::isNotificationsAvailable, "notifications never came back after the outage ended");
 				assertEquals(1d, gauge(registry, "event_appended"));
+
+				storage.close();
+			} finally {
+				PostgresContainer.closeDataSource(PostgresContainer.IMAGE_PG18);
+			}
+		}
+
+		/**
+		 * A channel is a database-wide name, so anything in the database can publish on it, in any shape.
+		 * The junk goes down both channels first; the notifications a real append and bookmark raise queue
+		 * behind it on the same connection, so they arrive only if both monitors are still there to receive
+		 * them -- and the gauge has to keep saying so truthfully either way.
+		 */
+		@Test
+		void testWhatArrivesOnTheChannelCannotKillAMonitor ( ) throws Exception {
+			DataSource main = PostgresContainer.dataSource(PostgresContainer.IMAGE_PG18);
+			MeterRegistry registry = new SimpleMeterRegistry();
+			try {
+				PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl(
+					"junk-on-the-channel", main, main, Limit.none(), "junk_", false, registry);
+				storage.initializeDatabase();
+				storage.start(MUST_RETURN_WITHIN);
+				RecordingListener listener = new RecordingListener();
+				storage.subscribe(listener);
+
+				try ( Connection connection = main.getConnection();
+					  Statement statement = connection.createStatement() ) {
+					// not JSON; JSON the record cannot parse; JSON that parses into something EventReference refuses
+					statement.execute("select pg_notify('junk_event_appended', 'not json at all')");
+					statement.execute("select pg_notify('junk_event_appended', '{\"unexpected\":true}')");
+					statement.execute("select pg_notify('junk_event_appended', "
+						+ "'{\"streamContext\":\"c\",\"streamPurpose\":\"p\",\"eventPosition\":0,\"eventTx\":\"1\",\"eventId\":\"x\"}')");
+					statement.execute("select pg_notify('junk_bookmark_placed', 'not json at all')");
+					statement.execute("select pg_notify('junk_bookmark_placed', "
+						+ "'{\"reader\":\"r\",\"eventPosition\":1,\"eventTx\":\"1\",\"eventId\":null}')");
+				}
+
+				EventStreamId stream = EventStreamId.forContext("junk").withPurpose("p");
+				StoredEvent stored = storage.append(AppendCriteria.none(), Optional.of(stream),
+					List.of(new EventToStore(stream, EventType.ofType("SomethingHappened"), "{}", Tags.none(), null))).getFirst();
+				storage.bookmark("reader", stored.reference(), Tags.none());
+
+				awaitTrue(() -> !listener.appends.isEmpty() && !listener.bookmarks.isEmpty(),
+					"the real append and bookmark never reached the listener: a monitor died on the junk ahead of them");
+				assertEquals(stored.reference(), listener.appends.getFirst().atLeastUntil());
+				assertEquals(stored.reference(), listener.bookmarks.getFirst().bookmark());
+				assertTrue(storage.isNotificationsAvailable());
+				assertEquals(1d, gauge(registry, "event_appended"));
+				assertEquals(1d, gauge(registry, "bookmark_placed"));
 
 				storage.close();
 			} finally {

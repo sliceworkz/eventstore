@@ -286,6 +286,14 @@ so a selective tag query costs it a walk of the whole log where Postgres does an
 size an application from it — see the Benchmarking digest below, and "What a read costs" in
 `sliceworkz-eventstore-benchmark/CLAUDE.md`.
 
+Correctness-equivalent includes what a storage *refuses*: an `append` or `importEvents` whose payload is
+not a JSON document — text that does not parse, a blank string, a null — fails with
+`EventStorageException` and stores nothing of the batch, exactly as the `::jsonb` cast makes Postgres
+fail. The stream layer never produces such a payload, so this only shows on the raw SPI path (an
+import, a fixture, a third-party caller writing `EventToStore` directly); it is checked here so that
+path cannot pass a test against the in-memory store and fail in production. `AppendPayloadTest` and
+`EventImportTest.testInvalidJsonPayloadIsRejected` in the TCK pin it per backend.
+
 ```java
 EventStorage storage = InMemoryEventStorage.newBuilder().build();
 EventStore store = EventStoreFactory.get().eventStore(storage);

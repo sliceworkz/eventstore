@@ -25,6 +25,7 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 
 import org.sliceworkz.eventstore.events.EventReference;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
@@ -32,6 +33,7 @@ import org.sliceworkz.eventstore.spi.EventStorage.ImportMode;
 import org.sliceworkz.eventstore.spi.EventStorage.QueryDirection;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.spi.EventToImport;
+import org.sliceworkz.eventstore.stream.EventStreamId;
 
 /**
  * Copies events from one {@link EventStorage} into another, preserving event identity, timestamps and
@@ -52,6 +54,29 @@ import org.sliceworkz.eventstore.spi.EventToImport;
  *     .onProgress(r -> LOGGER.info("import progress: {}", r))
  *     .run();
  * }</pre>
+ *
+ * <h2>Selecting what to copy</h2>
+ * By default every event in the source is read. {@link #stream(EventStreamId)} and
+ * {@link #matching(EventFilter)} narrow that to one stream, or to the types and tags of a filter, and the
+ * selection is handed to the storage query rather than applied to what comes back: on an indexed backend the
+ * run then costs what the selected events cost, not what the whole source costs. That is what makes the
+ * importer an archiving tool — copying a closed period, or one logical stream, into a cold store:
+ * <pre>{@code
+ * // the events of one logical stream
+ * EventStoreImporter.from(live).to(cold)
+ *     .stream(EventStreamId.forContext("ledger").withPurpose("2024Q1"))
+ *     .run();
+ *
+ * // every event carrying a tag, whatever its stream
+ * EventStoreImporter.from(live).to(cold)
+ *     .matching(EventFilter.forEvents(EventTypesFilter.any(), Tags.of("period", "2024Q1")))
+ *     .run();
+ * }</pre>
+ * The alternative — dropping the unwanted events from the transformation — reads the whole source to
+ * discard most of it, which is a full pass over the table on every run. Use the transformation for what
+ * a storage query cannot express; use the selection for what it can. The two compose: the transformation
+ * sees only the selected events. What a selection does <em>not</em> do is touch the source: an archive is
+ * a copy, and removing the copied range from the source is a separate, deliberate act.
  *
  * <h2>What it does and does not guarantee</h2>
  * <ul>
@@ -97,6 +122,8 @@ public final class EventStoreImporter {
 	private final EventStorage source;
 	private EventStorage target;
 	private ImportMode mode = ImportMode.FAIL_ON_EXISTING_ID;
+	private EventStreamId stream;
+	private EventFilter filter = EventFilter.matchAll();
 	private EventReference after;
 	private Function<StoredEvent,Optional<EventToImport>> transform = storedEvent -> Optional.of(EventToImport.from(storedEvent));
 	private int batchSize = DEFAULT_BATCH_SIZE;
@@ -152,6 +179,54 @@ public final class EventStoreImporter {
 			throw new IllegalArgumentException("import mode is required");
 		}
 		this.mode = mode;
+		return this;
+	}
+
+	/**
+	 * Reads only the events of the given stream instead of every stream in the source.
+	 * <p>
+	 * A wildcard stream — {@link EventStreamId#anyPurpose()} for every purpose of a context,
+	 * {@link EventStreamId#anyContext()} for every stream — is accepted and scopes accordingly. The scope
+	 * is part of the storage query, so a backend answers it from its stream index rather than reading
+	 * everything and discarding the rest. Combines with {@link #matching(EventFilter)}: an event is read
+	 * when it is on this stream <em>and</em> matches the filter.
+	 * <p>
+	 * The scope selects what is read; it says nothing about where the events land. Imported events keep
+	 * their source stream unless the transformation moves them.
+	 *
+	 * @param stream the stream to read, possibly a wildcard (required)
+	 * @return this importer
+	 * @throws IllegalArgumentException if stream is null
+	 */
+	public EventStoreImporter stream ( EventStreamId stream ) {
+		if ( stream == null ) {
+			throw new IllegalArgumentException("stream is required, omit the call to read every stream");
+		}
+		this.stream = stream;
+		return this;
+	}
+
+	/**
+	 * Reads only the events matching the given filter instead of every event in the source.
+	 * <p>
+	 * The filter's types and tags become part of the storage query, so a backend answers it from its
+	 * indexes rather than reading everything and discarding the rest. Event types are matched by their
+	 * stored name, so a legacy type is selected by its legacy name — nothing is upcast on this path.
+	 * <p>
+	 * A filter carrying an {@link EventFilter#until() until} reference bounds the run at that reference
+	 * when it is earlier than the source head, and {@link ImportReport#sourceTo()} then reports it, so a
+	 * later run started {@link #after(EventReference)} that report continues correctly. A filter matching
+	 * nothing reads nothing.
+	 *
+	 * @param filter the types, tags and optional boundary to select on (required)
+	 * @return this importer
+	 * @throws IllegalArgumentException if filter is null
+	 */
+	public EventStoreImporter matching ( EventFilter filter ) {
+		if ( filter == null ) {
+			throw new IllegalArgumentException("filter is required, omit the call to read every event");
+		}
+		this.filter = filter;
 		return this;
 	}
 
@@ -246,8 +321,10 @@ public final class EventStoreImporter {
 		long startedAt = System.nanoTime();
 
 		// Fix the range before writing anything. Without this an import into its own source would keep
-		// finding the events it just wrote and never terminate.
-		EventReference boundary = headOf(source);
+		// finding the events it just wrote and never terminate. A filter carrying its own, earlier
+		// boundary narrows the range further; it never widens it past the head.
+		EventReference boundary = boundedBy(filter, headOf(source));
+		Optional<EventStreamId> scope = Optional.ofNullable(stream);
 		EventReference cursor = after;
 
 		long read = 0;
@@ -259,10 +336,10 @@ public final class EventStoreImporter {
 
 		if ( boundary != null && ( cursor == null || cursor.happenedBefore(boundary) ) ) {
 
-			EventQuery pageQuery = EventQuery.matchAll().until(boundary);
+			EventQuery pageQuery = new EventQuery(filter.until(boundary), EventQuery.Direction.FORWARD, Limit.none());
 
 			while ( true ) {
-				List<StoredEvent> page = source.query(pageQuery, Optional.empty(), cursor, Limit.to(batchSize), QueryDirection.FORWARD).toList();
+				List<StoredEvent> page = source.query(pageQuery, scope, cursor, Limit.to(batchSize), QueryDirection.FORWARD).toList();
 				if ( page.isEmpty() ) {
 					break;
 				}
@@ -304,6 +381,18 @@ public final class EventStoreImporter {
 	 */
 	private static EventReference headOf ( EventStorage storage ) {
 		return storage.head(Optional.empty()).orElse(null);
+	}
+
+	/**
+	 * Returns the boundary a run is bounded by: the source head, or the filter's own {@code until} when
+	 * that is earlier. Null when the source holds nothing, whatever the filter says — there is nothing
+	 * to read then, and the report should say so rather than name a boundary the source never reached.
+	 */
+	private static EventReference boundedBy ( EventFilter filter, EventReference head ) {
+		if ( head == null ) {
+			return null;
+		}
+		return filter.untilIfEarlier(head).until();
 	}
 
 	private static Duration elapsedSince ( long startedAtNanos ) {

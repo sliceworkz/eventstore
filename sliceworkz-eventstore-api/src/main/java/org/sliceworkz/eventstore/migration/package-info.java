@@ -42,6 +42,8 @@
  *   <li><b>Migrating a store</b> — read every event from one backend, write it into another, unchanged</li>
  *   <li><b>Catching up</b> — a follow-up run started after the previous run's boundary brings across
  *       whatever the source accumulated since</li>
+ *   <li><b>Archiving</b> — copy one stream, or every event matching a filter, into a cold store; the
+ *       selection is part of the storage query, so the run costs what the selected events cost</li>
  *   <li><b>Remapping</b> — import a source stream into a differently named context or purpose</li>
  *   <li><b>Cloning</b> — import a store into itself with fresh identifiers to duplicate a stream</li>
  * </ul>

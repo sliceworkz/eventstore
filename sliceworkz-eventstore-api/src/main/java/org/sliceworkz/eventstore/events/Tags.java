@@ -17,8 +17,10 @@
  */
 package org.sliceworkz.eventstore.events;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -163,16 +165,47 @@ public record Tags ( Set<Tag> tags ) {
 	}
 
 	/**
-	 * Retrieves a tag by its key name.
+	 * Retrieves the single tag carrying a key.
 	 * <p>
-	 * If multiple tags share the same key (which shouldn't happen in normal usage due to Set semantics),
-	 * any matching tag may be returned.
+	 * Tags are a set of {@code (key, value)} pairs, so several tags with the same key and different
+	 * values are an ordinary shape — a transfer tagged {@code customer:alice} and {@code customer:bob},
+	 * an order tagged with each of its products. This method is for keys that carry <b>one</b> value
+	 * on the event, and it refuses to guess when they do not: if more than one tag carries
+	 * {@code name}, it throws rather than answering one of them, because a set has no first element
+	 * and whichever tag came back would depend on hash order, silently and differently per run.
+	 * A caller expecting several tags under a key reads them with {@link #tags(String)}.
+	 * <p>
+	 * A {@code null} name finds the tags that have no key — {@code Tag.of(null, "value")} — under
+	 * the same rule.
 	 *
 	 * @param name the key name to search for
-	 * @return an Optional containing the tag if found, or empty if no tag with the specified key exists
+	 * @return the tag with that key, or empty if no tag carries it
+	 * @throws IllegalStateException if more than one tag carries the key
+	 * @see #tags(String)
 	 */
 	public Optional<Tag> tag ( String name ) {
-		return tags.stream().filter(t->(name==null?"":name).equals(t.key())).findAny();
+		Set<Tag> matching = tags(name);
+		if ( matching.size() > 1 ) {
+			throw new IllegalStateException(
+					"tags carry " + matching.size() + " tags with key '" + name + "' (" + matching + "): tag(key) answers a"
+							+ " single tag, use tags(key) to read them all");
+		}
+		return matching.stream().findAny();
+	}
+
+	/**
+	 * Retrieves every tag carrying a key.
+	 * <p>
+	 * This is the read for a key that may hold several values on one event; {@link #tag(String)} is
+	 * the read for a key that holds one. Tag equality is on {@code (key, value)}, so the result holds
+	 * one tag per distinct value. A {@code null} key finds the tags that have no key.
+	 *
+	 * @param key the key to search for
+	 * @return the tags with that key, empty if none carries it; never null
+	 * @see #tag(String)
+	 */
+	public Set<Tag> tags ( String key ) {
+		return tags.stream().filter(t -> Objects.equals(key, t.key())).collect(Collectors.toUnmodifiableSet());
 	}
 
 	/**
@@ -217,18 +250,29 @@ public record Tags ( Set<Tag> tags ) {
 	 * Creates a Tags instance from an array of Tag objects.
 	 * <p>
 	 * This is the primary factory method for creating Tags from individual Tag objects.
-	 * Duplicate tags (same key and value) are automatically eliminated due to Set semantics.
+	 * Duplicate tags (same key and value) are eliminated: {@code Tags.of(t, t)} is
+	 * {@code Tags.of(t)}. Tags gathered from several sources — a domain tag list plus the tags a
+	 * decorator adds — legitimately overlap, and the caller should not have to de-duplicate before
+	 * building; the alternative, {@link Set#of(Object...)}, throws on a repeated element and would
+	 * turn such an overlap into an append failure. A {@code null} element is rejected, since a tag
+	 * that is not there cannot be stored or matched.
 	 *
 	 * @param tags the tags to include (if null, returns Tags.none())
-	 * @return a new Tags instance containing the specified tags
+	 * @return a new Tags instance containing the distinct specified tags
+	 * @throws IllegalArgumentException if an element is null
 	 */
 	public static Tags of ( Tag... tags ) {
-		if ( tags != null ) {
-			return new Tags ( Set.of(tags));
-		} else {
+		if ( tags == null ) {
 			return Tags.none();
 		}
-
+		Set<Tag> distinct = new HashSet<>();
+		for ( Tag tag : tags ) {
+			if ( tag == null ) {
+				throw new IllegalArgumentException("a null tag cannot be part of Tags: " + Arrays.toString(tags));
+			}
+			distinct.add(tag);
+		}
+		return new Tags(Collections.unmodifiableSet(distinct));
 	}
 
 	/**

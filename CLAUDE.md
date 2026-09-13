@@ -378,6 +378,13 @@ EventStorage storage = PostgresEventStorage.newBuilder()
   because the monitors it stopped never will; otherwise a thread still waiting in `start()` would stay
   parked forever.
 
+- **A store restored logically into a younger cluster is refused too.** After the monitors are up,
+  `start()` checks that no stream head carries a transaction id the cluster has not assigned yet —
+  the signature of a `pg_dump`/`pg_restore` into a fresh cluster, where the restored history sits
+  above the visibility barrier and reads as absent while every new append sorts before it. Fatal in
+  the same way, with the storage closed and the remedies named. See "Backup and restore" in the
+  postgres module README, and the PostgreSQL notes below.
+
 ### Lifecycle: closing a store
 
 Both `EventStorage` and `EventStore` extend `AutoCloseable`. A store that lives as long as the process
@@ -825,6 +832,10 @@ still raises.
   `from(x).to(x)` (cloning inside one store) terminate instead of re-reading its own writes forever. Events
   appended to the source during the run are excluded; `ImportReport.sourceTo()` fed into a later run's
   `.after(...)` picks them up in O(new events).
+- **This is also how a store moves to another cluster.** A logical dump keeps the source's
+  transaction ids and cannot be read on a younger cluster (see the PostgreSQL notes); an import lets
+  the target assign its own. Bookmarks do not travel with it — their stored coordinates are the
+  source's — so re-place them by `event_id` on the target, and carry the shredding keys across.
 - **One importer at a time per target** — the conflict check and the insert are not under a common lock.
 - **Listeners are notified** exactly as for appends, so a merge into a live store wakes its projections.
   Imported events arrive at new (high) positions carrying old timestamps, so "later position implies later
@@ -1462,6 +1473,15 @@ that bind everywhere:
   transactions holding a transaction id count — read-only ones never do, at any isolation level.
   The diagnosis query and monitoring guidance are in the module file; do not "fix" this by bounding
   the barrier.
+- **Back the cluster up physically; a logical dump restored into a fresh cluster does not work.**
+  `pg_dump` copies `event_tx` as data, so the restored history carries ids above the new cluster's
+  counter: every read sits behind the visibility barrier and sees an empty store, and the first
+  append sorts before all of history. `build()` refuses to start such a store (a bounded index walk
+  over the stream heads, under every init mode). Physical backups keep the counter and need nothing;
+  moving a store between clusters is `EventStoreImporter`'s job, which reassigns both ordering
+  columns — and bookmarks, keys and the `btree_gin` extension have to travel separately. The
+  runbook, with the measured breakage and the `pg_resetwal` escape hatch, is "Backup and restore" in
+  the postgres module README.
 - **The DCB check's SQL shape is derived from the criteria, not configured.** A criteria carrying an
   expected reference runs as an ordered probe (`ORDER BY event_tx, event_position LIMIT 1`) that
   walks the position index forward *from the cursor* and stops at the first match — its cached

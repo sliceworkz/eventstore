@@ -58,6 +58,12 @@ import reproduces the source *order* but not its ordering numbers.
 
 ```java
 ImportReport report = EventStoreImporter.from(sourceStorage).to(targetStorage).run();
+
+// or only part of it: one logical stream, or every event carrying a tag, selected by the storage
+// query rather than read and discarded -- which makes it the way to archive a closed period
+ImportReport archived = EventStoreImporter.from(live).to(cold)
+    .stream(EventStreamId.forContext("ledger").withPurpose("2024Q1"))
+    .run();
 ```
 
 It works below the serialization layer, so no domain classes are needed and legacy event types are not

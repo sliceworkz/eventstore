@@ -781,6 +781,8 @@ Projector.from(stream).towards(projection).build().run();
 ```java
 ImportReport report = EventStoreImporter.from(sourceStorage).to(targetStorage)
     .mode(ImportMode.SKIP_EXISTING_ID)                       // default is FAIL_ON_EXISTING_ID
+    .stream(EventStreamId.forContext("ledger").withPurpose("2024Q1"))   // optional: one stream only
+    .matching(EventFilter.forEvents(EventTypesFilter.any(), Tags.of("period", "2024Q1")))  // optional: types/tags
     .after(previousReport.sourceTo())                        // optional: catch-up run
     .transform(src -> Optional.of(EventToImport.from(src)    // optional: remap / rewrite / drop
                         .withStream(archiveStream)))
@@ -788,6 +790,20 @@ ImportReport report = EventStoreImporter.from(sourceStorage).to(targetStorage)
     .onProgress(r -> LOGGER.info("{}", r))
     .run();
 ```
+
+**Selection is pushed into the storage query, which is what makes the importer an archiving tool.**
+`.stream(...)` (a concrete or wildcard `EventStreamId`) and `.matching(EventFilter)` become the
+stream scope and the types/tags of the query the source is paged with, so on Postgres a run over one
+closed period costs what that period's events cost, answered from the stream and tag indexes, not a
+walk over the table. The two compose, and the transformation only sees what the selection read. The
+alternative — dropping unwanted events from `transform` — reads the whole source to discard most of it,
+which looks fine against the in-memory store and is a full pass over the table on Postgres. A filter
+carrying its own `until` bounds the run there when it is earlier than the source head, and
+`ImportReport.sourceTo()` then names that boundary, so `.after(report.sourceTo())` continues correctly.
+Types are matched by stored name (a legacy type by its legacy name), since nothing upcasts on this path.
+What a selection does *not* do is touch the source: an archive is a copy, and removing the copied range
+from the live store is a separate, deliberate operator act — the bookmarks foreign key is there to make
+it fail loudly for a reader still pointing into it (see Bookmarks above).
 
 **What survives, what does not:**
 - **Preserved**: `EventId`, timestamp, idempotency key, event type, tags and payload

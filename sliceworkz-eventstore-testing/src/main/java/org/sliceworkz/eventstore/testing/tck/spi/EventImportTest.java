@@ -30,6 +30,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 import org.sliceworkz.eventstore.events.EventId;
@@ -38,7 +39,9 @@ import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.migration.EventStoreImporter;
 import org.sliceworkz.eventstore.migration.ImportReport;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
+import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage.AppendsToEventStoreNotification;
 import org.sliceworkz.eventstore.spi.EventStorage.BookmarkPlacedNotification;
@@ -409,6 +412,191 @@ public class EventImportTest extends AbstractEventStoreTest {
 		assertEquals(0, report.read());
 		assertEquals(0, report.imported());
 		assertTrue(allEventsIn(target).isEmpty());
+	}
+
+	// --- importer: selecting what to copy ---
+	//
+	// The proof that a selection is pushed into the storage query rather than applied afterwards is
+	// report.read(): the transformation is the identity here, so every source event the importer read
+	// was imported, and read() equal to the number of matching events means nothing else was read.
+
+	@ForEachBackend(requires = Capability.IMPORT)
+	void testImporterScopedToAStreamReadsOnlyThatStream ( ) {
+		List<StoredEvent> sourceEvents = seedSource();
+		List<StoredEvent> onStream = sourceEvents.stream().filter(e -> stream.equals(e.stream())).toList();
+		assertEquals(2, onStream.size());
+
+		ImportReport report = EventStoreImporter.from(source).to(target)
+				.stream(stream)
+				.run();
+
+		assertEquals(2, report.read(), "only the events of the selected stream are read");
+		assertEquals(0, report.dropped());
+		assertEquals(2, report.imported());
+		assertEquals(sourceEvents.getLast().reference(), report.sourceTo(), "the boundary stays the source head, not the stream's");
+		assertEquals(idsOf(onStream), idsOf(allEventsIn(target)));
+		assertTrue(allEventsIn(target).stream().allMatch(e -> stream.equals(e.stream())), "imported events keep their stream");
+	}
+
+	@ForEachBackend(requires = Capability.IMPORT)
+	void testImporterScopedToAWildcardStreamReadsEveryPurposeOfTheContext ( ) {
+		EventStreamId secondPurpose = EventStreamId.forContext("app").withPurpose("second");
+		appendTo(source, event(stream, "First", "{\"a\":1}", null));
+		appendTo(source, event(secondPurpose, "Second", "{\"b\":2}", null));
+		appendTo(source, event(otherStream, "Third", "{\"c\":3}", null));
+
+		ImportReport report = EventStoreImporter.from(source).to(target)
+				.stream(EventStreamId.forContext("app").anyPurpose())
+				.run();
+
+		assertEquals(2, report.read());
+		assertEquals(2, report.imported());
+		assertTrue(allEventsIn(target).stream().allMatch(e -> "app".equals(e.stream().context())));
+	}
+
+	@ForEachBackend(requires = Capability.IMPORT)
+	void testImporterMatchingATagReadsOnlyTaggedEvents ( ) {
+		List<StoredEvent> sourceEvents = seedSource();
+		// every seeded event is tagged kind:<type>, so a tag selects exactly one of them, across streams
+		StoredEvent third = sourceEvents.stream().filter(e -> "Third".equals(e.type().name())).findFirst().orElseThrow();
+
+		ImportReport report = EventStoreImporter.from(source).to(target)
+				.matching(EventFilter.forEvents(EventTypesFilter.any(), Tags.of("kind", "Third")))
+				.run();
+
+		assertEquals(1, report.read(), "only the tagged event is read");
+		assertEquals(0, report.dropped());
+		assertEquals(1, report.imported());
+		assertEquals(idsOf(List.of(third)), idsOf(allEventsIn(target)));
+	}
+
+	@ForEachBackend(requires = Capability.IMPORT)
+	void testImporterMatchingEventTypesReadsOnlyThoseTypes ( ) {
+		List<StoredEvent> sourceEvents = seedSource();
+		List<StoredEvent> wanted = sourceEvents.stream().filter(e -> !"Second".equals(e.type().name())).toList();
+
+		ImportReport report = EventStoreImporter.from(source).to(target)
+				.matching(EventFilter.forEvents(EventTypesFilter.of(Set.of(EventType.ofType("First"), EventType.ofType("Third"))), Tags.none()))
+				.run();
+
+		assertEquals(2, report.read());
+		assertEquals(2, report.imported());
+		assertEquals(idsOf(wanted), idsOf(allEventsIn(target)));
+	}
+
+	@ForEachBackend(requires = Capability.IMPORT)
+	void testImporterStreamAndFilterCombine ( ) {
+		seedSource();
+
+		// kind:Third is on otherStream, so scoping to stream leaves nothing; kind:Second is on it
+		ImportReport none = EventStoreImporter.from(source).to(target)
+				.stream(stream)
+				.matching(EventFilter.forEvents(EventTypesFilter.any(), Tags.of("kind", "Third")))
+				.run();
+		assertEquals(0, none.read());
+		assertEquals(0, none.imported());
+
+		ImportReport one = EventStoreImporter.from(source).to(target)
+				.stream(stream)
+				.matching(EventFilter.forEvents(EventTypesFilter.any(), Tags.of("kind", "Second")))
+				.run();
+		assertEquals(1, one.read());
+		assertEquals(1, one.imported());
+		assertEquals("Second", allEventsIn(target).getFirst().type().name());
+	}
+
+	@ForEachBackend(requires = Capability.IMPORT)
+	void testImporterSelectionSeesOnlySelectedEventsInTheTransformation ( ) {
+		seedSource();
+		List<String> offered = new ArrayList<>();
+
+		EventStoreImporter.from(source).to(target)
+				.stream(otherStream)
+				.transform(src -> { offered.add(src.type().name()); return Optional.of(EventToImport.from(src)); })
+				.run();
+
+		assertEquals(List.of("Third"), offered, "the transformation is only handed what the selection read");
+	}
+
+	@ForEachBackend(requires = Capability.IMPORT)
+	void testImporterSelectionCatchesUpAfterAnEarlierRun ( ) {
+		seedSource();
+		EventFilter onStreamFirstOrFourth = EventFilter.forEvents(EventTypesFilter.of(Set.of(EventType.ofType("First"), EventType.ofType("Fourth"))), Tags.none());
+
+		ImportReport first = EventStoreImporter.from(source).to(target).matching(onStreamFirstOrFourth).run();
+		assertEquals(1, first.imported());
+
+		// the source moves on: one matching event, one not
+		appendTo(source, event(stream, "Fourth", "{\"d\":4}", null));
+		appendTo(source, event(stream, "Fifth", "{\"e\":5}", null));
+
+		ImportReport catchUp = EventStoreImporter.from(source).to(target)
+				.matching(onStreamFirstOrFourth)
+				.after(first.sourceTo())
+				.run();
+
+		assertEquals(1, catchUp.read(), "only the matching event the source gained since the boundary is read");
+		assertEquals(1, catchUp.imported());
+		assertEquals(first.sourceTo(), catchUp.sourceFrom());
+		assertEquals(List.of("First", "Fourth"), allEventsIn(target).stream().map(e -> e.type().name()).toList());
+	}
+
+	@ForEachBackend(requires = Capability.IMPORT)
+	void testImporterHonoursAnEarlierUntilOnTheFilter ( ) {
+		List<StoredEvent> sourceEvents = seedSource();
+		EventReference second = sourceEvents.get(1).reference();
+
+		ImportReport report = EventStoreImporter.from(source).to(target)
+				.matching(EventFilter.matchAll().until(second))
+				.run();
+
+		assertEquals(2, report.read(), "the filter's until is inclusive and bounds the run");
+		assertEquals(2, report.imported());
+		assertEquals(second, report.sourceTo(), "the report names the boundary the run was actually bounded by");
+
+		// so a follow-up started after that report continues from the filter's boundary
+		ImportReport rest = EventStoreImporter.from(source).to(target).after(report.sourceTo()).run();
+		assertEquals(1, rest.imported());
+		assertEquals(idsOf(sourceEvents), idsOf(allEventsIn(target)));
+	}
+
+	@ForEachBackend(requires = Capability.IMPORT)
+	void testImporterUntilPastTheHeadIsBoundedAtTheHead ( ) {
+		List<StoredEvent> sourceEvents = seedSource();
+		EventReference head = sourceEvents.getLast().reference();
+
+		// an until later than anything in the source cannot widen the run past the head
+		EventReference beyond = new EventReference(EventId.create(), head.position() + 1000, head.tx() + 1000, 0);
+		ImportReport report = EventStoreImporter.from(source).to(target)
+				.matching(EventFilter.matchAll().until(beyond))
+				.run();
+
+		assertEquals(3, report.imported());
+		assertEquals(head, report.sourceTo());
+	}
+
+	@ForEachBackend(requires = Capability.IMPORT)
+	void testImporterMatchingNothingReadsNothing ( ) {
+		seedSource();
+
+		ImportReport report = EventStoreImporter.from(source).to(target)
+				.matching(EventFilter.matchNone())
+				.run();
+
+		assertEquals(0, report.read());
+		assertEquals(0, report.imported());
+		assertTrue(allEventsIn(target).isEmpty());
+	}
+
+	@ForEachBackend(requires = Capability.IMPORT)
+	void testImporterSelectionOnAnEmptySourceDoesNothing ( ) {
+		ImportReport report = EventStoreImporter.from(source).to(target)
+				.stream(stream)
+				.matching(EventFilter.matchAll().until(new EventReference(EventId.create(), 1, 1, 0)))
+				.run();
+
+		assertEquals(0, report.read());
+		assertNull(report.sourceTo(), "an empty source has no boundary, whatever the filter carries");
 	}
 
 	@ForEachBackend(requires = Capability.IMPORT)

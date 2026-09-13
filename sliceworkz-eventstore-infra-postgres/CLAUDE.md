@@ -166,6 +166,49 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     xmin has been pinned for a while trades a visible, self-healing stall for silent event loss in
     exactly the scenario the barrier exists to prevent. `ConcurrentAppendVisibilityTest` is what fails
     when you try.
+- **A store restored logically into a younger cluster refuses to start.** `pg_dump` copies `event_tx`
+  as data, so a `pg_restore` into a fresh cluster keeps the source's transaction ids (billions, since
+  `xid8` carries the epoch) while the cluster assigns from a few hundred. Started, that store fails
+  silently twice: the restored history sits above the `pg_snapshot_xmin` barrier and every read, `head()`,
+  projection and DCB check sees an empty store while `count(*)` shows the rows; and the first append
+  gets a low id and sorts *before* all of history — a restored bookmark is then ahead of every new
+  event, and a lock check referenced in history sees nothing after it. `start()` therefore runs
+  `clusterAheadOfHistorySql` before it starts the monitors and, if any stream head is at or above
+  `pg_snapshot_xmax(pg_current_snapshot())`, closes the storage and throws, naming the ids, the streams
+  and the remedies. Details that are load-bearing:
+  - **It runs under every `DatabaseInitMode`, `NONE` included** — that is the production mode and the
+    one where nothing else touches the database before the monitors. So under `NONE` an unreachable main
+    DataSource fails here, within the pool's connection timeout and naming the database, and the
+    notification deadline is reached only by the realistic misconfiguration, a reachable main DataSource
+    with an unreachable monitoring one (`PostgresNotificationStartupTest` keeps its two parked-caller
+    scenarios in that shape for this reason).
+  - **Before the monitors, not after.** Its connection is back in the pool before the monitors take
+    theirs, and each monitor holds its connection for the life of the storage — so the other order
+    deadlocks several stores starting on one DataSource: per-prefix tenants in one process, or the
+    concurrent-ENSURE scenario's eight instances on a ten-connection pool, where five sets of monitors
+    fill the pool and every check waits on a connection none of them will release. The cost is that
+    `close()` cannot release a caller inside the check; the pool's connection timeout bounds it.
+  - **`xmax`, not `pg_current_xact_id()`.** The latter assigns a transaction id to the checking
+    connection — a startup check must not be the writing transaction the stall notes warn about. A
+    stored id at or above the snapshot's xmax is one the cluster has never handed out, so a hit is
+    unambiguous.
+  - **A recursive loose-index walk, not `DISTINCT ON`.** The heads are enumerated one stream at a time
+    off `idx_events_stream_position` (a probe per stream, each `O(log n)`, then one backward probe for
+    the head), so the cost is bounded by the number of streams, not events. The natural alternative —
+    `DISTINCT ON (stream_context, stream_purpose) … ORDER BY … event_tx DESC` — is exact but a full scan
+    of that index on every start before PG18's skip scan, for a once-in-a-deployment mistake. Reading only
+    the newest-position row loses: once anything has been appended to the restored store, that row is an
+    ordinary low-id event and the history above the counter is invisible to it — exactly the state that
+    must keep being reported, since by then the ordering is broken and not only the visibility.
+  - **Deliberately not behind the visibility barrier**: the rows it looks for are the ones the barrier
+    withholds.
+  - The remedies, in the README's "Backup and restore": a physical backup (the counter travels with
+    `pg_control`, so nothing here ever fires), `pg_resetwal -e/-x` on the stopped cluster while nothing
+    has been appended yet (verified: the check clears and reads return; an event appended *before* the
+    reset stays mis-ordered), or `EventStoreImporter` into a fresh store, which reassigns both ordering
+    columns. `PostgresRestoredIntoYoungerClusterTest` pins the refusal under `NONE`/`VALIDATE`/`ENSURE`,
+    the appended-after case, the closed storage, the untouched ordinary start, and the plan (index-only
+    scans, no `Seq Scan`, no `Sort`, backward walk for the head).
 - **Conditional appends are serialized per stream by a `pg_advisory_xact_lock`.** The optimistic-locking
   check is an `INSERT … WHERE NOT EXISTS (…)`, and under PostgreSQL's default READ COMMITTED isolation each
   statement fixes its snapshot when it starts, so two concurrent appends at the same consistency boundary

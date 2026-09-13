@@ -174,6 +174,82 @@ SELECT has_database_privilege('<role>', current_database(), 'CREATE') AS can_cre
 `can_create_extension` only has to be true when `extension_installed` is false.
 
 
+## Backup and restore
+
+**Back the cluster up physically, never with `pg_dump`.** `pg_basebackup` with WAL archiving,
+pgBackRest, Barman, a filesystem or managed-service snapshot, or a promoted replica all restore
+`pg_control` with the transaction counter and epoch intact, so the next transaction id the restored
+cluster assigns is above every stored `event_tx`. A restore of that kind needs nothing from this
+library and is the right routine backup for an eventstore. (The visibility notes say `pg_dump` is
+harmless, and it is — *as a reader*. The problem below is with restoring from one.)
+
+**What a logical dump does to this store.** `pg_dump` copies `event_tx` as plain data, so a
+`pg_restore` into a fresh cluster keeps the source cluster's transaction ids. `xid8` carries the
+epoch, so on a cluster that has been running for a while those are in the billions, while a fresh
+cluster hands out ids from a few hundred. Two things then fail, both silently — nothing throws and
+nothing is logged:
+
+- **The history reads as absent.** Every query, `head()`, every projection and every DCB check sits
+  behind `event_tx < pg_snapshot_xmin(pg_current_snapshot())`. Restored events with an id above the
+  new cluster's counter fail that test until the counter passes them, which is years away; meanwhile
+  `SELECT count(*)` in psql shows every row.
+- **New events sort before all of history.** An append gets a low id, and in the
+  `(event_tx, event_position)` order it lands before every restored event. A bookmark restored at the
+  old head is then ahead of every new event, so projectors never advance; a lock check whose
+  reference is in history sees nothing after it and admits every conflict.
+
+Measured on a source cluster at epoch 1 (`event_tx` ≈ 4.56 billion) dumped into a fresh PostgreSQL 16
+whose next id was 757: 2001 events restored, 0 visible to a read, 51 of 51 stream heads above the
+counter, and the first event appended afterwards ordered *first* in its stream with nothing after the
+restored bookmark. The 32-bit wraparound itself is not the issue — `xid8` never wraps in practice,
+and freezing does not touch stored values — the counter is simply younger than the data.
+
+**The store refuses to start in that state.** `build()` checks, whatever the `DatabaseInitMode`,
+that no stream head carries a transaction id at or above the next id the cluster will assign
+(`pg_snapshot_xmax(pg_current_snapshot())` — never `pg_current_xact_id()`, which would assign an id
+to the checking connection and make startup the kind of writing transaction the visibility notes
+warn about). No append can produce such a row, so a hit is unambiguous, and it is fatal: the storage
+is closed and `build()` throws an `EventStorageException` naming the highest stored id, the cluster's
+next id, how many streams are affected and the three remedies below. The check is a recursive
+loose-index walk over `idx_events_stream_position` — a probe per stream, each O(log n), no scan of
+the events table, no sort — so it costs milliseconds on every start whatever the store holds.
+`PostgresRestoredIntoYoungerClusterTest` pins the refusal, the closed storage, and the plan shape.
+What the check cannot catch is a store already appended to after such a restore *and* since had its
+counter moved past the history: those low-id events stay mis-ordered, and nothing distinguishes them
+from ordinary ones any more — which is why it is worth catching on the first start.
+
+**Three ways out, in the order to prefer them:**
+
+1. **Restore physically instead.** If a physical backup exists, use it; nothing else is needed.
+2. **Move the counter, if nothing has been appended yet.** On the *stopped* restored cluster,
+   `pg_resetwal -e <epoch> -x <xid>` sets the next transaction id; choose a value above the highest
+   stored `event_tx` (the error message carries it; `xid8` = epoch × 2³² + xid) and follow the
+   `pg_resetwal` documentation for choosing a safe one. Verified: after `pg_resetwal -e 1 -x 0x10100000`
+   on the cluster above, every event was visible again and the check passed. The one event appended
+   before the reset stayed ordered first — so this is only a fix while the restored store has not been
+   written to. Managed services do not expose `pg_resetwal`, which is one more reason the next option
+   is the portable one.
+3. **Copy the events into a fresh store with `EventStoreImporter`.** This is the supported way to
+   move a store between clusters — a major-version upgrade by dump, a cloud migration, a change of
+   hosting. `importEvents` binds no `event_tx` and no `event_position`: the target assigns both, in
+   source order, so the ordering is the new cluster's own and nothing is hidden. What the importer does
+   *not* carry, and the runbook therefore has to:
+   - **The `btree_gin` extension** on the target database (a `pg_dump -t` of the tables does not
+     include it, and the restore fails creating `idx_events_stream_tags` without it). Let `ENSURE`
+     create the target schema, or install the extension first.
+   - **Bookmarks.** The rows in `<prefix>bookmarks` carry the *source's* `event_tx` and
+     `event_position`, which mean nothing on the target. Re-place each reader's bookmark by looking
+     up its `event_id` in the target and using the reference the target assigned; the foreign key on
+     `event_id` holds because ids are preserved.
+   - **Shredding keys.** Copy `<prefix>shredding_keys` alongside, or every sealed value reads as erased.
+   - **Leases** are deliberately not migrated; they expire.
+   - **Anything outside the store holding event references** — an SQL read model's own bookmark and
+     freshness columns, say — holds the source's coordinates too. Rebuild such read models on the
+     target rather than resuming them.
+
+   Import in batches with `SKIP_EXISTING_ID` so a failed run resumes, and feed `ImportReport.sourceTo()`
+   into a later run's `.after(...)` to pick up events appended to the source during the cutover.
+
 ## Example queries 
 
 Specific syntax is used on on GIN-indexed Tags:

@@ -26,7 +26,10 @@ import org.slf4j.LoggerFactory;
 import com.zaxxer.hikari.HikariConfig;
 
 /*
- * Example config file (pooled and non-pooled configuration, as LISTEN/NOTIFY doesnt work with pgbouncer):
+ * Example config file (pooled and non-pooled configuration, as LISTEN/NOTIFY doesnt work with pgbouncer).
+ * Keys under 'datasource.' go to the PostgreSQL JDBC driver as they are, and it ignores a name it does not know
+ * without a word -- so only pgjdbc's own names belong there (its prepared-statement knobs are 'prepareThreshold',
+ * 'preparedStatementCacheQueries' and 'preparedStatementCacheSizeMiB'; the defaults need no setting):
 
 db.pooled.url=jdbc:postgresql://host-pooler.domain.com/db
 db.pooled.username=username
@@ -35,9 +38,6 @@ db.pooled.leakDetectionThreshold=2000
 db.pooled.maximumPoolSize=25
 db.pooled.datasource.sslmode=require
 db.pooled.datasource.channelBinding=require
-db.pooled.datasource.cachePrepStmts=true
-db.pooled.datasource.prepStmtCacheSize=250
-db.pooled.datasource.prepStmtCacheSqlLimit=2048
 
 db.nonpooled.url=jdbc:postgresql://host.domain.com/db
 db.nonpooled.username=username
@@ -46,9 +46,6 @@ db.nonpooled.leakDetectionThreshold=60000
 db.nonpooled.maximumPoolSize=2
 db.nonpooled.datasource.sslmode=require
 db.nonpooled.datasource.channelBinding=require
-db.nonpooled.datasource.cachePrepStmts=true
-db.nonpooled.datasource.prepStmtCacheSize=250
-db.nonpooled.datasource.prepStmtCacheSqlLimit=2048
 
  */
 public class HikariConfigurationUtil {

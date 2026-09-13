@@ -140,7 +140,7 @@ public class PostgresRestoredIntoYoungerClusterTest {
 			assertThrows(EventStorageException.class, storage::start);
 			assertThrows(IllegalStateException.class, storage::start,
 				"a storage whose startup failed must be closed, and a closed storage is terminal");
-			assertFalse(storage.isNotificationsAvailable(), "the monitors started for the failed start must be stopped again");
+			assertFalse(storage.isNotificationsAvailable(), "no monitor may be left listening behind a start that failed");
 		}
 
 		/** The ordinary case, which is every start there is: many streams, nothing above the counter, no effect. */

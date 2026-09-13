@@ -356,11 +356,13 @@ EventStorage storage = PostgresEventStorage.newBuilder()
   outage, with nothing to restart — the fail-fast is about not *starting* blind, not about tearing a live
   store down when its connection drops.
 - **Which configurations can reach this.** With `ENSURE` or `VALIDATE` the schema work runs first and
-  fails with a clear error, so a dead *main* DataSource never reaches the wait. The exposed paths are
-  `DatabaseInitMode.NONE` (recommended for production, where nothing touches the database before the
-  monitors do) and — the realistic one — a **reachable main DataSource with an unreachable monitoring
-  one**. Those two are configured separately precisely because LISTEN/NOTIFY does not survive a
-  transaction pooler, so "pooled works, direct is firewalled" is an ordinary misconfiguration.
+  fails with a clear error, so a dead *main* DataSource never reaches the wait; under
+  `DatabaseInitMode.NONE` (recommended for production) the restored-history check below is the first
+  thing `start()` asks the database, so a dead main DataSource fails there instead, within the pool's
+  connection timeout and naming the database. The exposed path is therefore the realistic one — a
+  **reachable main DataSource with an unreachable monitoring one**. Those two are configured separately
+  precisely because LISTEN/NOTIFY does not survive a transaction pooler, so "pooled works, direct is
+  firewalled" is an ordinary misconfiguration.
   Note that version detection (`detectsNativeUuidv7Support`) does *not* fail the build — it logs a WARN
   and falls back to the legacy implementation — so it is the schema work, not the version probe, that
   provides the fail-fast.
@@ -378,12 +380,15 @@ EventStorage storage = PostgresEventStorage.newBuilder()
   because the monitors it stopped never will; otherwise a thread still waiting in `start()` would stay
   parked forever.
 
-- **A store restored logically into a younger cluster is refused too.** After the monitors are up,
-  `start()` checks that no stream head carries a transaction id the cluster has not assigned yet —
+- **A store restored logically into a younger cluster is refused too.** Before the monitors are
+  started, `start()` checks that no stream head carries a transaction id the cluster has not assigned yet —
   the signature of a `pg_dump`/`pg_restore` into a fresh cluster, where the restored history sits
   above the visibility barrier and reads as absent while every new append sorts before it. Fatal in
   the same way, with the storage closed and the remedies named. See "Backup and restore" in the
-  postgres module README, and the PostgreSQL notes below.
+  postgres module README, and the PostgreSQL notes below. It runs *before* the monitors, on a
+  connection returned before they take theirs: the other order deadlocks several stores starting on one
+  shared pool, since each monitor holds its connection for the life of the storage. While a caller is in
+  that check, `close()` does not release it; the pool's connection timeout bounds it instead.
 
 ### Lifecycle: closing a store
 

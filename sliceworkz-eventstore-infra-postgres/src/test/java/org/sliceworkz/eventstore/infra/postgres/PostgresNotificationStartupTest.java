@@ -145,16 +145,21 @@ class PostgresNotificationStartupTest {
 				Throwable cause = failsWithinTheDeadline(() -> PostgresEventStorage.newBuilder()
 						.name("startup-none")
 						.dataSource(unreachable)
-						// the reachable path: with ENSURE or VALIDATE the schema work fails first and this
-						// is never reached, so NONE -- which is what a production deployment trusting its
-						// DBA is told to use -- is where the hang lived
+						// with ENSURE or VALIDATE the schema work fails first and this is never reached, so
+						// NONE -- what a production deployment trusting its DBA is told to use -- is the mode
+						// that reaches start() with nothing having touched the database yet
 						.databaseInitMode(DatabaseInitMode.NONE)
 						.notificationStartupTimeout(Duration.ofSeconds(1))
 						.build());
 
 				assertInstanceOf(EventStorageException.class, cause);
-				assertTrue(cause.getMessage().contains("LISTEN/NOTIFY"),
-					"the message should say what is actually wrong: " + cause.getMessage());
+				// the first thing start() asks the database is whether the history is ahead of the
+				// cluster, so an unreachable main DataSource fails there, naming the database -- bounded
+				// by the pool's connection timeout rather than by the notification deadline
+				assertTrue(cause.getMessage().contains("ahead of its history"),
+					"the message should say what was being attempted: " + cause.getMessage());
+				assertTrue(rootCause(cause) instanceof java.net.ConnectException,
+					"the root cause should be the unreachable database: " + rootCause(cause));
 			}
 		}
 
@@ -187,73 +192,6 @@ class PostgresNotificationStartupTest {
 				// behind a storage the caller never received: start() closes it rather than just throwing
 				assertThrows(IllegalStateException.class, () -> storage.start(Duration.ofSeconds(1)),
 					"a storage whose startup failed must be closed, and a closed storage is terminal");
-			}
-		}
-
-		@Test
-		void testCloseReleasesACallerStillWaitingInStart ( ) throws Exception {
-			try ( HikariDataSource unreachable = unreachablePool("unreachable-close") ) {
-
-				PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl(
-					"startup-close", unreachable, unreachable, Limit.none(), "", false, new SimpleMeterRegistry());
-
-				// a deliberately long deadline: this is the case where only close() can release the caller
-				AtomicReference<Throwable> outcome = new AtomicReference<>();
-				CompletableFuture<Void> starting = CompletableFuture.runAsync(() -> {
-					try {
-						storage.start(Duration.ofMinutes(10));
-					} catch ( Throwable t ) {
-						outcome.set(t);
-					}
-				});
-				assertThrows(TimeoutException.class, () -> starting.get(1, TimeUnit.SECONDS),
-					"start() should still be waiting for the monitors at this point");
-
-				storage.close();
-
-				// close() stops the monitors, so nothing will ever count those latches down: if close()
-				// does not release the waiter itself, this thread is parked for ten minutes
-				try {
-					starting.get(MUST_RETURN_WITHIN.toSeconds(), TimeUnit.SECONDS);
-				} catch ( TimeoutException e ) {
-					fail("close() left a caller blocked inside start()");
-				}
-				assertInstanceOf(EventStorageException.class, outcome.get(),
-					"the released caller must still learn that notifications were never established");
-			}
-		}
-
-		@Test
-		void testInterruptDuringStartupThrowsRatherThanReturningAnUnstartedStorage ( ) throws Exception {
-			try ( HikariDataSource unreachable = unreachablePool("unreachable-interrupt") ) {
-
-				PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl(
-					"startup-interrupt", unreachable, unreachable, Limit.none(), "", false, new SimpleMeterRegistry());
-
-				AtomicBoolean returnedNormally = new AtomicBoolean();
-				AtomicBoolean threw = new AtomicBoolean();
-				AtomicBoolean interruptFlagPreserved = new AtomicBoolean();
-
-				Thread starter = new Thread(() -> {
-					try {
-						storage.start(Duration.ofMinutes(10));
-						returnedNormally.set(true);
-					} catch ( EventStorageException e ) {
-						threw.set(true);
-					}
-					interruptFlagPreserved.set(Thread.currentThread().isInterrupted());
-				});
-				starter.start();
-				Thread.sleep(500);
-				starter.interrupt();
-				starter.join(MUST_RETURN_WITHIN.toMillis());
-
-				assertFalse(starter.isAlive(), "the interrupted starter thread should have finished");
-				assertFalse(returnedNormally.get(),
-					"an interrupt must not be swallowed into a silent 'started successfully': the monitors "
-					+ "are not listening and nothing would ever say so");
-				assertTrue(threw.get(), "an interrupt during startup should surface as an EventStorageException");
-				assertTrue(interruptFlagPreserved.get(), "the interrupt flag must be restored");
 			}
 		}
 
@@ -314,6 +252,87 @@ class PostgresNotificationStartupTest {
 				// nothing failed earlier and why this used to be a hang rather than an error
 				assertTrue(tableExists(main, "split_events"),
 					"the schema work should have completed before the monitors were even started");
+			} finally {
+				PostgresContainer.closeDataSource(PostgresContainer.IMAGE_PG18);
+			}
+		}
+
+		/*
+		 * The two scenarios about a caller parked in the monitor wait live here rather than in the
+		 * database-free half: start() checks the history against the cluster before it starts the
+		 * monitors, so the wait is only reachable with a main DataSource that answers -- which is also the
+		 * realistic shape of the misconfiguration, a working pooled connection and a firewalled direct one.
+		 */
+		@Test
+		void testCloseReleasesACallerStillWaitingInStart ( ) throws Exception {
+			DataSource main = PostgresContainer.dataSource(PostgresContainer.IMAGE_PG18);
+			try ( HikariDataSource unreachable = unreachablePool("unreachable-close") ) {
+
+				PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl(
+					"startup-close", main, unreachable, Limit.none(), "close_", false, new SimpleMeterRegistry());
+				storage.initializeDatabase();
+
+				// a deliberately long deadline: this is the case where only close() can release the caller
+				AtomicReference<Throwable> outcome = new AtomicReference<>();
+				CompletableFuture<Void> starting = CompletableFuture.runAsync(() -> {
+					try {
+						storage.start(Duration.ofMinutes(10));
+					} catch ( Throwable t ) {
+						outcome.set(t);
+					}
+				});
+				assertThrows(TimeoutException.class, () -> starting.get(1, TimeUnit.SECONDS),
+					"start() should still be waiting for the monitors at this point");
+
+				storage.close();
+
+				// close() stops the monitors, so nothing will ever count those latches down: if close()
+				// does not release the waiter itself, this thread is parked for ten minutes
+				try {
+					starting.get(MUST_RETURN_WITHIN.toSeconds(), TimeUnit.SECONDS);
+				} catch ( TimeoutException e ) {
+					fail("close() left a caller blocked inside start()");
+				}
+				assertInstanceOf(EventStorageException.class, outcome.get(),
+					"the released caller must still learn that notifications were never established");
+			} finally {
+				PostgresContainer.closeDataSource(PostgresContainer.IMAGE_PG18);
+			}
+		}
+
+		@Test
+		void testInterruptDuringStartupThrowsRatherThanReturningAnUnstartedStorage ( ) throws Exception {
+			DataSource main = PostgresContainer.dataSource(PostgresContainer.IMAGE_PG18);
+			try ( HikariDataSource unreachable = unreachablePool("unreachable-interrupt") ) {
+
+				PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl(
+					"startup-interrupt", main, unreachable, Limit.none(), "interrupt_", false, new SimpleMeterRegistry());
+				storage.initializeDatabase();
+
+				AtomicBoolean returnedNormally = new AtomicBoolean();
+				AtomicBoolean threw = new AtomicBoolean();
+				AtomicBoolean interruptFlagPreserved = new AtomicBoolean();
+
+				Thread starter = new Thread(() -> {
+					try {
+						storage.start(Duration.ofMinutes(10));
+						returnedNormally.set(true);
+					} catch ( EventStorageException e ) {
+						threw.set(true);
+					}
+					interruptFlagPreserved.set(Thread.currentThread().isInterrupted());
+				});
+				starter.start();
+				Thread.sleep(500);
+				starter.interrupt();
+				starter.join(MUST_RETURN_WITHIN.toMillis());
+
+				assertFalse(starter.isAlive(), "the interrupted starter thread should have finished");
+				assertFalse(returnedNormally.get(),
+					"an interrupt must not be swallowed into a silent 'started successfully': the monitors "
+					+ "are not listening and nothing would ever say so");
+				assertTrue(threw.get(), "an interrupt during startup should surface as an EventStorageException");
+				assertTrue(interruptFlagPreserved.get(), "the interrupt flag must be restored");
 			} finally {
 				PostgresContainer.closeDataSource(PostgresContainer.IMAGE_PG18);
 			}
@@ -453,6 +472,14 @@ class PostgresNotificationStartupTest {
 	 *
 	 * @return the exception {@code work} threw
 	 */
+	private static Throwable rootCause ( Throwable t ) {
+		Throwable root = t;
+		while ( root.getCause() != null && root.getCause() != root ) {
+			root = root.getCause();
+		}
+		return root;
+	}
+
 	private static Throwable failsWithinTheDeadline ( java.util.function.Supplier<?> work ) throws Exception {
 		CompletableFuture<?> future = CompletableFuture.supplyAsync(work);
 		try {

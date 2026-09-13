@@ -173,13 +173,21 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   projection and DCB check sees an empty store while `count(*)` shows the rows; and the first append
   gets a low id and sorts *before* all of history — a restored bookmark is then ahead of every new
   event, and a lock check referenced in history sees nothing after it. `start()` therefore runs
-  `clusterAheadOfHistorySql` after the monitors are up and, if any stream head is at or above
+  `clusterAheadOfHistorySql` before it starts the monitors and, if any stream head is at or above
   `pg_snapshot_xmax(pg_current_snapshot())`, closes the storage and throws, naming the ids, the streams
   and the remedies. Details that are load-bearing:
   - **It runs under every `DatabaseInitMode`, `NONE` included** — that is the production mode and the
-    one where nothing else touches the database before the monitors. It runs *after* the LISTEN/NOTIFY
-    wait, so an unreachable database still fails on the notification deadline as before rather than
-    on this check, and a failure here has monitors to wind down, which `close()` does.
+    one where nothing else touches the database before the monitors. So under `NONE` an unreachable main
+    DataSource fails here, within the pool's connection timeout and naming the database, and the
+    notification deadline is reached only by the realistic misconfiguration, a reachable main DataSource
+    with an unreachable monitoring one (`PostgresNotificationStartupTest` keeps its two parked-caller
+    scenarios in that shape for this reason).
+  - **Before the monitors, not after.** Its connection is back in the pool before the monitors take
+    theirs, and each monitor holds its connection for the life of the storage — so the other order
+    deadlocks several stores starting on one DataSource: per-prefix tenants in one process, or the
+    concurrent-ENSURE scenario's eight instances on a ten-connection pool, where five sets of monitors
+    fill the pool and every check waits on a connection none of them will release. The cost is that
+    `close()` cannot release a caller inside the check; the pool's connection timeout bounds it.
   - **`xmax`, not `pg_current_xact_id()`.** The latter assigns a transaction id to the checking
     connection — a startup check must not be the writing transaction the stall notes warn about. A
     stored id at or above the snapshot's xmax is one the cluster has never handed out, so a hit is

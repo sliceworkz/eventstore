@@ -880,6 +880,18 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 		Duration effectiveTimeout = timeout == null ? DEFAULT_NOTIFICATION_STARTUP_TIMEOUT : timeout;
 
+		// before the monitors, on a connection that is returned before they take theirs. The other order
+		// -- monitors first, then this check -- deadlocks on a shared pool: each monitor holds its
+		// connection for the life of the storage, so several stores starting on one DataSource (per-prefix
+		// tenants; the concurrent-ENSURE test's eight instances on a ten-connection pool) can fill the pool
+		// with monitors and leave every check waiting for a connection none of them will release
+		try {
+			verifyClusterIsAheadOfHistory();
+		} catch ( RuntimeException e ) {
+			close();
+			throw e;
+		}
+
 		this.eventMonitorReady = new CountDownLatch(1);
 		this.bookmarkMonitorReady = new CountDownLatch(1);
 		this.executorService.execute(new NewEventsAppendedMonitor("event-append-listener/" + name, listeners, monitoringDataSource, eventMonitorReady));
@@ -898,14 +910,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 
 		if ( ready ) {
-			try {
-				verifyClusterIsAheadOfHistory();
-			} catch ( RuntimeException e ) {
-				// the monitors are up, so there is something to wind down: a storage that failed to start
-				// must not leave two threads listening behind it
-				close();
-				throw e;
-			}
 			return;
 		}
 
@@ -985,9 +989,16 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * the production mode and the one that touches nothing else first. The remedies are named in the
 	 * error: a physical backup, {@code pg_resetwal} on the stopped cluster, or an import into a fresh
 	 * store; the module README's "Backup and restore" carries the reasoning.
+	 * <p>
+	 * Runs before the monitors are started, so its connection is back in the pool before they take
+	 * theirs — see {@link #start(Duration)} for why the other order deadlocks on a shared pool. One
+	 * consequence: under {@code NONE} this is the first thing {@code start()} asks the database, so an
+	 * unreachable main DataSource fails here, within the pool's connection timeout and naming the
+	 * database, rather than on the notification deadline.
 	 *
 	 * @throws EventStorageException if any stream head is at or above the cluster's next transaction id,
-	 *                               or if the check cannot be run
+	 *                               or if the check cannot be run — a database that cannot be reached
+	 *                               included
 	 */
 	private void verifyClusterIsAheadOfHistory ( ) {
 		String sql = clusterAheadOfHistorySql(prefix);
@@ -1019,7 +1030,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 			}
 		} catch ( SQLException e ) {
 			throw new EventStorageException(
-				"event storage '%s' could not verify that the cluster's transaction counter is ahead of its history".formatted(name), e);
+				("event storage '%s' could not read its stream heads to verify that the cluster's transaction "
+				+ "counter is ahead of its history: %s").formatted(name, e.getMessage()), e);
 		}
 	}
 

@@ -328,7 +328,9 @@ public class EventStoreImpl implements EventStore {
 	 * @param eventStorage the storage backend implementation (in-memory, PostgreSQL, etc.)
 	 * @param meterRegistry the Micrometer meter registry for collecting metrics; use {@link io.micrometer.core.instrument.Metrics#globalRegistry} if unsure
 	 * @param meterOptions how much detail this store's meters may carry
-	 * @param shreddingCodec seals and unseals protected values, or null for a store without shredding
+	 * @param shreddingCodec seals and unseals protected values, or null to use the codec the storage was
+	 *                       configured with ({@link EventStorage#shreddingCodec()}), which is empty for a
+	 *                       store without shredding
 	 * @throws IllegalArgumentException if eventStorage, meterRegistry or meterOptions is null
 	 */
 	protected EventStoreImpl ( EventStorage eventStorage, MeterRegistry meterRegistry, MeterOptions meterOptions, ShreddingCodec shreddingCodec ) {
@@ -344,7 +346,9 @@ public class EventStoreImpl implements EventStore {
 		this.eventStorage = eventStorage;
 		this.meterRegistry = meterRegistry;
 		this.meterOptions = meterOptions;
-		this.shreddingCodec = shreddingCodec;
+		// a codec handed in explicitly wins; otherwise the storage's own, so that a builder's .shredding(...)
+		// reaches a store built on the storage through the factory, not only one from buildStore()
+		this.shreddingCodec = shreddingCodec != null ? shreddingCodec : eventStorage.shreddingCodec().orElse(null);
 
 		ThreadFactory threadFactory = Thread.ofVirtual().name("eventually-consistent-listener-notifier/" + eventStorage.name(), 0).factory();
 		this.executorServiceForEventAppends = Executors.newThreadPerTaskExecutor(threadFactory);

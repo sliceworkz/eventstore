@@ -577,6 +577,13 @@ public interface PostgresEventStorage {
 		 * Without shredding configured, registering an event type that declares a {@code Shreddable}
 		 * component fails at stream creation rather than storing personal data in the clear.
 		 * <p>
+		 * Honoured by {@link #build()} as much as by {@link #buildStore()}: the codec travels with the
+		 * storage ({@link EventStorage#shreddingCodec()}), so a store built on {@code build()}'s result
+		 * through {@link EventStoreFactory#eventStore(EventStorage)} protects and erases personal data
+		 * too. That matters most for this overload, since the key store it stands for needs the
+		 * {@code DataSource} the builder resolves — one loaded from {@code db.properties} is never handed
+		 * out, so a caller could not construct it.
+		 * <p>
 		 * Note what colocation means for your threat model: an attacker with the database has both the
 		 * ciphertext and the keys. What crypto-shredding still buys, and buys unconditionally, is that a
 		 * <em>completed erasure</em> holds everywhere the ciphertext has already spread — old backups,
@@ -596,7 +603,8 @@ public interface PostgresEventStorage {
 		 * <p>
 		 * Use this to keep the encryption but put the keys somewhere else — Vault, a cloud KMS, an HSM,
 		 * another database. The key store is the caller's to close, following the same rule this builder
-		 * applies to a {@code DataSource}: what you pass in, you own.
+		 * applies to a {@code DataSource}: what you pass in, you own. Honoured by {@link #build()} as much
+		 * as by {@link #buildStore()} — see {@link #shredding()}.
 		 *
 		 * @param shreddingKeyStore where keys are minted, resolved and destroyed
 		 * @return this builder for method chaining
@@ -611,6 +619,7 @@ public interface PostgresEventStorage {
 		 * Protects personal data with a codec of your own, taking over encryption as well as key storage.
 		 * <p>
 		 * The seam for a codec that keeps key material inside an HSM and never lets it reach this JVM.
+		 * Honoured by {@link #build()} as much as by {@link #buildStore()} — see {@link #shredding()}.
 		 *
 		 * @param shreddingCodec seals and unseals protected values
 		 * @return this builder for method chaining
@@ -638,7 +647,10 @@ public interface PostgresEventStorage {
 		 * </ul>
 		 * <p>
 		 * The returned EventStorage can be passed to {@link EventStoreFactory#eventStore(EventStorage)}
-		 * to create an EventStore instance.
+		 * to create an EventStore instance. Shredding configured on this builder travels with the storage
+		 * ({@link EventStorage#shreddingCodec()}), so a store built that way protects and erases personal
+		 * data exactly as one from {@link #buildStore()} does; only {@link #meterOptions(MeterOptions)} is
+		 * a store-level setting that has to be passed to the factory again.
 		 * <p>
 		 * The returned storage is already started: its LISTEN/NOTIFY monitor threads are running and
 		 * holding connections. Close it with {@link EventStorage#close()} when done — and note that if no
@@ -702,9 +714,18 @@ public interface PostgresEventStorage {
 			try {
 				boolean nativeUuidv7 = detectsNativeUuidv7Support(dataSource);
 
+				// a key store on "this store's own database" can only be created once the DataSource is
+				// resolved, which is why it is created here and not in shredding(). It shares that DataSource
+				// and never closes it -- the storage does. The codec travels with the storage
+				// (EventStorage.shreddingCodec()), so a store built on it through the factory finds it,
+				// exactly as the one from buildStore() does
+				ShreddingCodec codec = shreddingOnOwnDataSource
+						? AesGcmShreddingCodec.over(PostgresShreddingKeyStore.on(dataSource, prefix))
+						: shreddingCodec;
+
 				PostgresEventStorageImpl result = nativeUuidv7
-					? new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, createdDataSources, meterRegistry)
-					: new PostgresLegacyEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, createdDataSources, meterRegistry);
+					? new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, createdDataSources, meterRegistry, codec)
+					: new PostgresLegacyEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, createdDataSources, meterRegistry, codec);
 
 
 				switch ( databaseInitMode ) {
@@ -767,14 +788,10 @@ public interface PostgresEventStorage {
 		public EventStore buildStore ( ) {
 			// the storage is created here and never handed to the caller, so the returned store owns it:
 			// closing that store is the only way this storage will ever be closed
-			ResolvedDataSources dataSources = resolveDataSources();
-			EventStorage eventStorage = build(dataSources);
-			// a key store on "this store's own database" sits on the pool this build resolved -- which is
-			// only known here, never on the builder -- and shares it without closing it: the storage does
-			ShreddingCodec codec = shreddingOnOwnDataSource
-					? AesGcmShreddingCodec.over(PostgresShreddingKeyStore.on(dataSources.main(), prefix))
-					: shreddingCodec;
-			return EventStore.owning(EventStoreFactory.get().eventStore(eventStorage, meterRegistry, meterOptions, codec), eventStorage);
+			EventStorage eventStorage = build();
+			// the codec travels with the storage (EventStorage.shreddingCodec()), so the store picks it up
+			// here exactly as a store built by the caller on build()'s result would
+			return EventStore.owning(EventStoreFactory.get().eventStore(eventStorage, meterRegistry, meterOptions), eventStorage);
 		}
 
 		/**

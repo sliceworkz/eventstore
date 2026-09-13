@@ -188,6 +188,10 @@ public interface InMemoryFsEventStorage {
 		 * <p>
 		 * The key store is the caller's to close.
 		 *
+		 * Honoured by {@link #build()} as much as by {@link #buildStore()}: the codec travels with the
+		 * storage ({@link EventStorage#shreddingCodec()}), so a store built on {@code build()}'s result
+		 * through {@link EventStoreFactory#eventStore(EventStorage)} protects and erases personal data too.
+		 *
 		 * @param shreddingKeyStore where keys are minted, resolved and destroyed
 		 * @return this builder for method chaining
 		 */
@@ -198,6 +202,9 @@ public interface InMemoryFsEventStorage {
 
 		/**
 		 * Protects personal data with a codec of your own, taking over encryption as well as key storage.
+		 *
+		 * Honoured by {@link #build()} as much as by {@link #buildStore()} — see
+		 * {@link #shredding(ShreddingKeyStore)}.
 		 *
 		 * @param shreddingCodec seals and unseals protected values
 		 * @return this builder for method chaining
@@ -222,7 +229,7 @@ public interface InMemoryFsEventStorage {
 		 * @return a new InMemoryFsEventStorageImpl instance with the configured settings
 		 */
 		public EventStorage build ( ) {
-			return new InMemoryFsEventStorageImpl(directory, name, limit);
+			return new InMemoryFsEventStorageImpl(directory, name, limit, shreddingCodec);
 		}
 
 		/**
@@ -234,7 +241,9 @@ public interface InMemoryFsEventStorage {
 			// the storage is created here and never handed to the caller, so the returned store owns it:
 			// closing that store is the only way this storage will ever be closed
 			EventStorage eventStorage = build();
-			return EventStore.owning(EventStoreFactory.get().eventStore(eventStorage, meterRegistry, meterOptions, shreddingCodec), eventStorage);
+			// the codec travels with the storage (EventStorage.shreddingCodec()), so the store picks it up
+			// here exactly as a store built by the caller on build()'s result would
+			return EventStore.owning(EventStoreFactory.get().eventStore(eventStorage, meterRegistry, meterOptions), eventStorage);
 		}
 	}
 

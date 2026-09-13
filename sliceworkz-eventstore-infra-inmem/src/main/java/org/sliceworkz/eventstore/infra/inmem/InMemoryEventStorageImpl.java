@@ -44,6 +44,7 @@ import org.sliceworkz.eventstore.events.Lease;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
+import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.spi.EventImportConflictException;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageClosedException;
@@ -137,6 +138,9 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	// is the same here as on a backend that does — code that outlives its storage fails the same way
 	// against every backend, in tests as in production.
 	private final AtomicBoolean closed = new AtomicBoolean();
+	// Never used here: the storage stores sealed envelopes as opaque JSON. Held so that a store built on
+	// this storage through the factory finds the codec the builder was given (EventStorage.shreddingCodec()).
+	private final ShreddingCodec shreddingCodec;
 
 	/**
 	 * Constructs a new in-memory event storage instance with the specified name and absolute query limit.
@@ -162,6 +166,27 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	}
 
 	public InMemoryEventStorageImpl ( String name, Limit absoluteLimit, List<StoredEvent> initialEvents, Map<String, Bookmark> initialBookmarks ) {
+		this(name, absoluteLimit, initialEvents, initialBookmarks, null);
+	}
+
+	/**
+	 * Constructs a new in-memory event storage instance carrying the codec that protects its events'
+	 * {@link org.sliceworkz.eventstore.shredding.Shreddable} values.
+	 * <p>
+	 * The storage never seals or unseals anything itself; the codec is answered from
+	 * {@link #shreddingCodec()} so that a store built on this storage — through
+	 * {@link org.sliceworkz.eventstore.EventStoreFactory#eventStore(EventStorage)} as much as through
+	 * {@link InMemoryEventStorage.Builder#buildStore()} — protects and erases personal data.
+	 *
+	 * @param name the unique name for this storage instance; must not be null or blank
+	 * @param absoluteLimit the absolute limit on query results, or {@link Limit#none()} for no limit
+	 * @param initialEvents events to preload, in order
+	 * @param initialBookmarks bookmarks to preload, by reader
+	 * @param shreddingCodec seals and unseals protected values, or null for a storage without shredding
+	 * @throws IllegalArgumentException if name is null or blank
+	 * @see InMemoryEventStorage.Builder#build()
+	 */
+	public InMemoryEventStorageImpl ( String name, Limit absoluteLimit, List<StoredEvent> initialEvents, Map<String, Bookmark> initialBookmarks, ShreddingCodec shreddingCodec ) {
 		if ( name == null || "".equals(name.strip())) {
 			throw new IllegalArgumentException("name must not be empty");
 		}
@@ -170,6 +195,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		// verifyImportableJson); nothing is bound to a class, so no binding features matter
 		this.jsonMapper = JsonMapper.builder().build();
 		this.absoluteLimit = absoluteLimit;
+		this.shreddingCodec = shreddingCodec;
 		this.eventlog.addAll(initialEvents);
 		// a persisted bookmark is trusted for its id only: the reference kept is the loaded event's own,
 		// so a bookmark file written beside a log that has since been re-imported (positions and
@@ -694,6 +720,11 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		} catch ( Exception e ) {
 			LOGGER.error("event store listener failed handling a bookmark notification: {}", e.getMessage(), e);
 		}
+	}
+
+	@Override
+	public Optional<ShreddingCodec> shreddingCodec ( ) {
+		return Optional.ofNullable(shreddingCodec);
 	}
 
 	@Override

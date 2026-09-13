@@ -100,13 +100,20 @@ public interface EventStoreFactory {
 	 * ShreddingCodec codec = AesGcmShreddingCodec.over(new InMemoryShreddingKeyStore());
 	 * EventStore store = EventStoreFactory.get().eventStore(storage, registry, MeterOptions.defaults(), codec);
 	 * }</pre>
+	 * A codec given here takes precedence over the one the storage was configured with; {@code null}
+	 * means the storage's own ({@link org.sliceworkz.eventstore.spi.EventStorage#shreddingCodec()}),
+	 * which is also what the overloads without a codec parameter use — so a storage builder's
+	 * {@code .shredding(...)} is honoured by every overload of this factory, not only by the builder's
+	 * {@code buildStore()}.
+	 * <p>
 	 * The default implementation ignores the codec and delegates, so that a factory written before this
 	 * method existed still compiles and runs. The factory shipped with this library overrides it.
 	 *
 	 * @param eventStorage the storage backend implementation
 	 * @param meterRegistry the Micrometer meter registry for collecting metrics and observability data
 	 * @param meterOptions how much detail the store's meters may carry
-	 * @param shreddingCodec protects personal data in event payloads, or null for a store without shredding
+	 * @param shreddingCodec protects personal data in event payloads, or null to use the codec the
+	 *                       storage was configured with, if any
 	 * @return a new EventStore instance using the provided storage
 	 * @see org.sliceworkz.eventstore.shredding.Shreddable
 	 */

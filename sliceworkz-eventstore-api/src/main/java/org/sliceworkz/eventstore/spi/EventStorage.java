@@ -32,6 +32,7 @@ import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
+import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
@@ -403,6 +404,31 @@ public interface EventStorage extends AutoCloseable {
 		return query(EventQuery.matchAll(), stream, null, Limit.to(1), QueryDirection.BACKWARD)
 				.findFirst()
 				.map(StoredEvent::reference);
+	}
+
+	/**
+	 * The codec protecting the {@link org.sliceworkz.eventstore.shredding.Shreddable} values of the
+	 * events in this storage, or empty when it was configured without one.
+	 * <p>
+	 * A storage never seals or unseals anything itself — it stores the sealed envelope as opaque JSON,
+	 * which is what lets raw mode, an export and an import see a protected value exactly as stored.
+	 * Sealing and unsealing happen in the {@link org.sliceworkz.eventstore.EventStore} built on the
+	 * storage, and this is how that store finds the codec: a store built through
+	 * {@link org.sliceworkz.eventstore.EventStoreFactory#eventStore(EventStorage)}, or through any
+	 * overload not handed a codec of its own, uses the one answered here. So a builder's
+	 * {@code .shredding(...)} is honoured whether the caller ends with {@code build()} and the factory
+	 * or with {@code buildStore()} — the alternative, a codec that lives on the store alone, loses
+	 * because the PostgreSQL key store on "this store's own database" is created from a
+	 * {@code DataSource} the builder resolves and never hands out, so a caller who took the storage
+	 * from {@code build()} could not construct it.
+	 * <p>
+	 * The default answers empty, so a storage written before this method existed keeps working and
+	 * simply has no codec of its own.
+	 *
+	 * @return the codec this storage was configured with, or empty for a storage without shredding
+	 */
+	default Optional<ShreddingCodec> shreddingCodec ( ) {
+		return Optional.empty();
 	}
 
 	/**

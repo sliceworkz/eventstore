@@ -43,6 +43,13 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
 import org.sliceworkz.eventstore.spi.EventStorage;
+import java.util.Optional;
+import org.sliceworkz.eventstore.events.EventType;
+import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
+import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
+import org.sliceworkz.eventstore.stream.AppendCriteria;
+import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.spi.EventStorageException;
 
 /**
@@ -211,6 +218,57 @@ public class PostgresSchemaDriftTest {
 					.validateDatabase().build());
 			assertTrue(e.getMessage().contains("stream_purpose") && e.getMessage().contains("nullability"),
 				"expected a nullability complaint, got: " + e.getMessage());
+
+			PostgresContainer.closeDataSource(image);
+		}
+
+		/**
+		 * A bookmarks table from before bookmarks stored the event id only still carries
+		 * {@code event_position} and {@code event_tx} {@code NOT NULL}, which nothing binds any more, so
+		 * the first placement would fail on them. {@code ENSURE} never drops a column, so the table is
+		 * reported — under {@code VALIDATE} and {@code ENSURE} alike — naming the migration to run by hand;
+		 * and under {@code NONE}, where nothing validates, the placement itself names it rather than
+		 * surfacing as a bare not-null violation.
+		 */
+		@Test
+		public void testUnmigratedBookmarksTableIsReportedWithItsMigration ( ) throws Exception {
+			String prefix = "driftbookmarks_";
+			DataSource dataSource = PostgresContainer.dataSource(image);
+
+			ensure(prefix, dataSource).close();
+			execute(dataSource, "ALTER TABLE " + prefix + "bookmarks ADD COLUMN event_position BIGINT NOT NULL DEFAULT 0, ADD COLUMN event_tx xid8 NOT NULL DEFAULT '0'::xid8");
+			execute(dataSource, "ALTER TABLE " + prefix + "bookmarks ALTER COLUMN event_position DROP DEFAULT, ALTER COLUMN event_tx DROP DEFAULT");
+			String migration = PostgresEventStorageImpl.BOOKMARKS_ID_ONLY_MIGRATION.formatted(prefix);
+
+			for ( DatabaseInitMode mode : List.of(DatabaseInitMode.VALIDATE, DatabaseInitMode.ENSURE) ) {
+				EventStorageException e = assertThrows(EventStorageException.class, () ->
+					PostgresEventStorage.newBuilder()
+						.name("unit-test").prefix(prefix).dataSource(dataSource)
+						.databaseInitMode(mode).build(),
+					"under " + mode + " the stale columns must be reported");
+				assertTrue(e.getMessage().contains(migration), "expected the migration statement, got: " + e.getMessage());
+			}
+
+			try ( EventStorage storage = PostgresEventStorage.newBuilder()
+					.name("unit-test").prefix(prefix).dataSource(dataSource)
+					.databaseInitMode(DatabaseInitMode.NONE).build() ) {
+				EventStreamId stream = EventStreamId.forContext("account").withPurpose("1");
+				List<StoredEvent> stored = storage.append(AppendCriteria.none(), Optional.of(stream),
+					List.of(new EventToStore(stream, new EventType("Opened"), "{}", Tags.none(), null)));
+				EventStorageException e = assertThrows(EventStorageException.class, () ->
+					storage.bookmark("reader", stored.getFirst().reference(), Tags.none()));
+				assertTrue(e.getMessage().contains(migration), "the placement must name the migration, got: " + e.getMessage());
+			}
+
+			// migrated, the same table is accepted and the placement goes through
+			execute(dataSource, migration);
+			try ( EventStorage storage = PostgresEventStorage.newBuilder()
+					.name("unit-test").prefix(prefix).dataSource(dataSource)
+					.validateDatabase().build() ) {
+				EventStreamId stream = EventStreamId.forContext("account").withPurpose("1");
+				storage.bookmark("reader", storage.head(Optional.of(stream)).orElseThrow(), Tags.none());
+				assertTrue(storage.getBookmark("reader").isPresent());
+			}
 
 			PostgresContainer.closeDataSource(image);
 		}

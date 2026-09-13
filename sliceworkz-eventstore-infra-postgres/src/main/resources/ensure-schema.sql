@@ -252,15 +252,20 @@ END $$;
 -- for a dispatcher is duplicate publishing to an external system -- and an event deletion (retention
 -- pruning, surgical removal of a poison event) reaches exactly the bookmarks of readers still
 -- pointing into the deleted range: the lagging ones, silently, with no notification (the bookmark
--- trigger fires on INSERT/UPDATE only). A dangling cursor, by contrast, is harmless: reads compare
--- the stored (event_tx, event_position) and never join back to the events row. So the default
--- NO ACTION is the right policy -- deleting events out from under an outstanding bookmark fails
--- loudly, and whoever prunes decides explicitly what to do with the reader.
+-- trigger fires on INSERT/UPDATE only). So the default NO ACTION is the right policy -- deleting
+-- events out from under an outstanding bookmark fails loudly, and whoever prunes decides explicitly
+-- what to do with the reader. The constraint is load-bearing for reads as well as writes: a bookmark
+-- resolves to its event on every read (below), so an event deleted from under a bookmark would leave
+-- that reader with no position at all, which is the same "replay from the beginning".
+--
+-- A bookmark names a stored event by id and nothing else. The (event_tx, event_position) the cursor
+-- comparisons order by are the store's own coordinates for that event, answered by a join on the
+-- unique event_id index whenever the bookmark is read -- so a bookmark can never carry coordinates
+-- that disagree with the event it names, and a bookmarks table copied between stores (an import,
+-- which preserves ids and reassigns both ordering columns) is valid as it stands.
 CREATE TABLE IF NOT EXISTS PREFIX_bookmarks (
       reader TEXT PRIMARY KEY,
-      event_position BIGINT NOT NULL,
       event_id UUID NOT NULL,
-      event_tx xid8 NOT NULL,
       updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
       updated_tags TEXT[] DEFAULT '{}',
       CONSTRAINT fk_bookmarks_event_id
@@ -277,14 +282,20 @@ CREATE TABLE IF NOT EXISTS PREFIX_bookmarks (
 -- row. The append amplification does not exist on this table.
 --
 -- CREATE OR REPLACE for the same reason as PREFIX_notify_event_appended above.
+-- The notification carries the store's coordinates of the bookmarked event, looked up by id: one
+-- probe on the unique event_id index per placement.
 CREATE OR REPLACE FUNCTION PREFIX_notify_bookmark_placed()
 RETURNS trigger AS $fn$
+DECLARE
+    bookmarked RECORD;
 BEGIN
+    SELECT event_tx, event_position INTO bookmarked
+    FROM PREFIX_events WHERE event_id = NEW.event_id;
     PERFORM pg_notify('PREFIX_bookmark_placed',
         jsonb_build_object(
             'reader', NEW.reader,
-            'eventTx', NEW.event_tx,
-            'eventPosition', NEW.event_position,
+            'eventTx', bookmarked.event_tx,
+            'eventPosition', bookmarked.event_position,
             'eventId', NEW.event_id
         )::text
     );

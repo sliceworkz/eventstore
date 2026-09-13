@@ -561,11 +561,20 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 		// Check required columns with their types
 		checkColumn(connection, tableName, "reader", "text", false);
-		checkColumn(connection, tableName, "event_position", "bigint", false);
 		checkColumn(connection, tableName, "event_id", "uuid", false);
-		checkColumn(connection, tableName, "event_tx", "xid8", false);
 		checkColumn(connection, tableName, "updated_at", "timestamp with time zone", true);
 		checkColumn(connection, tableName, "updated_tags", "ARRAY", true);
+		// A bookmark stores the event id only; a table from before that still carries the two ordering
+		// columns NOT NULL, so the first placeBookmark would fail on them. ENSURE never drops a column,
+		// so this is reported under every mode that validates, with the migration to run by hand
+		for ( String legacyColumn : List.of("event_position", "event_tx") ) {
+			if ( columnExists(connection, tableName, legacyColumn) ) {
+				throw new EventStorageException(
+					("Table '%s' still carries column '%s': bookmarks store the event id only, and answer the "
+					+ "position and transaction from the event. Migrate the table with: " + BOOKMARKS_ID_ONLY_MIGRATION)
+						.formatted(tableName, legacyColumn, prefix));
+			}
+		}
 
 		// Check foreign key constraint
 		checkForeignKey(connection, tableName, "fk_bookmarks_event_id");
@@ -652,6 +661,23 @@ public class PostgresEventStorageImpl implements EventStorage {
 			stmt.setString(1, tableName);
 			try (ResultSet rs = stmt.executeQuery()) {
 				return rs.next() && rs.getBoolean(1);
+			}
+		}
+	}
+
+	private boolean columnExists ( Connection connection, String tableName, String columnName ) throws SQLException {
+		String sql = """
+			SELECT 1
+			FROM information_schema.columns
+			WHERE table_schema = current_schema()
+			AND table_name = ?
+			AND column_name = ?
+		""";
+		try ( PreparedStatement stmt = connection.prepareStatement(sql) ) {
+			stmt.setString(1, tableName);
+			stmt.setString(2, columnName);
+			try ( ResultSet rs = stmt.executeQuery() ) {
+				return rs.next();
 			}
 		}
 	}
@@ -2153,6 +2179,21 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * @param e the failure to classify
 	 * @return {@code true} if the bookmarks-to-events foreign key rejected the row
 	 */
+	/** SQLSTATE 23502 */
+	private static final String NOT_NULL_VIOLATION = "23502";
+
+	/**
+	 * The hand-applied migration for a bookmarks table created while bookmarks still stored the two
+	 * ordering columns. {@code %s} is the prefix. Dropping the columns loses nothing: they were the
+	 * caller's copy of what the event row says, and every read now answers them from that row.
+	 */
+	static final String BOOKMARKS_ID_ONLY_MIGRATION =
+		"ALTER TABLE %sbookmarks DROP COLUMN event_position, DROP COLUMN event_tx;";
+
+	private static boolean isNotNullViolation ( SQLException e ) {
+		return NOT_NULL_VIOLATION.equals(e.getSQLState());
+	}
+
 	private static boolean isBookmarkEventFkViolation ( SQLException e ) {
 		return FOREIGN_KEY_VIOLATION.equals(e.getSQLState())
 				&& BOOKMARKS_EVENT_FK.equalsIgnoreCase(serverConstraintName(e));
@@ -2604,14 +2645,35 @@ public class PostgresEventStorageImpl implements EventStorage {
 		listeners.remove(listener);
 	}
 
+	/**
+	 * The statement behind {@link #getBookmark} and {@link #getBookmarks}: the bookmark row joined to the
+	 * event it names, so the reference read back carries the <em>store's</em> coordinates of that event.
+	 * <p>
+	 * A bookmark names a stored event by id and stores nothing else about it. The {@code (tx, position)}
+	 * that cursor comparisons order by are a property of the event, answered here by one probe on the
+	 * unique {@code event_id} index, which is what makes it impossible for a bookmark to carry coordinates
+	 * that disagree with the event it names — and what lets a bookmarks table copied from another store
+	 * (an import preserves ids and reassigns both ordering columns) stay valid as it stands. The
+	 * alternative — storing the caller's {@code (tx, position)} beside the id — costs the join but
+	 * stores a copy the foreign key never checks, so a bookmark could pass validation with a stored id
+	 * and a wrong cursor.
+	 * <p>
+	 * Deliberately <em>not</em> behind the {@code pg_snapshot_xmin} barrier: the bookmark names an event
+	 * the reader has already handled, and a reader is entitled to its own position whatever else is in
+	 * flight. Package-private so the module's tests can pin its shape.
+	 */
+	static String bookmarkSql ( String prefix ) {
+		return """
+			SELECT b.reader, e.event_position, b.event_id, e.event_tx::text, b.updated_at, b.updated_tags
+			FROM %1$sbookmarks b
+			JOIN %1$sevents e ON e.event_id = b.event_id
+			""".formatted(prefix);
+	}
+
 	@Override
 	public Optional<EventReference> getBookmark(String reader) {
 		checkNotClosed();
-		String sql = """
-			SELECT event_position, event_id, event_tx::text
-			FROM %sbookmarks
-			WHERE reader = ?
-		""".formatted(prefix);
+		String sql = bookmarkSql(prefix) + " WHERE b.reader = ?";
 
 		try ( Connection readConnection = dataSource.getConnection() ) {
 			readConnection.setAutoCommit(true);
@@ -2640,10 +2702,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	@Override
 	public List<Bookmark> getBookmarks() {
 		checkNotClosed();
-		String sql = """
-			SELECT reader, event_position, event_id, event_tx::text, updated_at, updated_tags
-			FROM %sbookmarks
-		""".formatted(prefix);
+		String sql = bookmarkSql(prefix);
 
 		List<Bookmark> bookmarks = new ArrayList<>();
 		try ( Connection readConnection = dataSource.getConnection() ) {
@@ -2684,13 +2743,13 @@ public class PostgresEventStorageImpl implements EventStorage {
 		if ( eventReference == null ) {
 			removeBookmark(reader);
 		} else {
+			// only the id is stored: the position and transaction carried by the reference are the
+			// caller's copy of what the event already says, and getBookmark answers them from the event
 			String sql = """
-				INSERT INTO %sbookmarks (reader, event_position, event_tx, event_id, updated_at, updated_tags)
-				VALUES (?, ?, ?::xid8, ?::uuid, CURRENT_TIMESTAMP, ? )
+				INSERT INTO %sbookmarks (reader, event_id, updated_at, updated_tags)
+				VALUES (?, ?::uuid, CURRENT_TIMESTAMP, ? )
 				ON CONFLICT (reader)
 				DO UPDATE SET
-					event_position = EXCLUDED.event_position,
-					event_tx = EXCLUDED.event_tx,
 					event_id = EXCLUDED.event_id,
 					updated_at = CURRENT_TIMESTAMP,
 					updated_tags = EXCLUDED.updated_tags
@@ -2706,13 +2765,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 					
 					try ( PreparedStatement stmt = writeConnection.prepareStatement(sql) ) {
 						stmt.setString(1, reader);
-						stmt.setLong(2, eventReference == null?0:eventReference.position());
-						stmt.setString(3, eventReference == null?"0":Long.toUnsignedString(eventReference.tx()));
-						stmt.setString(4, eventReference==null?null:eventReference.id().value());
+						stmt.setString(2, eventReference.id().value());
 						
 						// Convert tags to array
 						String[] tagsArray = tags.toStrings().toArray(new String[0]);
-						stmt.setArray(5, writeConnection.createArrayOf("text", (String[]) tagsArray));
+						stmt.setArray(3, writeConnection.createArrayOf("text", (String[]) tagsArray));
 						
 						int rowsAffected = stmt.executeUpdate();
 						if (rowsAffected == 0) {
@@ -2734,6 +2791,17 @@ public class PostgresEventStorageImpl implements EventStorage {
 						throw new EventStorageException(
 							"Cannot place bookmark for reader '%s': %s does not reference an event stored in this event storage"
 								.formatted(reader, eventReference), e);
+					}
+					if ( isNotNullViolation(e) ) {
+						// the one way this insert violates a NOT NULL: a bookmarks table from before bookmarks
+						// were id-only still carries event_position / event_tx, which nothing binds any more.
+						// checkDatabase() reports it under VALIDATE and ENSURE; under NONE this is the first
+						// place it shows, so name the migration rather than the column
+						throw new EventStorageException(
+							("Failed to bookmark event for reader '%s': table %sbookmarks still carries the "
+							+ "event_position/event_tx columns of a database created before bookmarks stored the "
+							+ "event id only. Migrate it with: " + BOOKMARKS_ID_ONLY_MIGRATION)
+								.formatted(reader, prefix, prefix), e);
 					}
 					throw new EventStorageException("Failed to bookmark event for reader: " + reader, e);
 				}

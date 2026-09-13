@@ -60,6 +60,9 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
  *     Tags.of("region", "EU")
  * );
  *
+ * // Query every event about one customer, whatever its type
+ * EventQuery customer = EventQuery.forTags(Tags.of("customer", "123"));
+ *
  * // Query backwards (newest first) with limit
  * EventQuery mostRecent = EventQuery.forEvents(
  *     EventTypesFilter.of(CustomerRegistered.class),
@@ -393,6 +396,23 @@ public record EventQuery ( EventFilter filter, Direction direction, Limit limit 
 	 */
 	public static final EventQuery forEvents ( EventTypesFilter eventTypes, Tags tags ) {
 		return forEvents(new EventFilterItem(eventTypes, tags));
+	}
+
+	/**
+	 * Creates a query for events of any type carrying the specified tags.
+	 * <p>
+	 * This is the query a consistency boundary is usually spelled with: every fact about one
+	 * entity, whatever its type. It is {@link #forEvents(EventTypesFilter, Tags)} with
+	 * {@link EventTypesFilter#any()}, and equivalent to it in every respect.
+	 * <pre>{@code
+	 * EventQuery customer = EventQuery.forTags(Tags.of("customer", "123"));
+	 * }</pre>
+	 *
+	 * @param tags the tags that events must contain (all tags must be present)
+	 * @return an EventQuery matching events of any type carrying the tags
+	 */
+	public static final EventQuery forTags ( Tags tags ) {
+		return forEvents(EventTypesFilter.any(), tags);
 	}
 
 	/**

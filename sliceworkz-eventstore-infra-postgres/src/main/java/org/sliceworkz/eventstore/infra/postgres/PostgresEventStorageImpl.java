@@ -880,6 +880,18 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 		Duration effectiveTimeout = timeout == null ? DEFAULT_NOTIFICATION_STARTUP_TIMEOUT : timeout;
 
+		// before the monitors, on a connection that is returned before they take theirs. The other order
+		// -- monitors first, then this check -- deadlocks on a shared pool: each monitor holds its
+		// connection for the life of the storage, so several stores starting on one DataSource (per-prefix
+		// tenants; the concurrent-ENSURE test's eight instances on a ten-connection pool) can fill the pool
+		// with monitors and leave every check waiting for a connection none of them will release
+		try {
+			verifyClusterIsAheadOfHistory();
+		} catch ( RuntimeException e ) {
+			close();
+			throw e;
+		}
+
 		this.eventMonitorReady = new CountDownLatch(1);
 		this.bookmarkMonitorReady = new CountDownLatch(1);
 		this.executorService.execute(new NewEventsAppendedMonitor("event-append-listener/" + name, listeners, monitoringDataSource, eventMonitorReady));
@@ -909,6 +921,118 @@ public class PostgresEventStorageImpl implements EventStorage {
 			+ "separately from the main one, since LISTEN/NOTIFY does not survive a transaction pooler, so a "
 			+ "deployment can have a working pooled connection and an unreachable direct one.")
 				.formatted(name, effectiveTimeout.toMillis()));
+	}
+
+	/**
+	 * The statement behind {@link #verifyClusterIsAheadOfHistory()}: the highest {@code event_tx} at the
+	 * head of any stream, compared with the next transaction id this cluster will assign.
+	 * <p>
+	 * A stored transaction id at or above {@code pg_snapshot_xmax(pg_current_snapshot())} is one this
+	 * cluster has never handed out, which no append can produce: it is the signature of events restored
+	 * <em>logically</em> — {@code pg_dump}/{@code pg_restore}, a copied table — into a cluster whose
+	 * counter is younger than the data. {@code xmax} rather than {@code pg_current_xact_id()} because the
+	 * latter assigns an id to the checking connection, and a startup check must not be the writing
+	 * transaction the visibility notes warn about.
+	 * <p>
+	 * The stream heads are enumerated with a recursive CTE that walks {@code idx_events_stream_position}
+	 * one stream at a time — a loose index scan: a probe per stream, each {@code O(log n)}, so the check
+	 * costs a few milliseconds whatever the store holds. The natural alternative — {@code DISTINCT ON
+	 * (stream_context, stream_purpose) … ORDER BY … event_tx DESC} — is exact too but is a full scan of
+	 * that index on every start before PostgreSQL 18's skip scan, and a store restored into a younger
+	 * cluster is a once-in-a-deployment mistake that should not tax every ordinary boot. Reading only the
+	 * newest-position row instead would be cheaper still and is wrong: the moment something is appended
+	 * to the restored store, that row is the new, low-tx event, and the restored history above the
+	 * counter is invisible to it — which is precisely the state to keep reporting.
+	 * <p>
+	 * Deliberately <em>not</em> behind the {@code pg_snapshot_xmin} barrier: the rows it looks for are
+	 * exactly the ones that barrier withholds. Package-private so the module's tests can pin its shape.
+	 */
+	static String clusterAheadOfHistorySql ( String prefix ) {
+		return """
+			WITH RECURSIVE streams AS (
+			    (SELECT stream_context, stream_purpose FROM %1$sevents ORDER BY stream_context, stream_purpose LIMIT 1)
+			    UNION ALL
+			    SELECT next_stream.stream_context, next_stream.stream_purpose
+			    FROM streams
+			    CROSS JOIN LATERAL (
+			        SELECT stream_context, stream_purpose FROM %1$sevents
+			        WHERE (stream_context, stream_purpose) > (streams.stream_context, streams.stream_purpose)
+			        ORDER BY stream_context, stream_purpose LIMIT 1
+			    ) next_stream
+			)
+			SELECT count(*) AS streams_ahead,
+			       max(head.event_tx)::text AS highest_tx,
+			       pg_snapshot_xmax(pg_current_snapshot())::text AS next_tx
+			FROM streams
+			CROSS JOIN LATERAL (
+			    SELECT event_tx FROM %1$sevents e
+			    WHERE e.stream_context = streams.stream_context AND e.stream_purpose = streams.stream_purpose
+			    ORDER BY event_tx DESC, event_position DESC LIMIT 1
+			) head
+			WHERE head.event_tx >= pg_snapshot_xmax(pg_current_snapshot())
+			""".formatted(prefix);
+	}
+
+	/**
+	 * Refuses to start on a store whose events carry transaction ids this cluster has not assigned yet.
+	 * <p>
+	 * Ordering here is the {@code (event_tx, event_position)} tuple and every read sits behind
+	 * {@code event_tx < pg_snapshot_xmin(...)}, so a history restored logically into a younger cluster
+	 * fails in two silent ways at once: the restored events sit above the barrier and every query,
+	 * {@link #head}, every projection and every DCB check reads an empty store while {@code SELECT
+	 * count(*)} shows the rows; and the first append lands with a transaction id below all of history,
+	 * ordered before it for every reader — a bookmark at the old head is then ahead of everything new, and
+	 * a lock check whose reference is in history sees nothing after it. Nothing fails, nothing is logged,
+	 * and the counter catching up with the data is years away. That is worse than not starting, and it is
+	 * cheapest to catch on the first start after the restore, before anything has been appended below the
+	 * history — so this runs whatever the {@link DatabaseInitMode}, {@code NONE} included, since that is
+	 * the production mode and the one that touches nothing else first. The remedies are named in the
+	 * error: a physical backup, {@code pg_resetwal} on the stopped cluster, or an import into a fresh
+	 * store; the module README's "Backup and restore" carries the reasoning.
+	 * <p>
+	 * Runs before the monitors are started, so its connection is back in the pool before they take
+	 * theirs — see {@link #start(Duration)} for why the other order deadlocks on a shared pool. One
+	 * consequence: under {@code NONE} this is the first thing {@code start()} asks the database, so an
+	 * unreachable main DataSource fails here, within the pool's connection timeout and naming the
+	 * database, rather than on the notification deadline.
+	 *
+	 * @throws EventStorageException if any stream head is at or above the cluster's next transaction id,
+	 *                               or if the check cannot be run — a database that cannot be reached
+	 *                               included
+	 */
+	private void verifyClusterIsAheadOfHistory ( ) {
+		String sql = clusterAheadOfHistorySql(prefix);
+		try ( Connection readConnection = dataSource.getConnection() ) {
+			readConnection.setAutoCommit(true);
+			try ( PreparedStatement stmt = readConnection.prepareStatement(sql);
+			      ResultSet rs = stmt.executeQuery() ) {
+				if ( !rs.next() ) {
+					return;
+				}
+				long streamsAhead = rs.getLong("streams_ahead");
+				if ( streamsAhead == 0 ) {
+					return;
+				}
+				String highestTx = rs.getString("highest_tx");
+				String nextTx = rs.getString("next_tx");
+				throw new EventStorageException(
+					("event storage '%s' holds events whose transaction id (up to %s, on %d stream(s)) is at or "
+					+ "above the next id this PostgreSQL cluster will assign (%s). No append can produce that: it "
+					+ "is the signature of events restored logically (pg_dump/pg_restore, a copied table) into a "
+					+ "cluster whose transaction counter is younger than the data. Started anyway, those events "
+					+ "would sit above the visibility barrier and read as absent, and anything appended would be "
+					+ "ordered before all of them. Either restore from a physical backup (pg_basebackup, WAL "
+					+ "archive, a snapshot), which keeps the counter; or, if nothing has been appended yet, stop "
+					+ "this cluster and move its counter past %s with pg_resetwal -x/-e; or copy the events into "
+					+ "a fresh store with EventStoreImporter, which reassigns the ordering. See 'Backup and "
+					+ "restore' in the postgres module README.")
+						.formatted(name, highestTx, streamsAhead, nextTx, highestTx));
+			}
+		} catch ( SQLException e ) {
+			throw new EventStorageException(
+				("event storage '%s' could not read its stream heads to verify that the cluster's transaction "
+				+ "counter is ahead of its history: %s").formatted(name, e.getMessage()), e);
+		}
 	}
 
 	/**

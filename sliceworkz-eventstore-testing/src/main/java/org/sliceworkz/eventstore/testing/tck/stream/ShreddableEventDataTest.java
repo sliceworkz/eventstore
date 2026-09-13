@@ -51,6 +51,7 @@ import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.shredding.ShreddingException;
 import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
 import org.sliceworkz.eventstore.shredding.ShreddingKeyStore.KeyResolution;
+import org.sliceworkz.eventstore.shredding.SubjectErasureReport;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -237,6 +238,109 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		assertTrue(((StrictlyValidated) read.get(0).data()).email().isShredded());
 		assertEquals("alice@financial", ((StrictlyValidated) read.get(1).data()).email().orElse(null),
 				"erasing one category took another category's data with it");
+	}
+
+	/**
+	 * A {@code DataSubject} names one category, so {@code erase(DataSubject.of(type, id))} is the default
+	 * category and nothing else — right for "erase marketing, retain financial", and the wrong call for
+	 * "erase this person". The whole-person erasure takes no category, so it cannot be narrowed by
+	 * accident, and it must take every category the subject ever held keys under, however many keys
+	 * each of them accumulated across earlier erasures.
+	 */
+	@ForEachBackend
+	void erasingASubjectAcrossAllCategoriesTakesEveryCategory ( ) {
+		EventStore store = eventStoreWithShredding();
+		EventStream<PaymentEvent> payments = store.getEventStream(STREAM, PaymentEvent.class);
+
+		DataSubject marketing = ALICE.withCategory("marketing");
+		DataSubject financial = ALICE.withCategory("financial");
+
+		payments.append(AppendCriteria.none(), List.of(
+				Event.of(new StrictlyValidated("d-1", Shreddable.of("alice@default", ALICE)), Tags.none()),
+				Event.of(new StrictlyValidated("m-1", Shreddable.of("alice@marketing", marketing)), Tags.none()),
+				Event.of(new StrictlyValidated("f-1", Shreddable.of("alice@financial", financial)), Tags.none()),
+				Event.of(new StrictlyValidated("b-1", Shreddable.of("bob@default", BOB)), Tags.none())));
+
+		// the per-category erasure under the default category is exactly that: one category
+		ErasureReport defaultOnly = store.erase(ALICE, ErasureReason.of("default category only"));
+		assertEquals(1, defaultOnly.keysShredded());
+		List<Event<PaymentEvent>> afterDefault = payments.query(EventQuery.matchAll()).toList();
+		assertTrue(email(afterDefault, 0).isShredded());
+		assertEquals("alice@marketing", email(afterDefault, 1).orElse(null), "erasing the default category took another category with it");
+		assertEquals("alice@financial", email(afterDefault, 2).orElse(null), "erasing the default category took another category with it");
+
+		// the whole person: every category still holding a key, whichever they are
+		ErasureReason reason = ErasureReason.of("GDPR art.17 request #4711");
+		SubjectErasureReport report = store.eraseAllCategories(ALICE.type(), ALICE.id(), reason);
+		assertFalse(report.isNoop());
+		assertEquals(2, report.keysShredded());
+		assertEquals(Set.of("marketing", "financial"), Set.copyOf(report.categoriesErased()),
+				"the whole-person erasure must take every category the subject holds keys under");
+		for ( ErasureReport category : report.categories() ) {
+			assertEquals(ALICE.type(), category.subject().type());
+			assertEquals(ALICE.id(), category.subject().id());
+			assertEquals(1, category.keysShredded(), "each category report names the keys of that category");
+			assertEquals(reason, category.reason());
+		}
+
+		List<Event<PaymentEvent>> read = payments.query(EventQuery.matchAll()).toList();
+		assertTrue(email(read, 0).isShredded());
+		assertTrue(email(read, 1).isShredded(), "the marketing category survived a whole-person erasure");
+		assertTrue(email(read, 2).isShredded(), "the financial category survived a whole-person erasure");
+		assertEquals("bob@default", email(read, 3).orElse(null), "erasing one subject across categories took another subject's data with it");
+
+		// the audit agrees: every key alice ever held is shredded, the two taken here under this reason
+		List<ShreddingAudit.KeyRecord> keys = audit(store).keys(KeyAuditQuery.forSubject(ALICE.type(), ALICE.id()));
+		assertEquals(3, keys.size());
+		assertTrue(keys.stream().allMatch(key -> key.shreddedAt().isPresent()), "a key of the subject is still live after a whole-person erasure");
+		assertEquals(Set.copyOf(report.shreddedKeys()),
+				keys.stream().filter(key -> key.reason().equals(Optional.of(reason))).map(ShreddingAudit.KeyRecord::id).collect(java.util.stream.Collectors.toSet()));
+
+		// idempotent
+		assertTrue(store.eraseAllCategories(ALICE.type(), ALICE.id(), ErasureReason.of("art.17 again")).isNoop(),
+				"a second whole-person erasure destroyed something that should already have been gone");
+
+		// fresh keys afterwards, readable -- and the next whole-person erasure takes those too
+		payments.append(AppendCriteria.none(), List.of(
+				Event.of(new StrictlyValidated("d-2", Shreddable.of("alice-new@default", ALICE)), Tags.none()),
+				Event.of(new StrictlyValidated("m-2", Shreddable.of("alice-new@marketing", marketing)), Tags.none())));
+		List<Event<PaymentEvent>> afterwards = payments.query(EventQuery.matchAll()).toList();
+		assertEquals("alice-new@default", email(afterwards, 4).orElse(null));
+		assertEquals("alice-new@marketing", email(afterwards, 5).orElse(null));
+
+		SubjectErasureReport again = store.eraseAllCategories(ALICE.type(), ALICE.id(), ErasureReason.of("art.17, once more"));
+		assertEquals(2, again.keysShredded());
+		assertEquals(Set.of("default", "marketing"), Set.copyOf(again.categoriesErased()));
+		assertTrue(email(payments.query(EventQuery.matchAll()).toList(), 5).isShredded());
+	}
+
+	/**
+	 * The whole-person erasure passes through a restricted codec whole, like the per-category one: an
+	 * erasure narrowed to the reader's categories would report success for an erasure it had not
+	 * performed.
+	 */
+	@ForEachBackend
+	void erasingASubjectAcrossAllCategoriesThroughARestrictedCodecErasesEveryCategory ( ) {
+		DataSubject identity = ALICE.withCategory("identity");
+		DataSubject address = ALICE.withCategory("address");
+		ShreddingKeyStore keyStore = backend().shreddingKeyStore(eventStorage());
+		eventStoreWithShredding(keyStore).getEventStream(STREAM, PaymentEvent.class).append(AppendCriteria.none(), List.of(
+				Event.of(new StrictlyValidated("i-1", Shreddable.of("Alice Martin", identity)), Tags.none()),
+				Event.of(new StrictlyValidated("a-1", Shreddable.of("Rue Haute 1", address)), Tags.none())));
+
+		EventStore namesOnly = eventStoreWithShredding(AesGcmShreddingCodec.over(keyStore).restrictedTo(Set.of("identity")));
+		SubjectErasureReport report = namesOnly.eraseAllCategories(ALICE.type(), ALICE.id(), ErasureReason.of("art.17"));
+		assertEquals(Set.of("identity", "address"), Set.copyOf(report.categoriesErased()),
+				"a whole-person erasure through a restricted codec must not be narrowed to the reader's categories");
+
+		EventStream<PaymentEvent> payments = eventStoreWithShredding(keyStore).getEventStream(STREAM, PaymentEvent.class);
+		List<Event<PaymentEvent>> read = payments.query(EventQuery.matchAll()).toList();
+		assertTrue(email(read, 0).isShredded());
+		assertTrue(email(read, 1).isShredded());
+	}
+
+	private static Shreddable<String> email ( List<Event<PaymentEvent>> events, int index ) {
+		return ((StrictlyValidated) events.get(index).data()).email();
 	}
 
 	/**

@@ -150,6 +150,14 @@ public final class CategoryRestrictedShreddingCodec implements ShreddingCodec {
 	}
 
 	@Override
+	public SubjectErasureReport shredAllCategories ( String subjectType, String subjectId, ErasureReason reason ) {
+		// Passed through whole for the same reason shred is: this restriction is about what a reader
+		// sees, and an erasure narrowed to the reader's categories would report success for an erasure
+		// it had not performed.
+		return delegate.shredAllCategories(subjectType, subjectId, reason);
+	}
+
+	@Override
 	public Optional<ShreddingAudit> audit ( ) {
 		return delegate.audit();
 	}

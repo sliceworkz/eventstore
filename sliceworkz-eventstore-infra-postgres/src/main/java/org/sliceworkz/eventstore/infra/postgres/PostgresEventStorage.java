@@ -597,7 +597,10 @@ public interface PostgresEventStorage {
 		 *         .shredding()
 		 *         .buildStore() ) {
 		 *     …
-		 *     store.erase(DataSubject.of("customer", "alice-42"), ErasureReason.of("art.17 request #4711"));
+		 *     // the person, under every category: art.17
+		 *     store.eraseAllCategories("customer", "alice-42", ErasureReason.of("art.17 request #4711"));
+		 *     // or one category only -- a DataSubject always names one, "default" unless set
+		 *     store.erase(DataSubject.of("customer", "alice-42").withCategory("marketing"), ErasureReason.of("consent withdrawn"));
 		 * }
 		 * }</pre>
 		 * Without shredding configured, registering an event type that declares a {@code Shreddable}

@@ -93,6 +93,43 @@ public class ReaderEntitlementTest {
 	}
 
 	@Test
+	void aRestrictedCodecErasesAcrossCategoriesThroughTheWholeDelegate ( ) {
+		MapKeyStore keyStore = new MapKeyStore();
+		AesGcmShreddingCodec full = AesGcmShreddingCodec.over(keyStore);
+		Sealed name = full.seal("\"Alice\"", IDENTITY);
+		Sealed street = full.seal("\"Rue Haute 1\"", ADDRESS);
+
+		ShreddingCodec namesOnly = full.restrictedTo(Set.of("identity"));
+		SubjectErasureReport report = namesOnly.shredAllCategories("customer", "alice-42", ErasureReason.of("art.17"));
+		assertEquals(Set.of(name.key(), street.key()), Set.copyOf(report.shreddedKeys()),
+				"a whole-person erasure must not be narrowed to the reader's categories");
+		assertEquals(Set.of("identity", "address"), Set.copyOf(report.categoriesErased()));
+		assertEquals(Unsealed.Erased.INSTANCE, full.open(name));
+		assertEquals(Unsealed.Erased.INSTANCE, full.open(street));
+	}
+
+	/**
+	 * A key store or codec written before cross-category erasure existed is told, rather than made to
+	 * erase one category and report success -- and nothing of the subject's is destroyed by the attempt.
+	 */
+	@Test
+	void aKeyStoreOrCodecWithoutCrossCategoryErasureIsToldRatherThanNarrowed ( ) {
+		MapKeyStore keyStore = new MapKeyStore();
+		AesGcmShreddingCodec overOldKeyStore = AesGcmShreddingCodec.over(new TwoAnswerKeyStore(keyStore));
+		Sealed name = overOldKeyStore.seal("\"Alice\"", IDENTITY);
+		Sealed street = overOldKeyStore.seal("\"Rue Haute 1\"", ADDRESS);
+
+		assertThrows(UnsupportedOperationException.class,
+				() -> overOldKeyStore.shredAllCategories("customer", "alice-42", ErasureReason.of("art.17")));
+		ShreddingCodec oldCodec = new TwoAnswerCodec(AesGcmShreddingCodec.over(keyStore));
+		assertThrows(UnsupportedOperationException.class,
+				() -> oldCodec.shredAllCategories("customer", "alice-42", ErasureReason.of("art.17")));
+
+		assertInstanceOf(Unsealed.Plaintext.class, overOldKeyStore.open(name), "a refused whole-person erasure must destroy nothing");
+		assertInstanceOf(Unsealed.Plaintext.class, overOldKeyStore.open(street), "a refused whole-person erasure must destroy nothing");
+	}
+
+	@Test
 	void aRestrictedCodecRejectsAnEmptyOrBlankCategorySet ( ) {
 		ShreddingCodec codec = AesGcmShreddingCodec.over(new MapKeyStore());
 		assertThrows(IllegalArgumentException.class, () -> codec.restrictedTo(Set.of()));
@@ -110,6 +147,7 @@ public class ReaderEntitlementTest {
 		assertThrows(ShreddingException.class, () -> none.unseal(name), "must not report withheld as erased");
 		assertThrows(ShreddingException.class, () -> none.seal("\"Alice\"", IDENTITY));
 		assertThrows(UnsupportedOperationException.class, () -> none.shred(IDENTITY, ErasureReason.of("art.17")));
+		assertThrows(UnsupportedOperationException.class, () -> none.shredAllCategories("customer", "alice-42", ErasureReason.of("art.17")));
 		assertEquals(Optional.empty(), none.audit());
 		assertSame(none, ShreddingCodec.withholdingAll(), "holds nothing, so one instance serves everyone");
 	}
@@ -289,6 +327,20 @@ public class ReaderEntitlementTest {
 			});
 			active.remove(subject);
 			return shredded;
+		}
+
+		@Override
+		public List<ErasureReport> shredAllCategories ( String subjectType, String subjectId, ErasureReason reason ) {
+			List<ErasureReport> reports = new ArrayList<>();
+			for ( DataSubject subject : List.copyOf(active.keySet()) ) {
+				if ( subject.type().equals(subjectType) && subject.id().equals(subjectId) ) {
+					List<KeyId> shredded = shred(subject, reason);
+					if ( !shredded.isEmpty() ) {
+						reports.add(new ErasureReport(subject, reason, shredded, java.time.Instant.now()));
+					}
+				}
+			}
+			return reports;
 		}
 
 		@Override

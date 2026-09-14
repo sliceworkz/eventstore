@@ -174,13 +174,22 @@ public interface EventStore extends AutoCloseable {
 	 * Retrieves an event stream for a single event root class.
 	 * <p>
 	 * Convenience method for the common case of a single sealed interface or base class for domain events.
+	 * <p>
+	 * The root class fixes the stream's type parameter: {@code getEventStream(id, CustomerEvent.class)} is an
+	 * {@code EventStream<CustomerEvent>} and nothing else, so assigning it to an {@code EventStream<OrderEvent>}
+	 * is a compile error rather than an append that fails at runtime with an event type the stream was never
+	 * given a mapping for. The alternative — a {@code Class<?>} parameter, with the type parameter inferred
+	 * from the assignment target alone — loses because it lets the declared type and the registered mapping
+	 * disagree silently. A stream deliberately typed wider than its root (an {@code EventStream<Object>} over
+	 * one root class, say) is opened through {@link #getEventStream(EventStreamId, Set)}, whose element type
+	 * carries no such constraint.
 	 *
-	 * @param <DOMAIN_EVENT_TYPE> the type of domain events in this stream
+	 * @param <DOMAIN_EVENT_TYPE> the type of domain events in this stream, fixed by {@code eventRootClass}
 	 * @param eventStreamId the identifier for the event stream
 	 * @param eventRootClass the root class/interface for domain events (typically a sealed interface)
 	 * @return an EventStream for reading and writing domain events
 	 */
-	default <DOMAIN_EVENT_TYPE> EventStream<DOMAIN_EVENT_TYPE> getEventStream ( EventStreamId eventStreamId, Class<?> eventRootClass ) {
+	default <DOMAIN_EVENT_TYPE> EventStream<DOMAIN_EVENT_TYPE> getEventStream ( EventStreamId eventStreamId, Class<DOMAIN_EVENT_TYPE> eventRootClass ) {
 		return getEventStream(eventStreamId, Collections.singleton(eventRootClass), Collections.emptySet());
 	}
 
@@ -190,13 +199,17 @@ public interface EventStore extends AutoCloseable {
 	 * Convenience method for the common case of a single current event type and a single historical event type
 	 * that requires upcasting.
 	 *
-	 * @param <DOMAIN_EVENT_TYPE> the type of domain events in this stream
+	 * The current root class fixes the stream's type parameter, as in
+	 * {@link #getEventStream(EventStreamId, Class)}. The historical root class does not: legacy events are
+	 * upcast into current ones and never surface under their own type, so it may be any class.
+	 *
+	 * @param <DOMAIN_EVENT_TYPE> the type of domain events in this stream, fixed by {@code eventRootClass}
 	 * @param eventStreamId the identifier for the event stream
 	 * @param eventRootClass the root class/interface for current domain events
 	 * @param historicalEventRootClass the root class/interface for historical events requiring upcasting
 	 * @return an EventStream for reading and writing domain events
 	 */
-	default <DOMAIN_EVENT_TYPE> EventStream<DOMAIN_EVENT_TYPE> getEventStream ( EventStreamId eventStreamId, Class<?> eventRootClass, Class<?> historicalEventRootClass ) {
+	default <DOMAIN_EVENT_TYPE> EventStream<DOMAIN_EVENT_TYPE> getEventStream ( EventStreamId eventStreamId, Class<DOMAIN_EVENT_TYPE> eventRootClass, Class<?> historicalEventRootClass ) {
 		return getEventStream(eventStreamId, Collections.singleton(eventRootClass), Collections.singleton(historicalEventRootClass));
 	}
 

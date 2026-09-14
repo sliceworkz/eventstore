@@ -38,6 +38,7 @@ import java.util.Arrays;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -227,6 +228,18 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	private static final long INITIAL_RETRY_DELAY_MS = 1_000;
 	private static final long MAX_RETRY_DELAY_MS = 30_000;
+
+	/**
+	 * How long the append monitor holds a notification behind the read barrier before saying so.
+	 * <p>
+	 * A notification is withheld for the few milliseconds an older append is still in flight on every
+	 * busy store, which is not worth a log line. One withheld for this long is being held by a
+	 * long-running writing transaction somewhere in the cluster — the visibility stall the read barrier
+	 * implies — and that stall is otherwise invisible from inside the process: nothing fails, every
+	 * call keeps succeeding, and reads simply stop advancing. The WARN is the one signal the library
+	 * itself gives; the diagnosis query lives in the module documentation.
+	 */
+	static final long WITHHELD_NOTIFICATION_WARN_MILLIS = 10_000;
 
 	/**
 	 * How long {@link #start()} waits for the monitors to register their {@code LISTEN} before deciding
@@ -2424,6 +2437,36 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	
 	
+	/**
+	 * Delivers append notifications to the storage's listeners — once the appended events are readable.
+	 * <p>
+	 * A {@code NOTIFY} is delivered when the appending transaction commits, but this store's reads sit
+	 * behind {@code event_tx < pg_snapshot_xmin(pg_current_snapshot())}, so a committed event is not
+	 * necessarily readable yet: while an older transaction that has written anything is still open
+	 * anywhere in the cluster, every event appended since it took its id is withheld from every query.
+	 * Delivering such a notification as it arrives would wake a subscriber that then reads nothing —
+	 * and a subscriber that reads nothing counts as caught up, so nothing wakes it again when the
+	 * events finally surface. Until the next append to its stream, that is, which for a quiet stream
+	 * is indefinitely: a projection stuck exactly as many events behind as were appended during the
+	 * stall, with nothing failing to say so.
+	 * <p>
+	 * So the monitor parks a notification whose transaction is not yet below the barrier, and re-checks
+	 * the barrier every poll slice while anything is parked, delivering what has become readable. The
+	 * check is one {@code SELECT pg_snapshot_xmin(pg_current_snapshot())} on the monitoring connection,
+	 * costing nothing while nothing is parked. Parked notifications are coalesced to the latest reference
+	 * per stream, exactly as the trigger already coalesces per statement, so a stall on a busy stream
+	 * holds one entry per stream, not one per append. They live on the monitor rather than on its
+	 * connection, so losing the connection during a stall does not lose them.
+	 * <p>
+	 * The alternative — leaving this to the subscriber, by having a listener report how far it could
+	 * read and re-delivering until it reaches the target — loses on two counts: a listener cannot tell
+	 * "nothing to read yet" from "nothing matches my query" (both are an empty read), and re-delivering
+	 * on either is the busy loop {@code OptimizingAppendListenerDecorator} exists to prevent. The
+	 * barrier is this backend's, so this backend accounts for it, and the listener contract stays what
+	 * it reads as: what a notification announces, a query can see.
+	 * <p>
+	 * The bookmark monitor has no such concern: a bookmark read is deliberately not behind the barrier.
+	 */
 	class NewEventsAppendedMonitor implements Runnable {
 
 		private static final Logger LOGGER = LoggerFactory.getLogger(NewEventsAppendedMonitor.class);
@@ -2434,6 +2477,19 @@ public class PostgresEventStorageImpl implements EventStorage {
 		private CountDownLatch readyLatch;
 		/** the outer storage's flag for this channel: true exactly while this monitor holds a live LISTEN */
 		private final AtomicBoolean listening = eventMonitorListening;
+		/**
+		 * Notifications whose events are not readable yet, the latest reference per stream, in the
+		 * order the streams were first parked — so the first entry is the one parked longest, since a
+		 * merge keeps the entry's position and its park time. Only the monitor thread touches it.
+		 */
+		private final Map<EventStreamId, Parked> withheld = new LinkedHashMap<>();
+		/** when the stall being reported began, for the line that reports it over; meaningful only while {@link #stallReported} */
+		private long reportedStallSinceNanos;
+		/** whether the current stall has been logged, so that it is logged once rather than once per slice */
+		private boolean stallReported;
+
+		/** a parked notification and when it was parked, which a later notification for the same stream keeps */
+		private record Parked ( AppendsToEventStoreNotification notification, long sinceNanos ) { }
 
 		public NewEventsAppendedMonitor ( String name, List<EventStoreListener> listeners, DataSource monitoringDataSource, CountDownLatch readyLatch ) {
 			this.name = name;
@@ -2450,11 +2506,14 @@ public class PostgresEventStorageImpl implements EventStorage {
 			
 			String listenStatement = "LISTEN %sevent_appended;".formatted(prefix);
 			String unlistenStatement = "UNLISTEN %sevent_appended;".formatted(prefix);
+			String barrierStatement = "SELECT pg_snapshot_xmin(pg_current_snapshot())::text";
 
 			long retryDelayMs = INITIAL_RETRY_DELAY_MS;
 			while ( !stopped.get() ) {
 
-				try ( Connection monitorConnection = monitoringDataSource.getConnection(); Statement stmt = monitorConnection.createStatement() ){
+				try ( Connection monitorConnection = monitoringDataSource.getConnection();
+					  Statement stmt = monitorConnection.createStatement();
+					  PreparedStatement barrierStmt = monitorConnection.prepareStatement(barrierStatement) ){
 					// Ensure connection is in the right state for LISTEN
 					monitorConnection.setAutoCommit(true);
 
@@ -2481,23 +2540,15 @@ public class PostgresEventStorageImpl implements EventStorage {
 					            LOGGER.debug("Received: {}", notification.getParameter());
 					            try {
 									EventAppendedPostgresNotification msg = JSONMAPPER.readValue(notification.getParameter(), EventAppendedPostgresNotification.class);
-									AppendsToEventStoreNotification aesn = msg.toNotification();
-
-									listeners.forEach(listener -> {
-										// one listener misbehaving must not kill this monitor: it is the only one this
-										// storage has, so its death silently stops notifications for every store,
-										// listener and projection attached to the storage
-										try {
-											listener.notify(aesn);
-										} catch (Exception e) {
-											LOGGER.error("event store listener failed handling a notification: {}", e.getMessage(), e);
-										}
-									});
-
+									withhold(msg.toNotification());
 								} catch (JacksonException e) {
 									LOGGER.error("Failed to parse notification: " + e.getMessage());
 								}
 					        }
+					    }
+
+					    if ( !withheld.isEmpty() ) {
+					    	deliverReadable(barrierStmt);
 					    }
 					}
 
@@ -2536,6 +2587,78 @@ public class PostgresEventStorageImpl implements EventStorage {
 					LOGGER.debug("loop done.");
 				}
 			}
+		}
+
+		/**
+		 * Parks a notification until the barrier check finds its events readable, keeping the latest
+		 * reference per stream. Every notification goes through here, including one that is readable
+		 * already: it is delivered by the check that follows in the same slice, so an unstalled store
+		 * pays one barrier read per batch of notifications and no delay.
+		 */
+		private void withhold ( AppendsToEventStoreNotification notification ) {
+			withheld.merge(notification.stream(), new Parked(notification, System.nanoTime()),
+				(parked, arrived) -> arrived.notification().atLeastUntil().happenedAfter(parked.notification().atLeastUntil())
+					? new Parked(arrived.notification(), parked.sinceNanos())
+					: parked);
+		}
+
+		/**
+		 * Delivers every parked notification whose transaction is below the read barrier, and keeps
+		 * the rest. Visibility is monotone in the transaction id, so the barrier read once here holds
+		 * for every reader that runs after it: once {@code event_tx < xmin} it stays so, because the
+		 * oldest running transaction only ever gets younger.
+		 */
+		private void deliverReadable ( PreparedStatement barrierStmt ) throws SQLException {
+			long barrier;
+			try ( ResultSet rs = barrierStmt.executeQuery() ) {
+				if ( !rs.next() ) {
+					throw new SQLException("pg_snapshot_xmin(pg_current_snapshot()) returned no row");
+				}
+				barrier = Long.parseUnsignedLong(rs.getString(1));
+			}
+
+			Iterator<Parked> parked = withheld.values().iterator();
+			while ( parked.hasNext() ) {
+				AppendsToEventStoreNotification notification = parked.next().notification();
+				if ( Long.compareUnsigned(notification.atLeastUntil().tx(), barrier) < 0 ) {
+					parked.remove();
+					deliver(notification);
+				}
+			}
+
+			// The age that matters is that of the notification parked longest, never how long the map
+			// has been non-empty: on a busy store with appends in flight there is nearly always something
+			// parked for a slice, and the map may not drain for minutes while nothing is stalled.
+			long now = System.nanoTime();
+			long oldestWithheldForMillis = withheld.isEmpty() ? 0 : (now - withheld.values().iterator().next().sinceNanos()) / 1_000_000;
+			if ( stallReported && oldestWithheldForMillis < WITHHELD_NOTIFICATION_WARN_MILLIS ) {
+				LOGGER.info("the withheld event append notifications of event storage '{}' were delivered after {}s: "
+					+ "the blocking transaction has ended and the appended events are readable",
+					PostgresEventStorageImpl.this.name, (now - reportedStallSinceNanos) / 1_000_000_000);
+				stallReported = false;
+			} else if ( !stallReported && oldestWithheldForMillis >= WITHHELD_NOTIFICATION_WARN_MILLIS ) {
+				LOGGER.warn("event append notifications of event storage '{}' have been withheld for {}s on {} stream(s): "
+					+ "a writing transaction older than the appended events is still open somewhere in the cluster, "
+					+ "holding pg_snapshot_xmin down, so the events are committed but not readable yet. Subscribers are "
+					+ "woken as soon as it ends. To find it: SELECT pid, datname, now() - xact_start, query "
+					+ "FROM pg_stat_activity WHERE backend_xid IS NOT NULL ORDER BY xact_start",
+					PostgresEventStorageImpl.this.name, oldestWithheldForMillis / 1000, withheld.size());
+				reportedStallSinceNanos = withheld.values().iterator().next().sinceNanos();
+				stallReported = true;
+			}
+		}
+
+		private void deliver ( AppendsToEventStoreNotification notification ) {
+			listeners.forEach(listener -> {
+				// one listener misbehaving must not kill this monitor: it is the only one this
+				// storage has, so its death silently stops notifications for every store,
+				// listener and projection attached to the storage
+				try {
+					listener.notify(notification);
+				} catch (Exception e) {
+					LOGGER.error("event store listener failed handling a notification: {}", e.getMessage(), e);
+				}
+			});
 		}
 	}
 	

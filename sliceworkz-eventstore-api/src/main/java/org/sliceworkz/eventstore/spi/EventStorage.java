@@ -452,6 +452,15 @@ public interface EventStorage extends AutoCloseable {
 	 * <p>
 	 * Registering the same listener twice must be harmless and must not double the notifications it
 	 * receives, so that a caller need not track whether it has already subscribed.
+	 * <p>
+	 * <b>A notification announces events a query can see.</b> A listener told about an append it cannot
+	 * read yet reads nothing, and a listener that reads nothing is treated as caught up — the next
+	 * append to the stream is what wakes it again, which on a quiet stream is never. So a storage whose
+	 * reads lag its commits must not deliver an {@link AppendsToEventStoreNotification} before the event
+	 * it names is readable through {@link #query}: hold it back and deliver it once it is. A storage
+	 * whose appends are readable the moment they return, like the in-memory ones, has nothing to do
+	 * here; the PostgreSQL storage, whose reads sit behind a cluster-wide visibility barrier, parks a
+	 * notification until the barrier has passed its transaction.
 	 *
 	 * @param listener the listener to register for storage notifications
 	 * @see #unsubscribe(EventStoreListener)
@@ -837,9 +846,13 @@ public interface EventStorage extends AutoCloseable {
 	 * The notification includes the stream where events were appended and a reference indicating
 	 * at least up to which point new events exist. Consumers should query for events after their
 	 * last known position.
+	 * <p>
+	 * By the time a listener receives it, the events up to {@code atLeastUntil} are readable through
+	 * {@link EventStorage#query}: a storage whose reads lag its commits holds the notification back
+	 * until they are — see {@link EventStorage#subscribe(EventStoreListener)}.
 	 *
 	 * @param stream the event stream where new events were appended
-	 * @param atLeastUntil reference indicating new events exist at least up to this point
+	 * @param atLeastUntil reference indicating new events exist at least up to this point, and are readable
 	 * @see EventStoreListener#notify(AppendsToEventStoreNotification)
 	 * @see #append(AppendCriteria, Optional, List)
 	 */

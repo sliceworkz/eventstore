@@ -529,6 +529,15 @@ it returns — on Postgres by issuing the `COMMIT` inside it, in memory by havin
 by the time anything is notified, the events are durable and every other reader can see them. A
 notification is an announcement, never a vote.
 
+**What a notification announces, a query can see — and a backend whose reads lag its commits has to
+hold the notification back until they can.** The store treats a listener that reads nothing as caught
+up (`OptimizingAppendListenerDecorator`, below), so a notification delivered before its events are
+readable would leave the subscriber behind with nothing to wake it until the next append to its
+stream. Postgres is such a backend — committed events sit behind the `pg_snapshot_xmin` barrier while
+an older writing transaction is open — and its append monitor parks a notification until the event it
+names is below the barrier. Documented on `EventStorage.subscribe`; pinned by
+`PostgresVisibilityStallTest`.
+
 **A listener failure is never anybody else's failure, and never silent.** Each subscriber's exception is
 contained, logged at ERROR, and the next subscriber still gets the notification. Bookmark listeners get the
 same containment, and the storage backends do the same with their own listeners (`notifyQuietly` in
@@ -1547,12 +1556,15 @@ that bind everywhere:
 - **Conditional appends serialize per stream via `pg_advisory_xact_lock`** keyed on the prefix and
   `(stream_context, stream_purpose)`; unconditional appends take no lock. A hot stream is therefore
   a ceiling, and stream layout the fix — see the write-contention findings under Benchmarking.
-- **A long-running *writing* transaction anywhere in the cluster silently freezes what this store
-  can read** (the `pg_snapshot_xmin` barrier): reads stop advancing, projections go quiet, nothing
-  fails or logs, and read-your-own-writes breaks in a way a DCB retry loop cannot clear. Only
+- **A long-running *writing* transaction anywhere in the cluster freezes what this store can
+  read** (the `pg_snapshot_xmin` barrier): reads stop advancing, projections go quiet, nothing
+  fails, and read-your-own-writes breaks in a way a DCB retry loop cannot clear. Only
   transactions holding a transaction id count — read-only ones never do, at any isolation level.
-  The diagnosis query and monitoring guidance are in the module file; do not "fix" this by bounding
-  the barrier.
+  Append notifications are held back until the events they announce are readable, so a subscribed
+  projection catches up by itself when the blocker ends rather than staying behind until the next
+  append to its stream — and a notification withheld for more than 10s is the one WARN the library
+  logs about a stall. The diagnosis query and monitoring guidance are in the module file; do not
+  "fix" this by bounding the barrier.
 - **Back the cluster up physically; a logical dump restored into a fresh cluster does not work.**
   `pg_dump` copies `event_tx` as data, so the restored history carries ids above the new cluster's
   counter: every read sits behind the visibility barrier and sees an empty store, and the first

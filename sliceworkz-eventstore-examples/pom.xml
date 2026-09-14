@@ -35,6 +35,11 @@
 
 	<artifactId>sliceworkz-eventstore-examples</artifactId>
 	<packaging>jar</packaging>
+
+	<properties>
+		<!-- the name this jar has on the module path (see the parent pom) -->
+		<automatic.module.name>org.sliceworkz.eventstore.examples</automatic.module.name>
+	</properties>
 	
 	<dependencies>
 		<dependency>

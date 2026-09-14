@@ -65,18 +65,23 @@ add `org.postgresql:postgresql` yourself, at the version your platform ships.
 
 ## Modules
 
-| artifact | what it is | when you need it |
-|---|---|---|
-| `sliceworkz-eventstore-api` | The interfaces you code against (`EventStore`, `EventStream`, `Event`, `Tags`, `AppendCriteria`, `Projector`, …) and the `EventStorage` SPI a backend implements | always |
-| `sliceworkz-eventstore-impl` | The `EventStore` implementation: streams, serialization, upcasting, crypto-shredding, meters | pulled in at runtime by every backend |
-| `sliceworkz-eventstore-infra-inmem` | In-memory storage | development, demos and tests |
-| `sliceworkz-eventstore-infra-inmem-fs` | The in-memory storage persisted to JSON files | local development that must survive a restart |
-| `sliceworkz-eventstore-infra-postgres` | PostgreSQL storage | production |
-| `sliceworkz-eventstore-serialization-json` | JSON codecs for stored events and bookmarks | pulled in by the file-backed store; only needed directly to build your own backend on it |
-| `sliceworkz-eventstore-testing` | `EventStoreFixture` for testing your application, plus the compliance suite for third-party backends | in `test` scope, see [Testing](#testing) |
-| `sliceworkz-eventstore-bom` | Bill of materials pinning all of the above to one version | imported once, as shown above |
+| artifact | module name | what it is | when you need it |
+|---|---|---|---|
+| `sliceworkz-eventstore-api` | `org.sliceworkz.eventstore` | The interfaces you code against (`EventStore`, `EventStream`, `Event`, `Tags`, `AppendCriteria`, `Projector`, …) and the `EventStorage` SPI a backend implements | always |
+| `sliceworkz-eventstore-impl` | `org.sliceworkz.eventstore.impl` | The `EventStore` implementation: streams, serialization, upcasting, crypto-shredding, meters | pulled in at runtime by every backend |
+| `sliceworkz-eventstore-infra-inmem` | `org.sliceworkz.eventstore.infra.inmem` | In-memory storage | development, demos and tests |
+| `sliceworkz-eventstore-infra-inmem-fs` | `org.sliceworkz.eventstore.infra.inmem.fs` | The in-memory storage persisted to JSON files | local development that must survive a restart |
+| `sliceworkz-eventstore-infra-postgres` | `org.sliceworkz.eventstore.infra.postgres` | PostgreSQL storage | production |
+| `sliceworkz-eventstore-serialization-json` | `org.sliceworkz.eventstore.serialization.json` | JSON codecs for stored events and bookmarks | pulled in by the file-backed store; only needed directly to build your own backend on it |
+| `sliceworkz-eventstore-testing` | `org.sliceworkz.eventstore.testing` | `EventStoreFixture` for testing your application, plus the compliance suite for third-party backends | in `test` scope, see [Testing](#testing) |
+| `sliceworkz-eventstore-bom` | — | Bill of materials pinning all of the above to one version | imported once, as shown above |
 
 The examples, benchmark and TCK-runner modules in this repository are not published.
+
+The module name is the `Automatic-Module-Name` in each jar's manifest, so `requires
+org.sliceworkz.eventstore.infra.postgres;` works on the module path and keeps working whatever the
+jar file is called. The jars carry no `module-info.java`: they are automatic modules, which read every
+other module and export every package, so nothing in them is encapsulated.
 
 ## Five concepts
 

@@ -19,6 +19,21 @@ This is a Java-based EventStore library implementing the Dynamic Consistency Bou
 - `sliceworkz-eventstore-benchmark`: Capacity-characterisation suite (nothing runs during a build)
 - `sliceworkz-eventstore-parent-pom` / `sliceworkz-eventstore-bom`: Build parent and the bill of materials consumers import
 
+**Every jar declares its name on the module path.** The parent pom writes an `Automatic-Module-Name`
+into each jar's manifest from the module's `automatic.module.name` property, which is its root
+package (`org.sliceworkz.eventstore` for the api, `org.sliceworkz.eventstore.infra.postgres` for
+the Postgres backend, and so on — the README's module table lists them). Without it the JDK derives
+a name from the file name, which changes on a rename or relocation and breaks every consumer's
+`requires`; the declared name is a commitment, and the one a `module-info.java` would have to keep.
+An enforcer rule in the parent pom fails the build for a jar module without the property or with a
+name outside `org.sliceworkz.eventstore`, since the alternative — the literal `${automatic.module.name}`
+shipped in a manifest — is an invalid module name that fails nothing until a consumer puts the jar
+on the module path. There is deliberately no `module-info.java` yet: an automatic module reads
+everything and exports everything, so nothing in these jars is encapsulated, and a real module
+descriptor is a separate decision about what to encapsulate, taken for all the jars at once (the api
+would have to `uses EventStoreFactory` and the impl `provides` it, for a start, and every dependency
+would have to resolve on the module path).
+
 **What the published artifacts put on a consumer's classpath.** The parent pom declares no
 compile-scoped dependency: one there is inherited by every module and ships in every published POM,
 whether the module uses it or not. Each module declares what it imports, so the transitive set of an

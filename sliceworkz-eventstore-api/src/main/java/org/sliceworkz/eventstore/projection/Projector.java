@@ -253,8 +253,10 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 	 *   <li>You need to reset the projector to a previously saved position</li>
 	 * </ul>
 	 * <p>
-	 * If no bookmark is found, the projector's position remains unchanged. The bookmark must
-	 * have been previously placed using {@link EventSource#placeBookmark(String, EventReference, Tags)}.
+	 * If no bookmark is found, the projector's position is reset to the start of the stream, so the
+	 * next run replays it: a reader whose bookmark has been removed starts over, which is what removing
+	 * a bookmark means. A bookmark is placed by the projector itself after every batch, or by hand using
+	 * {@link EventSource#placeBookmark(String, EventReference, Tags)}.
 	 * <p>
 	 * Depending on the configured {@code BookmarkReadFrequency}, this method may be called
 	 * automatically at different times (at creation, before first execution, or before each execution).
@@ -828,7 +830,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		public class BookmarkBuilder {
 
 			private Builder<EVENT_TYPE> parent;
-			private BookmarkReadFrequency bookmarkReadFrequency = BookmarkReadFrequency.MANUAL_TRIGGER;
+			private BookmarkReadFrequency bookmarkReadFrequency = BookmarkReadFrequency.BEFORE_EACH_EXECUTION;
 			private String readerName = null; // by default, no bookmarking is done
 			private Tags tags = Tags.none();
 
@@ -948,7 +950,12 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 			 *   <li>Coordinated projector restarts across a cluster</li>
 			 * </ul>
 			 * <p>
-			 * This is the default behavior when bookmarking is enabled.
+			 * This is the default behavior when bookmarking is enabled: it is the only mode under which a
+			 * projector built with nothing but a reader name resumes where it left off after a restart and
+			 * follows a bookmark rewound elsewhere, which is what bookmarking is for. The alternative — reading
+			 * only on an explicit {@link Projector#readBookmark()} by default — loses because a projector
+			 * configured with a reader then places bookmarks it never reads, and replays the whole stream on
+			 * every restart with nothing to say so. The cost is one bookmark lookup per execution.
 			 * <p>
 			 * Bookmarks are still automatically saved after each run if new events were processed.
 			 *

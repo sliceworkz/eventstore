@@ -52,7 +52,6 @@
 			<scope>runtime</scope>
 		</dependency>
 
-		<!-- payloads are round-tripped on append and parsed on import, so both backends refuse the same payloads -->
 		<dependency>
 			<groupId>tools.jackson.core</groupId>
 			<artifactId>jackson-databind</artifactId>

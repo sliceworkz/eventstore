@@ -128,7 +128,6 @@
 			<optional>true</optional>
 		</dependency>
 
-		<!-- the harness and the fixture give every store a SimpleMeterRegistry of its own; the TCK reads meters off it -->
 		<dependency>
 			<groupId>io.micrometer</groupId>
 			<artifactId>micrometer-core</artifactId>

@@ -110,7 +110,6 @@
 		    <scope>test</scope>
 		</dependency>
 
-		<!-- the store-level meter tests read a SimpleMeterRegistry -->
 		<dependency>
 			<groupId>io.micrometer</groupId>
 			<artifactId>micrometer-core</artifactId>

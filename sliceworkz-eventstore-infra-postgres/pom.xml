@@ -84,7 +84,6 @@
 		    <scope>test</scope>
 		</dependency>
 
-		<!-- notification payloads are JSON -->
 		<dependency>
 			<groupId>tools.jackson.core</groupId>
 			<artifactId>jackson-databind</artifactId>

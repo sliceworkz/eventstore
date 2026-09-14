@@ -47,7 +47,6 @@
 			<artifactId>sliceworkz-eventstore-api</artifactId>
 		</dependency>
 
-		<!-- payload serde is Jackson 3; the store's meters are Micrometer -->
 		<dependency>
 			<groupId>tools.jackson.core</groupId>
 			<artifactId>jackson-databind</artifactId>

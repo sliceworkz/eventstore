@@ -36,7 +36,6 @@
 
 	<properties>
 		<jackson.version>3.2.2</jackson.version>
-		<!-- the annotations artifact Jackson 2 and 3 share, at the version the managed jackson-databind pulls -->
 		<jackson-annotations.version>2.22</jackson-annotations.version>
 		<slf4j.version>2.0.18</slf4j.version>
 		<postgresql.jdbc.version>42.7.13</postgresql.jdbc.version>
@@ -161,7 +160,7 @@
 			    <version>${hikari.version}</version>
 			</dependency>
 			
-			<!-- Micrometer: a compile dependency of the api, never optional - see the api module's pom -->
+			<!-- micrometer -->
 			<dependency>
 			    <groupId>io.micrometer</groupId>
 			    <artifactId>micrometer-core</artifactId>
@@ -171,15 +170,7 @@
 		</dependencies>
 	</dependencyManagement>
 	
-	<!--
-		Only test-scoped dependencies are declared here. A dependency in this block is inherited by
-		every module, and a compile-scoped one would ship in every published artifact's POM whether
-		that module uses it or not - so Jackson, Micrometer and SLF4J are declared by the modules
-		that actually import them, and the api artifact, which has no serialization of its own,
-		carries no Jackson proper (only the optional annotations artifact Jackson 2 and 3 share).
-		Test scope is not transitive, so JUnit and the SLF4J test binding reach nobody. The api
-		module's enforcer rule keeps it that way.
-	-->
+	<!-- test scope only: a compile dependency here would ship in every published POM -->
 	<dependencies>
 		<dependency>
 			<groupId>org.junit.jupiter</groupId>

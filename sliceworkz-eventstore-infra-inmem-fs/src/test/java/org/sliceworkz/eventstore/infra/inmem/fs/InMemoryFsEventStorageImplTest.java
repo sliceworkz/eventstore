@@ -379,4 +379,36 @@ public class InMemoryFsEventStorageImplTest {
 		assertEquals("imported-key", found.get().idempotencyKey());
 	}
 
+	/**
+	 * Two appends race: the delegate assigns positions 3 and 4 in order, the thread holding 4 writes its
+	 * file first, and the process dies before 3 reaches disk. The reload then holds positions 1, 2 and 4.
+	 * The next append must take position 5 -- a position is the counter's, never the log's size, so no
+	 * two stored events share one -- and a cursor at position 4 must see it.
+	 */
+	@Test
+	void testAppendAfterACrashLeftAGapInThePersistedLogDoesNotReissueAPosition ( @TempDir Path tempDir ) throws IOException {
+		EventStreamId streamId = EventStreamId.forContext("customer").withPurpose("123");
+		EventReference lastBeforeTheCrash;
+		{
+			EventStore store = InMemoryFsEventStorage.newBuilder().directory(tempDir).name("gap").buildStore();
+			EventStream<TestEvent> stream = store.getEventStream(streamId, TestEvent.class);
+			stream.append(AppendCriteria.none(), List.of(Event.of(new TestEvent.CustomerRegistered("John"), Tags.none())));
+			stream.append(AppendCriteria.none(), List.of(Event.of(new TestEvent.CustomerNameChanged("Jane"), Tags.none())));
+			stream.append(AppendCriteria.none(), List.of(Event.of(new TestEvent.CustomerNameChanged("Jill"), Tags.none())));
+			lastBeforeTheCrash = stream.append(AppendCriteria.none(), List.of(Event.of(new TestEvent.CustomerNameChanged("Joan"), Tags.none()))).get(0).reference();
+		}
+		Path eventsDir = tempDir.resolve("events");
+		Files.delete(findEventFile(eventsDir, "0000000003-000003-0-"));
+
+		EventStore reloaded = InMemoryFsEventStorage.newBuilder().directory(tempDir).name("gap-2").buildStore();
+		EventStream<TestEvent> stream = reloaded.getEventStream(streamId, TestEvent.class);
+		Event<TestEvent> appended = stream.append(AppendCriteria.none(), List.of(Event.of(new TestEvent.CustomerNameChanged("June"), Tags.none()))).get(0);
+
+		assertEquals(5L, appended.reference().position(), "position 4 is taken, whatever the size of the reloaded log");
+		assertTrue(eventFileExists(eventsDir, "0000000005-000005-0-"));
+		List<Event<TestEvent>> since = stream.query(EventQuery.matchAll(), lastBeforeTheCrash).toList();
+		assertEquals(1, since.size());
+		assertEquals(appended.reference(), since.get(0).reference());
+	}
+
 }

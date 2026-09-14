@@ -40,14 +40,12 @@ artifact is what its code needs and nothing more:
 - **Jackson 3 arrives with the impl, the JSON codecs and the backends** — the payload serde, the
   file codecs, the in-memory store's payload validation, the Postgres notification payloads. It is
   `tools.jackson.*`, a different groupId and package from Jackson 2, so an application on Jackson 2
-  (Spring Boot 3, say) runs both side by side: two Jacksons on the classpath, no conflict, and its
-  own mapper untouched. That is the cost of building the serde on Jackson 3 and it is not hidden.
+  runs both side by side: two Jacksons on the classpath, no conflict, and its own mapper untouched. That is the cost of building the serde on Jackson 3 and it is not hidden.
 - **`Metrics.globalRegistry` is the default wherever a registry is not given** — the one-argument
   `EventStoreFactory.eventStore(storage)` and every storage builder's `buildStore()`. Micrometer's
   global registry is a composite with no children until something adds one, so meters registered
   there cost a map entry and record nothing; an application that binds its real registry to it
-  (Spring Boot does by default) gets the store's meters in its own series without configuring
-  anything. The testing module never registers there: `AbstractEventStoreTest` and
+  gets the store's meters in its own series without configuring anything. The testing module never registers there: `AbstractEventStoreTest` and
   `EventStoreFixture` give every store a `SimpleMeterRegistry` of its own, so a fixture in an
   application's test suite leaves nothing behind in the application's registry.
 

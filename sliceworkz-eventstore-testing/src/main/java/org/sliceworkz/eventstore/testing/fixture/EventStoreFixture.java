@@ -62,7 +62,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
  * <p>
  * Its store meters into a {@link SimpleMeterRegistry} of its own, never into
  * {@code Metrics.globalRegistry}. The global registry is where an application's test configuration
- * binds its real registry (Spring Boot adds its registry to it by default), and a fixture that
+ * binds its real registry, and a fixture that
  * registered there would leave every test run's meters, tagged {@code storage=fixture}, in the
  * application's own series.
  *

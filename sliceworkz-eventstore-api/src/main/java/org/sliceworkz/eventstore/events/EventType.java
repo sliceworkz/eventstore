@@ -20,8 +20,11 @@ package org.sliceworkz.eventstore.events;
 /**
  * Represents the type of an event, identified by a name.
  * <p>
- * EventType is used to distinguish between different kinds of domain events. The type name is typically
- * derived from the event class's simple name (e.g., "CustomerRegistered" for a class named CustomerRegistered).
+ * EventType is used to distinguish between different kinds of domain events. The type name is derived
+ * from the event class: its simple name (e.g., "CustomerRegistered" for a class named CustomerRegistered),
+ * or the name an {@link EventName} annotation on the class declares. That name is wire format — it is
+ * stored with every event and matched by every query — so see {@link EventName} before renaming an event
+ * class or giving two classes the same simple name.
  * <p>
  * Event types support upcasting scenarios where historical events may have different types than their
  * current runtime representation. The {@link Event} record maintains both the current {@code type}
@@ -36,12 +39,18 @@ package org.sliceworkz.eventstore.events;
  * // Or create from class
  * EventType type = EventType.of(CustomerRegistered.class);
  *
+ * // A class declaring its stored name is named by the annotation, not the class
+ * @EventName("CustomerRegistered")
+ * record CustomerSignedUp ( String name ) implements CustomerEvent { }
+ * EventType.of(CustomerSignedUp.class).name();   // "CustomerRegistered"
+ *
  * // Or from a string (useful for querying)
  * EventType type = EventType.ofType("CustomerRegistered");
  * }</pre>
  *
  * @param name the name identifying this event type
  * @see Event
+ * @see EventName
  * @see LegacyEvent
  * @see Upcast
  */
@@ -54,9 +63,35 @@ public record EventType ( String name ) implements java.io.Serializable {
 	private static final long serialVersionUID = 1L;
 
 	/**
+	 * The stored name of each class, resolved once per class.
+	 * <p>
+	 * {@link #of(Class)} runs on every append, on every serialized event and on every in-memory filter
+	 * match, so the annotation is read once and the name kept. A {@link ClassValue} rather than a map:
+	 * it is keyed by the class itself, so it pins no class loader and needs no eviction. An annotation
+	 * that fails validation is not remembered — {@code computeValue} throwing leaves nothing cached, so
+	 * the same class fails the same way on the next call instead of the failure being forgotten.
+	 */
+	private static final ClassValue<String> STORED_NAMES = new ClassValue<>() {
+		@Override
+		protected String computeValue ( Class<?> clazz ) {
+			EventName eventName = clazz.getAnnotation(EventName.class);
+			if ( eventName == null ) {
+				return clazz.getSimpleName();
+			}
+			String name = eventName.value();
+			if ( name.isBlank() || !name.equals(name.strip()) ) {
+				throw new IllegalArgumentException(
+						"@EventName on %s must be a non-blank name without leading or trailing whitespace, was '%s'"
+								.formatted(clazz.getName(), name));
+			}
+			return name;
+		}
+	};
+
+	/**
 	 * Creates an EventType from a domain event object.
 	 * <p>
-	 * The type name is derived from the object's class simple name.
+	 * The type name is derived from the object's class, as {@link #of(Class)} does.
 	 *
 	 * @param object the domain event object
 	 * @return an EventType based on the object's class
@@ -80,13 +115,18 @@ public record EventType ( String name ) implements java.io.Serializable {
 	/**
 	 * Creates an EventType from a class.
 	 * <p>
-	 * The type name is derived from the class's simple name (not the fully qualified name).
+	 * The type name is the class's simple name (not the fully qualified name), unless the class is
+	 * annotated {@link EventName}, in which case it is the annotation's value. This is the only place a
+	 * class is turned into a stored name, so the annotation is honoured everywhere a class is: on
+	 * append, in a stream's type mappings, and in an {@link org.sliceworkz.eventstore.query.EventTypesFilter}.
 	 *
 	 * @param clazz the class representing the domain event type
-	 * @return an EventType based on the class's simple name
+	 * @return an EventType named by the class's {@code @EventName}, or its simple name
+	 * @throws IllegalArgumentException when the class carries an {@code @EventName} that is blank or
+	 *         has leading or trailing whitespace
 	 */
 	public static final EventType of ( Class<?> clazz ) {
-		return new EventType(clazz.getSimpleName());
+		return new EventType(STORED_NAMES.get(clazz));
 	}
 
 }

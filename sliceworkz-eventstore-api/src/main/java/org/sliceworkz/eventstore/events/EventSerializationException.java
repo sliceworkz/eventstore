@@ -75,8 +75,8 @@ public class EventSerializationException extends RuntimeException {
 	/**
 	 * Returns the type of the event that could not be serialized.
 	 * <p>
-	 * This is {@link EventType#of(Object)} of the payload — that is, the simple name of its class, which is
-	 * also the name it would have been stored under.
+	 * This is {@link EventType#of(Object)} of the payload — the simple name of its class, or the name its
+	 * {@link EventName} declares — which is also the name it would have been stored under.
 	 *
 	 * @return the event type, or null when the payload's type could not be determined (a null payload)
 	 */

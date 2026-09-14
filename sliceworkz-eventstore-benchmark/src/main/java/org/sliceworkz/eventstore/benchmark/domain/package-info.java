@@ -35,11 +35,13 @@
  * </table>
  *
  * <p><b>Event type simple names are unique across all seven hierarchies, deliberately.</b>
- * {@code EventType.of(Class)} is {@code Class.getSimpleName()}, and that name is global to a storage
- * rather than scoped to a stream -- two contexts sharing a {@code Created} write indistinguishable
- * {@code event_type} values into one table, and nothing catches it across streams. Since the whole
- * point of the {@code multi-domain} composition is to put six contexts in one table, this package
- * has to obey that rule or it would be measuring a bug. It doubles as a worked example of it.
+ * {@code EventType.of(Class)} is {@code Class.getSimpleName()} for a class without an
+ * {@code @EventName}, and that name is global to a storage rather than scoped to a stream -- two
+ * contexts sharing a {@code Created} write indistinguishable {@code event_type} values into one table,
+ * and nothing catches it across streams. Since the whole point of the {@code multi-domain} composition
+ * is to put six contexts in one table, this package has to obey that rule or it would be measuring a
+ * bug. It keeps the class names distinct rather than annotating, so that it doubles as a worked
+ * example of the rule with nothing hidden in an annotation.
  *
  * <p>Contexts, and what each is for in the suite:
  *

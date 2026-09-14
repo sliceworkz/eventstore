@@ -71,14 +71,21 @@ bounded is mostly per-event and downstream of the query; and tuning the database
 move for a read that returns thousands of events, because the database is not where the time is going.
 (Testcontainers on a developer machine — the magnitude, not the third digit.)
 
-**Two read shapes do not use the index you would assume, and the captured plans say so.**
+**Three read shapes are worth reading the captured plans for.**
 
-- **A wildcard read scans the whole table, whatever its limit.** `EventStreamId.anyContext()` binds no
-  stream column, so `ORDER BY event_tx, event_position` has no index to walk: PG18 answers
-  `query-wildcard`'s `limit(500)` with a **parallel sequential scan over all 100.000 rows** feeding a
-  top-N heapsort — 4.428 buffers and ~20ms for 500 events. Its cost is the size of the store and not
-  the size of the page, which matters for the paths that legitimately use a wildcard stream: the raw
-  import check, an export, a store-wide projection.
+- **A wildcard read is an index walk only because of `idx_events_tx_position`, and the committed
+  `query-wildcard` rows were measured without it.** `EventStreamId.anyContext()` binds no stream
+  column, so `ORDER BY event_tx, event_position` has nothing to walk in the stream indexes, which all
+  lead with `(stream_context, stream_purpose)`; the B-tree on the global `(event_tx, event_position)`
+  order is what supplies the order, entered at the cursor, so a page costs the page. The runs under
+  `results/0.11.0-SNAPSHOT` predate that index in the schema, and their `query-wildcard` rows show
+  what the read costs without it: PG18 answers the `limit(500)` with a **parallel sequential scan over
+  all 100.000 rows** feeding a top-N heapsort — 4.428 buffers and ~20ms for 500 events, the size of
+  the store and not the size of the page. Quote those rows as the cost of a store whose schema is
+  missing the index (a `VALIDATE` deployment reports one), not as the cost of a wildcard read; a
+  re-run of `read-shapes` on the current schema is what replaces them. The paths that legitimately
+  use a wildcard stream — the raw import check, an export, a store-wide projection — are what the
+  index is for.
 - **An OR-of-facts read does not use the tag index at all.** `query-by-or-groups` (five items, each a
   type set plus a `sku:` tag) plans as an ordered index scan on `idx_events_stream_position` with the
   whole disjunction as a `Filter` — 2.196 rows discarded to return 500. The tag index serves a single
@@ -96,7 +103,8 @@ should beat.** `InMemoryEventStorageImpl` holds a `List` and matches in Java, wi
 top: its cost is *how far into the log the scan walks*, not how many events come back. At 100.000
 events that makes it **31× slower than PostgreSQL on a needle tag query** (0.155 against 4.886 ops/ms)
 and **78× slower reading one long-tail entity's history** (0.104 against 8.064), while still being
-3–90× *faster* on the shapes where a limit fills immediately — a page, a wildcard read, `getEventById`.
+3–90× *faster* on the shapes where a limit fills immediately — a page, `getEventById`, and in the
+committed run the wildcard read, measured there without `idx_events_tx_position`.
 The rule that fits every row is that a limit only helps when the matches are dense enough to fill it
 early.
 
@@ -145,9 +153,11 @@ those same 40.227 rows through the bare tag index: 239 buffers and 4.43ms, again
 **30× to 153×** — so crowding a table does not slow the most common DCB read down, it enlarges the
 blast radius of a statistics change that would.
 
-**A wildcard read costs the size of the table, confirmed.** 0.051 → 0.013 ops/ms (19.6 → 76.9
-ms/op) for a 6× bigger table: parallel sequential scan over all 600.000 rows, 23.731 buffers, and
-JIT compilation on top. Sub-linear only because two parallel workers absorb some of it.
+**The `query-wildcard` rows, measured without `idx_events_tx_position`, scale with the table.**
+0.051 → 0.013 ops/ms (19.6 → 76.9 ms/op) for a 6× bigger table: parallel sequential scan over all
+600.000 rows, 23.731 buffers, and JIT compilation on top. Sub-linear only because two parallel
+workers absorb some of it. That is what the read costs on a schema missing the index; on the current
+schema it is a walk of that index and the row is due for a re-run.
 
 **The caveat that keeps this honest: the noise is written as contiguous blocks after the context
 under test** (`CorpusGenerator` generates inventory, then sales, then each noise context in turn),
@@ -168,7 +178,8 @@ queue, `pg_snapshot_xmin`.
 **The answer is nothing measurable.** All twelve read shapes land inside the run-to-run band against
 the `read-shapes` control (0.94–1.18×, and the two ends of that are the needle tag query and
 `query-by-id`, both of which move that much between two runs of the *same* profile). The wildcard
-read — the one shape whose cost is the size of the table — is 0.051 against 0.051, which is the row
+read — in this run a scan of the store's own table, measured without `idx_events_tx_position` — is
+0.051 against 0.051, which is the row
 that says the neighbours really are in different tables: it scans the store under test and never
 touches them.
 
@@ -420,15 +431,16 @@ tagged, PG18, 0.00% store drift on both sides, with `append-none` as the control
   under `per-entity` writers to different entities take different locks and do not meet. The gap is
   4.2× single-threaded and grows with writers, which is the signature of contention rather than of a
   cheaper plan.
-- **The one real cost is paging a context in order: 13–15× slower.** That is not an artefact and
-  there is no addressing trick that recovers it — under `per-entity`, reading a whole context *is* a
-  cross-entity read, so `stream_purpose` is unbound, and it is the second column of both
-  `idx_events_stream_position` and `idx_events_stream_tags`. An ordered read loses its start
-  condition and the `LIMIT` cannot be pushed into the scan. Anything shaped like `query-stream-page`
-  is expected to pay it — a whole-context replay, a `Projector` over a context, an export — though
-  only the page is measured: `replay-batches` is not in these two profiles, so the replay cost is
-  inferred from the shape it shares rather than observed. Weigh the trade against how often the
-  application reads a whole context versus how often it reads or writes one entity.
+- **The one cost in this run is paging a context in order: 13–15× slower — and the run was measured
+  without `idx_events_context_tx_position`, the index that serves exactly that read.** Under
+  `per-entity`, reading a whole context *is* a cross-entity read, so `stream_purpose` is unbound, and
+  it is the second column of both `idx_events_stream_position` and `idx_events_stream_tags`: on that
+  schema an ordered read lost its start condition and the `LIMIT` could not be pushed into the scan.
+  `(stream_context, event_tx, event_position)` is the index that gives a context read its start
+  condition back — entered at the context, walked from the cursor, so a page costs the page — which
+  is what the `query-stream-page` row is expected to show on a re-run of this pair. Anything shaped
+  like it — a whole-context replay, a `Projector` over a context, an export — is the shape that index
+  is for; only the page is measured: `replay-batches` is not in these two profiles.
 - **Read one entity through its own stream, or the design buys you nothing.** This is the trap, and
   it is entirely in the calling code: `EventStreamId.forContext("inventory")` with a wildcard purpose
   addresses a per-entity corpus *the tagged way* and lands in exactly the unbound-column-2 case

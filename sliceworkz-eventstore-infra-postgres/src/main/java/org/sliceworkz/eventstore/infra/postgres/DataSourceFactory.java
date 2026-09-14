@@ -43,7 +43,7 @@ import com.zaxxer.hikari.HikariDataSource;
  * {@code db.nonpooled.*} for the LISTEN/NOTIFY monitor connections, which must not sit behind a transaction
  * pooler. Keys inside a section are HikariCP configuration properties ({@code url}, {@code username},
  * {@code password}, {@code maximumPoolSize}, ...); keys under {@code datasource.} go to the JDBC driver
- * ({@code sslmode}, {@code cachePrepStmts}, ...). See {@link HikariConfigurationUtil}.
+ * ({@code sslmode}, {@code prepareThreshold}, ...). See {@link HikariConfigurationUtil}.
  *
  * <h2>Where the file is looked for</h2>
  * {@link #loadProperties()} takes the <strong>first</strong> of these that is present, and never looks

@@ -59,23 +59,17 @@ import org.sliceworkz.eventstore.events.EphemeralEvent;
  * );
  *
  * // Conditional append with optimistic locking (DCB pattern)
- * // First, query relevant facts
- * List<Event<CustomerEvent>> relevantEvents = stream.query(
- *     EventQuery.forEvents(EventTypesFilter.any(), Tags.of("customer", "123"))
- * ).toList();
+ * // First, pin the boundary at the stream head and query the relevant facts up to it. An absent
+ * // head is an empty stream, and a valid boundary, so a new customer needs no special case
+ * EventQuery customer = EventQuery.forTags(Tags.of("customer", "123"));
+ * EventReference head = stream.head().orElse(null);
+ * List<Event<CustomerEvent>> relevantEvents = stream.query(customer.until(head)).toList();
  *
- * // Make decision based on relevant facts
- * EventReference lastRelevantRef = relevantEvents.isEmpty()
- *     ? null
- *     : relevantEvents.getLast().reference();
- *
- * // Attempt conditional append - will fail if new relevant facts have emerged
+ * // Make decision based on relevant facts, then attempt the conditional append - it fails if
+ * // new relevant facts have emerged after the boundary
  * try {
  *     stream.append(
- *         AppendCriteria.of(
- *             EventQuery.forEvents(EventTypesFilter.any(), Tags.of("customer", "123")),
- *             Optional.ofNullable(lastRelevantRef)
- *         ),
+ *         AppendCriteria.of(customer, head),
  *         Event.of(new CustomerNameChanged("Jane Doe"), Tags.of("customer", "123"))
  *     );
  * } catch (OptimisticLockingException e) {

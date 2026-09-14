@@ -189,6 +189,32 @@ public interface ShreddingCodec extends AutoCloseable {
 	ErasureReport shred ( DataSubject subject, ErasureReason reason );
 
 	/**
+	 * Destroys every key held for a subject under <em>every</em> category, recording why.
+	 * <p>
+	 * {@link #shred} takes a {@link DataSubject}, which always names one category, and erases that
+	 * category only. This is the whole-person erasure an art.17 request asks for: the caller names the
+	 * person and need not know which categories their data was ever written under.
+	 * <p>
+	 * The default throws {@link UnsupportedOperationException}, so a codec written before this method
+	 * existed is told rather than made to erase one category and report success. The shipped codec
+	 * delegates to {@link ShreddingKeyStore#shredAllCategories}; a category-restricted codec passes it
+	 * through whole, for the same reason it passes {@link #shred} through.
+	 *
+	 * @param subjectType what kind of subject, e.g. {@code "customer"}
+	 * @param subjectId   the pseudonymous identifier of the subject within that type
+	 * @param reason      the authority for the erasure, persisted alongside every shredded key
+	 * @return what was destroyed, per category
+	 * @throws ShreddingException            if the key store cannot be reached
+	 * @throws UnsupportedOperationException if this codec or its key store cannot erase across categories
+	 * @throws IllegalArgumentException      if any argument is null or blank
+	 */
+	default SubjectErasureReport shredAllCategories ( String subjectType, String subjectId, ErasureReason reason ) {
+		throw new UnsupportedOperationException(
+				"%s cannot erase subject %s/%s across categories: it does not implement ShreddingCodec.shredAllCategories; erase each category through shred(DataSubject, ErasureReason)"
+						.formatted(getClass().getName(), subjectType, subjectId));
+	}
+
+	/**
 	 * Reading which subjects hold protected data and which erasures have happened, without the means to
 	 * decrypt any of it.
 	 *
@@ -213,8 +239,8 @@ public interface ShreddingCodec extends AutoCloseable {
 	 * The three answers {@link #open} can give.
 	 * <p>
 	 * A sealed type so that a caller handles all three, and an implementation names which it means. The
-	 * fourth outcome — the key store is down, the envelope is corrupt, the algorithm is unknown — is not an
-	 * answer but a {@link ShreddingException}.
+	 * fourth outcome — the key store is down, the envelope is corrupt, the algorithm is unknown, the key
+	 * is one the store never held — is not an answer but a {@link ShreddingException}.
 	 */
 	sealed interface Unsealed permits Unsealed.Plaintext, Unsealed.Erased, Unsealed.Withheld {
 

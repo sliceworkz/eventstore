@@ -124,8 +124,9 @@ mvn clean install -DskipTests
     fails every command, an upcast-to-nothing head reads as an empty stream, and a sealed value costs a
     key-store round trip. That is why it is a method on `EventSource` and an SPI method on
     `EventStorage`, whose `default` is that query for a backend written before it; Postgres reads the
-    three reference columns off `idx_events_stream_position` and no payload
-    (`PostgresHeadStatementTest`)
+    three reference columns off `idx_events_stream_position` — off `idx_events_context_tx_position`
+    for a context, off `idx_events_tx_position` for a wildcard stream — and no payload
+    (`PostgresHeadStatementTest`, `PostgresGlobalOrderIndexTest`)
   - **It names a stored event, whole**: `index` 0, and a boundary at it includes every event the stored
     event upcasts into — see the `until` note under EventFilter
   - The event at the head need not match the boundary's filter: the reference is a cursor for the check,
@@ -159,7 +160,16 @@ mvn clean install -DskipTests
 - Key-value pairs attached to events for dynamic retrieval
 - Enable querying events across different event types
 - Core to the Dynamic Consistency Boundary pattern
-- Created via `Tags.of("key", "value")` or `Tags.of(Tag.of("key", "value"))`
+- Created via `Tags.of("key", "value")`, `Tags.of("k1", "v1", "k2", "v2", ...)` (alternating keys and
+  values; an odd count is rejected rather than read as a trailing flag) or `Tags.of(Tag.of("key", "value"))`
+- **`Tags` is a set, and its factories behave like one.** `Tags.of(Tag...)` eliminates a repeated tag
+  rather than rejecting it: tags gathered from several sources (a domain tag list plus what a
+  decorator adds) legitimately overlap, and building with `Set.of` would turn that overlap into an
+  append failure. A `null` element is an `IllegalArgumentException`. Several tags under one *key* are
+  an ordinary shape — a transfer tagged `customer:alice` and `customer:bob` — so `tags.tag(key)` answers
+  only a key holding a single tag and throws `IllegalStateException` when more than one carries it,
+  rather than returning whichever hash order put first; `tags.tags(key)` is the read for a key that may
+  hold several. `TagsTest` pins both
 - **`Tag.toString()` is the wire format, not a debugging rendering.** A tag is flattened to
   `"key:value"` to be persisted and to be matched: the Postgres backend stores `Tags.toStrings()` in a
   `text[]` column and answers a tag query with `event_tags @> ARRAY[...]` built from the *same*
@@ -204,7 +214,8 @@ mvn clean install -DskipTests
 - Pure matching criteria: event types, tags, and an optional "until" temporal boundary
 - Does not carry traversal semantics (direction, limit) — those belong to `EventQuery`
 - Can match all (`EventFilter.matchAll()`), none (`EventFilter.matchNone()`), or specific criteria
-- Created via `EventFilter.forEvents(eventTypesFilter, tags)`
+- Created via `EventFilter.forEvents(eventTypesFilter, tags)`, or `EventFilter.forTags(tags)` for events of
+  any type carrying the tags
 - Used by `AppendCriteria` for optimistic locking (where direction/limit are irrelevant)
 - **`until` is an inclusive upper bound over *stored* events, in the `(tx, position)` order, and is
   direction-independent**: `.backwards()` returns the same events as forward, newest first. It is part of
@@ -230,7 +241,8 @@ mvn clean install -DskipTests
 - Use `EventQuery.filter()` to extract the pure matching criteria
 - Can match all (`EventQuery.matchAll()`), none (`EventQuery.matchNone()`), or specific criteria
 - Supports backward direction (`.backwards()`) and result limits (`.limit(n)`)
-- Created via `EventQuery.forEvents(eventTypesFilter, tags)`
+- Created via `EventQuery.forEvents(eventTypesFilter, tags)`, or `EventQuery.forTags(tags)` for events of
+  any type carrying the tags — the usual shape of a consistency boundary
 - **`.limit(n)` means "read n stored events", and it is pushed into the storage query** — a SQL
   `LIMIT` on Postgres, a short-circuiting `Stream.limit` in memory — not applied to the result. That
   is what makes it bound memory as well as output: a storage query materialises its whole result set
@@ -315,6 +327,14 @@ Correctness-equivalent to Postgres and *not* performance-equivalent: it is an un
 so a selective tag query costs it a walk of the whole log where Postgres does an index lookup. Do not
 size an application from it — see the Benchmarking digest below, and "What a read costs" in
 `sliceworkz-eventstore-benchmark/CLAUDE.md`.
+
+Correctness-equivalent includes what a storage *refuses*: an `append` or `importEvents` whose payload is
+not a JSON document — text that does not parse, a blank string, a null — fails with
+`EventStorageException` and stores nothing of the batch, exactly as the `::jsonb` cast makes Postgres
+fail. The stream layer never produces such a payload, so this only shows on the raw SPI path (an
+import, a fixture, a third-party caller writing `EventToStore` directly); it is checked here so that
+path cannot pass a test against the in-memory store and fail in production. `AppendPayloadTest` and
+`EventImportTest.testInvalidJsonPayloadIsRejected` in the TCK pin it per backend.
 
 ```java
 EventStorage storage = InMemoryEventStorage.newBuilder().build();
@@ -403,6 +423,21 @@ EventStorage storage = PostgresEventStorage.newBuilder()
   loses its monitoring connection, which is the same silence as never having had one.
   `PostgresEventStorageImpl.isNotificationsAvailable()` is the same state for a health endpoint, at the
   cost of a downcast from `EventStorage`.
+- **What arrives on the channel cannot take a monitor down, and a monitor that does go down cannot
+  leave the gauge reading 1.** A `NOTIFY` channel is a database-wide name: any session in the database
+  can publish on it, and a trigger left behind by another release may not agree with this one on the
+  payload. A payload that does not parse, or parses into something `EventReference` refuses (a null
+  id, a position of 0), is logged at ERROR and dropped, and the monitor reads on — the catch is on
+  `RuntimeException`, not on the parser's own exception type, because the conversion into a reference
+  throws `IllegalArgumentException`. Anything a listener throws, an `Error` included, is contained the
+  same way. And the `listening` flag behind the gauge is cleared in a `finally`, so no exit from the
+  monitor's loop, an uncaught one included, leaves `notifications.up` claiming a channel that nobody is
+  listening on. The alternative — catching only the parser's exception — loses because a single
+  malformed payload then ends the monitor's virtual thread silently, and nothing wakes a subscriber
+  again for the life of the storage while the gauge and `isNotificationsAvailable()` both say
+  otherwise. `PostgresNotificationMonitorTest` pins the delivery step without a database;
+  `PostgresNotificationStartupTest` pushes junk down both channels of a live store and checks a real
+  append and bookmark still get through behind it.
 - **An interrupt during startup throws** `EventStorageException` and closes the storage, rather than
   returning quietly. The alternative — restore the flag and return — hands back a storage nobody can tell
   is unstarted, with two monitor threads still retrying behind it.
@@ -546,6 +581,15 @@ write the code after the call.
 it returns — on Postgres by issuing the `COMMIT` inside it, in memory by having the events in the log — so
 by the time anything is notified, the events are durable and every other reader can see them. A
 notification is an announcement, never a vote.
+
+**What a notification announces, a query can see — and a backend whose reads lag its commits has to
+hold the notification back until they can.** The store treats a listener that reads nothing as caught
+up (`OptimizingAppendListenerDecorator`, below), so a notification delivered before its events are
+readable would leave the subscriber behind with nothing to wake it until the next append to its
+stream. Postgres is such a backend — committed events sit behind the `pg_snapshot_xmin` barrier while
+an older writing transaction is open — and its append monitor parks a notification until the event it
+names is below the barrier. Documented on `EventStorage.subscribe`; pinned by
+`PostgresVisibilityStallTest`.
 
 **A listener failure is never anybody else's failure, and never silent.** Each subscriber's exception is
 contained, logged at ERROR, and the next subscriber still gets the notification. Bookmark listeners get the
@@ -768,13 +812,15 @@ Stream<Event<CustomerEvent>> filtered = stream.query(
     EventQuery.forEvents(EventTypesFilter.of(CustomerRegistered.class), Tags.of("region", "EU"))
 );
 
-// 6. Conditional append with optimistic locking
-EventQuery customerQuery = EventQuery.forEvents(EventTypesFilter.any(), Tags.of("customer", "123"));
-List<Event<CustomerEvent>> existingEvents = stream.query(customerQuery).toList();
-EventReference lastRef = existingEvents.getLast().reference();
+// 6. Conditional append with optimistic locking: pin the boundary at the head BEFORE reading.
+//    An absent head is an empty stream, and a valid boundary, so a customer with no history yet
+//    needs no special case -- there is no getLast() to throw on an empty result
+EventQuery customerQuery = EventQuery.forTags(Tags.of("customer", "123"));
+EventReference head = stream.head().orElse(null);
+List<Event<CustomerEvent>> existingEvents = stream.query(customerQuery.until(head)).toList();
 
 stream.append(
-    AppendCriteria.of(customerQuery, lastRef),
+    AppendCriteria.of(customerQuery, head),
     Event.of(new CustomerNameChanged("Jane"), Tags.of("customer", "123"))
 );
 ```
@@ -874,8 +920,11 @@ idempotency key, which the public `Event` record does not carry.
 **Sealed values move as ciphertext, and the keys do not move with them.** A `Shreddable`'s envelope is
 opaque JSON like any other payload, so an import copies it verbatim without keys, domain classes, or the
 right to read the personal data. The consequence is the obvious one: a store imported into a deployment
-whose key store does not hold those keys reads every protected value as erased. Migrate the keys
-alongside the events, or accept the erasure.
+whose key store does not hold those keys cannot read any protected value — every read throws
+`ShreddingException` naming a key the store never held, since an unknown key is deliberately not
+reported as erased (see below). Migrate the keys alongside the events. To accept the erasure
+deliberately, carry the key rows across shredded — material gone, reason stamped — so the values read
+as erased and the audit says why.
 
 **Import modes** (`EventStorage.ImportMode`):
 - `FAIL_ON_EXISTING_ID` (default) — an already-present event id aborts the batch with `EventImportConflictException`
@@ -1024,7 +1073,7 @@ transfer.from().map(PartyDetails::name).orElse("[erased]");
 ```
 
 - **The stored event never changes.** Its bytes stay identical forever, so an erasure needs no UPDATE,
-  produces no new tuple to VACUUM, does not decorrelate the BRIN index on `event_position`, and reaches
+  produces no new tuple to VACUUM, leaves the heap in insertion order, and reaches
   the ciphertext already sitting in WAL, on replicas and in every backup. The alternative — nulling a
   separate erasable column with an `UPDATE` — reaches none of those copies and makes the log no longer
   append-only.
@@ -1039,6 +1088,20 @@ transfer.from().map(PartyDetails::name).orElse("[erased]");
 - **Two subjects in one event each get their own key**, which no per-field annotation or per-event key
   can express. Keys are scoped to `(type, id, category)`, so "erase marketing, retain financial" is a
   category away.
+- **`erase(DataSubject, reason)` erases one category; `eraseAllCategories(type, id, reason)` erases the
+  person.** A `DataSubject` always names a category — `DataSubject.of("customer", id)` is the `default`
+  one — and `erase` destroys the keys of that category only, reporting success because the erasure it
+  names was performed. So `erase(DataSubject.of("customer", id))` on a subject that also holds
+  `marketing` data leaves the marketing data readable, which is right for a per-category request and
+  wrong for an art.17 request. The whole-person erasure takes the type and id and no category, so it
+  cannot be narrowed by accident, and answers a `SubjectErasureReport` with one `ErasureReport` per
+  category that held live keys. It is a separate SPI method on `ShreddingKeyStore` and `ShreddingCodec`
+  (`shredAllCategories`), whose defaults throw `UnsupportedOperationException` so a key store written
+  before it is told rather than made to erase one category and report success; a restricted codec
+  passes it through whole. The alternative — having `erase` of the default category mean "every
+  category" — loses because it makes erasing only the default category inexpressible, and because a
+  category is what a subject's data is *written* under, so which one a caller happens to name is not a
+  statement about the others.
 - **The subject id must not itself be personal data.** It is stored in the clear in the envelope and
   survives erasure by construction — use a customer number, never an email address.
 - **`KeyId` values are random and land on the event as `dek:` tags**, so "every event holding data under
@@ -1059,6 +1122,20 @@ PostgresEventStorage.newBuilder().shredding().buildStore();          // keys in 
 PostgresEventStorage.newBuilder().shredding(myKmsCodec).buildStore(); // take over encryption entirely
 ```
 
+- **The codec travels with the storage, so `build()` honours `.shredding(...)` as `buildStore()` does.**
+  `EventStorage.shreddingCodec()` answers the codec a builder was given (empty by default, so a backend
+  written before it keeps working), and `EventStoreFactory.eventStore(storage)` — every overload not
+  handed a codec of its own — uses it; a codec passed to the four-argument overload wins. The storage
+  never seals or unseals anything itself, which is what keeps raw mode, exports and imports seeing the
+  envelope as stored. The alternative — a codec living on the store alone, wired only by `buildStore()`
+  — loses because a caller taking the storage from `build()` then gets a store that refuses the very
+  event types the builder was configured for, and on Postgres cannot construct the key store the
+  no-arg `shredding()` stands for at all: it needs the `DataSource` the builder resolves, and one
+  loaded from `db.properties` is never handed out. `StorageShreddingCodecTest` pins the two in-memory
+  backends and the precedence rule; `PostgresShreddingBuilderTest` pins the no-arg case per Postgres
+  version. `MeterOptions` remains the one builder setting `build()` ignores, since it is a property of
+  the store's meters and nothing about the storage.
+
 - **`ShreddingKeyStore`** is the narrow seam: keep the shipped encryption, hold keys in Vault/KMS/an HSM.
 - **`ShreddingCodec`** is the outer seam: take over encryption too, so key material never enters the JVM.
 - **`unseal`/`resolve` returning empty means *erased*; anything else must throw `ShreddingException`.**
@@ -1067,6 +1144,16 @@ PostgresEventStorage.newBuilder().shredding(myKmsCodec).buildStore(); // take ov
   models permanently and never revisit them. `TypedEventPayloadSerializerDeserializer` rethrows a
   `ShreddingException` unwrapped (and unwraps one Jackson wrapped) precisely so that "retry later" does
   not arrive as `EventDeserializationException`, which means "never retry".
+- **A key id the store has never held is not erased either; it throws.** A shredded key keeps its row,
+  so every shipped key store can tell "destroyed" from "never seen", and the second means the store is
+  not the one the events were sealed against: the fs store pointed at the wrong directory, the Postgres
+  one at the wrong prefix or database, events imported without their keys. Reported as erased, that is
+  the outage failure above applied to the *whole* store at once. The alternative — a fourth
+  `KeyResolution` answer — loses because a reader could do nothing with it but throw: the value is not
+  erased, and not withheld from this reader in particular. The cost is that shredded rows must stay
+  (which the audit already requires): pruning one turns that subject's events from "erased" into
+  unreadable, with an error naming the key. `ShreddableEventDataTest.aKeyThisStoreNeverHeldThrowsRatherThanReadingAsErased`
+  pins it per backend, at the seam and through a projector.
 - **Nothing here needs post-quantum work.** The design uses no asymmetric cryptography, so Shor has no
   target; Grover leaves AES-256 at ~128 bits of effective security. Shredding is in fact a stronger
   position than encryption at rest generally is — the threat model is ciphertext recovered from a backup
@@ -1228,9 +1315,10 @@ to migrate the events via `EventStoreImporter.transform` or to read the old shap
 
 `ShreddableEventDataTest` in the TCK pins all of this per backend, against *that backend's* key store:
 the two-subject erasure, the collection case, a record whose constructor rejects nulls surviving erasure,
-category independence, idempotent erasure and a fresh key afterwards, the `dek:` tags, the audit view
+category independence and the whole-person erasure across every category (through a restricted codec
+too), idempotent erasure and a fresh key afterwards, the `dek:` tags, the audit view
 (including, reflectively, that `KeyRecord` cannot carry key material), that an unreachable key store
-throws instead of reporting the data as erased — and, for entitlement, that a withholding codec reads the
+throws instead of reporting the data as erased and so does one asked for a key it never held — and, for entitlement, that a withholding codec reads the
 typed events with every value withheld, that a restricted codec reads its categories and withholds the
 rest without a key lookup, seals nothing outside them and erases everything, that a withheld value says
 nothing about erasure, that a key store's `Denied` reads as withheld and a projector advances over it,
@@ -1348,7 +1436,8 @@ each figure as Testcontainers-on-a-developer-machine unless the module file says
   for) and win only where a limit fills before the scan gets far; prototyping tag-query cost against
   them points backwards.
 - **Stream design** (`stream-design-*` pair): **`PER_ENTITY` wins or ties everything except reading a
-  context in order** (13–15× worse — a whole-context replay or export pays it). The canonical DCB
+  context in order** (13–15× worse in the committed run, which was measured without
+  `idx_events_context_tx_position`, the index that serves exactly that read). The canonical DCB
   check is 4.2× better single-threaded and 16.8× at eight writers, because distinct purposes take
   distinct advisory locks. **But read an entity through its own stream, or the design buys nothing**:
   addressing a per-entity corpus by tag through a wildcard purpose costs 23–29× over its own stream.
@@ -1533,12 +1622,15 @@ that bind everywhere:
 - **Conditional appends serialize per stream via `pg_advisory_xact_lock`** keyed on the prefix and
   `(stream_context, stream_purpose)`; unconditional appends take no lock. A hot stream is therefore
   a ceiling, and stream layout the fix — see the write-contention findings under Benchmarking.
-- **A long-running *writing* transaction anywhere in the cluster silently freezes what this store
-  can read** (the `pg_snapshot_xmin` barrier): reads stop advancing, projections go quiet, nothing
-  fails or logs, and read-your-own-writes breaks in a way a DCB retry loop cannot clear. Only
+- **A long-running *writing* transaction anywhere in the cluster freezes what this store can
+  read** (the `pg_snapshot_xmin` barrier): reads stop advancing, projections go quiet, nothing
+  fails, and read-your-own-writes breaks in a way a DCB retry loop cannot clear. Only
   transactions holding a transaction id count — read-only ones never do, at any isolation level.
-  The diagnosis query and monitoring guidance are in the module file; do not "fix" this by bounding
-  the barrier.
+  Append notifications are held back until the events they announce are readable, so a subscribed
+  projection catches up by itself when the blocker ends rather than staying behind until the next
+  append to its stream — and a notification withheld for more than 10s is the one WARN the library
+  logs about a stall. The diagnosis query and monitoring guidance are in the module file; do not
+  "fix" this by bounding the barrier.
 - **Back the cluster up physically; a logical dump restored into a fresh cluster does not work.**
   `pg_dump` copies `event_tx` as data, so the restored history carries ids above the new cluster's
   counter: every read sits behind the visibility barrier and sees an empty store, and the first
@@ -1572,6 +1664,16 @@ that bind everywhere:
   canonical check, a 14× cliff at two OR-ed facts, and a steady-state 1.16 s whole-table scan on
   the empty boundary). The measurements behind that rejection are recorded in the benchmark
   module's `CLAUDE.md`.
+- **A read that does not bind both stream columns walks an index on the `(event_tx, event_position)`
+  order**: `idx_events_tx_position`, the global order, for a read that binds no stream column (a
+  wildcard stream paged by a store-wide projection or an export, `head()` of the whole store, an
+  unscoped `EventStoreImporter` run), and `idx_events_context_tx_position` for one that binds the
+  context and leaves the purpose open (a whole-context replay over a per-entity layout). The stream
+  indexes all lead with `(stream_context, stream_purpose)` and offer such reads neither a start
+  condition nor an order, so without these every page is a scan plus a sort, whatever its limit.
+  A database created before they existed needs them applied — `ENSURE` does that on the next
+  start, a `VALIDATE`/`NONE` deployment by hand with `CREATE INDEX CONCURRENTLY` — see "Migrating a
+  database created before the order indexes existed" in the postgres module README.
 - **Oldest supported PostgreSQL is 16**, and the `btree_gin` extension is required — creating it
   needs `CREATE` on the *database*, not the schema; a DBA installing it once is the recommended
   split, and an unprivileged role then starts against it silently.

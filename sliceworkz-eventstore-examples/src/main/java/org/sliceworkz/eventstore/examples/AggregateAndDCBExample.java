@@ -25,7 +25,6 @@ import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventHandler;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventWithMetaDataHandler;
-import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.examples.CourseDomainEvent.CourseCapacityUpdated;
 import org.sliceworkz.eventstore.examples.CourseDomainEvent.CourseDefined;
@@ -74,11 +73,12 @@ public class AggregateAndDCBExample {
 		s = loadStudent("123");
 	}
 	
-	// Load aggregate from events
+	// Load aggregate from events. An event is stored under its record's simple name, so the filter names the
+	// records of the hierarchy, not the sealed interface they implement
 	Student loadStudent(String studentId) {
 	    Student student = new Student(studentId);
 	    EventQuery query = EventQuery.forEvents(
-	        EventTypesFilter.of(StudentDomainEvent.class),
+	        EventTypesFilter.of(StudentDomainEvent.class.getPermittedSubclasses()),
 	        Tags.of("student", studentId)
 	    );
 	    stream.query(query)
@@ -91,7 +91,7 @@ public class AggregateAndDCBExample {
 	    stream.append(
 	        AppendCriteria.of(
 	            EventQuery.forEvents(
-        	        EventTypesFilter.of(StudentDomainEvent.class),
+        	        EventTypesFilter.of(StudentDomainEvent.class.getPermittedSubclasses()),
 	                Tags.of("student", student.studentId)
 	            ),
 	            student.lastEventReference()
@@ -106,7 +106,7 @@ public class AggregateAndDCBExample {
 	Course loadCourse(String courseId) {
 	    Course course = new Course(courseId);
 	    EventQuery query = EventQuery.forEvents(
-	        EventTypesFilter.of(CourseDomainEvent.class),
+	        EventTypesFilter.of(CourseDomainEvent.class.getPermittedSubclasses()),
 	        Tags.of("course", courseId)
 	    );
 	    stream.query(query)
@@ -119,7 +119,7 @@ public class AggregateAndDCBExample {
 	    stream.append(
 	        AppendCriteria.of(
 	            EventQuery.forEvents(
-	                EventTypesFilter.of(CourseDomainEvent.class),
+	                EventTypesFilter.of(CourseDomainEvent.class.getPermittedSubclasses()),
 	                Tags.of("course", course.courseId)
 	            ),
 	            course.lastEventReference()
@@ -135,16 +135,17 @@ public class AggregateAndDCBExample {
     	RegistrationDecisionModel dm = new RegistrationDecisionModel(studentId, courseId);
     	// remark: in practice, we would use additional decision models eg to determine if the studentId and the courseId exist at all. 
 
-    	List<Event<LearningDomainEvent>> relevantEvents = stream.query(dm.getEventQuery()).toList();
-        EventReference lastRef = relevantEvents.getLast().reference();
-        relevantEvents.forEach(dm::when);
+    	// pin the consistency boundary before reading: absent for an empty stream, which is a valid boundary,
+    	// so a student or course without any history yet needs no special case
+    	EventReference head = stream.head().orElse(null);
+    	stream.query(dm.getEventQuery().until(head)).forEach(dm::when);
 
         if ( dm.canSubscribe() ) {
             stream.append(
-                    AppendCriteria.of(dm.getEventQuery(), lastRef),
+                    AppendCriteria.of(dm.getEventQuery(), head),
                     Event.of(
                         new StudentSubscribedToCourse(studentId, courseId),
-                        Tags.of(Tag.of("student", studentId), Tag.of("course", courseId))
+                        Tags.of("student", studentId, "course", courseId)
                     )
                 );
             return true;

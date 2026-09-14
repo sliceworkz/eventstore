@@ -195,7 +195,7 @@ public class AesGcmShreddingCodec implements ShreddingCodec {
 
 		return switch ( keyStore.resolveKey(sealed.key()) ) {
 			// The key is gone, which is the mechanism working. Never conflate this with a key store that
-			// could not be reached -- that throws, from the key store itself.
+			// could not be reached, or one that never held the key -- both throw, from the key store itself.
 			case KeyResolution.Erased erased -> Unsealed.Erased.INSTANCE;
 			// The key exists and this reader may not have it: the key store's own boundary, passed on as
 			// what it is rather than as an erasure or a retry.
@@ -235,6 +235,21 @@ public class AesGcmShreddingCodec implements ShreddingCodec {
 		}
 		List<KeyId> shredded = keyStore.shred(subject, reason);
 		return new ErasureReport(subject, reason, shredded == null ? List.of() : shredded, Instant.now());
+	}
+
+	@Override
+	public SubjectErasureReport shredAllCategories ( String subjectType, String subjectId, ErasureReason reason ) {
+		if ( subjectType == null || subjectType.isBlank() ) {
+			throw new IllegalArgumentException("subjectType cannot be null or blank");
+		}
+		if ( subjectId == null || subjectId.isBlank() ) {
+			throw new IllegalArgumentException("subjectId cannot be null or blank");
+		}
+		if ( reason == null ) {
+			throw new IllegalArgumentException("reason cannot be null");
+		}
+		List<ErasureReport> categories = keyStore.shredAllCategories(subjectType, subjectId, reason);
+		return new SubjectErasureReport(subjectType, subjectId, reason, categories == null ? List.of() : categories);
 	}
 
 	@Override

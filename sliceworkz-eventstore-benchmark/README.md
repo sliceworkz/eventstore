@@ -384,6 +384,9 @@ inmem loses more than half the read shapes, and loses them by two orders of magn
 | `query-by-id` | map lookup | 1928 | 47.1 | 41 |
 | `query-wildcard` | 500 | 5.013 | 0.054 | 93 |
 
+(The `query-wildcard` row is from a run whose schema had no `idx_events_tx_position`; on the current
+schema that read is a walk of that index, and the row is due for a re-run.)
+
 The rule that fits every row: **inmem wins exactly where a limit fills before the scan gets far.**
 `query-by-tag-needle` carries no limit and matches ten events, so it walks all 100.000 at ~64ns each;
 `query-stream-page` fills its 500 immediately and stops. A limit is not enough on its own —

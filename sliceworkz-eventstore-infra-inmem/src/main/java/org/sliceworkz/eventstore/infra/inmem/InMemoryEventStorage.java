@@ -250,6 +250,10 @@ public interface InMemoryEventStorage {
 		 * The key store is the caller's to close, following the same rule the library applies to a
 		 * {@code DataSource}: what you pass in, you own.
 		 *
+		 * Honoured by {@link #build()} as much as by {@link #buildStore()}: the codec travels with the
+		 * storage ({@link EventStorage#shreddingCodec()}), so a store built on {@code build()}'s result
+		 * through {@link EventStoreFactory#eventStore(EventStorage)} protects and erases personal data too.
+		 *
 		 * @param shreddingKeyStore where keys are minted, resolved and destroyed
 		 * @return this builder for method chaining
 		 */
@@ -260,6 +264,9 @@ public interface InMemoryEventStorage {
 
 		/**
 		 * Protects personal data with a codec of your own, taking over encryption as well as key storage.
+		 *
+		 * Honoured by {@link #build()} as much as by {@link #buildStore()} — see
+		 * {@link #shredding(ShreddingKeyStore)}.
 		 *
 		 * @param shreddingCodec seals and unseals protected values
 		 * @return this builder for method chaining
@@ -331,7 +338,7 @@ public interface InMemoryEventStorage {
 		 * @see InMemoryEventStorageImpl
 		 */
 		public EventStorage build ( ) {
-			return new InMemoryEventStorageImpl(name, limit, initialEvents, initialBookmarks);
+			return new InMemoryEventStorageImpl(name, limit, initialEvents, initialBookmarks, shreddingCodec);
 		}
 
 		/**
@@ -363,7 +370,9 @@ public interface InMemoryEventStorage {
 			// the storage is created here and never handed to the caller, so the returned store owns it:
 			// closing that store is the only way this storage will ever be closed
 			EventStorage eventStorage = build();
-			return EventStore.owning(EventStoreFactory.get().eventStore(eventStorage, meterRegistry, meterOptions, shreddingCodec), eventStorage);
+			// the codec travels with the storage (EventStorage.shreddingCodec()), so the store picks it up
+			// here exactly as a store built by the caller on build()'s result would
+			return EventStore.owning(EventStoreFactory.get().eventStore(eventStorage, meterRegistry, meterOptions), eventStorage);
 		}
 	}
 	

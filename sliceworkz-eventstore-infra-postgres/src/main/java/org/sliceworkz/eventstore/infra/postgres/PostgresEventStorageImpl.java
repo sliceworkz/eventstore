@@ -38,6 +38,7 @@ import java.util.Arrays;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -55,6 +56,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import javax.sql.DataSource;
@@ -79,6 +81,7 @@ import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventFilterItem;
 import org.sliceworkz.eventstore.query.Limit;
+import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.spi.EventImportConflictException;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageClosedException;
@@ -88,7 +91,6 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 
-import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -184,6 +186,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private volatile CountDownLatch bookmarkMonitorReady;
 
 	private final MeterRegistry meterRegistry;
+	// Never used here: the storage stores sealed envelopes as opaque JSON. Held so that a store built on
+	// this storage through the factory finds the codec the builder was given (EventStorage.shreddingCodec()).
+	private final ShreddingCodec shreddingCodec;
 
 	/**
 	 * Whether the warning about being unable to keep a no-cursor check off the plan cache (see
@@ -223,6 +228,18 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	private static final long INITIAL_RETRY_DELAY_MS = 1_000;
 	private static final long MAX_RETRY_DELAY_MS = 30_000;
+
+	/**
+	 * How long the append monitor holds a notification behind the read barrier before saying so.
+	 * <p>
+	 * A notification is withheld for the few milliseconds an older append is still in flight on every
+	 * busy store, which is not worth a log line. One withheld for this long is being held by a
+	 * long-running writing transaction somewhere in the cluster — the visibility stall the read barrier
+	 * implies — and that stall is otherwise invisible from inside the process: nothing fails, every
+	 * call keeps succeeding, and reads simply stop advancing. The WARN is the one signal the library
+	 * itself gives; the diagnosis query lives in the module documentation.
+	 */
+	static final long WITHHELD_NOTIFICATION_WARN_MILLIS = 10_000;
 
 	/**
 	 * How long {@link #start()} waits for the monitors to register their {@code LISTEN} before deciding
@@ -304,6 +321,33 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * @see PostgresEventStorage.Builder#build()
 	 */
 	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources, MeterRegistry meterRegistry ) {
+		this(name, dataSource, monitoringDataSource, absoluteLimit, prefix, ownsDataSources, meterRegistry, null);
+	}
+
+	/**
+	 * Constructs a new PostgreSQL-backed event storage instance that also carries the codec protecting
+	 * its events' {@link org.sliceworkz.eventstore.shredding.Shreddable} values.
+	 * <p>
+	 * This constructor is used by {@link PostgresEventStorage.Builder} and should not be called directly.
+	 * The storage never seals or unseals anything itself; the codec is answered from
+	 * {@link #shreddingCodec()} so that a store built on this storage — through
+	 * {@link org.sliceworkz.eventstore.EventStoreFactory#eventStore(EventStorage)} as much as through
+	 * {@link PostgresEventStorage.Builder#buildStore()} — protects and erases personal data. A key
+	 * store the codec holds on this storage's own {@code DataSource} is not closed by {@link #close()}:
+	 * it holds no connection of its own, only a cache.
+	 *
+	 * @param name the logical name for this storage instance (used in logging and monitoring)
+	 * @param dataSource the main JDBC DataSource for event operations
+	 * @param monitoringDataSource the JDBC DataSource for LISTEN/NOTIFY operations
+	 * @param absoluteLimit the absolute limit on query results, or {@link Limit#none()} for no limit
+	 * @param prefix the table name prefix (validated, or empty string for no prefix)
+	 * @param ownsDataSources {@code true} if the DataSources were created for this storage and should
+	 *                        be closed by {@link #close()}; {@code false} if they belong to the caller
+	 * @param meterRegistry where to register the {@code sliceworkz.eventstore.notifications.*} meters
+	 * @param shreddingCodec seals and unseals protected values, or null for a storage without shredding
+	 * @see PostgresEventStorage.Builder#build()
+	 */
+	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources, MeterRegistry meterRegistry, ShreddingCodec shreddingCodec ) {
 		this.prefix = validatePrefix(prefix);
 		this.name = name;
 		this.dataSource = dataSource;
@@ -311,6 +355,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		this.absoluteLimit = absoluteLimit;
 		this.ownsDataSources = ownsDataSources;
 		this.meterRegistry = meterRegistry == null ? Metrics.globalRegistry : meterRegistry;
+		this.shreddingCodec = shreddingCodec;
 
 		this.executorService = Executors.newVirtualThreadPerTaskExecutor();
 
@@ -511,8 +556,15 @@ public class PostgresEventStorageImpl implements EventStorage {
 			checkTrigger(readConnection, prefix + "events", "table_insert_trigger", "STATEMENT");
 			checkTrigger(readConnection, prefix + "bookmarks", "table_insert_or_update_trigger", "ROW");
 
-			// Check indexes
-			checkIndex(readConnection, prefix + "idx_events_position_brin");
+			// Check indexes. Only the ones a statement the store issues can walk: idx_events_tx_position is
+			// the global (event_tx, event_position) order for reads that bind no stream column,
+			// idx_events_context_tx_position the same order within a context for reads that bind the
+			// context and leave the purpose open, and the stream indexes serve everything scoped to a
+			// stream. A database created before the two order indexes existed is reported here under
+			// VALIDATE and ENSURE -- ENSURE creates them on the next start, VALIDATE names them for the
+			// DBA -- see "Migrating a database created before the order indexes existed" in the README.
+			checkIndex(readConnection, prefix + "idx_events_tx_position");
+			checkIndex(readConnection, prefix + "idx_events_context_tx_position");
 			checkIndex(readConnection, prefix + "idx_events_stream_type_position");
 			checkIndex(readConnection, prefix + "idx_events_tags");
 			checkIndex(readConnection, prefix + "idx_events_stream_tags");
@@ -2255,9 +2307,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	/**
 	 * The statement behind {@link #head(Optional)}: the reference columns only, off
-	 * {@code idx_events_stream_position} walked backwards, behind the same {@code pg_snapshot_xmin}
-	 * barrier as {@link #query}. Package-private so the postgres module's tests can pin its shape —
-	 * that it reads no payload and sits behind the barrier are properties nothing else would notice.
+	 * {@code idx_events_stream_position} walked backwards — off {@code idx_events_context_tx_position}
+	 * when only the context is bound, off {@code idx_events_tx_position}, the global
+	 * {@code (event_tx, event_position)} order, for a wildcard stream — behind the same
+	 * {@code pg_snapshot_xmin} barrier as {@link #query}. Package-private so the postgres module's tests
+	 * can pin its shape — that it reads no payload and sits behind the barrier are properties nothing
+	 * else would notice.
 	 */
 	static String headSql ( String prefix, Optional<EventStreamId> stream ) {
 		StringBuilder sql = new StringBuilder();
@@ -2382,6 +2437,36 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	
 	
+	/**
+	 * Delivers append notifications to the storage's listeners — once the appended events are readable.
+	 * <p>
+	 * A {@code NOTIFY} is delivered when the appending transaction commits, but this store's reads sit
+	 * behind {@code event_tx < pg_snapshot_xmin(pg_current_snapshot())}, so a committed event is not
+	 * necessarily readable yet: while an older transaction that has written anything is still open
+	 * anywhere in the cluster, every event appended since it took its id is withheld from every query.
+	 * Delivering such a notification as it arrives would wake a subscriber that then reads nothing —
+	 * and a subscriber that reads nothing counts as caught up, so nothing wakes it again when the
+	 * events finally surface. Until the next append to its stream, that is, which for a quiet stream
+	 * is indefinitely: a projection stuck exactly as many events behind as were appended during the
+	 * stall, with nothing failing to say so.
+	 * <p>
+	 * So the monitor parks a notification whose transaction is not yet below the barrier, and re-checks
+	 * the barrier every poll slice while anything is parked, delivering what has become readable. The
+	 * check is one {@code SELECT pg_snapshot_xmin(pg_current_snapshot())} on the monitoring connection,
+	 * costing nothing while nothing is parked. Parked notifications are coalesced to the latest reference
+	 * per stream, exactly as the trigger already coalesces per statement, so a stall on a busy stream
+	 * holds one entry per stream, not one per append. They live on the monitor rather than on its
+	 * connection, so losing the connection during a stall does not lose them.
+	 * <p>
+	 * The alternative — leaving this to the subscriber, by having a listener report how far it could
+	 * read and re-delivering until it reaches the target — loses on two counts: a listener cannot tell
+	 * "nothing to read yet" from "nothing matches my query" (both are an empty read), and re-delivering
+	 * on either is the busy loop {@code OptimizingAppendListenerDecorator} exists to prevent. The
+	 * barrier is this backend's, so this backend accounts for it, and the listener contract stays what
+	 * it reads as: what a notification announces, a query can see.
+	 * <p>
+	 * The bookmark monitor has no such concern: a bookmark read is deliberately not behind the barrier.
+	 */
 	class NewEventsAppendedMonitor implements Runnable {
 
 		private static final Logger LOGGER = LoggerFactory.getLogger(NewEventsAppendedMonitor.class);
@@ -2392,6 +2477,19 @@ public class PostgresEventStorageImpl implements EventStorage {
 		private CountDownLatch readyLatch;
 		/** the outer storage's flag for this channel: true exactly while this monitor holds a live LISTEN */
 		private final AtomicBoolean listening = eventMonitorListening;
+		/**
+		 * Notifications whose events are not readable yet, the latest reference per stream, in the
+		 * order the streams were first parked — so the first entry is the one parked longest, since a
+		 * merge keeps the entry's position and its park time. Only the monitor thread touches it.
+		 */
+		private final Map<EventStreamId, Parked> withheld = new LinkedHashMap<>();
+		/** when the stall being reported began, for the line that reports it over; meaningful only while {@link #stallReported} */
+		private long reportedStallSinceNanos;
+		/** whether the current stall has been logged, so that it is logged once rather than once per slice */
+		private boolean stallReported;
+
+		/** a parked notification and when it was parked, which a later notification for the same stream keeps */
+		private record Parked ( AppendsToEventStoreNotification notification, long sinceNanos ) { }
 
 		public NewEventsAppendedMonitor ( String name, List<EventStoreListener> listeners, DataSource monitoringDataSource, CountDownLatch readyLatch ) {
 			this.name = name;
@@ -2408,11 +2506,14 @@ public class PostgresEventStorageImpl implements EventStorage {
 			
 			String listenStatement = "LISTEN %sevent_appended;".formatted(prefix);
 			String unlistenStatement = "UNLISTEN %sevent_appended;".formatted(prefix);
+			String barrierStatement = "SELECT pg_snapshot_xmin(pg_current_snapshot())::text";
 
 			long retryDelayMs = INITIAL_RETRY_DELAY_MS;
 			while ( !stopped.get() ) {
 
-				try ( Connection monitorConnection = monitoringDataSource.getConnection(); Statement stmt = monitorConnection.createStatement() ){
+				try ( Connection monitorConnection = monitoringDataSource.getConnection();
+					  Statement stmt = monitorConnection.createStatement();
+					  PreparedStatement barrierStmt = monitorConnection.prepareStatement(barrierStatement) ){
 					// Ensure connection is in the right state for LISTEN
 					monitorConnection.setAutoCommit(true);
 
@@ -2437,29 +2538,14 @@ public class PostgresEventStorageImpl implements EventStorage {
 					    if (notifications != null) {
 					        for (PGNotification notification : notifications) {
 					            LOGGER.debug("Received: {}", notification.getParameter());
-					            try {
-									EventAppendedPostgresNotification msg = JSONMAPPER.readValue(notification.getParameter(), EventAppendedPostgresNotification.class);
-									AppendsToEventStoreNotification aesn = msg.toNotification();
-
-									listeners.forEach(listener -> {
-										// one listener misbehaving must not kill this monitor: it is the only one this
-										// storage has, so its death silently stops notifications for every store,
-										// listener and projection attached to the storage
-										try {
-											listener.notify(aesn);
-										} catch (Exception e) {
-											LOGGER.error("event store listener failed handling a notification: {}", e.getMessage(), e);
-										}
-									});
-
-								} catch (JacksonException e) {
-									LOGGER.error("Failed to parse notification: " + e.getMessage());
-								}
+					            parse(notification.getParameter()).ifPresent(this::withhold);
 					        }
 					    }
-					}
 
-					listening.set(false);
+					    if ( !withheld.isEmpty() ) {
+					    	deliverReadable(barrierStmt);
+					    }
+					}
 
 					// drop the registration so the connection is hygienic when returned to the pool
 					try {
@@ -2468,10 +2554,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 						LOGGER.debug("UNLISTEN failed: {}", ue.getMessage());
 					}
 
-				} catch (SQLException e) {
+				} catch (SQLException | RuntimeException e) {
 					// notifications stop the moment this connection does, whether that is at startup or an
 					// hour in; say so before anything else, so the gauge never claims a channel is up while
-					// this monitor is sitting in the backoff below
+					// this monitor is sitting in the backoff below. A RuntimeException here is a DataSource or
+					// driver misbehaving, which is the same outage from where this monitor stands
 					boolean wasListening = listening.getAndSet(false);
 					if ( stopped.get() || Thread.currentThread().isInterrupted() ) {
 						// shutting down: the connection was closed underneath us on purpose, nothing to report
@@ -2491,9 +2578,97 @@ public class PostgresEventStorageImpl implements EventStorage {
 						return;
 					}
 				} finally {
+					// however the try was left -- a stop, a caught failure, or something nothing above catches --
+					// the connection is closed by now and the LISTEN gone with it, so the gauge has to say so.
+					// Set here rather than only on the paths above, so that no exit can leave it reading 1 over
+					// a monitor that is no longer there
+					listening.set(false);
 					LOGGER.debug("loop done.");
 				}
 			}
+		}
+
+		/**
+		 * Parks a notification until the barrier check finds its events readable, keeping the latest
+		 * reference per stream. Every notification goes through here, including one that is readable
+		 * already: it is delivered by the check that follows in the same slice, so an unstalled store
+		 * pays one barrier read per batch of notifications and no delay.
+		 */
+		private void withhold ( AppendsToEventStoreNotification notification ) {
+			withheld.merge(notification.stream(), new Parked(notification, System.nanoTime()),
+				(parked, arrived) -> arrived.notification().atLeastUntil().happenedAfter(parked.notification().atLeastUntil())
+					? new Parked(arrived.notification(), parked.sinceNanos())
+					: parked);
+		}
+
+		/**
+		 * Delivers every parked notification whose transaction is below the read barrier, and keeps
+		 * the rest. Visibility is monotone in the transaction id, so the barrier read once here holds
+		 * for every reader that runs after it: once {@code event_tx < xmin} it stays so, because the
+		 * oldest running transaction only ever gets younger.
+		 */
+		private void deliverReadable ( PreparedStatement barrierStmt ) throws SQLException {
+			long barrier;
+			try ( ResultSet rs = barrierStmt.executeQuery() ) {
+				if ( !rs.next() ) {
+					throw new SQLException("pg_snapshot_xmin(pg_current_snapshot()) returned no row");
+				}
+				barrier = Long.parseUnsignedLong(rs.getString(1));
+			}
+
+			Iterator<Parked> parked = withheld.values().iterator();
+			while ( parked.hasNext() ) {
+				AppendsToEventStoreNotification notification = parked.next().notification();
+				if ( Long.compareUnsigned(notification.atLeastUntil().tx(), barrier) < 0 ) {
+					parked.remove();
+					deliver(notification);
+				}
+			}
+
+			// The age that matters is that of the notification parked longest, never how long the map
+			// has been non-empty: on a busy store with appends in flight there is nearly always something
+			// parked for a slice, and the map may not drain for minutes while nothing is stalled.
+			long now = System.nanoTime();
+			long oldestWithheldForMillis = withheld.isEmpty() ? 0 : (now - withheld.values().iterator().next().sinceNanos()) / 1_000_000;
+			if ( stallReported && oldestWithheldForMillis < WITHHELD_NOTIFICATION_WARN_MILLIS ) {
+				LOGGER.info("the withheld event append notifications of event storage '{}' were delivered after {}s: "
+					+ "the blocking transaction has ended and the appended events are readable",
+					PostgresEventStorageImpl.this.name, (now - reportedStallSinceNanos) / 1_000_000_000);
+				stallReported = false;
+			} else if ( !stallReported && oldestWithheldForMillis >= WITHHELD_NOTIFICATION_WARN_MILLIS ) {
+				LOGGER.warn("event append notifications of event storage '{}' have been withheld for {}s on {} stream(s): "
+					+ "a writing transaction older than the appended events is still open somewhere in the cluster, "
+					+ "holding pg_snapshot_xmin down, so the events are committed but not readable yet. Subscribers are "
+					+ "woken as soon as it ends. To find it: SELECT pid, datname, now() - xact_start, query "
+					+ "FROM pg_stat_activity WHERE backend_xid IS NOT NULL ORDER BY xact_start",
+					PostgresEventStorageImpl.this.name, oldestWithheldForMillis / 1000, withheld.size());
+				reportedStallSinceNanos = withheld.values().iterator().next().sinceNanos();
+				stallReported = true;
+			}
+		}
+
+		/**
+		 * Turns one payload from the channel into a notification, or nothing.
+		 * <p>
+		 * The channel is a database-wide name: any session in the database can {@code NOTIFY} on it, and the
+		 * trigger of another release of this library may not agree with this one on the payload. So a
+		 * payload that does not parse, or parses into something {@link EventReference} refuses (a null id,
+		 * a position of 0), is logged and dropped -- caught as {@code RuntimeException} rather than as the
+		 * parser's own type, because the conversion throws {@code IllegalArgumentException} and an escape
+		 * from here would end the only monitor this storage has.
+		 */
+		Optional<AppendsToEventStoreNotification> parse ( String payload ) {
+			try {
+				return Optional.of(JSONMAPPER.readValue(payload, EventAppendedPostgresNotification.class).toNotification());
+			} catch ( RuntimeException e ) {
+				LOGGER.error("ignoring a notification on channel '{}event_appended' that is not a valid append notification: {} (payload: {})", prefix, e.getMessage(), payload);
+				return Optional.empty();
+			}
+		}
+
+		/** hands a notification whose events are readable to every listener; see {@link #notifyEach} */
+		void deliver ( AppendsToEventStoreNotification notification ) {
+			notifyEach(listeners, listener -> listener.notify(notification), LOGGER);
 		}
 	}
 	
@@ -2508,6 +2683,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		private CountDownLatch readyLatch;
 		/** the outer storage's flag for this channel: true exactly while this monitor holds a live LISTEN */
 		private final AtomicBoolean listening = bookmarkMonitorListening;
+		private final JsonMapper jsonMapper = JsonMapper.builder().build();
 
 		public BookmarkPlacedMonitor ( String name, List<EventStoreListener> listeners, DataSource monitoringDataSource, CountDownLatch readyLatch ) {
 			this.name = name;
@@ -2524,8 +2700,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 			
 			String listenStatement = "LISTEN %sbookmark_placed;".formatted(prefix);
 			String unlistenStatement = "UNLISTEN %sbookmark_placed;".formatted(prefix);
-
-			JsonMapper jsonMapper = JsonMapper.builder().build();
 
 			long retryDelayMs = INITIAL_RETRY_DELAY_MS;
 			while ( !stopped.get() ) {
@@ -2553,31 +2727,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 						PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // returns as soon as a notification arrives, otherwise empty-handed after the poll slice
 					    if (notifications != null) {
 					        for (PGNotification notification : notifications) {
-					            LOGGER.debug("Received: " + notification.getParameter());
-					            try {
-									BookmarkPlacedPostgresNotification msg = jsonMapper.readValue(notification.getParameter(), BookmarkPlacedPostgresNotification.class);
-									BookmarkPlacedNotification bpn = msg.toNotification();
-									LOGGER.debug("notification: " + bpn);
-
-									listeners.forEach(listener -> {
-										// one listener misbehaving must not kill this monitor: it is the only one this
-										// storage has, so its death silently stops notifications for every store,
-										// listener and projection attached to the storage
-										try {
-											listener.notify(bpn);
-										} catch (Exception e) {
-											LOGGER.error("event store listener failed handling a notification: {}", e.getMessage(), e);
-										}
-									});
-
-								} catch (JacksonException e) {
-									LOGGER.error("Failed to parse notification: " + e.getMessage());
-								}
+					            LOGGER.debug("Received: {}", notification.getParameter());
+					            parse(notification.getParameter()).ifPresent(this::deliver);
 					        }
 					    }
 					}
-
-					listening.set(false);
 
 					// drop the registration so the connection is hygienic when returned to the pool
 					try {
@@ -2586,10 +2740,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 						LOGGER.debug("UNLISTEN failed: {}", ue.getMessage());
 					}
 
-				} catch (SQLException e) {
+				} catch (SQLException | RuntimeException e) {
 					// notifications stop the moment this connection does, whether that is at startup or an
 					// hour in; say so before anything else, so the gauge never claims a channel is up while
-					// this monitor is sitting in the backoff below
+					// this monitor is sitting in the backoff below. A RuntimeException here is a DataSource or
+					// driver misbehaving, which is the same outage from where this monitor stands
 					boolean wasListening = listening.getAndSet(false);
 					if ( stopped.get() || Thread.currentThread().isInterrupted() ) {
 						// shutting down: the connection was closed underneath us on purpose, nothing to report
@@ -2609,8 +2764,53 @@ public class PostgresEventStorageImpl implements EventStorage {
 						return;
 					}
 				} finally {
+					// however the try was left -- a stop, a caught failure, or something nothing above catches --
+					// the connection is closed by now and the LISTEN gone with it, so the gauge has to say so.
+					// Set here rather than only on the paths above, so that no exit can leave it reading 1 over
+					// a monitor that is no longer there
+					listening.set(false);
 					LOGGER.debug("loop done.");
 				}
+			}
+		}
+
+		/**
+		 * Turns one payload from the channel into a notification, or nothing; see
+		 * {@link NewEventsAppendedMonitor#parse(String)} for why the catch is as wide as it is.
+		 */
+		Optional<BookmarkPlacedNotification> parse ( String payload ) {
+			try {
+				return Optional.of(jsonMapper.readValue(payload, BookmarkPlacedPostgresNotification.class).toNotification());
+			} catch ( RuntimeException e ) {
+				LOGGER.error("ignoring a notification on channel '{}bookmark_placed' that is not a valid bookmark notification: {} (payload: {})", prefix, e.getMessage(), payload);
+				return Optional.empty();
+			}
+		}
+
+		/** hands a notification to every listener; see {@link #notifyEach} */
+		void deliver ( BookmarkPlacedNotification notification ) {
+			LOGGER.debug("notification: {}", notification);
+			notifyEach(listeners, listener -> listener.notify(notification), LOGGER);
+		}
+	}
+
+	/**
+	 * Hands one notification to every listener, containing whatever each throws.
+	 * <p>
+	 * The monitor calling this is the only one the storage has for its channel, so a listener ending it
+	 * would silently stop notifications for every store, listener and projection attached to the
+	 * storage. The catch is {@code Throwable}, not {@code Exception}: what a listener realistically
+	 * throws besides an exception is an {@code AssertionError} from a test double, a
+	 * {@code NoClassDefFoundError} after a hot reload, or a {@code StackOverflowError} in a projection,
+	 * and none of those is the monitor's to die of. Each is logged at ERROR and the next listener still
+	 * gets the notification.
+	 */
+	private static void notifyEach ( List<EventStoreListener> listeners, Consumer<EventStoreListener> notification, Logger logger ) {
+		for ( EventStoreListener listener : listeners ) {
+			try {
+				notification.accept(listener);
+			} catch ( Throwable t ) {
+				logger.error("event store listener failed handling a notification: {}", t.getMessage(), t);
 			}
 		}
 	}
@@ -3096,6 +3296,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 		return result;
 	}
 	
+	@Override
+	public Optional<ShreddingCodec> shreddingCodec ( ) {
+		return Optional.ofNullable(shreddingCodec);
+	}
+
 	@Override
 	public String name() {
 		return name;

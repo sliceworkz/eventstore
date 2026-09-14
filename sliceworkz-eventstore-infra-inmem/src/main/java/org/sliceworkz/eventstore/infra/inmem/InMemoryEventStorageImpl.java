@@ -44,6 +44,7 @@ import org.sliceworkz.eventstore.events.Lease;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
+import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.spi.EventImportConflictException;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageClosedException;
@@ -54,8 +55,6 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 
 import tools.jackson.core.JacksonException;
-import tools.jackson.databind.DatabindException;
-import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -139,6 +138,9 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	// is the same here as on a backend that does — code that outlives its storage fails the same way
 	// against every backend, in tests as in production.
 	private final AtomicBoolean closed = new AtomicBoolean();
+	// Never used here: the storage stores sealed envelopes as opaque JSON. Held so that a store built on
+	// this storage through the factory finds the codec the builder was given (EventStorage.shreddingCodec()).
+	private final ShreddingCodec shreddingCodec;
 
 	/**
 	 * Constructs a new in-memory event storage instance with the specified name and absolute query limit.
@@ -164,17 +166,36 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	}
 
 	public InMemoryEventStorageImpl ( String name, Limit absoluteLimit, List<StoredEvent> initialEvents, Map<String, Bookmark> initialBookmarks ) {
+		this(name, absoluteLimit, initialEvents, initialBookmarks, null);
+	}
+
+	/**
+	 * Constructs a new in-memory event storage instance carrying the codec that protects its events'
+	 * {@link org.sliceworkz.eventstore.shredding.Shreddable} values.
+	 * <p>
+	 * The storage never seals or unseals anything itself; the codec is answered from
+	 * {@link #shreddingCodec()} so that a store built on this storage — through
+	 * {@link org.sliceworkz.eventstore.EventStoreFactory#eventStore(EventStorage)} as much as through
+	 * {@link InMemoryEventStorage.Builder#buildStore()} — protects and erases personal data.
+	 *
+	 * @param name the unique name for this storage instance; must not be null or blank
+	 * @param absoluteLimit the absolute limit on query results, or {@link Limit#none()} for no limit
+	 * @param initialEvents events to preload, in order
+	 * @param initialBookmarks bookmarks to preload, by reader
+	 * @param shreddingCodec seals and unseals protected values, or null for a storage without shredding
+	 * @throws IllegalArgumentException if name is null or blank
+	 * @see InMemoryEventStorage.Builder#build()
+	 */
+	public InMemoryEventStorageImpl ( String name, Limit absoluteLimit, List<StoredEvent> initialEvents, Map<String, Bookmark> initialBookmarks, ShreddingCodec shreddingCodec ) {
 		if ( name == null || "".equals(name.strip())) {
 			throw new IllegalArgumentException("name must not be empty");
 		}
 		this.name = name;
-		// Jackson 3.x: immutable mapper built via builder; modules (incl. java.time) auto-register.
-		// FAIL_ON_UNKNOWN_PROPERTIES is re-enabled (Jackson 2.x default) so the round-trip
-		// validation in verifyPersistableJson keeps rejecting non-round-trippable events.
-		this.jsonMapper = JsonMapper.builder()
-				.enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
-				.build();
+		// only ever parses payloads to check they are JSON documents (verifyPersistableJson,
+		// verifyImportableJson); nothing is bound to a class, so no binding features matter
+		this.jsonMapper = JsonMapper.builder().build();
 		this.absoluteLimit = absoluteLimit;
+		this.shreddingCodec = shreddingCodec;
 		this.eventlog.addAll(initialEvents);
 		// a persisted bookmark is trusted for its id only: the reference kept is the loaded event's own,
 		// so a bookmark file written beside a log that has since been re-imported (positions and
@@ -341,17 +362,31 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		return result;
 	}
 	
+	/**
+	 * Rejects payloads the Postgres backend would refuse on its {@code ::jsonb} cast -- text that is not
+	 * a JSON document, a blank string, a null -- so an append accepted here is accepted there too, and
+	 * a raw-mode caller handing the SPI a payload that is not JSON finds out in a test rather than in
+	 * production. Checked for the whole batch before anything is added, so a batch with one bad payload
+	 * stores nothing, as a rolled-back multi-row insert stores nothing.
+	 * <p>
+	 * The alternative -- writing the string through the mapper and reading it back -- checks nothing:
+	 * the payload is already a {@code String}, and any string serialises to a JSON string literal
+	 * that reads back as itself. Whether a <em>domain</em> event round-trips through its mappings is
+	 * the stream layer's concern, which surfaces it from {@code append} returning the stored events
+	 * deserialized (see {@code InMemoryEventStorageImplTest.testUnparsableJsonNotAppendable}).
+	 */
 	private void verifyPersistableJson ( List<EventToStore> newEvents ) {
-		try {
-			for ( EventToStore e: newEvents ) {
-				Class<?> clz = e.immutableData().getClass();
-				String s = jsonMapper.writeValueAsString(e.immutableData());
-				jsonMapper.readValue(s, clz);
+		for ( EventToStore e : newEvents ) {
+			if ( e.immutableData() == null ) {
+				throw new EventStorageException("event of type %s to append on stream %s carries no payload".formatted(e.type().name(), e.stream()));
 			}
-		} catch (DatabindException e) {
-			throw new RuntimeException("json mapping roundtrip test failed", e);
-		} catch (JacksonException e) {
-			throw new RuntimeException("json mapping roundtrip test failed", e);
+			try {
+				if ( jsonMapper.readTree(e.immutableData()).isMissingNode() ) {
+					throw new EventStorageException("event of type %s to append on stream %s carries an empty payload".formatted(e.type().name(), e.stream()));
+				}
+			} catch (JacksonException ex) {
+				throw new EventStorageException("event of type %s to append on stream %s does not carry valid JSON".formatted(e.type().name(), e.stream()), ex);
+			}
 		}
 	}
 	
@@ -685,6 +720,11 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		} catch ( Exception e ) {
 			LOGGER.error("event store listener failed handling a bookmark notification: {}", e.getMessage(), e);
 		}
+	}
+
+	@Override
+	public Optional<ShreddingCodec> shreddingCodec ( ) {
+		return Optional.ofNullable(shreddingCodec);
 	}
 
 	@Override

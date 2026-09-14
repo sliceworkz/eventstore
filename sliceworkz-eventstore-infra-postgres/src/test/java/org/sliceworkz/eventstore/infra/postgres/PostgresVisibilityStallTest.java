@@ -28,6 +28,9 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
 
 import javax.sql.DataSource;
 
@@ -35,18 +38,27 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.sliceworkz.eventstore.EventStore;
+import org.sliceworkz.eventstore.EventStoreFactory;
+import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
+import org.sliceworkz.eventstore.projection.Projection;
+import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
+import org.sliceworkz.eventstore.spi.EventStorage.AppendsToEventStoreNotification;
+import org.sliceworkz.eventstore.spi.EventStorage.BookmarkPlacedNotification;
+import org.sliceworkz.eventstore.spi.EventStorage.EventStoreListener;
 import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
 import org.sliceworkz.eventstore.spi.EventStorage.QueryDirection;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
+import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 
@@ -84,6 +96,15 @@ import org.sliceworkz.eventstore.stream.OptimisticLockingException;
  * stale answer, appends against it, and conflicts — every time, for as long as the stall lasts. The
  * usual retry loop cannot make progress, because the fact it would have to observe to move on is the
  * one being withheld from it.
+ * <p>
+ * <b>What a stall must not do is strand a subscriber.</b> A {@code NOTIFY} is delivered when the
+ * appending transaction commits, which during a stall is before its events are readable. Delivered
+ * then, it wakes a subscribed projection that reads nothing — and a listener that reads nothing is
+ * caught up as far as the store can tell, so nothing wakes it again when the blocker ends and the
+ * events surface. The append monitor therefore holds a notification back until the event it names is
+ * below the barrier: {@link Tests#testAppendNotificationsAreWithheldUntilTheEventsAreReadable} pins
+ * that at the SPI, and {@link Tests#testASubscribedProjectionCatchesUpWhenTheBlockerEnds} is the
+ * symptom it prevents, seen from a subscribed {@link Projector}.
  *
  * @see PostgresLockCheckOrderingTest
  */
@@ -267,7 +288,127 @@ public class PostgresVisibilityStallTest {
 			});
 		}
 
+		/**
+		 * A notification announces events a query can see. During a stall the append has committed and
+		 * the {@code NOTIFY} has fired, but the event sits above the barrier, so the notification is
+		 * held back — and delivered, with the event readable, once the blocker ends.
+		 */
+		@Test
+		public void testAppendNotificationsAreWithheldUntilTheEventsAreReadable ( ) throws Exception {
+			withStorage("visnotify_", (storage, dataSource, prefix) -> {
+
+				EventStreamId stream = EventStreamId.forContext("account").withPurpose("1");
+				execute(dataSource, "CREATE TABLE IF NOT EXISTS " + prefix + "unrelated_workload (id int)");
+
+				record Delivery ( EventReference atLeastUntil, int readableAtDelivery ) { }
+				List<Delivery> deliveries = new CopyOnWriteArrayList<>();
+				storage.subscribe(new EventStoreListener() {
+					@Override
+					public void notify ( AppendsToEventStoreNotification newEventsInStore ) {
+						// what the listener can read at the moment it is told, which is the whole contract
+						deliveries.add(new Delivery(newEventsInStore.atLeastUntil(), visibleCount(storage, stream)));
+					}
+					@Override
+					public void notify ( BookmarkPlacedNotification bookmarkPlaced ) { }
+				});
+
+				EventReference before = storage.append(AppendCriteria.none(), Optional.of(stream), List.of(event(stream, "Before"))).getFirst().reference();
+				awaitTrue(() -> deliveries.stream().anyMatch(d -> d.atLeastUntil().equals(before)),
+					"fixture: an unstalled append must be announced");
+
+				EventReference withheld;
+				try ( Connection held = dataSource.getConnection() ) {
+					held.setAutoCommit(false);
+					try ( Statement stmt = held.createStatement() ) {
+						stmt.execute("INSERT INTO " + prefix + "unrelated_workload VALUES (1)");
+					}
+
+					withheld = storage.append(AppendCriteria.none(), Optional.of(stream), List.of(event(stream, "During"))).getFirst().reference();
+					assertEquals(1, visibleCount(storage, stream), "fixture: the appended event is withheld from reads");
+
+					// long enough for several poll slices of the monitor: the NOTIFY has long arrived
+					Thread.sleep(1_000);
+					assertTrue(deliveries.stream().noneMatch(d -> d.atLeastUntil().equals(withheld)),
+						"a notification for an event no query can see yet must be held back, not delivered");
+
+					held.commit();
+				}
+
+				awaitTrue(() -> deliveries.stream().anyMatch(d -> d.atLeastUntil().equals(withheld)),
+					"once the blocking transaction ends, the withheld notification must be delivered without another append");
+				Delivery delivery = deliveries.stream().filter(d -> d.atLeastUntil().equals(withheld)).findFirst().orElseThrow();
+				assertEquals(2, delivery.readableAtDelivery(),
+					"by the time a listener is told about an event, it must be able to read it");
+			});
+		}
+
+		/**
+		 * The failure the deferral exists to prevent, seen from the outside: a subscribed projection
+		 * that was told about an append it could not read would count as caught up and stay one event
+		 * behind until the next append to its stream — indefinitely, on a quiet stream. With the
+		 * notification held back, it catches up by itself when the blocker ends.
+		 */
+		@Test
+		public void testASubscribedProjectionCatchesUpWhenTheBlockerEnds ( ) throws Exception {
+			withStorage("visproj_", (storage, dataSource, prefix) -> {
+
+				EventStreamId streamId = EventStreamId.forContext("account").withPurpose("1");
+				execute(dataSource, "CREATE TABLE IF NOT EXISTS " + prefix + "unrelated_workload (id int)");
+
+				try ( EventStore eventStore = EventStoreFactory.get().eventStore(storage);
+					  EventStream<AccountEvent> stream = eventStore.getEventStream(streamId, AccountEvent.class) ) {
+
+					AtomicInteger projected = new AtomicInteger();
+					Projector.from(stream).towards(new Projection<AccountEvent>() {
+						@Override
+						public EventQuery eventQuery ( ) {
+							return EventQuery.matchAll();
+						}
+						@Override
+						public void when ( Event<AccountEvent> event ) {
+							projected.incrementAndGet();
+						}
+					}).subscribe().build();
+
+					stream.append(AppendCriteria.none(), Event.of(new AccountEvent.MoneyDeposited(10), Tags.none()));
+					awaitTrue(() -> projected.get() == 1, "fixture: a subscribed projection follows an unstalled append");
+
+					try ( Connection held = dataSource.getConnection() ) {
+						held.setAutoCommit(false);
+						try ( Statement stmt = held.createStatement() ) {
+							stmt.execute("INSERT INTO " + prefix + "unrelated_workload VALUES (1)");
+						}
+
+						stream.append(AppendCriteria.none(), Event.of(new AccountEvent.MoneyDeposited(20), Tags.none()));
+						assertEquals(1, visibleCount(storage, streamId), "fixture: the appended event is withheld from reads");
+
+						Thread.sleep(1_000);
+						assertEquals(1, projected.get(), "fixture: nothing to project while the event is withheld");
+
+						held.commit();
+					}
+
+					// nothing else is appended: the withheld notification alone has to bring the projection up to date
+					awaitTrue(() -> projected.get() == 2,
+						"a subscribed projection must catch up on the withheld events once the blocker ends, without another append");
+				}
+			});
+		}
+
+		sealed interface AccountEvent {
+			record MoneyDeposited ( int amount ) implements AccountEvent { }
+		}
+
 		// --- helpers -------------------------------------------------------------------------------
+
+		private static void awaitTrue ( BooleanSupplier condition, String message ) throws InterruptedException {
+			long deadline = System.nanoTime() + 10_000_000_000L;
+			while ( !condition.getAsBoolean() ) {
+				assertTrue(System.nanoTime() < deadline, message);
+				Thread.sleep(50);
+			}
+		}
+
 
 		private interface Scenario {
 			void run ( EventStorage storage, DataSource dataSource, String prefix ) throws Exception;

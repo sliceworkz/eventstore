@@ -99,14 +99,15 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
  * // Tags identify the consistency boundary for optimistic locking
  * Tag customerTag = Tag.of("customer", "123");
  *
- * // Query events with the customer tag to make a business decision
- * EventQuery query = EventQuery.forEvents(EventTypesFilter.any(), Tags.of(customerTag));
- * List<Event<CustomerEvent>> events = stream.query(query).toList();
- * EventReference lastRef = events.getLast().reference();
+ * // Pin the boundary at the stream head, then query events with the customer tag up to it to
+ * // make a business decision. An absent head is an empty stream, and a valid boundary
+ * EventQuery query = EventQuery.forTags(Tags.of(customerTag));
+ * EventReference head = stream.head().orElse(null);
+ * List<Event<CustomerEvent>> events = stream.query(query.until(head)).toList();
  *
- * // Append new events only if no new customer events appeared
+ * // Append new events only if no new customer events appeared after the boundary
  * stream.append(
- *     AppendCriteria.of(query, Optional.of(lastRef)),
+ *     AppendCriteria.of(query, head),
  *     Event.of(new CustomerUpdated("Jane"), Tags.of(customerTag))
  * );
  * }</pre>

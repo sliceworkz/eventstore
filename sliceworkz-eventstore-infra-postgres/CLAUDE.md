@@ -92,10 +92,34 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   barrier above is `event_tx < pg_snapshot_xmin(pg_current_snapshot())`, and `pg_snapshot_xmin` is the
   oldest transaction id still running — a property of the whole PostgreSQL cluster, not of this store.
   Every event appended since the oldest open transaction took its id is invisible here until that
-  transaction ends. **Nothing fails and nothing is logged**: reads just stop advancing, projections go
-  quiet, bookmarks stop moving, `SELECT count(*)` in psql shows the events are there, and when the
-  blocker finally ends everything appears at once. `PostgresVisibilityStallTest` demonstrates it end to
-  end.
+  transaction ends. **Nothing fails**: reads just stop advancing, projections go quiet, bookmarks
+  stop moving, `SELECT count(*)` in psql shows the events are there, and when the blocker finally
+  ends everything appears at once. `PostgresVisibilityStallTest` demonstrates it end to end.
+  - **Subscribers are woken when the withheld events surface, not when they were appended.** A
+    `NOTIFY` is delivered at the appending transaction's commit, which during a stall is before its
+    events are readable. Delivered then, it would wake a subscribed projection that reads nothing —
+    and a listener that reads nothing counts as caught up (see `OptimizingAppendListenerDecorator`),
+    so nothing would wake it again when the blocker ends: it would sit exactly as many events behind
+    as were appended during the stall, until the next append to its stream, which on a quiet stream
+    is indefinitely. So the append monitor (`NewEventsAppendedMonitor`) parks a notification whose
+    `event_tx` is not yet below `pg_snapshot_xmin`, re-reads the barrier every poll slice while
+    anything is parked, and delivers what has become readable — coalesced to the latest reference per
+    stream, so a stall on a busy stream holds one entry per stream, not one per append. The cost
+    while nothing is parked is nothing; while something is, one `SELECT pg_snapshot_xmin(...)` on
+    the monitoring connection per slice. The rejected alternative — a listener reporting how far it
+    could read, and the store re-delivering until it reaches the target — loses because a listener
+    cannot tell "nothing readable yet" from "nothing matches my query", and re-delivering on either
+    is the busy loop the decorator exists to prevent. The bookmark monitor needs none of this: a
+    bookmark read is deliberately not behind the barrier.
+    `PostgresVisibilityStallTest.testAppendNotificationsAreWithheldUntilTheEventsAreReadable` pins
+    the deferral at the SPI, `testASubscribedProjectionCatchesUpWhenTheBlockerEnds` the symptom.
+  - **This is also the one place the library logs a stall.** A notification is withheld for the few
+    milliseconds an older append is still in flight on every busy store, which is not worth a line;
+    one withheld for longer than `WITHHELD_NOTIFICATION_WARN_MILLIS` (10s) is a WARN naming the
+    storage, how long, how many streams are affected and the diagnosis query, once per stall, and an
+    INFO when it clears. Only a store with an append during the stall sees it — a stall on a store
+    nobody is writing to withholds nothing and is still silent — so it complements the external
+    monitoring below rather than replacing it.
   - **Only transactions that have *written* count** — this is what makes the hazard narrow rather than
     severe, and it is worth being precise about. PostgreSQL assigns a transaction id lazily, at the
     first write, and only assigned ids enter a snapshot's xmin. A read-only transaction pins nothing,
@@ -134,7 +158,8 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     still selects the right rows for any role.)
   - **The library does not meter this**, and there is nothing in the `sliceworkz.eventstore.*` meters
     that reveals it — they count and time the calls the store makes, all of which keep succeeding
-    throughout a stall. Detection is therefore external, on the database, using the query above.
+    throughout a stall. Beyond the withheld-notification WARN above, detection is external, on the
+    database, using the query above.
     Two notes for whoever wires that up:
     - **Watch `pg_snapshot_xmin` standing still *while* something holds a transaction id**, not either
       alone. xmin also stops moving on a completely idle database, so "xmin has not advanced" on its own
@@ -264,9 +289,9 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     per bounded context puts an idle entity's reference millions of rows back. Pinning at
     `EventSource.head()` *before* the read, and bounding the read with it, hands the probe a cursor
     at the stream head whatever the boundary; the head statement (`headSql`) reads the three
-    reference columns off `idx_events_stream_position` behind the same `pg_snapshot_xmin` barrier as
-    every read, so it can never run ahead of the reads it bounds (`PostgresVisibilityStallTest`,
-    `PostgresHeadStatementTest`). Re-reading the boundary before appending — what a conflict retry
+    reference columns off `idx_events_stream_position` (off `idx_events_tx_position` for a wildcard
+    stream) behind the same `pg_snapshot_xmin` barrier as every read, so it can never run ahead of the
+    reads it bounds (`PostgresVisibilityStallTest`, `PostgresHeadStatementTest`). Re-reading the boundary before appending — what a conflict retry
     does anyway — remains the fix for a reference held long.
   - **The alternatives, and why each loses — so nobody re-treads them.** One uniform `NOT EXISTS`
     for every criteria, left to the plan cache, binds the tag value and so sends the planner to the
@@ -293,6 +318,32 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   without it every DCB consistency check fails on 15 and older with `VALUES in FROM must have an alias`.
   An older server is **warned about, not rejected**: a hard failure would turn a library upgrade into an
   outage, and the warning names the version
+- **Every index exists for a statement the store issues, and `checkDatabase()` requires exactly those.**
+  The stream indexes — `idx_events_stream_position`, `idx_events_stream_type_position`, the two GIN
+  indexes — all lead with `(stream_context, stream_purpose)` and serve everything scoped to a stream.
+  Two B-trees on the `(event_tx, event_position)` order serve the reads that do not bind both stream
+  columns, which the stream indexes offer neither a start condition nor an order, so that without
+  them a page is a scan feeding a top-N sort whatever its `LIMIT`:
+  - **`idx_events_tx_position`**, the global order, for a read that binds no stream column: a
+    wildcard stream (`EventStreamId.anyContext()`) paged by a store-wide projection or an export,
+    `head()` of the whole store, an unscoped `EventStoreImporter` run. Measured at 300.000 events:
+    ~7.500 buffers and 120–220 ms per page without it, ~20 buffers and under 1 ms walking it; the
+    store-wide head the same.
+  - **`idx_events_context_tx_position`**, the same order within a context, for a read that binds
+    the context and leaves the purpose open — a whole-context replay or export over a per-entity
+    layout, where every entity is its own purpose. The global index can serve that shape only with
+    the context as a `Filter`, walking every other context's events to discard them, which is fine
+    while the context is most of the table and linear in the rest of it otherwise: measured on a
+    context holding 2% of 300.000 events, 24.500 rows removed by the filter against none, 3.9 ms
+    against 0.9 ms for a page. The planner picks between the two by share — the smaller global index
+    with a filter when the context dominates, this one when it does not — and both are index walks.
+  - Both are cheap to maintain: their trailing columns only ever grow, so every insert lands on the
+    rightmost leaf of its context, or of the table.
+  - `PostgresGlobalOrderIndexTest` pins the plans (a plain `Index Scan`, no `Sort`, the cursor in the
+    `Index Cond`; the heads an `Index Scan Backward`), on a corpus where the context under test is a
+    minority of the table so the choice is unambiguous, and the migration: a database from before the
+    indexes is reported by `VALIDATE` naming the missing one and repaired by `ENSURE`, see "Migrating
+    a database created before the order indexes existed" in the README.
 - **`ENSURE` brings functions and triggers up to date; tables, columns and indexes are only ever created.**
   The functions are `CREATE OR REPLACE`d and each trigger is compared against the shape this release wants
   (`tgtype` plus target function, in a `DO $$` block) and recreated only when it differs — so wrong timing,
@@ -366,6 +417,19 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   and only recycled once every listener has consumed, so a stalled listener does make usage accumulate
   monotonically across transactions — but from a base low enough that per-row notification would be a
   throughput and latency problem, not a correctness-of-operation one.
+- **The monitors survive whatever arrives on their channels.** `NewEventsAppendedMonitor` and
+  `BookmarkPlacedMonitor` each turn a payload into a notification in a `parse(String)` step that
+  catches `RuntimeException` around the parse *and* the conversion — `toNotification()` builds an
+  `EventReference`, which throws `IllegalArgumentException` on a null id or a non-positive position, and
+  the channel is open to any session in the database and to the trigger of any other release. A bad
+  payload is logged at ERROR with the payload (it carries stream, position, tx and id, never event data)
+  and dropped. The fan-out to listeners (`notifyEach`) contains `Throwable`, since a test double's
+  `AssertionError` or a projection's `StackOverflowError` is not the monitor's to die of. The outer loop
+  catches `RuntimeException` alongside `SQLException` and backs off the same way, and the `listening`
+  flag is cleared in a `finally`, so the `notifications.up` gauge cannot read 1 over a monitor that has
+  exited by any path. `PostgresNotificationMonitorTest` drives `parse` and `deliver` directly, without a database;
+  `PostgresNotificationStartupTest.testWhatArrivesOnTheChannelCannotKillAMonitor` does it on a live
+  store through `pg_notify`.
 - `stream_purpose` defaults to `'default'` in the DDL, matching `EventStreamId.DEFAULT_PURPOSE` — a public
   constant, so an interop layer can bind the same value the library does rather than copy the literal out
   of this file. A database created by an older release may carry `''` as that default; operators doing raw

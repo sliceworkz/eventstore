@@ -26,6 +26,7 @@ import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -39,6 +40,7 @@ import javax.sql.DataSource;
 
 import org.sliceworkz.eventstore.shredding.DataSubject;
 import org.sliceworkz.eventstore.shredding.ErasureReason;
+import org.sliceworkz.eventstore.shredding.ErasureReport;
 import org.sliceworkz.eventstore.shredding.KeyAuditQuery;
 import org.sliceworkz.eventstore.shredding.KeyId;
 import org.sliceworkz.eventstore.shredding.ShreddingAudit;
@@ -67,7 +69,10 @@ import org.sliceworkz.eventstore.shredding.ShreddingKeyStore.KeyResolution;
  * the table, in the write-ahead log, on every replica and in every backup, and all of it becomes
  * unreadable at the moment the material goes. Keeping the row is what gives the erasure an audit trail —
  * nothing else records that it happened — and what lets a key id keep resolving to "erased" instead of
- * to "unknown".
+ * to "unknown": a key id with no row at all is one this store never minted, and resolving it throws
+ * {@link ShreddingException} rather than reporting an erasure. That is the store being pointed at the
+ * wrong prefix or database, or events imported without their keys, and reported as erased it would
+ * have every protected value read as destroyed, permanently, in every bookmarked read model.
  * <p>
  * Every key a subject has ever held is destroyed, not just the active one: a subject appended for after
  * an earlier erasure holds a second key, and missing it would leave that data readable while the
@@ -103,8 +108,8 @@ import org.sliceworkz.eventstore.shredding.ShreddingKeyStore.KeyResolution;
  * decides on the category in the envelope and never reaches this store for a denied one.
  * <p>
  * Row-level security on the key table does <em>not</em> give a denial: a row the policy hides is
- * indistinguishable from a row that never existed, and reads as erased. Use column privileges for the
- * hard boundary and the codec restriction for the per-category one.
+ * indistinguishable from a row that never existed, and fails to resolve as a key this store never held.
+ * Use column privileges for the hard boundary and the codec restriction for the per-category one.
  * <p>
  * A denial is cached for the same ttl as a key, since a role's privileges do not change per value; a
  * grant made while a process runs is seen once the entry lapses.
@@ -306,10 +311,15 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 			statement.setString(1, key.value());
 			try ( ResultSet resultSet = statement.executeQuery() ) {
 				if ( !resultSet.next() ) {
-					// No such key. Reported as "erased" rather than thrown: a key id this store has never
-					// held cannot be produced by a retry either, and the only readings that reach here are
-					// an erasure whose row was pruned, or an envelope from another store.
-					return KeyResolution.Erased.INSTANCE;
+					// No such key, which is not "erased": a shredded key keeps its row. An id with no row
+					// was minted by some other store -- this one is pointed at the wrong prefix or
+					// database, or the events were imported without their keys -- and reported as erased
+					// every protected value would read as destroyed, and bookmarked projections would
+					// write that into read models and never revisit it. Thrown, the read fails and the
+					// bookmark stays until the store is pointed at its keys.
+					throw new ShreddingException(
+							"key %s is not held in %s and never was: the value was sealed against another key store. Point this store at the keys the events were sealed with, or import the keys alongside the events."
+									.formatted(key, tableName));
 				}
 				byte[] material = resultSet.getBytes("key_material");
 				if ( material == null ) {
@@ -384,6 +394,66 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 		shredded.forEach(cache::remove);
 
 		return List.copyOf(shredded);
+	}
+
+	@Override
+	public List<ErasureReport> shredAllCategories ( String subjectType, String subjectId, ErasureReason reason ) {
+		if ( subjectType == null || subjectType.isBlank() ) {
+			throw new IllegalArgumentException("subjectType cannot be null or blank");
+		}
+		if ( subjectId == null || subjectId.isBlank() ) {
+			throw new IllegalArgumentException("subjectId cannot be null or blank");
+		}
+		if ( reason == null ) {
+			throw new IllegalArgumentException("reason cannot be null");
+		}
+
+		// The same statement as shred without the category predicate: one UPDATE, so every category
+		// goes in one transaction and no append can mint a fresh key for one of them between two
+		// erasures. The category comes back per row to be reported.
+		String sql = """
+				UPDATE %s
+				   SET key_material = NULL,
+				       shredded_at = CURRENT_TIMESTAMP,
+				       shredded_reason = ?
+				 WHERE subject_type = ? AND subject_id = ?
+				   AND key_material IS NOT NULL
+				RETURNING key_id, subject_category, shredded_at
+				""".formatted(tableName);
+
+		// insertion-ordered, so the report lists categories in the order the rows came back
+		Map<String, List<KeyId>> shreddedByCategory = new LinkedHashMap<>();
+		Instant shreddedAt = null;
+
+		try ( Connection connection = dataSource.getConnection();
+				PreparedStatement statement = connection.prepareStatement(sql) ) {
+
+			statement.setString(1, reason.value());
+			statement.setString(2, subjectType);
+			statement.setString(3, subjectId);
+
+			try ( ResultSet resultSet = statement.executeQuery() ) {
+				while ( resultSet.next() ) {
+					shreddedByCategory.computeIfAbsent(resultSet.getString("subject_category"), category -> new ArrayList<>())
+							.add(KeyId.of(resultSet.getString("key_id")));
+					Timestamp stamped = resultSet.getTimestamp("shredded_at");
+					shreddedAt = stamped == null ? Instant.now() : stamped.toInstant();
+				}
+			}
+
+		} catch (SQLException e) {
+			throw new ShreddingException("failed to shred the keys of subject %s/%s across categories in %s".formatted(subjectType, subjectId, tableName), e);
+		}
+
+		List<ErasureReport> reports = new ArrayList<>();
+		for ( Map.Entry<String, List<KeyId>> category : shreddedByCategory.entrySet() ) {
+			reports.add(new ErasureReport(new DataSubject(subjectType, subjectId, category.getKey()), reason, category.getValue(), shreddedAt));
+		}
+
+		// Only after the database has committed the erasure, as in shred.
+		shreddedByCategory.values().forEach(keys -> keys.forEach(cache::remove));
+
+		return List.copyOf(reports);
 	}
 
 	@Override

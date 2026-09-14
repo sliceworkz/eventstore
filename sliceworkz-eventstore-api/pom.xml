@@ -41,7 +41,61 @@
 		<maven.deploy.skip>false</maven.deploy.skip>
 	</properties>
 	
+	<!-- Micrometer and SLF4J are the api's dependencies; Jackson is not - see "What the published artifacts put on a consumer's classpath" in CLAUDE.md -->
 	<dependencies>
+		<dependency>
+		    <groupId>io.micrometer</groupId>
+		    <artifactId>micrometer-core</artifactId>
+		</dependency>
+		<dependency>
+		    <groupId>org.slf4j</groupId>
+		    <artifactId>slf4j-api</artifactId>
+		</dependency>
 
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-annotations</artifactId>
+			<optional>true</optional>
+		</dependency>
+
+		<dependency>
+			<groupId>tools.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-enforcer-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>no-jackson-in-the-api</id>
+						<goals>
+							<goal>enforce</goal>
+						</goals>
+						<configuration>
+							<rules>
+								<bannedDependencies>
+									<message>The api artifact must not carry Jackson (see CLAUDE.md); declare it in the module that uses it.</message>
+									<searchTransitive>true</searchTransitive>
+									<excludes>
+										<exclude>tools.jackson.*:*:*:*:compile</exclude>
+										<exclude>tools.jackson.*:*:*:*:runtime</exclude>
+										<exclude>com.fasterxml.jackson.*:*:*:*:compile</exclude>
+										<exclude>com.fasterxml.jackson.*:*:*:*:runtime</exclude>
+									</excludes>
+									<includes>
+										<include>com.fasterxml.jackson.core:jackson-annotations</include>
+									</includes>
+								</bannedDependencies>
+							</rules>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
 </project>

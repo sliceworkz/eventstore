@@ -36,6 +36,7 @@
 
 	<properties>
 		<jackson.version>3.2.2</jackson.version>
+		<jackson-annotations.version>2.22</jackson-annotations.version>
 		<slf4j.version>2.0.19</slf4j.version>
 		<postgresql.jdbc.version>42.7.13</postgresql.jdbc.version>
 		<uuid-creator.version>6.1.1</uuid-creator.version>
@@ -92,6 +93,11 @@
 			    <groupId>tools.jackson.core</groupId>
 			    <artifactId>jackson-databind</artifactId>
 			    <version>${jackson.version}</version>
+			</dependency>
+			<dependency>
+			    <groupId>com.fasterxml.jackson.core</groupId>
+			    <artifactId>jackson-annotations</artifactId>
+			    <version>${jackson-annotations.version}</version>
 			</dependency>
 
 			<!-- JUnit Testing -->
@@ -159,32 +165,17 @@
 			    <groupId>io.micrometer</groupId>
 			    <artifactId>micrometer-core</artifactId>
 			    <version>${micrometer.version}</version>
-			    <optional>true</optional>
 			</dependency>
 			
 		</dependencies>
 	</dependencyManagement>
 	
+	<!-- test scope only: a compile dependency here would ship in every published POM -->
 	<dependencies>
-		<dependency>
-			<groupId>tools.jackson.core</groupId>
-			<artifactId>jackson-databind</artifactId>
-		</dependency>
-		
-		<dependency>
-		    <groupId>io.micrometer</groupId>
-		    <artifactId>micrometer-core</artifactId>
-		</dependency>
-		
 		<dependency>
 			<groupId>org.junit.jupiter</groupId>
 			<artifactId>junit-jupiter</artifactId>
 			<scope>test</scope>
-		</dependency>
-
-		<dependency>
-		    <groupId>org.slf4j</groupId>
-		    <artifactId>slf4j-api</artifactId>
 		</dependency>
 		<dependency>
 		    <groupId>org.slf4j</groupId>

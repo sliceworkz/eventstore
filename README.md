@@ -185,6 +185,12 @@ database privileges per init mode, and the backup and migration notes.
 - [`CLAUDE.md`](CLAUDE.md) is the design record: why each contract is what it is, which alternatives
   were rejected and what was measured. Read it when the javadoc says *what* and you want *why*.
 
+What lands on your classpath: `sliceworkz-eventstore-api` brings Micrometer (the store's meters, with
+`Metrics.globalRegistry` as the default registry) and SLF4J, and no Jackson beyond the optional
+`jackson-annotations` artifact that Jackson 2 and 3 share. Jackson 3 (`tools.jackson.*`) comes with the
+impl and the backends; it is a different groupId and package from Jackson 2, so an application on
+Jackson 2 runs both side by side with no conflict.
+
 
 # Shutting a store down
 

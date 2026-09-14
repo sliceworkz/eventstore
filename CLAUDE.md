@@ -19,6 +19,36 @@ This is a Java-based EventStore library implementing the Dynamic Consistency Bou
 - `sliceworkz-eventstore-benchmark`: Capacity-characterisation suite (nothing runs during a build)
 - `sliceworkz-eventstore-parent-pom` / `sliceworkz-eventstore-bom`: Build parent and the bill of materials consumers import
 
+**What the published artifacts put on a consumer's classpath.** The parent pom declares no
+compile-scoped dependency: one there is inherited by every module and ships in every published POM,
+whether the module uses it or not. Each module declares what it imports, so the transitive set of an
+artifact is what its code needs and nothing more:
+
+- **`sliceworkz-eventstore-api` carries Micrometer and SLF4J, and no Jackson proper.** `MeterRegistry`
+  is in the signature of `EventStoreFactory.eventStore` and `Metrics.globalRegistry` is the default of
+  every builder, so Micrometer is a compile dependency and deliberately never `<optional>`: marking it
+  optional would not make a metrics-free consumer possible, only move the failure from dependency
+  resolution to a `NoClassDefFoundError` on the first store built. The alternative — an internal meter
+  facade with a no-op binding, Micrometer loaded only when present — is what a metrics-free api would
+  take, and is not on offer. `Projector` logs through SLF4J. The one Jackson artifact the api names is
+  `jackson-annotations`, optional: `EventQuery` and `EventFilter` mark their derived getters
+  `@JsonIgnore` so a mapper renders a query by its components only, and that is the 2.x annotations
+  artifact Jackson 2 and Jackson 3 share (Jackson 3's databind depends on it). A consumer serializing
+  anything already has it; one with no Jackson resolves nothing and loses nothing, because a JVM
+  ignores an annotation whose type is absent at runtime. An enforcer rule in the api pom fails the
+  build if Jackson proper reaches its compile or runtime classpath.
+- **Jackson 3 arrives with the impl, the JSON codecs and the backends** — the payload serde, the
+  file codecs, the in-memory store's payload validation, the Postgres notification payloads. It is
+  `tools.jackson.*`, a different groupId and package from Jackson 2, so an application on Jackson 2
+  runs both side by side: two Jacksons on the classpath, no conflict, and its own mapper untouched. That is the cost of building the serde on Jackson 3 and it is not hidden.
+- **`Metrics.globalRegistry` is the default wherever a registry is not given** — the one-argument
+  `EventStoreFactory.eventStore(storage)` and every storage builder's `buildStore()`. Micrometer's
+  global registry is a composite with no children until something adds one, so meters registered
+  there cost a map entry and record nothing; an application that binds its real registry to it
+  gets the store's meters in its own series without configuring anything. The testing module never registers there: `AbstractEventStoreTest` and
+  `EventStoreFixture` give every store a `SimpleMeterRegistry` of its own, so a fixture in an
+  application's test suite leaves nothing behind in the application's registry.
+
 ## Build Commands
 
 **Build entire project:**

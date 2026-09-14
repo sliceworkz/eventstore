@@ -35,9 +35,11 @@ import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventSerializationException;
 import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.infra.inmem.shredding.InMemoryShreddingKeyStore;
 import org.sliceworkz.eventstore.projection.Projection;
 import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.projection.Projector.ProjectorMetrics;
+import org.sliceworkz.eventstore.projection.ProjectorException;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.shredding.AesGcmShreddingCodec;
 import org.sliceworkz.eventstore.shredding.DataSubject;
@@ -361,6 +363,47 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		ShreddingException thrown = assertThrows(ShreddingException.class,
 				() -> reading.query(EventQuery.matchAll()).toList());
 		assertNotNull(thrown.getMessage());
+	}
+
+	/**
+	 * The other way to make the same mistake: being asked for a key the store has never held. A shredded
+	 * key keeps its row, so the store can tell the two apart, and they mean different things — "erased"
+	 * is the mechanism working, an unknown id is a store pointed at the wrong directory, prefix or
+	 * database, or events imported without their keys. Reported as erased, that would have every
+	 * protected value in the store read as destroyed and every bookmarked projection write it into its
+	 * read model for good. It throws instead, so the read fails, nothing advances, and the projection
+	 * recovers once the store is pointed at its keys.
+	 */
+	@ForEachBackend
+	void aKeyThisStoreNeverHeldThrowsRatherThanReadingAsErased ( ) {
+		ShreddingKeyStore own = backend().shreddingKeyStore(eventStorage());
+
+		// at the seam: neither erased nor denied, on both lookups
+		KeyId neverMinted = KeyId.of("k-never-minted-here");
+		assertThrows(ShreddingException.class, () -> own.resolveKey(neverMinted));
+		assertThrows(ShreddingException.class, () -> own.resolve(neverMinted));
+
+		// through the store: sealed under another key store's keys, read through this one
+		EventStream<PaymentEvent> elsewhere = eventStoreWithShredding(new InMemoryShreddingKeyStore()).getEventStream(STREAM, PaymentEvent.class);
+		List<Event<PaymentEvent>> written = elsewhere.append(AppendCriteria.none(), Event.of(transfer(), Tags.none()));
+		List<String> keysOnTheEvent = written.getFirst().tags().tags().stream()
+				.filter(tag -> KeyId.TAG_KEY.equals(tag.key()))
+				.map(Tag::value)
+				.toList();
+		assertFalse(keysOnTheEvent.isEmpty());
+
+		EventStream<PaymentEvent> reading = eventStoreWithShredding(own).getEventStream(STREAM, PaymentEvent.class);
+		ShreddingException thrown = assertThrows(ShreddingException.class,
+				() -> reading.query(EventQuery.matchAll()).toList());
+		assertTrue(keysOnTheEvent.stream().anyMatch(thrown.getMessage()::contains),
+				"the failure names the key the store does not hold, not a vague erasure: " + thrown.getMessage());
+
+		// and a projector fails its batch rather than advancing over the gap
+		CountingProjection projection = new CountingProjection();
+		ProjectorException failed = assertThrows(ProjectorException.class,
+				() -> Projector.from(reading).towards(projection).build().run());
+		assertInstanceOf(ShreddingException.class, failed.getCause());
+		assertEquals(0, projection.handled, "nothing was projected, so nothing could have been bookmarked past");
 	}
 
 	@ForEachBackend

@@ -54,6 +54,9 @@ import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
  *       after erasure.</li>
  *   <li>Shredding destroys the key material and keeps the row, stamped with when and why, so the audit
  *       trail survives and the key id keeps resolving to "erased" rather than to "unknown".</li>
+ *   <li>A key id this store has never held throws {@link ShreddingException}: the events were sealed
+ *       against some other store, and reporting them as erased would write that into every read model
+ *       for good. The file-backed subclass pointed at the wrong directory is the realistic way in.</li>
  *   <li>A subject that is appended for after an erasure gets a <em>new</em> key. New data is readable;
  *       what was sealed under the destroyed key never is.</li>
  * </ul>
@@ -111,11 +114,16 @@ public class InMemoryShreddingKeyStore implements ShreddingKeyStore {
 			throw new IllegalArgumentException("key cannot be null");
 		}
 		StoredKey stored = keys.get(key);
-		// A key that was shredded and one this store never knew are both "no key": there is nothing to
-		// decrypt with either way, and an unknown key id in an envelope this store cannot serve is not
-		// something a retry would fix. Anything that a retry *would* fix throws instead -- there is
-		// nothing here that can fail transiently, which is the whole reason this store is trivial.
-		return stored == null ? Optional.empty() : Optional.ofNullable(stored.material());
+		if ( stored == null ) {
+			// Not "erased": a shredded key keeps its row, so an id with no row is one this store never
+			// minted, and the envelope was sealed against some other store. Reported as erased, a store
+			// pointed at the wrong key directory would read every protected value as destroyed, and
+			// bookmarked projections would write that into read models and never revisit it.
+			throw new ShreddingException(
+					"key %s is not held by this key store and never was: the value was sealed against another key store. Point this store at the keys the events were sealed with, or import the keys alongside the events."
+							.formatted(key));
+		}
+		return Optional.ofNullable(stored.material());
 	}
 
 	@Override

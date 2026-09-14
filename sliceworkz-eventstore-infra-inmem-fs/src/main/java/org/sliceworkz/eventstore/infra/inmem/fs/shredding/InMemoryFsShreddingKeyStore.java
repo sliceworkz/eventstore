@@ -134,10 +134,10 @@ public class InMemoryFsShreddingKeyStore extends InMemoryShreddingKeyStore {
 				restore(fromJson(jsonMapper.readTree(line)));
 			} catch (RuntimeException e) {
 				// A key that cannot be parsed is not a key that can be ignored: every event sealed under
-				// it would silently read as erased, which is exactly the confusion this design works to
-				// avoid everywhere else.
+				// it would fail to read as a key this store never held, and a shredded one would lose the
+				// record of its erasure. A file that is partly a key store is not one.
 				throw new ShreddingException(
-						"cannot parse a shredding key in %s; refusing to start with keys missing, because every value sealed under them would read as erased".formatted(keysFile), e);
+						"cannot parse a shredding key in %s; refusing to start with keys missing, because every value sealed under them would be unreadable".formatted(keysFile), e);
 			}
 		}
 	}

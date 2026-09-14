@@ -61,13 +61,14 @@
  *
  * <h2>Projection with Metadata:</h2>
  * <pre>{@code
- * // Track when events occurred using timestamps
+ * // Count events per day. The timestamp is an Instant, so the day it falls on depends on the zone
+ * // the report is for: name it, rather than the JVM's
  * Map<LocalDate, Long> eventsByDate = new HashMap<>();
  *
  * Projection<CustomerEvent> projection = new Projection<>(
  *     EventQuery.matchAll(),
  *     event -> {
- *         LocalDate date = event.timestamp().toLocalDate();
+ *         LocalDate date = LocalDate.ofInstant(event.timestamp(), ZoneId.of("Europe/Brussels"));
  *         eventsByDate.merge(date, 1L, Long::sum);
  *     }
  * );

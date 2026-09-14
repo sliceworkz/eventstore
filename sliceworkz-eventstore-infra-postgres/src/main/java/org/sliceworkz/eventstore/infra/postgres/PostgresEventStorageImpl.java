@@ -30,7 +30,6 @@ import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -1944,7 +1943,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 							EventToStore e = it.next();
 
 							EventReference reference = EventReference.of(id, position, tx);
-							storedEvents.add(e.positionAt(reference, timestamp.toInstant().atOffset(ZoneOffset.UTC).toLocalDateTime()));
+							storedEvents.add(e.positionAt(reference, timestamp.toInstant()));
 						}
 
 						if ( storedEvents.size() != events.size() ) {
@@ -2095,11 +2094,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 			parameters.add(event.stream().context());
 			parameters.add(event.stream().purpose());
 			parameters.add(event.type().name());
-			// The timestamp travels with the event. Bound as an OffsetDateTime at UTC so the instant is
-			// unambiguous on the wire, mirroring the read path which renders event_timestamp back to a
-			// UTC LocalDateTime. Note timestamptz keeps microseconds and rounds anything finer, so a
-			// nanosecond-precision source timestamp lands up to half a microsecond off.
-			parameters.add(OffsetDateTime.of(event.timestamp(), ZoneOffset.UTC));
+			// The timestamp travels with the event. Bound as an OffsetDateTime at UTC, which the driver
+			// maps to timestamptz unambiguously; the read path hands the column back as the Instant it
+			// is. Note timestamptz keeps microseconds and rounds anything finer, so a nanosecond-precision
+			// source timestamp lands up to half a microsecond off.
+			parameters.add(OffsetDateTime.ofInstant(event.timestamp(), ZoneOffset.UTC));
 			parameters.add(event.immutableData());
 			parameters.add(event.tags().toStrings().toArray(new String[0]));
 		}
@@ -2432,7 +2431,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		// Create Tags from tag array
 		Tags tags = Tags.parse(tagsArray);
 
-		return new StoredEvent(streamId, EventType.ofType(eventTypeName), eventReference, eventDataJson, tags, timestamp.toInstant().atOffset(ZoneOffset.UTC).toLocalDateTime(), idempotencyKey);
+		return new StoredEvent(streamId, EventType.ofType(eventTypeName), eventReference, eventDataJson, tags, timestamp.toInstant(), idempotencyKey);
 	}
 
 	

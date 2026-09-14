@@ -19,7 +19,7 @@ package org.sliceworkz.eventstore.projection;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Stream;
@@ -46,7 +46,7 @@ public class ProjectionTest {
 		EventStreamId mockStream = EventStreamId.forContext("unit").withPurpose("test");
 		EventReference ref1 = EventReference.create(1, 1);
 		EventReference ref2 = EventReference.create(2, 2);
-		LocalDateTime now = LocalDateTime.now();
+		Instant now = Instant.now();
 		this.mockEvents = Arrays.asList(new Event[] {
 				Event.of(mockStream, ref1, EventType.of(new FirstDomainEvent()), EventType.of(new FirstDomainEvent()), new FirstDomainEvent(), Tags.none(), now),
 				Event.of(mockStream, ref2, EventType.of(new SecondDomainEvent()), EventType.of(new SecondDomainEvent()), new SecondDomainEvent(), Tags.none(), now)});

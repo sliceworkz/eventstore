@@ -142,6 +142,17 @@ mvn clean install -DskipTests
 - Data is the actual domain event (typically a sealed interface with record implementations)
 - Tags enable dynamic querying and consistency boundaries
 - Created via `Event.of(data, tags)` for ephemeral events or full constructor for persisted events
+- **`timestamp` is an `Instant`**: the moment the store persisted the event, on the storage's clock — the
+  JVM's in memory, the server's on Postgres, where the column is a `timestamptz`. It is the same kind of
+  value as `Bookmark.updatedAt` and the clocks on `Lease`, so the three compare without conversion, and it
+  is what `StoredEvent`, `EventToStore.positionAt` and `EventToImport` carry too. An instant has no zone:
+  the day or wall-clock time it falls on is the reader's rendering, made with the zone the reader means
+  (`event.timestamp().atZone(zone)`). The alternative — a `LocalDateTime` documented as "always UTC" —
+  loses because the type does not carry the convention: nothing stops a reader comparing it with a
+  wall-clock reading in the JVM's zone, and every correct use starts by re-attaching the offset the type
+  dropped. The file codec writes it as an ISO-8601 instant at UTC and reads a value carrying no offset as
+  UTC, so an events directory holds one meaning of the field whichever shape a file carries.
+  `EventTimestampTest` pins per backend that the stamp is the instant of the append
 
 **EphemeralEvent:**
 - Lightweight event representation before persistence (no stream, reference, or timestamp)
@@ -1413,7 +1424,7 @@ See `EventStoreFixtureTest` for a worked example.
 **Timestamps are not assertable.** The in-memory store stamps events from the JVM clock; Postgres does
 not bind `event_timestamp` on append at all and lets the DDL default (`CURRENT_TIMESTAMP`, server
 clock) apply. There is no `Clock` seam anywhere. Assert on timestamps only with a tolerance window, as
-`EventTimestampUtcTest` does. The one path that writes a chosen timestamp is `importEvents`, which
+`EventTimestampTest` does. The one path that writes a chosen timestamp is `importEvents`, which
 bypasses `append()`.
 
 ## Benchmarking

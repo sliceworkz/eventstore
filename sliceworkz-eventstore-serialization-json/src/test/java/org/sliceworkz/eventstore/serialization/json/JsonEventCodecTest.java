@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.Set;
 
 import org.junit.jupiter.api.Test;
@@ -45,7 +45,7 @@ class JsonEventCodecTest {
 				EventReference.of(EventId.of("id-1"), 1L, 1L, 0),
 				"{\"name\":\"John\"}",
 				new Tags(Set.of(Tag.of("customer", "123"))),
-				LocalDateTime.parse("2026-04-19T12:34:56.789"));
+				Instant.parse("2026-04-19T12:34:56.789Z"));
 
 		String json = codec.write(event);
 		StoredEvent restored = codec.read(json);
@@ -61,7 +61,7 @@ class JsonEventCodecTest {
 				EventReference.of(EventId.of("id-1"), 1L, 1L, 0),
 				"{\"name\":\"John Doe\"}",
 				new Tags(Set.of(Tag.of("customer", "42"))),
-				LocalDateTime.parse("2026-04-19T12:34:56.789"));
+				Instant.parse("2026-04-19T12:34:56.789Z"));
 
 		String json = codec.write(event);
 
@@ -79,7 +79,7 @@ class JsonEventCodecTest {
 				EventReference.of(EventId.of("id-1"), 1L, 1L, 0),
 				"{\"name\":\"John\"}",
 				new Tags(Set.of(Tag.of("customer", "123"))),
-				LocalDateTime.parse("2026-04-19T12:34:56.789"),
+				Instant.parse("2026-04-19T12:34:56.789Z"),
 				"idem-key-1");
 
 		String json = codec.write(event);
@@ -90,6 +90,35 @@ class JsonEventCodecTest {
 	}
 
 	@Test
+	void writesTheTimestampAsAnInstantAtUtc ( ) {
+		StoredEvent event = new StoredEvent(
+				EventStreamId.forContext("ctx").withPurpose("p"),
+				EventType.ofType("Stamped"),
+				EventReference.of(EventId.of("id-4"), 4L, 4L, 0),
+				"{}",
+				new Tags(Set.of()),
+				Instant.parse("2026-04-19T12:34:56.789Z"));
+
+		assertTrue(codec.write(event).contains("\"timestamp\" : \"2026-04-19T12:34:56.789Z\""));
+	}
+
+	@Test
+	void readsATimestampWithoutOffsetAsUtc ( ) {
+		StoredEvent event = new StoredEvent(
+				EventStreamId.forContext("ctx").withPurpose("p"),
+				EventType.ofType("Stamped"),
+				EventReference.of(EventId.of("id-5"), 5L, 5L, 0),
+				"{}",
+				new Tags(Set.of()),
+				Instant.parse("2026-04-19T12:34:56.789Z"));
+
+		String withoutOffset = codec.write(event).replace("2026-04-19T12:34:56.789Z", "2026-04-19T12:34:56.789");
+		assertTrue(withoutOffset.contains("\"timestamp\" : \"2026-04-19T12:34:56.789\""));
+
+		assertEquals(event, codec.read(withoutOffset));
+	}
+
+	@Test
 	void preservesNullIdempotencyKey ( ) {
 		StoredEvent event = new StoredEvent(
 				EventStreamId.forContext("ctx").withPurpose("p"),
@@ -97,7 +126,7 @@ class JsonEventCodecTest {
 				EventReference.of(EventId.of("id-3"), 3L, 3L, 0),
 				"{}",
 				new Tags(Set.of()),
-				LocalDateTime.parse("2026-04-19T00:00:00"));
+				Instant.parse("2026-04-19T00:00:00Z"));
 
 		StoredEvent restored = codec.read(codec.write(event));
 
@@ -112,7 +141,7 @@ class JsonEventCodecTest {
 				EventReference.of(EventId.of("id-2"), 2L, 2L, 0),
 				null,
 				new Tags(Set.of()),
-				LocalDateTime.parse("2026-04-19T00:00:00"));
+				Instant.parse("2026-04-19T00:00:00Z"));
 
 		StoredEvent restored = codec.read(codec.write(event));
 

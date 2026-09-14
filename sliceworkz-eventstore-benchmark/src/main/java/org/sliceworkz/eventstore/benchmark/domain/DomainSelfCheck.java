@@ -17,7 +17,7 @@
  */
 package org.sliceworkz.eventstore.benchmark.domain;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -177,7 +177,7 @@ public final class DomainSelfCheck {
 	 */
 	private static int roundTripLegacy ( EventStore store, EventStorage storage ) {
 		EventStreamId id = EventStreamId.forContext("sales").withPurpose("legacy");
-		LocalDateTime when = LocalDateTime.of(2024, 1, 1, 12, 0);
+		Instant when = Instant.parse("2024-01-01T12:00:00Z");
 
 		storage.importEvents(List.of(
 				new EventToImport(id, EventType.of(LegacySalesEvent.OrderPlacedV1.class), EventId.create(),

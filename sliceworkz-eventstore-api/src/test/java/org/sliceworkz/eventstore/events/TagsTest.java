@@ -22,9 +22,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.Optional;
 import java.util.Set;
 
 import org.junit.jupiter.api.Test;
@@ -212,5 +214,96 @@ public class TagsTest {
 		assertFalse(onEvent.containsAll(keyOnlyQuery));
 		assertFalse(Tags.of(Tag.of("customer")).containsAll(onEvent));
 		assertFalse(onEvent.toStrings().contains("customer"));
+	}
+
+	// ---------------------------------------------------------------------------------------------
+	// Tags.of(Tag...) is a set: a repeated tag is one tag, never an error. Tags gathered from several
+	// sources overlap legitimately, and the caller should not have to de-duplicate first.
+	// ---------------------------------------------------------------------------------------------
+
+	@Test
+	void testOfEliminatesDuplicateTags ( ) {
+		Tag customer = Tag.of("customer", "123");
+		Tags tags = Tags.of(customer, Tag.of("region", "EU"), customer, Tag.of("customer", "123"));
+		assertEquals(2, tags.tags().size());
+		assertEquals(Tags.of(customer, Tag.of("region", "EU")), tags);
+	}
+
+	@Test
+	void testOfTheSameTagTwiceIsThatTag ( ) {
+		Tag t = Tag.of("a", "b");
+		assertEquals(Tags.of(t), Tags.of(t, t));
+		assertEquals(Tags.of(t), Tags.of(t, t, t));
+	}
+
+	@Test
+	void testOfRejectsANullTag ( ) {
+		IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+				() -> Tags.of(Tag.of("a", "b"), null));
+		assertTrue(e.getMessage().contains("null tag"), e.getMessage());
+	}
+
+	@Test
+	void testOfIsImmutable ( ) {
+		Tags tags = Tags.of(Tag.of("a", "b"));
+		assertThrows(UnsupportedOperationException.class, () -> tags.tags().add(Tag.of("c", "d")));
+	}
+
+	// ---------------------------------------------------------------------------------------------
+	// tag(key) answers a single tag; several tags under one key are an ordinary shape (a transfer
+	// tagged with both customers), and tag(key) refuses to pick one of them at random.
+	// ---------------------------------------------------------------------------------------------
+
+	@Test
+	void testTagFindsTheSingleTagWithAKey ( ) {
+		Tags tags = Tags.of(Tag.of("customer", "123"), Tag.of("region", "EU"), Tag.of("important"));
+		assertEquals(Optional.of(Tag.of("customer", "123")), tags.tag("customer"));
+		assertEquals(Optional.of(Tag.of("important")), tags.tag("important"));
+		assertEquals(Optional.empty(), tags.tag("order"));
+		assertEquals(Optional.empty(), Tags.none().tag("customer"));
+	}
+
+	@Test
+	void testTagThrowsWhenSeveralTagsCarryTheKey ( ) {
+		Tags tags = Tags.of(Tag.of("customer", "alice"), Tag.of("customer", "bob"), Tag.of("region", "EU"));
+		IllegalStateException e = assertThrows(IllegalStateException.class, () -> tags.tag("customer"));
+		assertTrue(e.getMessage().contains("customer"), e.getMessage());
+		assertTrue(e.getMessage().contains("tags(key)"), e.getMessage());
+		// the other keys are unaffected
+		assertEquals(Optional.of(Tag.of("region", "EU")), tags.tag("region"));
+	}
+
+	@Test
+	void testTagsWithKeyAnswersEveryTagCarryingIt ( ) {
+		Tags tags = Tags.of(Tag.of("customer", "alice"), Tag.of("customer", "bob"), Tag.of("region", "EU"));
+		assertEquals(Set.of(Tag.of("customer", "alice"), Tag.of("customer", "bob")), tags.tags("customer"));
+		assertEquals(Set.of(Tag.of("region", "EU")), tags.tags("region"));
+		assertEquals(Set.of(), tags.tags("order"));
+		assertEquals(Set.of(), Tags.none().tags("customer"));
+	}
+
+	@Test
+	void testTagsWithKeyIsImmutable ( ) {
+		Tags tags = Tags.of(Tag.of("customer", "alice"));
+		assertThrows(UnsupportedOperationException.class, () -> tags.tags("customer").add(Tag.of("customer", "bob")));
+	}
+
+	@Test
+	void testTagWithNullKeyFindsTheTagsWithoutAKey ( ) {
+		// Tag.of(null, "v") is legal (Tag.parse(":v") produces it from history), so it must be findable
+		Tags tags = Tags.of(Tag.of(null, "orphan"), Tag.of("customer", "123"));
+		assertEquals(Optional.of(Tag.of(null, "orphan")), tags.tag(null));
+		assertEquals(Set.of(Tag.of(null, "orphan")), tags.tags(null));
+		assertEquals(Optional.empty(), Tags.of(Tag.of("customer", "123")).tag(null));
+		assertThrows(IllegalStateException.class,
+				() -> Tags.of(Tag.of(null, "one"), Tag.of(null, "two")).tag(null));
+	}
+
+	@Test
+	void testTagAndTagsSeeTheSameTags ( ) {
+		Tags tags = Tags.parse("customer:123", "order:ABC");
+		Tag viaTag = tags.tag("order").orElseThrow();
+		Tag viaTags = tags.tags("order").iterator().next();
+		assertSame(viaTag, viaTags);
 	}
 }

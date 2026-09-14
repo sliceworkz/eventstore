@@ -132,6 +132,14 @@ mvn clean install -DskipTests
 - Core to the Dynamic Consistency Boundary pattern
 - Created via `Tags.of("key", "value")`, `Tags.of("k1", "v1", "k2", "v2", ...)` (alternating keys and
   values; an odd count is rejected rather than read as a trailing flag) or `Tags.of(Tag.of("key", "value"))`
+- **`Tags` is a set, and its factories behave like one.** `Tags.of(Tag...)` eliminates a repeated tag
+  rather than rejecting it: tags gathered from several sources (a domain tag list plus what a
+  decorator adds) legitimately overlap, and building with `Set.of` would turn that overlap into an
+  append failure. A `null` element is an `IllegalArgumentException`. Several tags under one *key* are
+  an ordinary shape — a transfer tagged `customer:alice` and `customer:bob` — so `tags.tag(key)` answers
+  only a key holding a single tag and throws `IllegalStateException` when more than one carries it,
+  rather than returning whichever hash order put first; `tags.tags(key)` is the read for a key that may
+  hold several. `TagsTest` pins both
 - **`Tag.toString()` is the wire format, not a debugging rendering.** A tag is flattened to
   `"key:value"` to be persisted and to be matched: the Postgres backend stores `Tags.toStrings()` in a
   `text[]` column and answers a tag query with `event_tags @> ARRAY[...]` built from the *same*

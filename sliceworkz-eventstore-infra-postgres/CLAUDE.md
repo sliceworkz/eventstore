@@ -471,6 +471,12 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     Verified, not assumed.) `EventStreamIdempotencyTest` builds its store with exactly such a prefix and
     pins a generated `event_id` with a `BEFORE INSERT` trigger, so the misrouting fails the build rather
     than passing silently
+  - **A batch is one statement, so a duplicate key in it swallows the whole batch**, which is the
+    all-or-nothing rule the SPI contract makes of every backend. What the server cannot tell apart is
+    a key repeated *within* the batch: the second row violates the same index, and `append` would
+    report the first ever attempt at that batch as a de-duplication. `rejectRepeatedIdempotencyKeys`
+    refuses such a batch with `IllegalArgumentException` before the insert; `AppendIdempotencyTest`
+    pins it
   - **Identifier length is a coupling to keep in mind.** PostgreSQL truncates identifiers at 63 bytes, which
     would break an exact-name comparison; `MAX_PREFIX_LENGTH` (32) keeps the longest generated index name at
     61 characters, so it cannot happen. Raising that cap needs this comparison revisited — and, more

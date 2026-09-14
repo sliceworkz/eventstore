@@ -26,7 +26,7 @@
  * whole suite runs against your storage.
  * <p>
  * Together they pin the behaviour the SPI's javadoc describes in prose — stream scoping, tag
- * matching, optimistic locking, idempotency-key scoping per stream, bookmarks, listener
+ * matching, optimistic locking, idempotency-key scoping per stream and de-duplication per batch, bookmarks, listener
  * notification, upcasting and query direction, event import, UTC timestamps, and the visibility of
  * concurrent appends to a tailing reader.
  * <p>

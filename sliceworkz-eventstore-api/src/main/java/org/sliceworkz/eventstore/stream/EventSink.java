@@ -106,11 +106,26 @@ public interface EventSink<DOMAIN_EVENT_TYPE> {
 	 * no new events matching the criteria's query have been added since the expected last event reference.
 	 * If conflicting events are detected, an {@link OptimisticLockingException}
 	 * is thrown.
+	 * <p>
+	 * <b>Idempotency keys make the batch a unit of de-duplication.</b> Each event carries its own key
+	 * ({@link EphemeralEvent#withIdempotencyKey(String)}), scoped to the stream, and the keys of one
+	 * batch must be distinct — a batch repeating a key is rejected with {@link IllegalArgumentException}
+	 * before anything is stored. If any key in the batch was stored on the stream before, the whole
+	 * batch is swallowed: nothing is stored and an empty list is returned, counted on
+	 * {@code sliceworkz.eventstore.append.deduplicated}. Since a batch is stored atomically, a retry
+	 * of a command's batch finds either every key or none, so a command producing several events is
+	 * made idempotent by deriving a key per event from the command's id. The alternative — storing the
+	 * events whose keys are new and skipping the rest — loses because it is not an answer every backend
+	 * can give: Postgres writes a batch as one multi-row insert and pairs the rows it returns with the
+	 * input by position, so it cannot insert a subset, and a batch that is one command's output has no
+	 * meaningful fragment to store anyway.
 	 *
 	 * @param appendCriteria the criteria determining whether the append should proceed (use AppendCriteria.none() for unconditional append)
 	 * @param events the list of ephemeral events to append
-	 * @return a list of fully-formed Events with assigned references and metadata
+	 * @return a list of fully-formed Events with assigned references and metadata; empty when the batch
+	 *         was de-duplicated on an idempotency key
 	 * @throws OptimisticLockingException if append criteria are violated (new relevant facts detected)
+	 * @throws IllegalArgumentException if two events of the batch carry the same idempotency key
 	 * @throws org.sliceworkz.eventstore.events.EventSerializationException if an event's payload cannot be
 	 *         written; nothing is stored. A property of the payload class, so never worth retrying —
 	 *         unlike an {@link org.sliceworkz.eventstore.spi.EventStorageException} from the same call

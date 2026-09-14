@@ -98,11 +98,15 @@ public record EphemeralEvent<DOMAIN_EVENT_TYPE> ( EventType type, DOMAIN_EVENT_T
 	 * <p>
 	 * All other properties remain unchanged. An idempotency key ensures that the same event
 	 * is not appended multiple times if the append operation is retried. When an event with
-	 * an idempotency key is appended a second time, the storage will silently ignore it
-	 * rather than creating a duplicate event.
+	 * an idempotency key is appended a second time on the same stream, the storage silently
+	 * ignores it rather than creating a duplicate event, and the append returns an empty list.
 	 * <p>
-	 * <b>Important:</b> When appending multiple events in a single batch, none of them may
-	 * have an idempotency key. Idempotency keys can only be used with single-event appends.
+	 * A key is per event, and the events of one batch must carry distinct keys — a batch repeating a
+	 * key is rejected with {@link IllegalArgumentException} and stores nothing. A batch is
+	 * de-duplicated as a whole: if any key in it was stored on the stream before, none of the batch
+	 * is stored. So a command producing several events is made idempotent by giving each of them its
+	 * own key derived from the command's — {@code commandId + "/1"}, {@code commandId + "/2"} — and its
+	 * retry is then swallowed entirely. See {@link org.sliceworkz.eventstore.stream.EventSink#append(org.sliceworkz.eventstore.stream.AppendCriteria, java.util.List)}.
 	 *
 	 * @param idempotencyKey the idempotency key to attach to the event, or null for no idempotency check
 	 * @return a new EphemeralEvent instance with the specified idempotency key

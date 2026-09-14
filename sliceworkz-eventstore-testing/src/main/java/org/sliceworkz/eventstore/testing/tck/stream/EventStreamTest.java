@@ -280,19 +280,6 @@ public class EventStreamTest extends AbstractEventStoreTest {
 	}
 
 	@ForEachBackend
-	void testAppendMultipleWithIdempotency ( ) {
-
-		// if at least one of the events carries an idempotency key, this is not possible
-		EphemeralEvent<MockDomainEvent> e1 = Event.<MockDomainEvent>of(new FirstDomainEvent("1"), Tags.none());
-		EphemeralEvent<MockDomainEvent> e2 = Event.<MockDomainEvent>of(new SecondDomainEvent("2"), Tags.none()).withIdempotencyKey("idempotency-key");
-
-		IllegalArgumentException iae = assertThrows(IllegalArgumentException.class, ()->
-			es.append(AppendCriteria.none(), List.of(e1, e2))
-		);
-		assertEquals("cannot append multiple events in combination with an idempotency key", iae.getMessage());
-	}
-
-	@ForEachBackend
 	void testIdempotencyIsScopedPerStream ( ) {
 
 		// The same idempotency key used on two *different* streams must NOT collide: dedup is

@@ -307,12 +307,23 @@ public interface EventStorage extends AutoCloseable {
 	 *   <li>Recording the current timestamp</li>
 	 *   <li>Persisting the event payload</li>
 	 * </ul>
+	 * <p>
+	 * <b>Idempotency keys.</b> An {@link EventToStore#idempotencyKey()} is scoped to its event's stream
+	 * (context and purpose). A batch is de-duplicated as a whole: if any event of it carries a key
+	 * already stored on its stream, the implementation stores nothing, notifies nobody and returns an
+	 * empty list — never a subset of the batch. The events of one batch must carry distinct keys;
+	 * implementations must reject a batch repeating a key with {@link IllegalArgumentException} before
+	 * anything is stored, because the unique index that enforces the key would otherwise reject the
+	 * batch in a way indistinguishable from a duplicate of an earlier append, and a first attempt
+	 * would then be reported as a de-duplication.
 	 *
 	 * @param appendCriteria criteria defining optimistic locking constraints (or none for simple append)
 	 * @param stream optional stream identifier to append events to a specific stream
 	 * @param events list of events to append (must not be empty)
-	 * @return list of stored events with assigned references and timestamps
+	 * @return list of stored events with assigned references and timestamps; empty when the batch was
+	 *         de-duplicated on an idempotency key
 	 * @throws org.sliceworkz.eventstore.stream.OptimisticLockingException if append criteria are violated
+	 * @throws IllegalArgumentException if two events of the batch carry the same idempotency key
 	 * @throws EventStorageException if an error occurs during append operation
 	 * @see AppendCriteria
 	 * @see EventToStore

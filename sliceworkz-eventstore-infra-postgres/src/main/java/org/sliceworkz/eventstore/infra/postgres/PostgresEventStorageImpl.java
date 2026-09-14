@@ -1790,6 +1790,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	@Override
 	public List<StoredEvent> append(AppendCriteria appendCriteria, Optional<EventStreamId> streamId, List<EventToStore> events) {
 		checkNotClosed();
+		rejectRepeatedIdempotencyKeys(events);
 		List<StoredEvent> storedEvents = new ArrayList<>();
 
 		if ( events.size() != 0 ) {
@@ -1982,6 +1983,23 @@ public class PostgresEventStorageImpl implements EventStorage {
 		
 		return storedEvents;
 			
+	}
+
+	/**
+	 * Rejects a batch carrying one idempotency key on two of its events, before the insert. Left to the
+	 * server, the stream-scoped unique index rejects the second row and the catch in {@link #append}
+	 * reads that violation as "this key was appended before" — so the first ever attempt at such a
+	 * batch would store nothing and be reported as a successful de-duplication. The violation carries
+	 * no way to tell the two apart, and a batch that repeats a key has no meaning a storage could give
+	 * it, so it is refused as a caller error.
+	 */
+	private static void rejectRepeatedIdempotencyKeys ( List<EventToStore> events ) {
+		Set<List<Object>> scopes = new HashSet<>();
+		for ( EventToStore event : events ) {
+			if ( event.idempotencyKey() != null && !scopes.add(List.of(event.stream(), event.idempotencyKey())) ) {
+				throw new IllegalArgumentException("idempotency key '%s' is carried by more than one event of the batch on stream %s".formatted(event.idempotencyKey(), event.stream()));
+			}
+		}
 	}
 
 	/**

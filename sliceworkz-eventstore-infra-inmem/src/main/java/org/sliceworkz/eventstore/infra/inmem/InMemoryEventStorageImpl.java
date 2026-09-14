@@ -328,6 +328,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		checkNotClosed();
 		
 		verifyPersistableJson(events);
+		rejectRepeatedIdempotencyKeys(events);
 		
 		List<StoredEvent> result = Collections.emptyList();
 		
@@ -390,9 +391,39 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		}
 	}
 	
+	/**
+	 * Rejects a batch carrying one idempotency key on two of its events, as the Postgres backend does
+	 * before its insert. A storage cannot give such a batch a meaning: the key says "appended before"
+	 * of the second event while the first is being appended in the same call, and de-duplicating one
+	 * against the other would store a fragment of the batch.
+	 */
+	private static void rejectRepeatedIdempotencyKeys ( List<EventToStore> events ) {
+		Set<IdempotencyScope> scopes = new HashSet<>();
+		for ( EventToStore event : events ) {
+			if ( event.idempotencyKey() != null && !scopes.add(new IdempotencyScope(event.stream(), event.idempotencyKey())) ) {
+				throw new IllegalArgumentException("idempotency key '%s' is carried by more than one event of the batch on stream %s".formatted(event.idempotencyKey(), event.stream()));
+			}
+		}
+	}
+
+	/**
+	 * Adds the batch to the event log, or nothing of it: a batch is swallowed whole when any of its
+	 * idempotency keys was stored on its stream before. That is the one answer every backend can give
+	 * -- Postgres writes a batch as a single multi-row insert, which its unique index rejects as a
+	 * whole -- and the one a retried command needs: its batch either landed entirely or not at all, so
+	 * on the retry either every key is known or none is. The alternative -- skipping the duplicate
+	 * events and storing the rest -- looks reasonable in memory and is unavailable on Postgres, where
+	 * the append pairs the returned rows with the input by position and so cannot insert a subset.
+	 */
 	private List<StoredEvent> addAndNotifyListeners ( List<EventToStore> events ) {
+		for ( EventToStore event : events ) {
+			if ( event.idempotencyKey() != null && idempotencyKeys.contains(new IdempotencyScope(event.stream(), event.idempotencyKey())) ) {
+				return Collections.emptyList();
+			}
+		}
+
 		long tx = ++txCounter;
-		var addedEvents = events.stream().map(e -> addEventToEventLog(e, tx)).filter(e->e!=null).toList();
+		var addedEvents = events.stream().map(e -> addEventToEventLog(e, tx)).toList();
 
 		notifyListenersAbout(addedEvents);
 
@@ -414,11 +445,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	private StoredEvent addEventToEventLog ( EventToStore event, long tx ) {
 
 		if ( event.idempotencyKey() != null ) {
-			IdempotencyScope scope = new IdempotencyScope(event.stream(), event.idempotencyKey());
-			if ( idempotencyKeys.contains(scope)) {
-				return null;
-			}
-			idempotencyKeys.add(scope);
+			idempotencyKeys.add(new IdempotencyScope(event.stream(), event.idempotencyKey()));
 		}
 
 		long position = eventlog.size() + 1;

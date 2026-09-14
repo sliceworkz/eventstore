@@ -668,6 +668,35 @@ later reference, which is after this one and so still delivered.
   no data migration is needed. `checkDatabase()` validates the constraint by name only, not its delete
   rule, so an un-migrated database still starts, with the old cascade behaviour
 
+### Idempotent appends: a key per event, and the batch as the unit of de-duplication
+
+An `EphemeralEvent.withIdempotencyKey(key)` makes an append safe to retry: a key already stored on
+the same stream is swallowed — nothing written, an empty list returned, counted on
+`sliceworkz.eventstore.append.deduplicated`. The key is scoped to the stream (context and purpose),
+persisted on the row and surfaced on `StoredEvent`, never on the public `Event`.
+
+- **A command producing several events gets a key per event, derived from the command's id**
+  (`cmd-4711/1`, `cmd-4711/2`). Keys are per event because that is what storage holds — one column,
+  one stream-scoped unique index — and the events of one batch must carry *distinct* keys.
+- **The batch is swallowed whole when any key in it was stored before**, the events with new keys and
+  the events with no key included. A batch is stored atomically, so a retry finds either every key
+  or none; the mixed case only arises from a caller reusing a key across commands, and then the
+  batch is not the one the store already holds. The alternative — storing the events whose keys are
+  new and skipping the rest — loses because it is not an answer every backend can give: Postgres
+  writes a batch as a single multi-row insert and pairs the rows it returns with the input by
+  position, so it inserts all or none, and a batch that is one command's output has no meaningful
+  fragment to store. The in-memory stores could store the subset and deliberately do not.
+- **A batch repeating a key is refused with `IllegalArgumentException`, storing nothing.** Left to
+  the server, the unique index rejects the second row and the append path reads that as "appended
+  before", so the first ever attempt at such a batch would store nothing and report a successful
+  de-duplication. Both `EventStreamImpl.append` and every backend's SPI `append` check it before
+  anything is written, since the SPI is a public path too.
+- **The lock check runs first.** A conditional append that conflicts raises
+  `OptimisticLockingException` whether or not its keys are duplicates; the de-duplication is only
+  seen by an append that was admitted.
+- `EventStreamIdempotencyTest` pins the stream-level contract per backend and `AppendIdempotencyTest`
+  the SPI one: a swallowed batch stores nothing and notifies nobody, and a rejected batch spends no key.
+
 ### Leases: electing one processor among several instances
 
 **The storage can hold named leases, which is what a framework builds leader election on** — one
@@ -1679,7 +1708,10 @@ that bind everywhere:
   split, and an unprivileged role then starts against it silently.
 - **Idempotency keys are scoped per stream** (partial unique index `idx_events_stream_idempotency`);
   a duplicate is recognised by the constraint name the server reports, never by message text, and a
-  swallowed duplicate returns an empty result.
+  swallowed duplicate returns an empty result. A batch is one multi-row insert, so a duplicate in it
+  swallows the whole batch — the all-or-nothing rule under "Idempotent appends" above — and a batch
+  repeating a key is refused in Java before the insert, since the server would report it as the same
+  violation.
 - Append notifications are emitted once per stream per statement, not per row; `timestamptz` keeps
   microseconds (the one lossy step of an inmem → Postgres → inmem round trip); and a `db.properties`
   *value* never reaches an error message or log line — only the key does.

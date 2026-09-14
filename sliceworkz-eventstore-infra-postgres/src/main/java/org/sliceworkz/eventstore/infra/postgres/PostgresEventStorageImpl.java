@@ -543,8 +543,15 @@ public class PostgresEventStorageImpl implements EventStorage {
 			checkTrigger(readConnection, prefix + "events", "table_insert_trigger", "STATEMENT");
 			checkTrigger(readConnection, prefix + "bookmarks", "table_insert_or_update_trigger", "ROW");
 
-			// Check indexes
-			checkIndex(readConnection, prefix + "idx_events_position_brin");
+			// Check indexes. Only the ones a statement the store issues can walk: idx_events_tx_position is
+			// the global (event_tx, event_position) order for reads that bind no stream column,
+			// idx_events_context_tx_position the same order within a context for reads that bind the
+			// context and leave the purpose open, and the stream indexes serve everything scoped to a
+			// stream. A database created before the two order indexes existed is reported here under
+			// VALIDATE and ENSURE -- ENSURE creates them on the next start, VALIDATE names them for the
+			// DBA -- see "Migrating a database created before the order indexes existed" in the README.
+			checkIndex(readConnection, prefix + "idx_events_tx_position");
+			checkIndex(readConnection, prefix + "idx_events_context_tx_position");
 			checkIndex(readConnection, prefix + "idx_events_stream_type_position");
 			checkIndex(readConnection, prefix + "idx_events_tags");
 			checkIndex(readConnection, prefix + "idx_events_stream_tags");
@@ -2287,9 +2294,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	/**
 	 * The statement behind {@link #head(Optional)}: the reference columns only, off
-	 * {@code idx_events_stream_position} walked backwards, behind the same {@code pg_snapshot_xmin}
-	 * barrier as {@link #query}. Package-private so the postgres module's tests can pin its shape —
-	 * that it reads no payload and sits behind the barrier are properties nothing else would notice.
+	 * {@code idx_events_stream_position} walked backwards — off {@code idx_events_context_tx_position}
+	 * when only the context is bound, off {@code idx_events_tx_position}, the global
+	 * {@code (event_tx, event_position)} order, for a wildcard stream — behind the same
+	 * {@code pg_snapshot_xmin} barrier as {@link #query}. Package-private so the postgres module's tests
+	 * can pin its shape — that it reads no payload and sits behind the barrier are properties nothing
+	 * else would notice.
 	 */
 	static String headSql ( String prefix, Optional<EventStreamId> stream ) {
 		StringBuilder sql = new StringBuilder();

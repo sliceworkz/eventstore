@@ -62,8 +62,30 @@ CREATE TABLE IF NOT EXISTS events (
   ) WITH (FILLFACTOR = 100);
 
 
-	-- Compact BRIN index on event_position
-	CREATE INDEX IF NOT EXISTS idx_events_position_brin ON events USING BRIN (event_position);
+	-- The global read order. Every ORDER BY the store issues is (event_tx, event_position), and a
+	-- read that binds no stream column -- a wildcard stream (EventStreamId.anyContext()), the head of
+	-- the whole store, an unscoped import or export -- has only this index to walk it: the stream
+	-- indexes below all lead with (stream_context, stream_purpose), so for such a read they offer no
+	-- start condition and no order, and a page costs a scan of the table plus a top-N sort, whatever
+	-- its LIMIT. Walked forward from a cursor for a store-wide projection, backward for head().
+	-- Cheap to maintain: event_tx and event_position only ever grow, so every insert lands on the
+	-- rightmost leaf.
+	CREATE INDEX IF NOT EXISTS idx_events_tx_position ON events (
+	    event_tx,
+	    event_position
+	);
+
+	-- The same order within one context. A read that binds the context and leaves the purpose
+	-- open -- EventStreamId.forContext("x") over a per-entity layout, where every entity is its
+	-- own purpose and reading the context is a cross-entity read -- can enter neither the stream
+	-- indexes (purpose is their second column) nor, usefully, the global index above (every other
+	-- context's events would be walked and filtered out). Entered at the context, walked from the
+	-- cursor: a whole-context replay, a Projector over a context, a per-context export.
+	CREATE INDEX IF NOT EXISTS idx_events_context_tx_position ON events (
+	    stream_context,
+	    event_tx,
+	    event_position
+	);
 
 	-- Allows efficient filtering on multiple dimensions
 	-- Primary index for your most common query pattern

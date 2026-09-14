@@ -264,9 +264,9 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     per bounded context puts an idle entity's reference millions of rows back. Pinning at
     `EventSource.head()` *before* the read, and bounding the read with it, hands the probe a cursor
     at the stream head whatever the boundary; the head statement (`headSql`) reads the three
-    reference columns off `idx_events_stream_position` behind the same `pg_snapshot_xmin` barrier as
-    every read, so it can never run ahead of the reads it bounds (`PostgresVisibilityStallTest`,
-    `PostgresHeadStatementTest`). Re-reading the boundary before appending — what a conflict retry
+    reference columns off `idx_events_stream_position` (off `idx_events_tx_position` for a wildcard
+    stream) behind the same `pg_snapshot_xmin` barrier as every read, so it can never run ahead of the
+    reads it bounds (`PostgresVisibilityStallTest`, `PostgresHeadStatementTest`). Re-reading the boundary before appending — what a conflict retry
     does anyway — remains the fix for a reference held long.
   - **The alternatives, and why each loses — so nobody re-treads them.** One uniform `NOT EXISTS`
     for every criteria, left to the plan cache, binds the tag value and so sends the planner to the
@@ -293,6 +293,32 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   without it every DCB consistency check fails on 15 and older with `VALUES in FROM must have an alias`.
   An older server is **warned about, not rejected**: a hard failure would turn a library upgrade into an
   outage, and the warning names the version
+- **Every index exists for a statement the store issues, and `checkDatabase()` requires exactly those.**
+  The stream indexes — `idx_events_stream_position`, `idx_events_stream_type_position`, the two GIN
+  indexes — all lead with `(stream_context, stream_purpose)` and serve everything scoped to a stream.
+  Two B-trees on the `(event_tx, event_position)` order serve the reads that do not bind both stream
+  columns, which the stream indexes offer neither a start condition nor an order, so that without
+  them a page is a scan feeding a top-N sort whatever its `LIMIT`:
+  - **`idx_events_tx_position`**, the global order, for a read that binds no stream column: a
+    wildcard stream (`EventStreamId.anyContext()`) paged by a store-wide projection or an export,
+    `head()` of the whole store, an unscoped `EventStoreImporter` run. Measured at 300.000 events:
+    ~7.500 buffers and 120–220 ms per page without it, ~20 buffers and under 1 ms walking it; the
+    store-wide head the same.
+  - **`idx_events_context_tx_position`**, the same order within a context, for a read that binds
+    the context and leaves the purpose open — a whole-context replay or export over a per-entity
+    layout, where every entity is its own purpose. The global index can serve that shape only with
+    the context as a `Filter`, walking every other context's events to discard them, which is fine
+    while the context is most of the table and linear in the rest of it otherwise: measured on a
+    context holding 2% of 300.000 events, 24.500 rows removed by the filter against none, 3.9 ms
+    against 0.9 ms for a page. The planner picks between the two by share — the smaller global index
+    with a filter when the context dominates, this one when it does not — and both are index walks.
+  - Both are cheap to maintain: their trailing columns only ever grow, so every insert lands on the
+    rightmost leaf of its context, or of the table.
+  - `PostgresGlobalOrderIndexTest` pins the plans (a plain `Index Scan`, no `Sort`, the cursor in the
+    `Index Cond`; the heads an `Index Scan Backward`), on a corpus where the context under test is a
+    minority of the table so the choice is unambiguous, and the migration: a database from before the
+    indexes is reported by `VALIDATE` naming the missing one and repaired by `ENSURE`, see "Migrating
+    a database created before the order indexes existed" in the README.
 - **`ENSURE` brings functions and triggers up to date; tables, columns and indexes are only ever created.**
   The functions are `CREATE OR REPLACE`d and each trigger is compared against the shape this release wants
   (`tgtype` plus target function, in a `DO $$` block) and recreated only when it differs — so wrong timing,

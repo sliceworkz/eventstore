@@ -94,8 +94,8 @@ mvn clean install -DskipTests
     fails every command, an upcast-to-nothing head reads as an empty stream, and a sealed value costs a
     key-store round trip. That is why it is a method on `EventSource` and an SPI method on
     `EventStorage`, whose `default` is that query for a backend written before it; Postgres reads the
-    three reference columns off `idx_events_stream_position` and no payload
-    (`PostgresHeadStatementTest`)
+    three reference columns off `idx_events_stream_position` — off `idx_events_tx_position` for a
+    wildcard stream — and no payload (`PostgresHeadStatementTest`, `PostgresGlobalOrderIndexTest`)
   - **It names a stored event, whole**: `index` 0, and a boundary at it includes every event the stored
     event upcasts into — see the `until` note under EventFilter
   - The event at the head need not match the boundary's filter: the reference is a cursor for the check,
@@ -994,7 +994,7 @@ transfer.from().map(PartyDetails::name).orElse("[erased]");
 ```
 
 - **The stored event never changes.** Its bytes stay identical forever, so an erasure needs no UPDATE,
-  produces no new tuple to VACUUM, does not decorrelate the BRIN index on `event_position`, and reaches
+  produces no new tuple to VACUUM, leaves the heap in insertion order, and reaches
   the ciphertext already sitting in WAL, on replicas and in every backup. The alternative — nulling a
   separate erasable column with an `UPDATE` — reaches none of those copies and makes the log no longer
   append-only.
@@ -1542,6 +1542,14 @@ that bind everywhere:
   canonical check, a 14× cliff at two OR-ed facts, and a steady-state 1.16 s whole-table scan on
   the empty boundary). The measurements behind that rejection are recorded in the benchmark
   module's `CLAUDE.md`.
+- **A read that binds no stream column walks `idx_events_tx_position`**, a B-tree on the global
+  `(event_tx, event_position)` order: a wildcard stream paged by a store-wide projection or an
+  export, `head()` of the whole store, an unscoped `EventStoreImporter` run. The stream indexes all
+  lead with `(stream_context, stream_purpose)` and offer such a read neither a start condition nor
+  an order, so without it every page is a scan of the whole table plus a sort, whatever its limit.
+  A database created before the index existed needs it applied — `ENSURE` does that on the next
+  start, a `VALIDATE`/`NONE` deployment by hand with `CREATE INDEX CONCURRENTLY` — see "Migrating a
+  database created before the global order was indexed" in the postgres module README.
 - **Oldest supported PostgreSQL is 16**, and the `btree_gin` extension is required — creating it
   needs `CREATE` on the *database*, not the schema; a DBA installing it once is the recommended
   split, and an unprivileged role then starts against it silently.

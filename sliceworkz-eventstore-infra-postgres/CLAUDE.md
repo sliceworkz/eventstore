@@ -264,9 +264,9 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     per bounded context puts an idle entity's reference millions of rows back. Pinning at
     `EventSource.head()` *before* the read, and bounding the read with it, hands the probe a cursor
     at the stream head whatever the boundary; the head statement (`headSql`) reads the three
-    reference columns off `idx_events_stream_position` behind the same `pg_snapshot_xmin` barrier as
-    every read, so it can never run ahead of the reads it bounds (`PostgresVisibilityStallTest`,
-    `PostgresHeadStatementTest`). Re-reading the boundary before appending — what a conflict retry
+    reference columns off `idx_events_stream_position` (off `idx_events_tx_position` for a wildcard
+    stream) behind the same `pg_snapshot_xmin` barrier as every read, so it can never run ahead of the
+    reads it bounds (`PostgresVisibilityStallTest`, `PostgresHeadStatementTest`). Re-reading the boundary before appending — what a conflict retry
     does anyway — remains the fix for a reference held long.
   - **The alternatives, and why each loses — so nobody re-treads them.** One uniform `NOT EXISTS`
     for every criteria, left to the plan cache, binds the tag value and so sends the planner to the
@@ -293,6 +293,20 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   without it every DCB consistency check fails on 15 and older with `VALUES in FROM must have an alias`.
   An older server is **warned about, not rejected**: a hard failure would turn a library upgrade into an
   outage, and the warning names the version
+- **Every index exists for a statement the store issues, and `checkDatabase()` requires exactly those.**
+  The stream indexes — `idx_events_stream_position`, `idx_events_stream_type_position`, the two GIN
+  indexes — all lead with `(stream_context, stream_purpose)` and serve everything scoped to a stream.
+  `idx_events_tx_position`, a B-tree on the global `(event_tx, event_position)` order, serves the reads
+  that bind no stream column: a wildcard stream (`EventStreamId.anyContext()`) paged by a store-wide
+  projection or an export, `head()` of the whole store, an unscoped `EventStoreImporter` run. Without
+  it those reads have no index that supplies their order, so a page is a scan of the whole table
+  feeding a top-N sort whatever its `LIMIT` — measured at 300.000 events: ~7.500 buffers and
+  120–220 ms per page, against ~20 buffers and under 1 ms walking the index; the store-wide head
+  the same. Cheap to maintain, since both columns only ever grow and every insert lands on the
+  rightmost leaf. `PostgresGlobalOrderIndexTest` pins the plans (a plain `Index Scan`, no `Sort`, the
+  cursor in the `Index Cond`; the head an `Index Scan Backward`) and the migration: a database from
+  before the index is reported by `VALIDATE` naming it and repaired by `ENSURE`, see "Migrating a
+  database created before the global order was indexed" in the README.
 - **`ENSURE` brings functions and triggers up to date; tables, columns and indexes are only ever created.**
   The functions are `CREATE OR REPLACE`d and each trigger is compared against the shape this release wants
   (`tgtype` plus target function, in a `DO $$` block) and recreated only when it differs — so wrong timing,

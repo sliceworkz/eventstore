@@ -260,6 +260,30 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     serialization failures and a third of the throughput, with disjoint boundaries falsely conflicting
     because the planner's choice (seq scan → relation-level `SIRead` lock) decides the granularity.
   - No DDL change, so no migration: the lock is entirely in the write path.
+  - **The wait for it is bounded** by the builder's `lockTimeout` (default
+    `PostgresEventStorageImpl.DEFAULT_LOCK_TIMEOUT`, 10s; `Duration.ZERO` waits without bound), sent as
+    `SET LOCAL lock_timeout` in the same round trip as the lock statement — pgjdbc pipelines the two
+    parts of a `;`-separated statement behind one sync, so a bounded acquisition costs the wire what an
+    unbounded one did. `SET LOCAL`, never `SET`: the connection goes back to a pool, and
+    `PostgresLockTimeoutTest.theBoundIsScopedToTheAppendsTransactionAndNeverFollowsTheConnection` borrows
+    the session an append ran on and checks `SHOW lock_timeout` still reads 0. A wait that outlives it
+    fails as `EventStorageException` naming the stream and the bound, nothing written, the cause
+    carrying SQLSTATE `55P03` (`lock_not_available` — recognised by state, never by message text). The
+    hazard it bounds is not contention — a healthy holder hands the lock on within one INSERT — but a
+    holder that has stalled: a paused JVM, a session the server still believes in after its client has
+    gone. Without the bound every conditional append to that stream parks behind it inside a
+    checked-out pool connection, the pool empties, and from then on *every* operation of the storage,
+    on every stream, fails on the pool's connection timeout: one stalled stream takes the store down.
+    With it the parked appends fail one at a time and return their connections, the store stays up for
+    everything else, and `pg_locks WHERE locktype = 'advisory'` joined to `pg_stat_activity` names the
+    holder. The same bound covers the per-lease lock (`requestLease`/`releaseLease`), and, because
+    `SET LOCAL` lasts to the end of the transaction, the INSERT behind the append lock — which only
+    ever waits on DDL. The schema scripts' own lock is deliberately not under it: a second instance
+    waiting for a first one's `CREATE INDEX` on a large table is right to wait. The alternative — a
+    session-level `lock_timeout` through the driver's `options` or the pool's `connectionInitSql` — loses
+    because it bounds every statement of every caller sharing the pool, and only for pools this library
+    builds. `PostgresLockTimeoutTest` pins the bound on appends and leases, its scope, the zero case
+    and the default.
 - **The DCB check's SQL shape is derived per append from the criteria — there is no mode, and the
   measurements behind that choice are recorded in the benchmark module's `CLAUDE.md`, with the
   rejected alternative's baselines under its `results/`.** The check asks one question — any event
@@ -430,6 +454,27 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   exited by any path. `PostgresNotificationMonitorTest` drives `parse` and `deliver` directly, without a database;
   `PostgresNotificationStartupTest.testWhatArrivesOnTheChannelCannotKillAMonitor` does it on a live
   store through `pg_notify`.
+- **A monitor notices a socket that dies without saying so.** A monitor waits for notifications with
+  pgjdbc's timed `getNotifications`, which is a socket read under `SO_TIMEOUT` and nothing else — the
+  driver sends no statement while it waits — so on a quiet channel the connection carries no traffic
+  at all, and a peer that vanished without a FIN or RST (a NAT or firewall that dropped its state, a
+  partition, a crashed host) is indistinguishable from a quiet channel: every poll slice returns
+  empty-handed, forever, with `notifications.up` reading 1 over a connection nothing can arrive on.
+  Two things close that gap. Every monitoring connection gets a JDBC network timeout of
+  `NOTIFICATION_PROBE_TIMEOUT` (5s), so no statement a monitor sends — the `LISTEN`, the barrier read —
+  can wait forever on a dead socket (the notification wait is unaffected: the driver puts its own
+  slice on the socket for that read and restores this one after). And a monitor whose connection has
+  been silent for `notificationProbeInterval` (default `DEFAULT_NOTIFICATION_PROBE_INTERVAL`, 30s)
+  sends one round trip — `Connection.isValid`, bounded by the same 5s — and treats no answer as the
+  lost connection it is: gauge to 0, WARN, backoff, a fresh connection. Anything the server sends
+  resets the interval, so a busy channel is never probed, and a probe never runs while a notification
+  is parked (the barrier read is already a round trip per slice). `tcpKeepAlive=true` on the driver
+  detects the same condition and is complementary, not an alternative: it fires after the operating
+  system's keepalive time, two hours by default on Linux, which pgjdbc offers no way to shorten.
+  `PostgresMonitorLivenessTest` black-holes the monitoring connections through a TCP proxy that
+  swallows bytes without closing either side — the half-open connection itself, not a stand-in —
+  and checks the monitors drop it and announce a later append; and that a live channel probed far
+  more often than anyone would configure loses nothing.
 - `stream_purpose` defaults to `'default'` in the DDL, matching `EventStreamId.DEFAULT_PURPOSE` — a public
   constant, so an interop layer can bind the same value the library does rather than copy the literal out
   of this file. A database created by an older release may carry `''` as that default; operators doing raw

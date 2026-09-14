@@ -222,6 +222,8 @@ public interface PostgresEventStorage {
 		private Properties configuration;
 		private DatabaseInitMode databaseInitMode = DatabaseInitMode.ENSURE;
 		private Duration notificationStartupTimeout = PostgresEventStorageImpl.DEFAULT_NOTIFICATION_STARTUP_TIMEOUT;
+		private Duration lockTimeout = PostgresEventStorageImpl.DEFAULT_LOCK_TIMEOUT;
+		private Duration notificationProbeInterval = PostgresEventStorageImpl.DEFAULT_NOTIFICATION_PROBE_INTERVAL;
 		private Limit limit = Limit.none();
 		private MeterRegistry meterRegistry = Metrics.globalRegistry;
 		private MeterOptions meterOptions = MeterOptions.defaults();
@@ -460,6 +462,59 @@ public interface PostgresEventStorage {
 		 */
 		public Builder notificationStartupTimeout ( Duration timeout ) {
 			this.notificationStartupTimeout = timeout == null ? PostgresEventStorageImpl.DEFAULT_NOTIFICATION_STARTUP_TIMEOUT : timeout;
+			return this;
+		}
+
+		/**
+		 * How long an operation waits for one of the storage's advisory locks — the per-stream lock a
+		 * conditional append takes, the per-lease lock a lease request takes — before failing with
+		 * {@link EventStorageException}, nothing written.
+		 * <p>
+		 * A healthy holder releases the lock within one INSERT, so this is never hit by contention; it is
+		 * hit by a holder that has stalled, and without it every conditional append to that stream parks
+		 * behind the holder inside a checked-out pool connection until the pool is empty and the whole
+		 * store fails on the pool's connection timeout. With it the parked appends fail one at a time,
+		 * naming the stream, and the store stays up for everything else. The default,
+		 * {@link PostgresEventStorageImpl#DEFAULT_LOCK_TIMEOUT} (10 seconds), is generous on purpose;
+		 * {@link Duration#ZERO} removes the bound. Set with {@code SET LOCAL}, so it never leaks to another
+		 * statement on the pooled connection, and it does not cover the schema scripts' own lock.
+		 * <pre>{@code
+		 * EventStorage storage = PostgresEventStorage.newBuilder()
+		 *     .lockTimeout(Duration.ofSeconds(3))
+		 *     .build();
+		 * }</pre>
+		 *
+		 * @param timeout the bound; {@code null} restores the default, zero waits without bound
+		 * @return this Builder for method chaining
+		 * @throws IllegalArgumentException for a negative timeout
+		 * @see PostgresEventStorageImpl#lockTimeout(Duration)
+		 */
+		public Builder lockTimeout ( Duration timeout ) {
+			this.lockTimeout = PostgresEventStorageImpl.validateLockTimeout(timeout);
+			return this;
+		}
+
+		/**
+		 * How long a LISTEN/NOTIFY monitoring connection may stay silent before its monitor asks the
+		 * server whether it is still there.
+		 * <p>
+		 * A monitor waits for notifications by reading its socket and sends nothing while it waits, so a
+		 * socket whose peer has vanished without closing it — a dropped NAT or firewall state, a network
+		 * partition, a crashed host — looks exactly like a quiet channel, indefinitely, with the
+		 * {@code notifications.up} gauge reading 1. After this long without traffic the monitor sends one
+		 * round trip, bounded by {@link PostgresEventStorageImpl#NOTIFICATION_PROBE_TIMEOUT}, and drops a
+		 * connection that does not answer for a new one. Traffic resets the interval, so a busy channel is
+		 * never probed. The default, {@link PostgresEventStorageImpl#DEFAULT_NOTIFICATION_PROBE_INTERVAL}
+		 * (30 seconds), notices a dead connection within about half a minute for two round trips a minute
+		 * on an idle channel.
+		 *
+		 * @param interval the interval; {@code null} restores the default
+		 * @return this Builder for method chaining
+		 * @throws IllegalArgumentException for a zero or negative interval
+		 * @see PostgresEventStorageImpl#notificationProbeInterval(Duration)
+		 */
+		public Builder notificationProbeInterval ( Duration interval ) {
+			this.notificationProbeInterval = PostgresEventStorageImpl.validateNotificationProbeInterval(interval);
 			return this;
 		}
 
@@ -727,6 +782,8 @@ public interface PostgresEventStorage {
 					? new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, createdDataSources, meterRegistry, codec)
 					: new PostgresLegacyEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, createdDataSources, meterRegistry, codec);
 
+
+				result.lockTimeout(lockTimeout).notificationProbeInterval(notificationProbeInterval);
 
 				switch ( databaseInitMode ) {
 					case NONE       -> { }

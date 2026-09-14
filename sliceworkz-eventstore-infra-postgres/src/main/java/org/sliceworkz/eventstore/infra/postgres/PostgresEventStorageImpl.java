@@ -253,6 +253,38 @@ public class PostgresEventStorageImpl implements EventStorage {
 	public static final Duration DEFAULT_NOTIFICATION_STARTUP_TIMEOUT = Duration.ofSeconds(10);
 
 	/**
+	 * How long an operation waits for one of this storage's advisory locks — the per-stream append lock
+	 * a conditional append takes, the per-lease lock a lease request takes — before failing, when
+	 * nothing else has been configured; see {@link #lockTimeout(Duration)}.
+	 * <p>
+	 * Generous on purpose, for the same reason {@link #DEFAULT_NOTIFICATION_STARTUP_TIMEOUT} is: the
+	 * lock is held for the duration of one INSERT, so a healthy stream hands it over in milliseconds and
+	 * even a queue of writers at one hot boundary clears in well under this. What it bounds is the other
+	 * case — a holder that is not coming back — where the alternative to a deadline is every conditional
+	 * append to that stream parking in a checked-out pool connection until the pool is empty.
+	 */
+	public static final Duration DEFAULT_LOCK_TIMEOUT = Duration.ofSeconds(10);
+
+	/**
+	 * How long a monitoring connection may go without traffic before the monitor asks the server whether
+	 * it is still there, when nothing else has been configured; see
+	 * {@link #notificationProbeInterval(Duration)}.
+	 */
+	public static final Duration DEFAULT_NOTIFICATION_PROBE_INTERVAL = Duration.ofSeconds(30);
+
+	/**
+	 * How long a monitor waits for the server to answer — a liveness probe, the {@code LISTEN}, the
+	 * barrier read — before it presumes its connection dead and drops it for a new one.
+	 * <p>
+	 * Applied as the JDBC network timeout of every monitoring connection. Nothing a monitor asks the
+	 * server takes more than milliseconds, so the bound can be tight without ever being hit by a live
+	 * connection; it exists because a socket whose peer has vanished without a FIN or RST — a NAT or
+	 * firewall that dropped its state, a partitioned network, a crashed host — answers nothing, and a
+	 * read on it with no deadline waits forever.
+	 */
+	public static final Duration NOTIFICATION_PROBE_TIMEOUT = Duration.ofSeconds(5);
+
+	/**
 	 * The slice {@link #start()} waits in, so that it notices a concurrent {@link #close()} promptly even
 	 * when the configured timeout is long. The latches are also counted down by {@code close()}; this is
 	 * the belt to that pair of braces.
@@ -396,7 +428,117 @@ public class PostgresEventStorageImpl implements EventStorage {
 	public boolean isNotificationsAvailable ( ) {
 		return eventMonitorListening.get() && bookmarkMonitorListening.get();
 	}
-	
+
+	/** see {@link #lockTimeout(Duration)} */
+	private volatile Duration lockTimeout = DEFAULT_LOCK_TIMEOUT;
+
+	/** see {@link #notificationProbeInterval(Duration)} */
+	private volatile Duration notificationProbeInterval = DEFAULT_NOTIFICATION_PROBE_INTERVAL;
+
+	/**
+	 * Bounds how long an operation waits for one of this storage's advisory locks: the per-stream lock
+	 * a conditional append takes (see {@link #appendLockKey}) and the per-lease lock a lease request
+	 * takes (see {@link #leaseLockKey}). Waiting longer fails the operation with
+	 * {@link EventStorageException}, nothing written, the cause carrying SQLSTATE {@code 55P03}.
+	 * <p>
+	 * <b>Why a deadline.</b> The lock is transaction-scoped and its holder is another instance of this
+	 * library in the middle of one INSERT, so a healthy holder releases it in milliseconds. A holder
+	 * that has stalled — a paused JVM, a session the server still believes in after its client has
+	 * gone, a transaction left open by a debugger — releases it never, and every conditional append to
+	 * that stream then parks behind it inside a checked-out pool connection. The pool empties, and
+	 * from there every operation of the storage fails on the pool's own connection timeout, reads and
+	 * unconditional appends included, on every stream: one stalled stream takes the store down. With
+	 * the deadline the parked appends fail one by one, each naming the stream and the lock, each
+	 * returning its connection, and the store stays up for everything else while the operator finds
+	 * the holder ({@code pg_locks} joined to {@code pg_stat_activity} on {@code locktype = 'advisory'}).
+	 * <p>
+	 * <b>What it is not.</b> It is not a contention control and does not need tuning for load: a queue
+	 * of writers at one hot boundary hands the lock along in milliseconds each, and a wait anywhere near
+	 * the default means a holder that is stuck, not busy. The one legitimate reason to raise it is a
+	 * conditional append whose own check is slow — the stale-cursor walk described on
+	 * {@link org.sliceworkz.eventstore.stream.EventSource#head()} — where the right fix is the cursor
+	 * rather than the deadline. It is set with {@code SET LOCAL}, so it is scoped to the transaction it
+	 * is set in and never reaches another statement on the same pooled connection; and it covers the
+	 * INSERT behind the lock as well, which only ever waits on DDL. The schema scripts' own lock (see
+	 * {@link #executeSqlScripts}) is deliberately not under it: a second instance waiting for a first
+	 * one to finish a {@code CREATE INDEX} on a large table is right to wait.
+	 * <p>
+	 * {@link Duration#ZERO} removes the bound, which restores waiting indefinitely — PostgreSQL's own
+	 * meaning of a zero {@code lock_timeout}.
+	 *
+	 * @param timeout the bound; {@code null} restores {@link #DEFAULT_LOCK_TIMEOUT}, zero waits forever
+	 * @return this instance for method chaining
+	 * @throws IllegalArgumentException for a negative timeout, or one PostgreSQL cannot represent
+	 */
+	public PostgresEventStorageImpl lockTimeout ( Duration timeout ) {
+		this.lockTimeout = validateLockTimeout(timeout);
+		return this;
+	}
+
+	/** @return the bound on waiting for an advisory lock; zero means no bound */
+	public Duration lockTimeout ( ) {
+		return lockTimeout;
+	}
+
+	/**
+	 * How long a monitoring connection may stay silent before its monitor asks the server whether it is
+	 * still there.
+	 * <p>
+	 * A monitor waits for notifications by reading its socket, and nothing else: the driver sends no
+	 * statement while it waits, so on a channel nobody appends to, the connection carries no traffic at
+	 * all. That is exactly what a socket whose peer has vanished without closing looks like — a NAT or
+	 * firewall that dropped its state, a network partition, a server host that crashed — and the two are
+	 * indistinguishable from the reading side: every poll slice returns empty-handed, forever, with the
+	 * {@code notifications.up} gauge reading 1 over a connection nothing can arrive on. So a monitor
+	 * whose connection has been silent for this long sends the server one round trip
+	 * ({@link Connection#isValid}, bounded by {@link #NOTIFICATION_PROBE_TIMEOUT}), and a connection that
+	 * does not answer is dropped and replaced through the same retry the monitor uses for any other
+	 * failure. Traffic on the connection — a notification, a barrier read — is proof enough and resets
+	 * the interval, so a busy channel is never probed.
+	 * <p>
+	 * The default, {@link #DEFAULT_NOTIFICATION_PROBE_INTERVAL}, notices a dead connection within about
+	 * half a minute at the cost of two round trips a minute on an idle channel. TCP keepalive on the
+	 * driver ({@code tcpKeepAlive=true}) is complementary rather than an alternative: it detects the
+	 * same condition, but only after the operating system's keepalive time, which defaults to two hours
+	 * on Linux and cannot be set through the driver.
+	 *
+	 * @param interval the interval; {@code null} restores {@link #DEFAULT_NOTIFICATION_PROBE_INTERVAL}
+	 * @return this instance for method chaining
+	 * @throws IllegalArgumentException for a zero or negative interval
+	 */
+	public PostgresEventStorageImpl notificationProbeInterval ( Duration interval ) {
+		this.notificationProbeInterval = validateNotificationProbeInterval(interval);
+		return this;
+	}
+
+	/** @return how long a monitoring connection may stay silent before it is probed */
+	public Duration notificationProbeInterval ( ) {
+		return notificationProbeInterval;
+	}
+
+	static Duration validateLockTimeout ( Duration timeout ) {
+		if ( timeout == null ) {
+			return DEFAULT_LOCK_TIMEOUT;
+		}
+		if ( timeout.isNegative() ) {
+			throw new IllegalArgumentException("lock timeout must not be negative: " + timeout);
+		}
+		if ( timeout.toMillis() > Integer.MAX_VALUE ) {
+			throw new IllegalArgumentException("lock timeout exceeds what PostgreSQL's lock_timeout can hold: " + timeout);
+		}
+		return timeout;
+	}
+
+	static Duration validateNotificationProbeInterval ( Duration interval ) {
+		if ( interval == null ) {
+			return DEFAULT_NOTIFICATION_PROBE_INTERVAL;
+		}
+		if ( interval.isZero() || interval.isNegative() ) {
+			throw new IllegalArgumentException("notification probe interval must be positive: " + interval);
+		}
+		return interval;
+	}
+
 	static String validatePrefix(String prefix) {
 		if (prefix == null) {
 			throw new IllegalArgumentException("Prefix cannot be null");
@@ -1563,6 +1705,51 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 */
 	private static final String ACQUIRE_APPEND_LOCK = "SELECT pg_advisory_xact_lock(?)";
 
+	/** SQLSTATE PostgreSQL reports when a wait for a lock outlives {@code lock_timeout} ({@code lock_not_available}) */
+	private static final String LOCK_NOT_AVAILABLE_SQLSTATE = "55P03";
+
+	/**
+	 * Takes an advisory lock in the transaction open on {@code connection}, waiting at most
+	 * {@link #lockTimeout()} for it.
+	 * <p>
+	 * The bound is {@code SET LOCAL lock_timeout}, sent in the same round trip as the lock statement:
+	 * pgjdbc splits a statement string on {@code ;} and pipelines the parts behind one sync, so a
+	 * bounded acquisition costs the wire what an unbounded one does. {@code SET LOCAL} rather than
+	 * {@code SET} because the connection goes back to a pool, and a session-level setting would follow
+	 * it to whatever runs on it next. It lasts until this transaction ends, so the statements behind
+	 * the lock — the INSERT, the lease writes — run under the same bound, which they can only meet by
+	 * waiting on DDL. The alternative — the driver's {@code options} connection property, or a
+	 * {@code connectionInitSql} on the pool — would bound every statement of every caller sharing the
+	 * pool, and only for pools this library builds.
+	 * <p>
+	 * A wait that outlives the bound fails the statement with SQLSTATE {@code 55P03} and aborts the
+	 * transaction; the caller's catch rolls back and names it through {@link #isLockTimeout}.
+	 */
+	private void acquireAdvisoryLock ( Connection connection, String acquireStatement, long key ) throws SQLException {
+		Duration timeout = lockTimeout;
+		String statement = timeout.isZero()
+				? acquireStatement
+				: "SET LOCAL lock_timeout = '%dms'; %s".formatted(timeout.toMillis(), acquireStatement);
+		try ( PreparedStatement lock = connection.prepareStatement(statement) ) {
+			lock.setLong(1, key);
+			lock.execute();
+		}
+	}
+
+	/** whether a failure is a wait for a lock that outlived {@link #lockTimeout()}, by SQLSTATE, never by message text */
+	private static boolean isLockTimeout ( SQLException e ) {
+		return LOCK_NOT_AVAILABLE_SQLSTATE.equals(e.getSQLState());
+	}
+
+	/** the message of the {@link EventStorageException} that reports such a wait */
+	private String lockTimedOut ( String operation, String lock ) {
+		return ("%s waited %dms for %s without getting it; nothing was written. Another session holds the lock: "
+				+ "one still running its own check, or one that has stalled (a paused process, a session the server "
+				+ "has not yet noticed losing) -- pg_locks WHERE locktype = 'advisory', joined to pg_stat_activity, "
+				+ "names it. Retry with backoff; raise the storage's lockTimeout only where a holder is legitimately "
+				+ "this slow").formatted(operation, lockTimeout.toMillis(), lock);
+	}
+
 	/**
 	 * How the conditional append states its DCB consistency check, and why it is not a setting.
 	 *
@@ -1707,7 +1894,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * and PostgreSQL's advisory lock space is global to the database — but they can only make two
 	 * unrelated appends take turns, never let a real conflict through.
 	 */
-	private long appendLockKey ( Optional<EventStreamId> streamId ) {
+	long appendLockKey ( Optional<EventStreamId> streamId ) {
 
 		String scope = ANY_STREAM_SCOPE;
 		if ( streamId.isPresent() && !streamId.get().isAnyContext() && !streamId.get().isAnyPurpose() ) {
@@ -1740,7 +1927,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * lease request — and a transaction that has only taken an advisory lock holds no transaction id,
 	 * so a waiting contender does not pin {@code pg_snapshot_xmin} and cannot stall event visibility.
 	 */
-	private long leaseLockKey ( String leaseName ) {
+	long leaseLockKey ( String leaseName ) {
 		return advisoryLockKey(LEASE_SCOPE + UNIT_SEPARATOR + leaseName);
 	}
 
@@ -1915,10 +2102,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 						// check, which READ COMMITTED does not protect. Held until this transaction ends,
 						// and taken as its own statement so the INSERT's snapshot is taken after the
 						// previous holder committed. See appendLockKey.
-						try ( PreparedStatement lock = writeConnection.prepareStatement(ACQUIRE_APPEND_LOCK) ) {
-							lock.setLong(1, appendLockKey(streamId));
-							lock.execute();
-						}
+						acquireAdvisoryLock(writeConnection, ACQUIRE_APPEND_LOCK, appendLockKey(streamId));
 					}
 
 					// Set parameters
@@ -1970,6 +2154,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 					// contain the word "idempotency".
 					if ( isIdempotencyKeyViolation(e) ) {
 						return Collections.emptyList();
+					} else if ( isLockTimeout(e) ) {
+						throw new EventStorageException(lockTimedOut(
+								"conditional append to " + streamId.map(EventStreamId::toString).orElse("any stream"),
+								"the stream's append lock"), e);
 					} else {
 						throw new EventStorageException("SQLException during append", e);
 					}
@@ -2438,6 +2626,72 @@ public class PostgresEventStorageImpl implements EventStorage {
 	
 	
 	/**
+	 * Gives a monitoring connection a deadline on every read, so that nothing a monitor sends can wait
+	 * forever on a socket whose peer is gone; see {@link #NOTIFICATION_PROBE_TIMEOUT}.
+	 * <p>
+	 * Best effort: a DataSource that does not support {@link Connection#setNetworkTimeout} keeps the
+	 * driver's own setting, and the liveness probe still bounds itself. The wait for notifications is
+	 * unaffected either way — the driver puts its own poll slice on the socket for that read and
+	 * restores this deadline afterwards.
+	 */
+	private void boundMonitorReads ( Connection connection ) {
+		try {
+			connection.setNetworkTimeout(executorService, (int) NOTIFICATION_PROBE_TIMEOUT.toMillis());
+		} catch ( SQLException | RuntimeException e ) {
+			LOGGER.debug("{}: could not put a network timeout on the monitoring connection, its reads keep the driver's own: {}",
+				Thread.currentThread().getName(), e.getMessage());
+		}
+	}
+
+	/**
+	 * Detects a monitoring connection whose socket has died without saying so; see
+	 * {@link #notificationProbeInterval(Duration)} for why nothing else would.
+	 * <p>
+	 * One per connection, touched by its monitor thread only. Anything the server sends is proof the
+	 * socket is alive; after {@link #notificationProbeInterval()} without any, the monitor asks for
+	 * proof with one round trip, and a connection that gives none within
+	 * {@link #NOTIFICATION_PROBE_TIMEOUT} is reported as failed — which the monitor's loop treats like
+	 * any other lost connection: drop it, clear the gauge, back off, take a new one.
+	 */
+	private final class MonitorLiveness {
+
+		private final String channel;
+		private long lastProofNanos = System.nanoTime();
+
+		MonitorLiveness ( String channel ) {
+			this.channel = channel;
+		}
+
+		/** the server just sent something on this connection */
+		void proven ( ) {
+			lastProofNanos = System.nanoTime();
+		}
+
+		/** asks the server for proof of life if none has arrived for the probe interval */
+		void probeIfSilent ( Connection connection ) throws SQLException {
+			long silentNanos = System.nanoTime() - lastProofNanos;
+			if ( silentNanos < notificationProbeInterval.toNanos() ) {
+				return;
+			}
+			boolean alive;
+			try {
+				alive = connection.isValid((int) NOTIFICATION_PROBE_TIMEOUT.toSeconds());
+			} catch ( SQLException | RuntimeException e ) {
+				// isValid is specified to answer rather than throw; a wrapper that throws anyway has answered
+				LOGGER.debug("liveness probe on the monitoring connection of channel '{}{}' threw: {}", prefix, channel, e.getMessage());
+				alive = false;
+			}
+			if ( !alive ) {
+				throw new SQLException(("the monitoring connection of channel '%s%s' was silent for %dms and then did not "
+						+ "answer a liveness probe within %dms: the socket is presumed dead -- its peer gone without closing it, "
+						+ "the way a dropped NAT or firewall state, a network partition or a crashed host leave one -- and is dropped")
+						.formatted(prefix, channel, TimeUnit.NANOSECONDS.toMillis(silentNanos), NOTIFICATION_PROBE_TIMEOUT.toMillis()));
+			}
+			proven();
+		}
+	}
+
+	/**
 	 * Delivers append notifications to the storage's listeners — once the appended events are readable.
 	 * <p>
 	 * A {@code NOTIFY} is delivered when the appending transaction commits, but this store's reads sit
@@ -2516,6 +2770,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 					  PreparedStatement barrierStmt = monitorConnection.prepareStatement(barrierStatement) ){
 					// Ensure connection is in the right state for LISTEN
 					monitorConnection.setAutoCommit(true);
+					// and give every read on it a deadline, the LISTEN included: this connection is held for
+					// the life of the storage, and a socket whose peer has silently gone must not hold it forever
+					boundMonitorReads(monitorConnection);
 
 					stmt.execute(listenStatement);
 
@@ -2526,6 +2783,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 					readyLatch.countDown();
 
 					PGConnection pgConn = monitorConnection.unwrap(PGConnection.class);
+					MonitorLiveness liveness = new MonitorLiveness("event_appended");
 
 					retryDelayMs = INITIAL_RETRY_DELAY_MS;
 
@@ -2535,7 +2793,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 						PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // returns as soon as a notification arrives, otherwise empty-handed after the poll slice
 
-					    if (notifications != null) {
+					    if (notifications != null && notifications.length > 0) {
+					    	liveness.proven();   // whatever it says, it came from the server
 					        for (PGNotification notification : notifications) {
 					            LOGGER.debug("Received: {}", notification.getParameter());
 					            parse(notification.getParameter()).ifPresent(this::withhold);
@@ -2544,6 +2803,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 					    if ( !withheld.isEmpty() ) {
 					    	deliverReadable(barrierStmt);
+					    	liveness.proven();   // the barrier read is an answered round trip
+					    } else {
+					    	liveness.probeIfSilent(monitorConnection);
 					    }
 					}
 
@@ -2707,6 +2969,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 				try ( Connection monitorConnection = monitoringDataSource.getConnection(); Statement stmt = monitorConnection.createStatement() ){
 					// Ensure connection is in the right state for LISTEN
 					monitorConnection.setAutoCommit(true);
+					// and give every read on it a deadline, the LISTEN included: this connection is held for
+					// the life of the storage, and a socket whose peer has silently gone must not hold it forever
+					boundMonitorReads(monitorConnection);
 
 					stmt.execute(listenStatement);
 
@@ -2717,6 +2982,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 					readyLatch.countDown();
 
 					PGConnection pgConn = monitorConnection.unwrap(PGConnection.class);
+					MonitorLiveness liveness = new MonitorLiveness("bookmark_placed");
 
 					retryDelayMs = INITIAL_RETRY_DELAY_MS;
 
@@ -2725,11 +2991,14 @@ public class PostgresEventStorageImpl implements EventStorage {
 						LOGGER.debug("checking for notifications...");
 
 						PGNotification[] notifications = pgConn.getNotifications(WAIT_FOR_NOTIFICATIONS_TIMEOUT); // returns as soon as a notification arrives, otherwise empty-handed after the poll slice
-					    if (notifications != null) {
+					    if (notifications != null && notifications.length > 0) {
+					    	liveness.proven();   // whatever it says, it came from the server
 					        for (PGNotification notification : notifications) {
 					            LOGGER.debug("Received: {}", notification.getParameter());
 					            parse(notification.getParameter()).ifPresent(this::deliver);
 					        }
+					    } else {
+					    	liveness.probeIfSilent(monitorConnection);
 					    }
 					}
 
@@ -3114,10 +3383,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			try {
 				connection.setAutoCommit(false);
 
-				try ( PreparedStatement lock = connection.prepareStatement(ACQUIRE_LEASE_LOCK) ) {
-					lock.setLong(1, leaseLockKey(request.leaseName()));
-					lock.execute();
-				}
+				acquireAdvisoryLock(connection, ACQUIRE_LEASE_LOCK, leaseLockKey(request.leaseName()));
 
 				try ( PreparedStatement stmt = connection.prepareStatement(registerContender) ) {
 					stmt.setString(1, request.leaseName());
@@ -3183,6 +3449,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 				} catch (SQLException rollbackEx) {
 					e.addSuppressed(rollbackEx);
 				}
+				if ( isLockTimeout(e) ) {
+					throw new EventStorageException(lockTimedOut(
+							"lease request for '%s' by '%s'".formatted(request.leaseName(), request.owner()), "the lease's lock"), e);
+				}
 				throw new EventStorageException("Failed to request lease '%s' for owner '%s'".formatted(request.leaseName(), request.owner()), e);
 			}
 		} catch (SQLException e) {
@@ -3211,10 +3481,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			try {
 				connection.setAutoCommit(false);
 
-				try ( PreparedStatement lock = connection.prepareStatement(ACQUIRE_LEASE_LOCK) ) {
-					lock.setLong(1, leaseLockKey(leaseName));
-					lock.execute();
-				}
+				acquireAdvisoryLock(connection, ACQUIRE_LEASE_LOCK, leaseLockKey(leaseName));
 
 				try ( PreparedStatement stmt = connection.prepareStatement(release) ) {
 					stmt.setString(1, leaseName);
@@ -3235,6 +3502,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 					connection.rollback();
 				} catch (SQLException rollbackEx) {
 					e.addSuppressed(rollbackEx);
+				}
+				if ( isLockTimeout(e) ) {
+					throw new EventStorageException(lockTimedOut(
+							"lease release of '%s' by '%s'".formatted(leaseName, owner), "the lease's lock"), e);
 				}
 				throw new EventStorageException("Failed to release lease '%s' for owner '%s'".formatted(leaseName, owner), e);
 			}

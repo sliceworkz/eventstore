@@ -217,6 +217,22 @@ mvn clean install -DskipTests
 - Created via `EventFilter.forEvents(eventTypesFilter, tags)`, or `EventFilter.forTags(tags)` for events of
   any type carrying the tags
 - Used by `AppendCriteria` for optimistic locking (where direction/limit are irrelevant)
+- **A sealed interface in a type filter stands for every event type under it.** An event is stored
+  under the simple name of its record, never under an interface it implements, so
+  `EventTypesFilter.of(Class...)` resolves a sealed interface into the event types it permits,
+  recursively, when the filter is built: the root of a hierarchy names all of it
+  (`EventTypesFilter.of(CustomerEvent.class)`), a nested interface names its own branch, and the
+  filter then holds those names only. Resolved at construction rather than where the filter is
+  matched, because a filter is matched in several places — the storage query, the store's re-check
+  of the events it upcasts, a `Projector`'s check of the events it is handed, the lock check of an
+  append — and only some of them have the stream's registrations at hand; resolving once keeps them
+  in agreement. The alternative — resolving an interface by name inside the typed serde — loses
+  because the filter then holds a name no stored event carries, honoured by whichever path consults
+  the serde and by none of the others; a lock check built on it admits every append, silently. A
+  non-sealed interface is refused with `IllegalArgumentException`, as `getEventStream` refuses it as
+  a root. A filter built from `EventType`s is literal: `EventType.of(SomeInterface.class)` names a
+  stored type no record has. `EventTypesFilterTest` pins the resolution,
+  `EventTypesFilterHierarchyTest` in the TCK pins the four paths per backend, legacy upcasts included
 - **`until` is an inclusive upper bound over *stored* events, in the `(tx, position)` order, and is
   direction-independent**: `.backwards()` returns the same events as forward, newest first. It is part of
   the filter, so it also bounds a consistency boundary — an event past it is not a new relevant fact and

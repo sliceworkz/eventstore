@@ -25,7 +25,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import org.sliceworkz.eventstore.events.EventDeserializationException;
 import org.sliceworkz.eventstore.events.EventType;
@@ -70,7 +69,6 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 
 	private final Map<String,EventDeserializer> deserializers = new HashMap<>();
 	private final Map<EventType, Set<EventType>> mostRecentTypes = new HashMap<>();
-	private final Map<EventType, Set<EventType>> mostRecentMultiTypes = new HashMap<>(); // for interface hierarchies, this maps interface->set of interface-implementing event types
 	
 	@Override
 	public List<TypeAndPayload> deserialize ( TypeAndSerializedPayload serialized ) {
@@ -110,14 +108,14 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 	
 	@Override
 	public TypedEventPayloadSerializerDeserializer registerEventTypes(Class<?> rootClass) {
-		deserializersFor(rootClass, Collections.emptySet()).forEach(m->registerEventType(m.name(), m.clazz(), false));
+		deserializersFor(rootClass).forEach(m->registerEventType(m.name(), m.clazz(), false));
 		
 		return this;
 	}
 	
 	@Override
 	public TypedEventPayloadSerializerDeserializer registerLegacyEventTypes(Class<?> rootClass) {
-		deserializersFor(rootClass, Collections.emptySet()).forEach(m->registerEventType(m.name(), m.clazz(), true));
+		deserializersFor(rootClass).forEach(m->registerEventType(m.name(), m.clazz(), true));
 		
 		return this;
 	}
@@ -191,7 +189,14 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		deserializers.put(key, eventDeserializer);
 	}
 	
-	private Set<EventNameAndEventClass> deserializersFor ( Class<?> eventRootClass, Set<EventType> implementedInterfaces ) {
+	/**
+	 * The event classes under a root: every permitted class of a sealed interface, walking nested sealed
+	 * interfaces, or the class itself when the root is a class. Interfaces are walked and never recorded:
+	 * an interface is not the name of any stored event, and a filter naming one has already been resolved
+	 * into the event types under it by {@link org.sliceworkz.eventstore.query.EventTypesFilter#of(List)}
+	 * by the time it reaches this serde.
+	 */
+	private Set<EventNameAndEventClass> deserializersFor ( Class<?> eventRootClass ) {
 		Set<EventNameAndEventClass> result = Collections.emptySet();
 		if ( eventRootClass != null && !eventRootClass.equals(Object.class)) {
 			if ( eventRootClass.isInterface() ) {
@@ -207,16 +212,9 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 					
 					for ( Class<?> psc: permittedSubclassses ) {
 						if ( psc.isInterface() ) {
-							
-							Set<EventType> newImplementedInterfaces = new HashSet<>(implementedInterfaces);
-							newImplementedInterfaces.add(EventType.of(psc));
-							result.addAll(deserializersFor(psc, newImplementedInterfaces));
+							result.addAll(deserializersFor(psc));
 						} else {
 							result.add(EventNameAndEventClass.of(psc));
-
-							registerEventTypeWithParentInterfaceType(implementedInterfaces, EventType.of(psc)); 
-							// add eg a CustomerRegistered record with a CustomerDomainEvent interface (to allow querying with typefilter CustomerDomainEvent.class, etc... 
-							
 						}
 					}
 					
@@ -224,21 +222,10 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 					result = Collections.emptySet();
 				}
 			} else {
-				result = Stream.of(eventRootClass).map(EventNameAndEventClass::of).collect(Collectors.toSet()) ;
-				registerEventTypeWithParentInterfaceType(implementedInterfaces, EventType.of(eventRootClass)); 
+				result = Set.of(EventNameAndEventClass.of(eventRootClass));
 			}
 		}
 		return result;
-	}
-
-	private void registerEventTypeWithParentInterfaceType(Set<EventType> implementedInterfaces, EventType eventType) {
-		// register this event class as a descendent of each of its implemented interfaces
-		implementedInterfaces.forEach(parentTypeInterface->{
-			if ( !mostRecentMultiTypes.containsKey(parentTypeInterface)) {
-				mostRecentMultiTypes.put(parentTypeInterface, new HashSet<>());
-			}
-			mostRecentMultiTypes.get(parentTypeInterface).add(eventType);	
-		});
 	}
 	
 	record EventNameAndEventClass (String name, Class<?> clazz) { 
@@ -333,25 +320,14 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 
 	@Override
 	public Set<EventType> determineLegacyTypes(Set<EventType> currentTypes) {
-		// return all types that are upcasted to the currentType, and include the currentType itself as well
-		Set<EventType> currentConcreteEventTypes = concreteEventTypesFor(currentTypes); // explode to concrete implementations if interfaces are passed
-		Set<EventType> result = new HashSet<>(currentConcreteEventTypes); // we always include "current types", legacy types are optional - only if they are present
+		// the current types themselves, always, plus every legacy type whose upcaster produces one of
+		// them. The names are stored type names: a sealed interface never reaches here, since
+		// EventTypesFilter resolves one into the event types under it when the filter is built
+		Set<EventType> result = new HashSet<>(currentTypes);
 		result.addAll(mostRecentTypes.entrySet().stream()
-				.filter(e -> e.getValue().stream().anyMatch(currentConcreteEventTypes::contains))
+				.filter(e -> e.getValue().stream().anyMatch(currentTypes::contains))
 				.map(Map.Entry::getKey)
 				.collect(Collectors.toSet()));
-		return result;
-	}
-	
-	private Set<EventType> concreteEventTypesFor ( Set<EventType> types ) {
-		Set<EventType> result = new HashSet<>();
-		for ( EventType e: types ) {
-			if ( mostRecentMultiTypes.containsKey(e)) { // if type is an interface
-				result.addAll(mostRecentMultiTypes.get(e));
-			} else { // if type is a concrete event class
-				result.add(e);
-			}
-		}
 		return result;
 	}
 

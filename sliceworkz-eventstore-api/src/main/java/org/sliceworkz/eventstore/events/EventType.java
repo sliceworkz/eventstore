@@ -80,7 +80,10 @@ public record EventType ( String name ) implements java.io.Serializable {
 	/**
 	 * Creates an EventType from a class.
 	 * <p>
-	 * The type name is derived from the class's simple name (not the fully qualified name).
+	 * The type name is derived from the class's simple name (not the fully qualified name). An
+	 * interface's simple name is not the name of any stored event; to match every event type under a
+	 * sealed interface, build the filter from the class with
+	 * {@link org.sliceworkz.eventstore.query.EventTypesFilter#of(Class...)}, which resolves it.
 	 *
 	 * @param clazz the class representing the domain event type
 	 * @return an EventType based on the class's simple name

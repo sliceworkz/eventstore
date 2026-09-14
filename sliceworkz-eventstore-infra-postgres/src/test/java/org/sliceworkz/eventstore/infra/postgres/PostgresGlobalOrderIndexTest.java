@@ -51,26 +51,44 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
 /**
- * Pins that a read binding no stream column walks {@code idx_events_tx_position}, the index on the
- * global {@code (event_tx, event_position)} order — rather than scanning the table and sorting it.
+ * Pins that a read which does not bind both stream columns walks an index on the
+ * {@code (event_tx, event_position)} order — rather than scanning and sorting.
  * <p>
  * Every {@code ORDER BY} the store issues is that pair, and the stream indexes all lead with
  * {@code (stream_context, stream_purpose)}: bound, they supply the order from a start condition; unbound,
- * they supply nothing, and the planner is left with a scan of the whole table feeding a top-N sort,
- * however small the {@code LIMIT}. The reads that legitimately bind no stream column — a wildcard stream
- * paged by a store-wide projection, {@code head()} of the whole store, an unscoped
- * {@code EventStoreImporter} run — then cost the size of the store per page instead of the size of the
- * page. Nothing else would notice the index going missing: the answers are correct either way, and the
- * compliance suite runs on tables far too small for a scan to hurt. So the plan is pinned, the way
+ * they supply nothing, and the planner is left with a scan feeding a top-N sort, however small the
+ * {@code LIMIT}. Two indexes cover the two ways a read can leave them unbound:
+ * <ul>
+ *   <li>{@code idx_events_tx_position}, the global order, for a read that binds no stream column — a
+ *       wildcard stream paged by a store-wide projection, {@code head()} of the whole store, an unscoped
+ *       {@code EventStoreImporter} run;</li>
+ *   <li>{@code idx_events_context_tx_position}, the same order within a context, for a read that binds
+ *       the context and leaves the purpose open — a whole-context replay or export over a per-entity
+ *       layout, where every entity is its own purpose.</li>
+ * </ul>
+ * Without them those reads cost the size of the store per page instead of the size of the page. Nothing
+ * else would notice an index going missing: the answers are correct either way, and the compliance suite
+ * runs on tables far too small for a scan to hurt. So the plans are pinned, the way
  * {@code PostgresCursorBoundaryTest} pins the cursor's plan.
  * <p>
- * The third scenario is the migration story: a database created before the index existed is reported by
- * {@code VALIDATE} naming the index, and repaired by {@code ENSURE} on its next start.
+ * The context scenarios seed the context under test as a small share of the table. That is the case
+ * the context index exists for: when a context is most of the table the planner may just as well walk
+ * the smaller global index and filter, which is also cheap, and either plan would satisfy a looser
+ * assertion — so the corpus is skewed to make the choice, and the assertion, unambiguous.
+ * <p>
+ * The last scenario is the migration story: a database created before the indexes existed is reported by
+ * {@code VALIDATE} naming the missing one, and repaired by {@code ENSURE} on its next start.
  */
 public class PostgresGlobalOrderIndexTest {
 
-	/** Streams seeded, so the corpus is genuinely cross-stream. */
-	private static final int STREAMS = 3;
+	/** The context whose reads are explained; a minority of the table, see the class comment. */
+	private static final String CONTEXT = "inventory";
+
+	/** Streams seeded in {@link #CONTEXT}, so a context read is genuinely cross-stream. */
+	private static final int CONTEXT_STREAMS = 3;
+
+	/** Streams seeded in the other context, each the same size, so {@link #CONTEXT} is a quarter of the table. */
+	private static final int OTHER_STREAMS = 9;
 
 	/** Appends per stream; each is one transaction, so the corpus spans transactions too. */
 	private static final int SEED_APPENDS = 5;
@@ -78,7 +96,7 @@ public class PostgresGlobalOrderIndexTest {
 	/** Events per seeding append. */
 	private static final int SEED_BATCH = 40;
 
-	/** A page smaller than the corpus, so a page really is a slice of it. */
+	/** A page smaller than a context, so a page really is a slice of it. */
 	private static final int PAGE = 25;
 
 	abstract static class Tests {
@@ -99,18 +117,12 @@ public class PostgresGlobalOrderIndexTest {
 				analyze(dataSource, prefix);
 
 				List<StoredEvent> all = storage.query(EventQuery.matchAll(), Optional.empty(), null, Limit.none(), QueryDirection.FORWARD).toList();
-				String plan = explainWildcardPage(storage, dataSource, prefix, all.get(all.size() / 2).reference());
+				String plan = explainPage(storage, dataSource, prefix, Optional.empty(), all.get(all.size() / 2).reference());
 
 				assertTrue(plan.contains("Index Scan using " + prefix + "idx_events_tx_position"), () ->
 						"a wildcard page has no stream column to enter a stream index by, so the global"
 								+ " (event_tx, event_position) index is the only one that can supply its order\n" + plan);
-				assertFalse(plan.contains("Sort"), () ->
-						"a sort above the scan means no index supplied the order, so the LIMIT cannot stop the"
-								+ " scan early and a page costs the whole store\n" + plan);
-				assertFalse(plan.contains("Seq Scan"), plan);
-				assertTrue(indexCondition(plan).contains("event_position"), () ->
-						"the cursor has to be a start condition on that index, not a filter over rows already"
-								+ " fetched from the head of the store\n" + plan);
+				assertOrderedWalkFromTheCursor(plan);
 			} finally {
 				storage.close();
 			}
@@ -137,26 +149,73 @@ public class PostgresGlobalOrderIndexTest {
 		}
 
 		@Test
-		public void testADatabaseWithoutTheIndexIsReportedByValidateAndCreatedByEnsure ( ) throws Exception {
-			String prefix = "globalmigr_";
+		public void testAContextPageWalksTheContextOrderIndexFromTheCursor ( ) throws Exception {
+			String prefix = "contextorder_";
+			DataSource dataSource = PostgresContainer.dataSource(image);
+			PostgresEventStorageImpl storage = open(prefix, dataSource);
+			try {
+				seed(storage);
+				analyze(dataSource, prefix);
+
+				Optional<EventStreamId> context = Optional.of(EventStreamId.forContext(CONTEXT).anyPurpose());
+				List<StoredEvent> all = storage.query(EventQuery.matchAll(), context, null, Limit.none(), QueryDirection.FORWARD).toList();
+				String plan = explainPage(storage, dataSource, prefix, context, all.get(all.size() / 2).reference());
+
+				assertTrue(plan.contains("Index Scan using " + prefix + "idx_events_context_tx_position"), () ->
+						"a context page leaves the purpose open, so the stream indexes offer no start condition;"
+								+ " the (stream_context, event_tx, event_position) index is entered at the context\n" + plan);
+				assertTrue(indexCondition(plan).contains("stream_context"), () ->
+						"the context has to be an index condition, not a filter over every other context's events\n" + plan);
+				assertOrderedWalkFromTheCursor(plan);
+			} finally {
+				storage.close();
+			}
+		}
+
+		@Test
+		public void testTheHeadOfAContextWalksTheContextOrderIndexBackward ( ) throws Exception {
+			String prefix = "contexthead_";
+			DataSource dataSource = PostgresContainer.dataSource(image);
+			PostgresEventStorageImpl storage = open(prefix, dataSource);
+			try {
+				seed(storage);
+				analyze(dataSource, prefix);
+
+				String sql = "EXPLAIN (COSTS OFF) " + PostgresEventStorageImpl.headSql(prefix, Optional.of(EventStreamId.forContext(CONTEXT).anyPurpose()));
+				String plan = explain(dataSource, sql, List.of(CONTEXT));
+
+				assertTrue(plan.contains("Index Scan Backward using " + prefix + "idx_events_context_tx_position"), () ->
+						"the head of a context is one backward probe on the context order index\n" + plan);
+				assertFalse(plan.contains("Sort"), plan);
+				assertFalse(plan.contains("Seq Scan"), plan);
+			} finally {
+				storage.close();
+			}
+		}
+
+		@Test
+		public void testADatabaseWithoutTheIndexesIsReportedByValidateAndRepairedByEnsure ( ) throws Exception {
+			String prefix = "ordermigr_";
 			DataSource dataSource = PostgresContainer.dataSource(image);
 			open(prefix, dataSource).close();
 
-			// a database created before the index existed
-			execute(dataSource, "DROP INDEX " + prefix + "idx_events_tx_position");
+			for ( String index : List.of("idx_events_tx_position", "idx_events_context_tx_position") ) {
+				// a database created before the index existed
+				execute(dataSource, "DROP INDEX " + prefix + index);
 
-			EventStorageException reported = assertThrows(EventStorageException.class, () ->
-					PostgresEventStorage.newBuilder()
-							.name("unit-test").prefix(prefix).dataSource(dataSource)
-							.validateDatabase().build().close());
-			assertTrue(reported.getMessage().contains(prefix + "idx_events_tx_position"),
-					"VALIDATE must name the missing index: " + reported.getMessage());
+				EventStorageException reported = assertThrows(EventStorageException.class, () ->
+						PostgresEventStorage.newBuilder()
+								.name("unit-test").prefix(prefix).dataSource(dataSource)
+								.validateDatabase().build().close());
+				assertTrue(reported.getMessage().contains(prefix + index),
+						"VALIDATE must name the missing index: " + reported.getMessage());
 
-			try ( EventStorage ensured = PostgresEventStorage.newBuilder()
-					.name("unit-test").prefix(prefix).dataSource(dataSource)
-					.ensureDatabase().build() ) {
-				assertTrue(indexExists(dataSource, prefix + "idx_events_tx_position"),
-						"ENSURE creates the index a database from before it existed is missing");
+				try ( EventStorage ensured = PostgresEventStorage.newBuilder()
+						.name("unit-test").prefix(prefix).dataSource(dataSource)
+						.ensureDatabase().build() ) {
+					assertTrue(indexExists(dataSource, prefix + index),
+							"ENSURE creates the index a database from before it existed is missing: " + index);
+				}
 			}
 		}
 
@@ -171,14 +230,23 @@ public class PostgresGlobalOrderIndexTest {
 					.build();
 		}
 
-		/** Round-robins the appends over the streams, so the streams interleave in the global order. */
+		/**
+		 * Round-robins the appends over every stream of both contexts, so the streams and the contexts
+		 * interleave in the global order and {@link #CONTEXT} is a minority of the table.
+		 */
 		private void seed ( PostgresEventStorageImpl storage ) {
+			List<EventStreamId> streams = new ArrayList<>();
+			for ( int s = 0; s < CONTEXT_STREAMS; s++ ) {
+				streams.add(EventStreamId.forContext(CONTEXT).withPurpose("sku-" + s));
+			}
+			for ( int s = 0; s < OTHER_STREAMS; s++ ) {
+				streams.add(EventStreamId.forContext("sales").withPurpose("order-" + s));
+			}
 			for ( int batch = 0; batch < SEED_APPENDS; batch++ ) {
-				for ( int s = 0; s < STREAMS; s++ ) {
-					EventStreamId stream = EventStreamId.forContext("inventory").withPurpose("sku-" + s);
+				for ( EventStreamId stream : streams ) {
 					List<EventToStore> events = new ArrayList<>();
 					for ( int i = 0; i < SEED_BATCH; i++ ) {
-						events.add(new EventToStore(stream, new EventType("StockReserved"), "{}", Tags.of("sku", "SKU-" + s), null));
+						events.add(new EventToStore(stream, new EventType("SomethingHappened"), "{}", Tags.of("purpose", stream.purpose()), null));
 					}
 					storage.append(AppendCriteria.none(), Optional.of(stream), events);
 				}
@@ -189,20 +257,39 @@ public class PostgresGlobalOrderIndexTest {
 			execute(dataSource, "ANALYZE " + prefix + "events");
 		}
 
+		/** The three assertions every ordered page shares, in the order the mechanism has to hold. */
+		private void assertOrderedWalkFromTheCursor ( String plan ) {
+			assertTrue(indexCondition(plan).contains("event_position"), () ->
+					"the cursor has to be a start condition on the index, not a filter over rows already"
+							+ " fetched from the head\n" + plan);
+			assertFalse(plan.contains("Sort"), () ->
+					"a sort above the scan means no index supplied the order, so the LIMIT cannot stop the"
+							+ " scan early and a page costs everything after the cursor\n" + plan);
+			assertFalse(plan.contains("Seq Scan"), plan);
+		}
+
 		/**
-		 * Explains a cursor-carried page over a wildcard stream: the read path's select list, barrier,
-		 * the store's own cursor predicate, and the read path's ordering and limit — with no stream
-		 * predicate, which is the whole point. {@code enable_seqscan} is off so that the question asked is
-		 * whether an index <em>can</em> supply the order, not whether a scan of a tiny table is cheaper.
+		 * Explains a cursor-carried page: the read path's select list, barrier, the store's own cursor
+		 * predicate, whichever stream predicates the scope binds, and the read path's ordering and limit.
+		 * {@code enable_seqscan} is off so that the question asked is whether an index <em>can</em> supply
+		 * the order, not whether a scan of a tiny table is cheaper.
 		 */
-		private String explainWildcardPage ( PostgresEventStorageImpl storage, DataSource dataSource, String prefix,
-				EventReference cursor ) throws SQLException {
+		private String explainPage ( PostgresEventStorageImpl storage, DataSource dataSource, String prefix,
+				Optional<EventStreamId> stream, EventReference cursor ) throws SQLException {
 			StringBuilder sql = new StringBuilder(
 					"EXPLAIN (COSTS OFF) SELECT event_position, event_tx::text, event_id FROM %sevents"
 							.formatted(prefix)
 							+ " WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())");
 			List<Object> parameters = new ArrayList<>();
 			storage.addCursorBoundary(sql, parameters, cursor, QueryDirection.FORWARD);
+			if ( stream.isPresent() && !stream.get().isAnyContext() ) {
+				sql.append(" AND stream_context = ?");
+				parameters.add(stream.get().context());
+			}
+			if ( stream.isPresent() && !stream.get().isAnyPurpose() ) {
+				sql.append(" AND stream_purpose = ?");
+				parameters.add(stream.get().purpose());
+			}
 			// the read path's ORDER BY, verbatim: the cast keeps the name from resolving to the text output column
 			sql.append(" ORDER BY event_tx::xid8, event_position LIMIT ").append(PAGE);
 			return explain(dataSource, sql.toString(), parameters);

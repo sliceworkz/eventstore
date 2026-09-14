@@ -122,23 +122,31 @@ the event up for the notification payload. `checkDatabase()` reports an un-migra
 than failing on a bare not-null violation (`PostgresSchemaDriftTest` pins both). The grants are
 unchanged: the role already needs `SELECT` on the events table.
 
-### Migrating a database created before the global order was indexed
+### Migrating a database created before the order indexes existed
 
-`idx_events_tx_position`, a B-tree on `(event_tx, event_position)`, is the index behind every read
-that binds no stream column: a wildcard stream (`EventStreamId.anyContext()`) paged by a store-wide
-projection or an export, `head()` of the whole store, and an unscoped `EventStoreImporter` run.
-Without it those reads have no index that supplies their order — the stream indexes all lead with
-`(stream_context, stream_purpose)` — so each page is a scan of the whole table feeding a sort,
-whatever its limit. Schema validation requires it. `ENSURE` creates it on the next start of an
-existing database; that is a plain `CREATE INDEX`, which blocks appends for the duration of the
-build, so on a large table a `VALIDATE` or `NONE` deployment — or an `ENSURE` one that would rather
-not build an index during a rolling start — applies it by hand first, without the lock:
+Two B-tree indexes on the `(event_tx, event_position)` order serve the reads that do not bind both
+stream columns — the stream indexes all lead with `(stream_context, stream_purpose)` and offer such a
+read neither a start condition nor an order, so without them each page is a scan feeding a sort,
+whatever its limit:
+
+- `idx_events_tx_position` on `(event_tx, event_position)`: a wildcard stream
+  (`EventStreamId.anyContext()`) paged by a store-wide projection or an export, `head()` of the
+  whole store, an unscoped `EventStoreImporter` run.
+- `idx_events_context_tx_position` on `(stream_context, event_tx, event_position)`: a read that
+  binds the context and leaves the purpose open — a whole-context replay or export over a
+  per-entity layout, where every entity is its own purpose.
+
+Schema validation requires both. `ENSURE` creates them on the next start of an existing database;
+that is a plain `CREATE INDEX`, which blocks appends for the duration of the build, so on a large
+table a `VALIDATE` or `NONE` deployment — or an `ENSURE` one that would rather not build indexes
+during a rolling start — applies them by hand first, without the lock:
 
 ```sql
 CREATE INDEX CONCURRENTLY IF NOT EXISTS <prefix>idx_events_tx_position ON <prefix>events (event_tx, event_position);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS <prefix>idx_events_context_tx_position ON <prefix>events (stream_context, event_tx, event_position);
 ```
 
-`checkDatabase()` reports the index as missing under `VALIDATE` until it exists.
+`checkDatabase()` reports a missing one under `VALIDATE`, by name, until it exists.
 
 ### Migrating a database created before shredding existed
 

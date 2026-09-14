@@ -94,8 +94,9 @@ mvn clean install -DskipTests
     fails every command, an upcast-to-nothing head reads as an empty stream, and a sealed value costs a
     key-store round trip. That is why it is a method on `EventSource` and an SPI method on
     `EventStorage`, whose `default` is that query for a backend written before it; Postgres reads the
-    three reference columns off `idx_events_stream_position` — off `idx_events_tx_position` for a
-    wildcard stream — and no payload (`PostgresHeadStatementTest`, `PostgresGlobalOrderIndexTest`)
+    three reference columns off `idx_events_stream_position` — off `idx_events_context_tx_position`
+    for a context, off `idx_events_tx_position` for a wildcard stream — and no payload
+    (`PostgresHeadStatementTest`, `PostgresGlobalOrderIndexTest`)
   - **It names a stored event, whole**: `index` 0, and a boundary at it includes every event the stored
     event upcasts into — see the `until` note under EventFilter
   - The event at the head need not match the boundary's filter: the reference is a cursor for the check,
@@ -1318,7 +1319,8 @@ each figure as Testcontainers-on-a-developer-machine unless the module file says
   for) and win only where a limit fills before the scan gets far; prototyping tag-query cost against
   them points backwards.
 - **Stream design** (`stream-design-*` pair): **`PER_ENTITY` wins or ties everything except reading a
-  context in order** (13–15× worse — a whole-context replay or export pays it). The canonical DCB
+  context in order** (13–15× worse in the committed run, which was measured without
+  `idx_events_context_tx_position`, the index that serves exactly that read). The canonical DCB
   check is 4.2× better single-threaded and 16.8× at eight writers, because distinct purposes take
   distinct advisory locks. **But read an entity through its own stream, or the design buys nothing**:
   addressing a per-entity corpus by tag through a wildcard purpose costs 23–29× over its own stream.
@@ -1542,14 +1544,16 @@ that bind everywhere:
   canonical check, a 14× cliff at two OR-ed facts, and a steady-state 1.16 s whole-table scan on
   the empty boundary). The measurements behind that rejection are recorded in the benchmark
   module's `CLAUDE.md`.
-- **A read that binds no stream column walks `idx_events_tx_position`**, a B-tree on the global
-  `(event_tx, event_position)` order: a wildcard stream paged by a store-wide projection or an
-  export, `head()` of the whole store, an unscoped `EventStoreImporter` run. The stream indexes all
-  lead with `(stream_context, stream_purpose)` and offer such a read neither a start condition nor
-  an order, so without it every page is a scan of the whole table plus a sort, whatever its limit.
-  A database created before the index existed needs it applied — `ENSURE` does that on the next
+- **A read that does not bind both stream columns walks an index on the `(event_tx, event_position)`
+  order**: `idx_events_tx_position`, the global order, for a read that binds no stream column (a
+  wildcard stream paged by a store-wide projection or an export, `head()` of the whole store, an
+  unscoped `EventStoreImporter` run), and `idx_events_context_tx_position` for one that binds the
+  context and leaves the purpose open (a whole-context replay over a per-entity layout). The stream
+  indexes all lead with `(stream_context, stream_purpose)` and offer such reads neither a start
+  condition nor an order, so without these every page is a scan plus a sort, whatever its limit.
+  A database created before they existed needs them applied — `ENSURE` does that on the next
   start, a `VALIDATE`/`NONE` deployment by hand with `CREATE INDEX CONCURRENTLY` — see "Migrating a
-  database created before the global order was indexed" in the postgres module README.
+  database created before the order indexes existed" in the postgres module README.
 - **Oldest supported PostgreSQL is 16**, and the `btree_gin` extension is required — creating it
   needs `CREATE` on the *database*, not the schema; a DBA installing it once is the recommended
   split, and an unprivileged role then starts against it silently.

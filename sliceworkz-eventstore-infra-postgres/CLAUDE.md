@@ -296,17 +296,29 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
 - **Every index exists for a statement the store issues, and `checkDatabase()` requires exactly those.**
   The stream indexes — `idx_events_stream_position`, `idx_events_stream_type_position`, the two GIN
   indexes — all lead with `(stream_context, stream_purpose)` and serve everything scoped to a stream.
-  `idx_events_tx_position`, a B-tree on the global `(event_tx, event_position)` order, serves the reads
-  that bind no stream column: a wildcard stream (`EventStreamId.anyContext()`) paged by a store-wide
-  projection or an export, `head()` of the whole store, an unscoped `EventStoreImporter` run. Without
-  it those reads have no index that supplies their order, so a page is a scan of the whole table
-  feeding a top-N sort whatever its `LIMIT` — measured at 300.000 events: ~7.500 buffers and
-  120–220 ms per page, against ~20 buffers and under 1 ms walking the index; the store-wide head
-  the same. Cheap to maintain, since both columns only ever grow and every insert lands on the
-  rightmost leaf. `PostgresGlobalOrderIndexTest` pins the plans (a plain `Index Scan`, no `Sort`, the
-  cursor in the `Index Cond`; the head an `Index Scan Backward`) and the migration: a database from
-  before the index is reported by `VALIDATE` naming it and repaired by `ENSURE`, see "Migrating a
-  database created before the global order was indexed" in the README.
+  Two B-trees on the `(event_tx, event_position)` order serve the reads that do not bind both stream
+  columns, which the stream indexes offer neither a start condition nor an order, so that without
+  them a page is a scan feeding a top-N sort whatever its `LIMIT`:
+  - **`idx_events_tx_position`**, the global order, for a read that binds no stream column: a
+    wildcard stream (`EventStreamId.anyContext()`) paged by a store-wide projection or an export,
+    `head()` of the whole store, an unscoped `EventStoreImporter` run. Measured at 300.000 events:
+    ~7.500 buffers and 120–220 ms per page without it, ~20 buffers and under 1 ms walking it; the
+    store-wide head the same.
+  - **`idx_events_context_tx_position`**, the same order within a context, for a read that binds
+    the context and leaves the purpose open — a whole-context replay or export over a per-entity
+    layout, where every entity is its own purpose. The global index can serve that shape only with
+    the context as a `Filter`, walking every other context's events to discard them, which is fine
+    while the context is most of the table and linear in the rest of it otherwise: measured on a
+    context holding 2% of 300.000 events, 24.500 rows removed by the filter against none, 3.9 ms
+    against 0.9 ms for a page. The planner picks between the two by share — the smaller global index
+    with a filter when the context dominates, this one when it does not — and both are index walks.
+  - Both are cheap to maintain: their trailing columns only ever grow, so every insert lands on the
+    rightmost leaf of its context, or of the table.
+  - `PostgresGlobalOrderIndexTest` pins the plans (a plain `Index Scan`, no `Sort`, the cursor in the
+    `Index Cond`; the heads an `Index Scan Backward`), on a corpus where the context under test is a
+    minority of the table so the choice is unambiguous, and the migration: a database from before the
+    indexes is reported by `VALIDATE` naming the missing one and repaired by `ENSURE`, see "Migrating
+    a database created before the order indexes existed" in the README.
 - **`ENSURE` brings functions and triggers up to date; tables, columns and indexes are only ever created.**
   The functions are `CREATE OR REPLACE`d and each trigger is compared against the shape this release wants
   (`tgtype` plus target function, in a `DO $$` block) and recreated only when it differs — so wrong timing,

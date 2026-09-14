@@ -75,6 +75,18 @@ CREATE TABLE IF NOT EXISTS PREFIX_events (
 	    event_position
 	);
 
+	-- The same order within one context. A read that binds the context and leaves the purpose
+	-- open -- EventStreamId.forContext("x") over a per-entity layout, where every entity is its
+	-- own purpose and reading the context is a cross-entity read -- can enter neither the stream
+	-- indexes (purpose is their second column) nor, usefully, the global index above (every other
+	-- context's events would be walked and filtered out). Entered at the context, walked from the
+	-- cursor: a whole-context replay, a Projector over a context, a per-context export.
+	CREATE INDEX IF NOT EXISTS PREFIX_idx_events_context_tx_position ON PREFIX_events (
+	    stream_context,
+	    event_tx,
+	    event_position
+	);
+
 	-- Allows efficient filtering on multiple dimensions
 	-- Primary index for your most common query pattern
 	-- B-tree handles equality (=) and IN clauses efficiently

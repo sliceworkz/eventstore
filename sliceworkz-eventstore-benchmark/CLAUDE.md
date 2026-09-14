@@ -431,15 +431,16 @@ tagged, PG18, 0.00% store drift on both sides, with `append-none` as the control
   under `per-entity` writers to different entities take different locks and do not meet. The gap is
   4.2× single-threaded and grows with writers, which is the signature of contention rather than of a
   cheaper plan.
-- **The one real cost is paging a context in order: 13–15× slower.** That is not an artefact and
-  there is no addressing trick that recovers it — under `per-entity`, reading a whole context *is* a
-  cross-entity read, so `stream_purpose` is unbound, and it is the second column of both
-  `idx_events_stream_position` and `idx_events_stream_tags`. An ordered read loses its start
-  condition and the `LIMIT` cannot be pushed into the scan. Anything shaped like `query-stream-page`
-  is expected to pay it — a whole-context replay, a `Projector` over a context, an export — though
-  only the page is measured: `replay-batches` is not in these two profiles, so the replay cost is
-  inferred from the shape it shares rather than observed. Weigh the trade against how often the
-  application reads a whole context versus how often it reads or writes one entity.
+- **The one cost in this run is paging a context in order: 13–15× slower — and the run was measured
+  without `idx_events_context_tx_position`, the index that serves exactly that read.** Under
+  `per-entity`, reading a whole context *is* a cross-entity read, so `stream_purpose` is unbound, and
+  it is the second column of both `idx_events_stream_position` and `idx_events_stream_tags`: on that
+  schema an ordered read lost its start condition and the `LIMIT` could not be pushed into the scan.
+  `(stream_context, event_tx, event_position)` is the index that gives a context read its start
+  condition back — entered at the context, walked from the cursor, so a page costs the page — which
+  is what the `query-stream-page` row is expected to show on a re-run of this pair. Anything shaped
+  like it — a whole-context replay, a `Projector` over a context, an export — is the shape that index
+  is for; only the page is measured: `replay-batches` is not in these two profiles.
 - **Read one entity through its own stream, or the design buys you nothing.** This is the trap, and
   it is entirely in the calling code: `EventStreamId.forContext("inventory")` with a wildcard purpose
   addresses a per-entity corpus *the tagged way* and lands in exactly the unbound-column-2 case

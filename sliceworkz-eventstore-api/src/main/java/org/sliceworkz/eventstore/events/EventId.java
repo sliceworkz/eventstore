@@ -61,8 +61,8 @@ public record EventId ( String value ) implements java.io.Serializable {
 	 */
 	public EventId ( String value ) {
 
-		if ( value == null || "".equals(value.strip()) ) {
-			throw new IllegalArgumentException();
+		if ( value == null || value.isBlank() ) {
+			throw new IllegalArgumentException("event id cannot be null or blank");
 		}
 
 		this.value = value;
@@ -82,15 +82,20 @@ public record EventId ( String value ) implements java.io.Serializable {
 	}
 
 	/**
-	 * Creates an EventId from a string value, with null-safe handling.
+	 * Creates an EventId from a string value.
 	 * <p>
-	 * If the value is null or blank, this method returns null instead of throwing an exception.
+	 * Validates exactly as the constructor does: a null or blank value is rejected here, where the
+	 * caller can see which value was wrong. The alternative — answering {@code null} for a null or
+	 * blank value — loses because no caller can use a null id: the only thing it can be handed to,
+	 * {@link EventReference}, rejects it, so the failure would surface one call later, with a message
+	 * saying nothing about the blank string that caused it.
 	 *
-	 * @param value the unique identifier string (can be null or blank)
-	 * @return an EventId with the specified value, or null if the value is null/blank
+	 * @param value the unique identifier string (required, non-blank)
+	 * @return an EventId with the specified value
+	 * @throws IllegalArgumentException if value is null or blank
 	 */
 	public static EventId of ( String value ) {
-		return ( value == null || "".equals(value.strip()) ) ? null : new EventId ( value );
+		return new EventId ( value );
 	}
 
 

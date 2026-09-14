@@ -311,7 +311,7 @@ mvn clean install -DskipTests
   come round again, and a failing rollback keeps the cause
 
 **Projection initQuery (Savepoint Pattern):**
-- Projections can define an optional `initQuery()` (default returns `null`) that runs before the main `eventQuery()`
+- Projections can define an optional `initQuery()` (default returns `EventQuery.matchNone()`; a `null` is tolerated and means the same) that runs before the main `eventQuery()`
 - Enables the savepoint pattern: a backward query with limit 1 finds the most recent savepoint event that summarizes prior state
 - The `Projector` executes `initQuery()` first, passes results to `when()`, then uses the last event's reference as the cursor for `eventQuery()`
 - Savepoint events are pure domain events — no special framework support needed

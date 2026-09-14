@@ -17,8 +17,6 @@
  */
 package org.sliceworkz.eventstore.query;
 
-import java.security.InvalidParameterException;
-
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
@@ -66,12 +64,20 @@ import org.sliceworkz.eventstore.events.Tags;
  */
 public record EventFilterItem ( EventTypesFilter eventTypes, Tags tags ) {
 
+	/**
+	 * Constructs a filter item with validation. Neither half is optional: "no restriction" is spelled
+	 * {@link EventTypesFilter#any()} and {@link Tags#none()}, never {@code null}.
+	 *
+	 * @param eventTypes the event types to match (required; {@link EventTypesFilter#any()} for all)
+	 * @param tags the tags an event must carry (required; {@link Tags#none()} for none)
+	 * @throws IllegalArgumentException if either is {@code null}, like every other value type in this API
+	 */
 	public EventFilterItem ( EventTypesFilter eventTypes, Tags tags ) {
 		if ( eventTypes == null ) {
-			throw new InvalidParameterException("eventTypes is required on filter (can be 'any')");
+			throw new IllegalArgumentException("eventTypes is required on filter (can be 'any')");
 		}
 		if ( tags == null ) {
-			throw new InvalidParameterException("tags is required on filter (can be 'any')");
+			throw new IllegalArgumentException("tags is required on filter (can be 'any')");
 		}
 		this.eventTypes = eventTypes;
 		this.tags = tags;

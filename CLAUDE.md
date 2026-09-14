@@ -393,6 +393,21 @@ EventStorage storage = PostgresEventStorage.newBuilder()
   loses its monitoring connection, which is the same silence as never having had one.
   `PostgresEventStorageImpl.isNotificationsAvailable()` is the same state for a health endpoint, at the
   cost of a downcast from `EventStorage`.
+- **What arrives on the channel cannot take a monitor down, and a monitor that does go down cannot
+  leave the gauge reading 1.** A `NOTIFY` channel is a database-wide name: any session in the database
+  can publish on it, and a trigger left behind by another release may not agree with this one on the
+  payload. A payload that does not parse, or parses into something `EventReference` refuses (a null
+  id, a position of 0), is logged at ERROR and dropped, and the monitor reads on — the catch is on
+  `RuntimeException`, not on the parser's own exception type, because the conversion into a reference
+  throws `IllegalArgumentException`. Anything a listener throws, an `Error` included, is contained the
+  same way. And the `listening` flag behind the gauge is cleared in a `finally`, so no exit from the
+  monitor's loop, an uncaught one included, leaves `notifications.up` claiming a channel that nobody is
+  listening on. The alternative — catching only the parser's exception — loses because a single
+  malformed payload then ends the monitor's virtual thread silently, and nothing wakes a subscriber
+  again for the life of the storage while the gauge and `isNotificationsAvailable()` both say
+  otherwise. `PostgresNotificationMonitorTest` pins the delivery step without a database;
+  `PostgresNotificationStartupTest` pushes junk down both channels of a live store and checks a real
+  append and bookmark still get through behind it.
 - **An interrupt during startup throws** `EventStorageException` and closes the storage, rather than
   returning quietly. The alternative — restore the flag and return — hands back a storage nobody can tell
   is unstarted, with two monitor threads still retrying behind it.

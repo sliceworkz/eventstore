@@ -417,6 +417,19 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   and only recycled once every listener has consumed, so a stalled listener does make usage accumulate
   monotonically across transactions — but from a base low enough that per-row notification would be a
   throughput and latency problem, not a correctness-of-operation one.
+- **The monitors survive whatever arrives on their channels.** `NewEventsAppendedMonitor` and
+  `BookmarkPlacedMonitor` each turn a payload into a notification in a `parse(String)` step that
+  catches `RuntimeException` around the parse *and* the conversion — `toNotification()` builds an
+  `EventReference`, which throws `IllegalArgumentException` on a null id or a non-positive position, and
+  the channel is open to any session in the database and to the trigger of any other release. A bad
+  payload is logged at ERROR with the payload (it carries stream, position, tx and id, never event data)
+  and dropped. The fan-out to listeners (`notifyEach`) contains `Throwable`, since a test double's
+  `AssertionError` or a projection's `StackOverflowError` is not the monitor's to die of. The outer loop
+  catches `RuntimeException` alongside `SQLException` and backs off the same way, and the `listening`
+  flag is cleared in a `finally`, so the `notifications.up` gauge cannot read 1 over a monitor that has
+  exited by any path. `PostgresNotificationMonitorTest` drives `parse` and `deliver` directly, without a database;
+  `PostgresNotificationStartupTest.testWhatArrivesOnTheChannelCannotKillAMonitor` does it on a live
+  store through `pg_notify`.
 - `stream_purpose` defaults to `'default'` in the DDL, matching `EventStreamId.DEFAULT_PURPOSE` — a public
   constant, so an interop layer can bind the same value the library does rather than copy the literal out
   of this file. A database created by an older release may carry `''` as that default; operators doing raw

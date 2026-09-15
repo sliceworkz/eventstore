@@ -18,7 +18,7 @@
 package org.sliceworkz.eventstore.spi;
 
 import java.time.Duration;
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -988,11 +988,11 @@ public interface EventStorage extends AutoCloseable {
 		 * to create the final persisted representation of the event.
 		 *
 		 * @param reference the unique reference assigned to this event
-		 * @param timestamp the timestamp when this event was stored
+		 * @param timestamp the instant at which this event was stored, on the storage's clock
 		 * @return a StoredEvent with all metadata assigned
 		 * @see StoredEvent
 		 */
-		public StoredEvent positionAt ( EventReference reference, LocalDateTime timestamp) {
+		public StoredEvent positionAt ( EventReference reference, Instant timestamp ) {
 			return new StoredEvent(stream, type, reference, immutableData, tags, timestamp, idempotencyKey);
 		}
 	}
@@ -1015,14 +1015,14 @@ public interface EventStorage extends AutoCloseable {
 	 * @param reference the unique reference (ID and position) of this event
 	 * @param immutableData the serialized event payload, as stored
 	 * @param tags key-value pairs for dynamic event retrieval and consistency boundaries
-	 * @param timestamp the moment this event was stored, always in UTC
+	 * @param timestamp the instant at which this event was stored, on the storage's clock
 	 * @param idempotencyKey the idempotency key the event was appended with, or {@code null} if none;
 	 *                       scoped to the event stream (context and purpose)
 	 * @see EventToStore
 	 * @see EventReference
 	 * @see #query(EventQuery, Optional, EventReference, Limit, QueryDirection)
 	 */
-	public record StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String immutableData, Tags tags, LocalDateTime timestamp, String idempotencyKey ) {
+	public record StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String immutableData, Tags tags, Instant timestamp, String idempotencyKey ) {
 
 		/**
 		 * Convenience constructor for stored events without an idempotency key.
@@ -1035,9 +1035,9 @@ public interface EventStorage extends AutoCloseable {
 		 * @param reference the unique reference (ID and position) of this event
 		 * @param immutableData the serialized event payload, as stored
 		 * @param tags key-value pairs for dynamic event retrieval and consistency boundaries
-		 * @param timestamp the moment this event was stored, always in UTC
+		 * @param timestamp the instant at which this event was stored, on the storage's clock
 		 */
-		public StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String immutableData, Tags tags, LocalDateTime timestamp ) {
+		public StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String immutableData, Tags tags, Instant timestamp ) {
 			this(stream, type, reference, immutableData, tags, timestamp, null);
 		}
 

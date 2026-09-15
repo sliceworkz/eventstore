@@ -73,7 +73,7 @@ import java.util.stream.Stream;
  *         return EventQuery.matchAll();
  *     }
  *
- *     public List<TimelineEntry> getTimelineSince(LocalDateTime since) {
+ *     public List<TimelineEntry> getTimelineSince(Instant since) {
  *         return timeline.stream()
  *             .filter(entry -> entry.timestamp().isAfter(since))
  *             .toList();
@@ -183,20 +183,20 @@ import java.util.stream.Stream;
  * <h2>Time-Windowed Aggregation:</h2>
  * <pre>{@code
  * public class HourlyRegistrationsProjection implements EventWithMetaDataHandler<CustomerEvent> {
- *     private Map<LocalDateTime, Integer> registrationsByHour = new HashMap<>();
+ *     private Map<Instant, Integer> registrationsByHour = new HashMap<>();
  *
  *     @Override
  *     public void when(Event<CustomerEvent> event) {
  *         if (event.data() instanceof CustomerRegistered) {
  *             // Round timestamp to hour
- *             LocalDateTime hour = event.timestamp()
+ *             Instant hour = event.timestamp()
  *                 .truncatedTo(ChronoUnit.HOURS);
  *
  *             registrationsByHour.merge(hour, 1, Integer::sum);
  *         }
  *     }
  *
- *     public Map<LocalDateTime, Integer> getRegistrationsByHour() {
+ *     public Map<Instant, Integer> getRegistrationsByHour() {
  *         return Collections.unmodifiableMap(registrationsByHour);
  *     }
  * }

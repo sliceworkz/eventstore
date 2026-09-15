@@ -17,8 +17,7 @@
  */
 package org.sliceworkz.eventstore.benchmark.corpus;
 
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
+import java.time.Instant;
 import java.util.UUID;
 
 import org.sliceworkz.eventstore.events.EventId;
@@ -30,7 +29,7 @@ import org.sliceworkz.eventstore.events.EventId;
  * <p>This is what makes a reusable corpus defensible rather than a hope. A corpus lives in a database
  * for weeks and is measured against repeatedly; "is the data still what the spec describes?" has to
  * be answerable by regenerating it and comparing, and that only works if nothing about it is random
- * in the ordinary sense. {@code UUID.randomUUID()} and {@code LocalDateTime.now()} are therefore both
+ * in the ordinary sense. {@code UUID.randomUUID()} and {@code Instant.now()} are therefore both
  * out.
  *
  * <p><b>The ids are UUIDv7-shaped on purpose.</b> A v7 id carries a millisecond timestamp in its
@@ -47,7 +46,7 @@ import org.sliceworkz.eventstore.events.EventId;
 final class DeterministicIds {
 
 	/** Where a corpus's history starts. Fixed, so the timestamps are a property of the spec alone. */
-	static final LocalDateTime EPOCH = LocalDateTime.of(2024, 1, 1, 0, 0, 0);
+	static final Instant EPOCH = Instant.parse("2024-01-01T00:00:00Z");
 
 	/**
 	 * Mean gap between consecutive events. At 40ms a ten-million event corpus spans about five days,
@@ -67,7 +66,7 @@ final class DeterministicIds {
 	 * order and timestamp order all agree -- an inversion here would show up as decorrelated BRIN and
 	 * be read as a property of the store rather than of the fixture.
 	 */
-	LocalDateTime timestampOf ( long sequence ) {
+	Instant timestampOf ( long sequence ) {
 		return EPOCH.plusNanos(sequence * MEAN_GAP_MILLIS * 1_000_000L);
 	}
 
@@ -76,7 +75,7 @@ final class DeterministicIds {
 	 * {@link #timestampOf(long)} and whose remaining bits are a hash of the seed and the sequence.
 	 */
 	EventId idOf ( long sequence ) {
-		long millis = timestampOf(sequence).toInstant(ZoneOffset.UTC).toEpochMilli();
+		long millis = timestampOf(sequence).toEpochMilli();
 
 		// mix the seed and the sequence into two well-distributed words; SplittableRandom's finaliser
 		// is a convenient, stable avalanche function

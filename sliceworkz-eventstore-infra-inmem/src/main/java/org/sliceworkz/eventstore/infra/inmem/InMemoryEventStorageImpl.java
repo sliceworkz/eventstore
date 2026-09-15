@@ -19,8 +19,6 @@ package org.sliceworkz.eventstore.infra.inmem;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -423,7 +421,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 
 		long position = eventlog.size() + 1;
 		EventReference reference = EventReference.create(position, tx);
-		StoredEvent storedEvent = event.positionAt(reference, LocalDateTime.now(ZoneOffset.UTC));
+		StoredEvent storedEvent = event.positionAt(reference, Instant.now());
 		eventlog.add(storedEvent);
 		eventsById.put(reference.id(), storedEvent);
 		return storedEvent;

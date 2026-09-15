@@ -25,7 +25,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -352,7 +352,7 @@ public class InMemoryFsEventStorageImplTest {
 	void testImportedEventsArePersisted ( @TempDir Path tempDir ) {
 		EventStreamId streamId = EventStreamId.forContext("ctx").withPurpose("p");
 		EventId id = EventId.create();
-		LocalDateTime timestamp = LocalDateTime.of(2020, 1, 2, 3, 4, 5);
+		Instant timestamp = Instant.parse("2020-01-02T03:04:05Z");
 
 		// First instance: import an event straight into storage
 		{

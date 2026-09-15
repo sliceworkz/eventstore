@@ -845,11 +845,17 @@ public class EventStoreImpl implements EventStore {
 				}
 			}
 
+			// The boundary is checked over stored type names, exactly as a query is answered: a legacy
+			// event that upcasts into a type of the boundary is a new relevant fact for it, so the
+			// criteria storage sees carries those legacy names too. The caller's own criteria is kept
+			// for the exception, which names the boundary the caller decided on.
+			AppendCriteria storageCriteria = includeLegacyEventTypes(appendCriteria);
+
 			// append events to the eventstore (with optimistic locking)
 			List<Event<EVENT_TYPE>> appendedEvents;
 			try {
 				List<EventToStore> eventsToStore = reduce(events, streamToAppendTo);
-				List<StoredEvent> storedEvents = timerAppend.record(()->eventStorage.append(appendCriteria, Optional.of(streamToAppendTo), eventsToStore));
+				List<StoredEvent> storedEvents = timerAppend.record(()->eventStorage.append(storageCriteria, Optional.of(streamToAppendTo), eventsToStore));
 				appendedEvents = storedEvents.stream().flatMap(se->enrich(se, QueryDirection.FORWARD)).toList();
 				meterAppend.increment();
 
@@ -873,7 +879,7 @@ public class EventStoreImpl implements EventStore {
 					.ifPresent(maxPosition -> gaugeHighestEventPosition.updateAndGet(current -> Math.max(current, maxPosition)));
 			} catch (OptimisticLockingException optimisticLockingException) {
 				meterAppendOptimisticLock.increment();
-				throw optimisticLockingException;
+				throw namingTheCallersBoundary(optimisticLockingException, appendCriteria, storageCriteria);
 			}
 
 			// The appended events -- typed, with their assigned references -- are handed straight back to
@@ -890,9 +896,42 @@ public class EventStoreImpl implements EventStore {
 			if ( query.items() == null ) {
 				return query; // match-all, nothing to modify
 			} else {
-				EventFilter newFilter = new EventFilter(query.items().stream().map(this::includeLegacyEventTypes).toList(), query.until());
-				return new EventQuery(newFilter, query.direction(), query.limit());
+				return new EventQuery(includeLegacyEventTypes(query.filter()), query.direction(), query.limit());
 			}
+		}
+
+		/**
+		 * The same trace-back for a consistency boundary: a legacy event that upcasts into a type of the
+		 * boundary is a new relevant fact for it, exactly as a query for that type returns it, so the
+		 * check storage runs has to count it. Without this the two would disagree on the same filter --
+		 * a decision read through the query path sees the legacy event and the lock check admitting the
+		 * append does not.
+		 */
+		private AppendCriteria includeLegacyEventTypes ( AppendCriteria criteria ) {
+			if ( criteria.eventFilter().items() == null ) {
+				return criteria; // match-all, nothing to modify
+			}
+			return new AppendCriteria(includeLegacyEventTypes(criteria.eventFilter()), criteria.expectedLastEventReference());
+		}
+
+		private EventFilter includeLegacyEventTypes ( EventFilter filter ) {
+			return new EventFilter(filter.items().stream().map(this::includeLegacyEventTypes).toList(), filter.until());
+		}
+
+		/**
+		 * The exception reports the boundary the caller decided on, not the stored names it was checked
+		 * with: a caller comparing {@code getFilter()} against its own criteria -- the testing fixture's
+		 * {@code OptimisticLockingFailure} does -- should not find legacy names it never wrote. Storage's
+		 * own exception is kept as the cause. Where the trace-back changed nothing, which is every stream
+		 * without legacy types, storage's exception is what the caller gets, untouched.
+		 */
+		private OptimisticLockingException namingTheCallersBoundary ( OptimisticLockingException fromStorage, AppendCriteria callers, AppendCriteria storages ) {
+			if ( callers.eventFilter().equals(storages.eventFilter()) ) {
+				return fromStorage;
+			}
+			OptimisticLockingException named = new OptimisticLockingException(callers.eventFilter(), callers.expectedLastEventReference());
+			named.initCause(fromStorage);
+			return named;
 		}
 
 		private EventFilterItem includeLegacyEventTypes ( EventFilterItem queryItem ) {

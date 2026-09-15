@@ -18,6 +18,7 @@
 package org.sliceworkz.eventstore.impl;
 
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -839,11 +840,12 @@ public class EventStoreImpl implements EventStore {
 				return Collections.emptyList();
 			}
 			
-			if ( events.size() > 1 ) {
-				if ( events.stream().filter(e->e.idempotencyKey()!=null).findAny().isPresent()) {
-					throw new IllegalArgumentException("cannot append multiple events in combination with an idempotency key");
-				}
-			}
+			// Idempotency keys are per event and must be distinct within the batch. Checked here rather
+			// than left to storage because of what storage would otherwise do with a repeated key: the
+			// stream-scoped unique index rejects the second row of the batch, and the append path reads
+			// that violation as "this key was appended before" -- so the first ever attempt at such a
+			// batch would store nothing and report a successful de-duplication. See EventSink.append.
+			rejectRepeatedIdempotencyKeys(events);
 
 			// The boundary is checked over stored type names, exactly as a query is answered: a legacy
 			// event that upcasts into a type of the boundary is a new relevant fact for it, so the
@@ -887,6 +889,15 @@ public class EventStoreImpl implements EventStore {
 			// an append on the appending thread is code that caller writes after this call returns.
 			// Subscribers hear about it through the storage notification, on a thread of their own.
 			return appendedEvents;
+		}
+
+		private static void rejectRepeatedIdempotencyKeys ( List<? extends EphemeralEvent<?>> events ) {
+			Set<String> keys = new HashSet<>();
+			for ( EphemeralEvent<?> event : events ) {
+				if ( event.idempotencyKey() != null && !keys.add(event.idempotencyKey()) ) {
+					throw new IllegalArgumentException("idempotency key '%s' is carried by more than one event of the batch".formatted(event.idempotencyKey()));
+				}
+			}
 		}
 
 		/**

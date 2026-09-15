@@ -26,6 +26,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventQuery;
@@ -82,6 +83,12 @@ public class AppendIdempotencyTest extends AbstractEventStoreTest {
 		assertEquals(1, append(event("1", "cmd-4711")).size());
 	}
 
+	/**
+	 * Subscribes before anything is appended. Delivery is asynchronous on a backend notifying through
+	 * the database (LISTEN/NOTIFY), so a listener registered after an append can still receive that
+	 * append's notification; counting from before the first append, and waiting for each real
+	 * append's own notification, is what makes the count below deterministic.
+	 */
 	private List<AppendsToEventStoreNotification> recordNotifications ( ) {
 		List<AppendsToEventStoreNotification> received = new CopyOnWriteArrayList<>();
 		eventStorage().subscribe(new EventStoreListener() {
@@ -97,30 +104,39 @@ public class AppendIdempotencyTest extends AbstractEventStoreTest {
 		return received;
 	}
 
+	private void waitForNotificationAbout ( List<AppendsToEventStoreNotification> received, List<StoredEvent> appended ) {
+		EventReference last = appended.getLast().reference();
+		waitBecauseOfEventualConsistency(() -> received.stream().anyMatch(n -> n.atLeastUntil().equals(last)));
+	}
+
 	@ForEachBackend
 	void aRetriedBatchStoresNothingAndNotifiesNobody ( ) {
-		assertEquals(3, append(event("1", "cmd-4711/1"), event("2", "cmd-4711/2"), event("3", null)).size());
-
 		List<AppendsToEventStoreNotification> received = recordNotifications();
+
+		List<StoredEvent> first = append(event("1", "cmd-4711/1"), event("2", "cmd-4711/2"), event("3", null));
+		assertEquals(3, first.size());
+		waitForNotificationAbout(received, first);
 
 		// every key stored before: a retry, swallowed whole, the unkeyed event included
 		List<StoredEvent> retry = append(event("1", "cmd-4711/1"), event("2", "cmd-4711/2"), event("3", null));
 		assertTrue(retry.isEmpty(), "a retried batch must be reported as de-duplicated");
 		assertEquals(3, allEvents().size(), "a retried batch must store none of its events");
 
-		// and a batch that stored nothing announces nothing: the next real append is what proves the
-		// listener is wired, and it is the only notification that may arrive
-		assertEquals(1, append(event("4", "cmd-4712")).size());
-		waitBecauseOfEventualConsistency(() -> !received.isEmpty());
-		assertEquals(1, received.size(), "a swallowed batch must not be announced to listeners");
-		assertEquals(allEvents().getLast().reference(), received.getFirst().atLeastUntil());
+		// a batch that stored nothing announces nothing: the next real append is announced, and a
+		// notification for the swallowed batch would have arrived ahead of it
+		List<StoredEvent> next = append(event("4", "cmd-4712"));
+		assertEquals(1, next.size());
+		waitForNotificationAbout(received, next);
+		assertEquals(2, received.size(), "a swallowed batch must not be announced to listeners");
 	}
 
 	@ForEachBackend
 	void aBatchMixingStoredAndNewKeysIsRefusedAndStoresNothing ( ) {
-		assertEquals(1, append(event("1", "order-4711")).size());
-
 		List<AppendsToEventStoreNotification> received = recordNotifications();
+
+		List<StoredEvent> first = append(event("1", "order-4711"));
+		assertEquals(1, first.size());
+		waitForNotificationAbout(received, first);
 
 		// one stored key, one new key: not a retry of anything the store holds
 		IdempotencyKeyConflictException conflict = assertThrows(IdempotencyKeyConflictException.class,
@@ -129,8 +145,9 @@ public class AppendIdempotencyTest extends AbstractEventStoreTest {
 		assertEquals(Set.of("order-4712"), conflict.newKeys());
 		assertEquals(1, allEvents().size(), "a refused batch must store none of its events");
 
-		assertEquals(1, append(event("4", "order-4712")).size());
-		waitBecauseOfEventualConsistency(() -> !received.isEmpty());
-		assertEquals(1, received.size(), "a refused batch must not be announced to listeners");
+		List<StoredEvent> next = append(event("4", "order-4712"));
+		assertEquals(1, next.size());
+		waitForNotificationAbout(received, next);
+		assertEquals(2, received.size(), "a refused batch must not be announced to listeners");
 	}
 }

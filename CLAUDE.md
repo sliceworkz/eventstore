@@ -1213,6 +1213,25 @@ PostgresEventStorage.newBuilder().shredding(myKmsCodec).buildStore(); // take ov
   (which the audit already requires): pruning one turns that subject's events from "erased" into
   unreadable, with an error naming the key. `ShreddableEventDataTest.aKeyThisStoreNeverHeldThrowsRatherThanReadingAsErased`
   pins it per backend, at the seam and through a projector.
+- **The shipped codec measures the key it seals under, and keeps the label it binds unambiguous.**
+  The JCE encrypts under a 128-, 192- or 256-bit AES key alike, so a key store minting the wrong
+  length would otherwise seal without complaint under an envelope recording `A256GCM` for a value
+  not sealed that way. `AesGcmShreddingCodec.seal` refuses a key that is not 256-bit AES material —
+  `ShreddingException` naming the key and its length, nothing sealed — and refuses a key whose
+  material it cannot see (`getEncoded()` null, an HSM-resident key), since the key-store seam hands
+  material into the JVM and a key that never leaves its hardware belongs behind a `ShreddingCodec` of
+  its own. `open` deliberately does not measure: what is sealed is sealed, and refusing to read it
+  would strand the data while protecting nothing. The metadata GCM authenticates is the algorithm,
+  key id, subject type, id and category joined with `|`, nothing escaped, so `seal` also refuses a
+  `|` in any of those — two labels differing only in where the `|` falls would otherwise authenticate
+  as one, and a sealed value could be relabelled between them with decryption still succeeding. The
+  alternative — escaping the fields — loses because the authenticated string is recomputed on both
+  sides and stored nowhere, so an escaped form stops authenticating every value already sealed whose
+  fields hold the escape character, with nothing on the envelope to say which form it was sealed
+  under; an envelope already carrying a `|` stays readable, ambiguous as it was written. The subject
+  rule applies to this codec only — a codec of your own binds what it likes — and a subject is refused
+  before the key store is asked, so it is not given a key row it will never use.
+  `AesGcmShreddingCodecTest` pins all of it, the layout of the authenticated bytes included.
 - **Nothing here needs post-quantum work.** The design uses no asymmetric cryptography, so Shor has no
   target; Grover leaves AES-256 at ~128 bits of effective security. Shredding is in fact a stronger
   position than encryption at rest generally is — the threat model is ciphertext recovered from a backup

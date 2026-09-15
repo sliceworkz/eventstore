@@ -62,6 +62,28 @@ import org.sliceworkz.eventstore.shredding.ShreddingKeyStore.KeyResolution;
  * subject, relabelled with another key id, or have its recorded algorithm altered without decryption
  * failing outright. Tampering surfaces as a {@link ShreddingException}, never as a silently wrong value
  * and never as a spurious "erased".
+ * <p>
+ * What GCM authenticates is the five fields joined with {@value #AAD_SEPARATOR}, and nothing in them is
+ * escaped, so a field holding that character would let two different labels authenticate as one — a
+ * subject {@code ("a|b", "c")} and a subject {@code ("a", "b|c")} join to the same bytes, and a value
+ * sealed for the one could be relabelled to the other with decryption still succeeding. {@link #seal}
+ * therefore refuses a subject whose type, id or category contains the separator, and a key id that
+ * does, with a {@link ShreddingException} and nothing sealed. {@link #open} refuses nothing: a value
+ * already sealed under such a label stays readable, ambiguous as it was written. The alternative —
+ * escaping the fields — loses because the authenticated string is recomputed on both sides and stored
+ * nowhere, so an escaped form stops authenticating every value already sealed whose fields hold the
+ * escape character, with nothing on the envelope to say which form it was sealed under.
+ *
+ * <h2>The key is measured before it is used</h2>
+ * The JCE accepts AES keys of 128, 192 and 256 bits alike, so a key store minting the wrong length would
+ * otherwise seal without complaint, under an envelope that records {@value #ALGORITHM} for a value not
+ * sealed that way. {@link #seal} refuses a key that is not {@value #KEY_BITS}-bit AES material — a
+ * {@link ShreddingException} naming the key and its length, nothing sealed — and refuses a key whose
+ * material it cannot see ({@link SecretKey#getEncoded()} answering null, an HSM-resident key), because
+ * a key it cannot measure is a key it cannot vouch for: the {@link ShreddingKeyStore} seam hands
+ * material into the JVM, and a key that never leaves its hardware belongs behind a
+ * {@link ShreddingCodec} of its own. {@link #open} deliberately does not measure: what is sealed is
+ * sealed, and refusing to read it would strand the data while protecting nothing.
  *
  * <h2>A key store's refusal is passed on as withheld</h2>
  * {@link #open} asks the key store through {@link ShreddingKeyStore#resolveKey}, and a
@@ -95,12 +117,21 @@ public class AesGcmShreddingCodec implements ShreddingCodec {
 	public static final String ALGORITHM = "A256GCM";
 
 	/**
-	 * The AES key length this codec expects, in bits. Key stores minting material for it should use the
-	 * same; a key of another length fails at {@link #seal}, loudly, rather than silently weakening.
+	 * The AES key length this codec seals under, in bits. Key stores minting material for it must use
+	 * the same: a key of another length, of another algorithm, or whose material is not extractable is
+	 * refused at {@link #seal} with a {@link ShreddingException}, rather than silently sealing an
+	 * envelope that claims {@link #ALGORITHM} for a value not sealed that way.
 	 */
 	public static final int KEY_BITS = 256;
 
+	/**
+	 * What joins the fields of the additional authenticated data. Nothing is escaped, so {@link #seal}
+	 * refuses a subject or key id containing it; see the class documentation for why.
+	 */
+	public static final char AAD_SEPARATOR = '|';
+
 	private static final String TRANSFORMATION = "AES/GCM/NoPadding";
+	private static final String KEY_ALGORITHM = "AES";
 	private static final int IV_BYTES = 12;
 	private static final int TAG_BITS = 128;
 
@@ -143,8 +174,13 @@ public class AesGcmShreddingCodec implements ShreddingCodec {
 		if ( subject == null ) {
 			throw new IllegalArgumentException("subject cannot be null");
 		}
+		// Before the key store is asked, so that a subject this codec can never seal for is not given a
+		// key row it will never use.
+		requireSeparatorFree(subject);
 
 		ActiveKey activeKey = keyStore.keyFor(subject);
+		requireSeparatorFree(activeKey.id(), subject);
+		requireSealingKey(activeKey, subject);
 
 		byte[] iv = new byte[IV_BYTES];
 		secureRandom.nextBytes(iv);
@@ -263,10 +299,53 @@ public class AesGcmShreddingCodec implements ShreddingCodec {
 	 * Everything here is stored in the clear beside the ciphertext, so authenticating it is what stops a
 	 * sealed value being relabelled — moved to another subject, attributed to another key, or claimed to
 	 * have been written with another algorithm — without decryption failing.
+	 * <p>
+	 * This is wire format: every value ever sealed authenticates against exactly these bytes, and they
+	 * are stored nowhere else, so the layout cannot change without every existing envelope failing to
+	 * open. The join is unambiguous only because {@link #seal} keeps {@link #AAD_SEPARATOR} out of the
+	 * fields.
 	 */
 	private static byte[] additionalAuthenticatedData ( KeyId key, DataSubject subject ) {
-		return "%s|%s|%s|%s|%s".formatted(ALGORITHM, key.value(), subject.type(), subject.id(), subject.category())
+		return String.join(String.valueOf(AAD_SEPARATOR), ALGORITHM, key.value(), subject.type(), subject.id(), subject.category())
 				.getBytes(StandardCharsets.UTF_8);
+	}
+
+	private static void requireSeparatorFree ( DataSubject subject ) {
+		if ( subject.type().indexOf(AAD_SEPARATOR) >= 0 || subject.id().indexOf(AAD_SEPARATOR) >= 0
+				|| subject.category().indexOf(AAD_SEPARATOR) >= 0 ) {
+			throw new ShreddingException(
+					"cannot seal a value for subject %s: '%s' separates the fields of the authenticated metadata, and a subject type, id or category containing it would let two different subjects authenticate as one. Choose a subject without it."
+							.formatted(subject, AAD_SEPARATOR));
+		}
+	}
+
+	private static void requireSeparatorFree ( KeyId key, DataSubject subject ) {
+		if ( key.value().indexOf(AAD_SEPARATOR) >= 0 ) {
+			throw new ShreddingException(
+					"cannot seal a value for subject %s: the key store minted key id '%s', and '%s' separates the fields of the authenticated metadata; a key id containing it would let two different labels authenticate as one. Mint key ids without it."
+							.formatted(subject, key, AAD_SEPARATOR));
+		}
+	}
+
+	/**
+	 * Refuses a key this codec cannot seal under as {@link #ALGORITHM}: one of another algorithm or
+	 * length, which the JCE would accept and encrypt with all the same, or one whose material is not
+	 * extractable, which cannot be measured and so cannot be vouched for.
+	 */
+	private static void requireSealingKey ( ActiveKey activeKey, DataSubject subject ) {
+		SecretKey key = activeKey.key();
+		byte[] encoded = key.getEncoded();
+		if ( encoded == null ) {
+			throw new ShreddingException(
+					"cannot seal a value for subject %s: key %s does not expose its material (getEncoded() is null), so this codec cannot vouch that an envelope recording %s was sealed under a %d-bit AES key. A key that never leaves its hardware belongs behind a ShreddingCodec of its own."
+							.formatted(subject, activeKey.id(), ALGORITHM, KEY_BITS));
+		}
+		int bits = encoded.length * Byte.SIZE;
+		if ( !KEY_ALGORITHM.equalsIgnoreCase(key.getAlgorithm()) || bits != KEY_BITS ) {
+			throw new ShreddingException(
+					"cannot seal a value for subject %s: key %s is a %d-bit %s key, and this codec seals under %d-bit %s only; an envelope recording %s for it would lie about how the value was sealed. Mint %d-bit %s keys in the key store."
+							.formatted(subject, activeKey.id(), bits, key.getAlgorithm(), KEY_BITS, KEY_ALGORITHM, ALGORITHM, KEY_BITS, KEY_ALGORITHM));
+		}
 	}
 
 	private static String encode ( byte[] bytes ) {

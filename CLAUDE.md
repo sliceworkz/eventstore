@@ -105,7 +105,14 @@ mvn clean install -DskipTests
 - Identified by `EventStreamId` which consists of a context and optional purpose
 - Purpose is optional: `EventStreamId.forContext("x")` defaults purpose to `"default"`, so a context that needs only one stream can ignore purpose entirely. Set a purpose only to distinguish multiple streams within a context (e.g. per-instance, or separating event kinds). Whether to make the purpose an *entity id* — a stream per SKU rather than a stream per context — is the one layout decision with measured consequences on both reads and write contention; see the Benchmarking digest below, and "Choosing a stream design" in `sliceworkz-eventstore-benchmark/CLAUDE.md` for the figures
 - Supports both reading (via `query()`) and writing (via `append()`)
-- Type-safe through generic parameter `<DOMAIN_EVENT_TYPE>`
+- Type-safe through generic parameter `<DOMAIN_EVENT_TYPE>`, which the single-class overloads of
+  `getEventStream` fix from the root class: `getEventStream(id, CustomerEvent.class)` is an
+  `EventStream<CustomerEvent>`, and assigning it to an `EventStream<OrderEvent>` — or widening it to an
+  `EventStream<Object>`, which would let an append of a foreign event type compile — is a compile error
+  rather than a runtime append failure. The historical root class is not constrained, since legacy events
+  upcast into current ones. The `Set<Class<?>>` overloads carry no such constraint and are the way to open
+  a stream typed wider than its roots. `EventStoreTypeParameterTest` in the api module pins it by running
+  javac against probe snippets
 - Combines `EventSource` (reading) and `EventSink` (writing) interfaces
 - **`query()` returns a `Stream`, but it is already in memory.** Storage has finished reading by the
   time the stream comes back — the whole result set is fetched and the stream iterates a list. So

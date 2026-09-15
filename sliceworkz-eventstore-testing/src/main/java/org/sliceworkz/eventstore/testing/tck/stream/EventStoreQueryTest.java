@@ -55,7 +55,7 @@ public class EventStoreQueryTest extends AbstractEventStoreTest {
 	EventStream<BankDomainEvent> eventStream;
 
 	EventStreamId otherPurposeEventStreamId;
-	EventStream<Object> otherPurposeEventStream;
+	EventStream<PerformanceReportEvent> otherPurposeEventStream;
 
 	EventStreamId otherEventStreamId;
 	EventStream<MockDomainEvent> otherEventStream;
@@ -312,23 +312,23 @@ public class EventStoreQueryTest extends AbstractEventStoreTest {
 		assertEquals(expectedQueries, prj.accumulatedMetrics().queriesDone());
 	}
 
-	private Stream<Event<Object>> query ( EventQuery eventQuery ) {
+	private Stream<Event<BankDomainEvent>> query ( EventQuery eventQuery ) {
 		return query(eventQuery, null, null);
 	}
-	private Stream<Event<Object>> query ( EventQuery eventQuery, Limit limit ) {
+	private Stream<Event<BankDomainEvent>> query ( EventQuery eventQuery, Limit limit ) {
 		return query(eventQuery, limit, null);
 	}
-	private Stream<Event<Object>> query ( EventQuery eventQuery, Limit limit, Event<?> after ) {
+	private Stream<Event<BankDomainEvent>> query ( EventQuery eventQuery, Limit limit, Event<?> after ) {
 		return eventStore().getEventStream(EventStreamId.forContext("app").withPurpose("domain"), BankDomainEvent.class).query(eventQuery, after==null?null:after.reference(), limit);
 	}
 
-	private Stream<Event<Object>> queryReversed ( EventQuery eventQuery ) {
+	private Stream<Event<BankDomainEvent>> queryReversed ( EventQuery eventQuery ) {
 		return queryReversed(eventQuery, null, null);
 	}
-	private Stream<Event<Object>> queryReversed ( EventQuery eventQuery, Limit limit ) {
+	private Stream<Event<BankDomainEvent>> queryReversed ( EventQuery eventQuery, Limit limit ) {
 		return queryReversed(eventQuery, limit, null);
 	}
-	private Stream<Event<Object>> queryReversed ( EventQuery eventQuery, Limit limit, Event<?> before ) {
+	private Stream<Event<BankDomainEvent>> queryReversed ( EventQuery eventQuery, Limit limit, Event<?> before ) {
 		return eventStore().getEventStream(EventStreamId.forContext("app").withPurpose("domain"), BankDomainEvent.class).query(eventQuery.backwards(), before==null?null:before.reference(), limit);
 	}
 

@@ -223,6 +223,13 @@ public class EventTypesFilterHierarchyTest extends AbstractEventStoreTest {
 
 		List<Event<ShopEvent>> payments = asRead.query(EventQuery.forEvents(EventTypesFilter.of(PaymentEvent.class), Tags.none())).toList();
 		assertEquals(types(PaymentReceived.class), typesOf(payments));
+
+		// and a boundary over the branch counts a legacy event upcasting into it, as the query does
+		EventReference head = asRead.head().orElseThrow();
+		AppendCriteria everyOrderFact = AppendCriteria.of(EventQuery.forEvents(EventTypesFilter.of(OrderEvent.class), Tags.none()), head);
+		asWritten.append(AppendCriteria.none(), Event.of(new OriginalShopEvent.OrderBooked("3"), order("3")));
+		assertThrows(OptimisticLockingException.class,
+				() -> asRead.append(everyOrderFact, Event.of(new OrderShipped("2"), order("2"))));
 	}
 
 }

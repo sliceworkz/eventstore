@@ -22,8 +22,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.sliceworkz.eventstore.events.Event;
+import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.LegacyEvent;
 import org.sliceworkz.eventstore.events.Tags;
@@ -38,6 +40,7 @@ import org.sliceworkz.eventstore.testing.ForEachBackend;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
+import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 
 public class UpcastTest extends AbstractEventStoreTest {
 
@@ -131,6 +134,42 @@ public class UpcastTest extends AbstractEventStoreTest {
 		assertEquals(EventType.ofType("CustomerChurned"), rawEvents.get(5).type());
 		assertEquals(EventType.ofType("CustomerChurned"), rawEvents.get(5).storedType());
 		assertEquals(6, rawEvents.get(5).reference().position());
+	}
+
+	/**
+	 * A consistency boundary over a current type counts the legacy events that upcast into it, exactly
+	 * as a query for that type returns them: the two are answered over the same stored names. A legacy
+	 * event upcasting into a type <em>outside</em> the boundary is not a relevant fact for it. The
+	 * exception names the boundary the caller decided on, not the stored names it was checked with.
+	 */
+	@ForEachBackend
+	void aBoundaryOverACurrentTypeCountsTheLegacyEventsUpcastIntoIt() {
+		Tags customer = Tags.of("customer", "123");
+		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, CustomerHistoricalEvent.class);
+		// history lands the way it was written, under its legacy names
+		EventStream<OriginalEvent> asWritten = eventStore().getEventStream(streamId, OriginalEvent.class);
+
+		current.append(AppendCriteria.none(), Event.of(new CustomerEvent.CustomerRegisteredV2(Name.of("Superman")), customer));
+
+		// decided on the renames of this customer; a legacy registration is not one of them, so it is no
+		// new relevant fact and the append is admitted
+		EventReference head = current.head().orElseThrow();
+		AppendCriteria decidedOnRenames = AppendCriteria.of(EventQuery.forEvents(EventTypesFilter.of(CustomerRenamed.class), customer), head);
+		asWritten.append(AppendCriteria.none(), Event.of(new OriginalEvent.CustomerRegistered("John"), customer));
+		current.append(decidedOnRenames, Event.of(new CustomerEvent.CustomerRenamed(Name.of("Robin")), customer));
+
+		// a legacy rename is one of them
+		EventReference laterHead = current.head().orElseThrow();
+		AppendCriteria decidedOnRenamesAgain = AppendCriteria.of(EventQuery.forEvents(EventTypesFilter.of(CustomerRenamed.class), customer), laterHead);
+		asWritten.append(AppendCriteria.none(), Event.of(new OriginalEvent.CustomerNameChanged("Batman"), customer));
+		OptimisticLockingException e = assertThrows(OptimisticLockingException.class,
+				() -> current.append(decidedOnRenamesAgain, Event.of(new CustomerEvent.CustomerRenamed(Name.of("Joker")), customer)));
+
+		assertEquals(decidedOnRenamesAgain.eventFilter(), e.getFilter());
+		assertEquals(Optional.of(laterHead), e.getExpectedLastEventReference());
+
+		// which is what the query path says too: the legacy rename is a rename
+		assertEquals(2, current.query(EventQuery.forEvents(EventTypesFilter.of(CustomerRenamed.class), customer)).count());
 	}
 
 	@ForEachBackend

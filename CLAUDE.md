@@ -290,6 +290,16 @@ mvn clean install -DskipTests
   `OptimisticLockingTest.testOptimisticLockingSucceedsWhenExpectingEmptyStreamAndStreamIsNotEmpty`). A backend
   skipping the check when the reference is absent is a silent loss of optimistic locking; `AppendCriteriaTest`
   in the TCK pins both halves down
+- **A boundary over a current type counts the legacy events that upcast into it**, exactly as a query for
+  that type returns them. Storage checks stored type names, so `EventStreamImpl.append` traces the
+  criteria's types back to their legacy names before handing it over, the same trace-back the query path
+  applies (`determineLegacyTypes`). Without it the two paths disagree on one filter: a decision read
+  through the query sees the legacy event and the lock check admits the append over it. The exception
+  names the boundary the caller decided on, never the stored names it was checked with — a caller
+  comparing `getFilter()` to its own criteria, as the fixture's `OptimisticLockingFailure` does, finds no
+  legacy names it never wrote; storage's exception is the cause. On a stream without legacy types the
+  trace-back changes nothing and storage's exception passes through untouched.
+  `UpcastTest.aBoundaryOverACurrentTypeCountsTheLegacyEventsUpcastIntoIt` pins it per backend
 
 **Projection:**
 - Combines an `EventQuery` with an `EventHandler`

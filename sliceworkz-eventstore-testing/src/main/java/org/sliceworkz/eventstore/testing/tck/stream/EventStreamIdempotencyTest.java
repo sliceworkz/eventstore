@@ -25,12 +25,14 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import java.sql.Connection;
 import java.sql.Statement;
 import java.util.List;
+import java.util.Set;
 
 import javax.sql.DataSource;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
+import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventQuery;
@@ -38,6 +40,7 @@ import org.sliceworkz.eventstore.spi.EventStorageException;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
+import org.sliceworkz.eventstore.stream.IdempotencyKeyConflictException;
 import org.sliceworkz.eventstore.testing.AbstractEventStoreTest;
 import org.sliceworkz.eventstore.testing.EventStoreBackend.Capability;
 import org.sliceworkz.eventstore.testing.ForEachBackend;
@@ -190,35 +193,61 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 	}
 
 	/**
-	 * A batch is the unit of de-duplication: one stored key in it swallows the whole batch, the events
-	 * whose keys are new and the event carrying no key included.
+	 * A batch mixing keys already stored with keys not stored is refused, and nothing of it is stored.
 	 * <p>
-	 * The alternative — storing the events whose keys are new — is not an answer every backend can
-	 * give. Postgres writes the batch as a single multi-row insert whose returned rows are paired with
-	 * the input by position, so it inserts all of them or none; and a batch that is one command's
-	 * output has no fragment worth storing anyway. So the contract is all-or-nothing on every backend,
-	 * and the in-memory stores must not store the subset their data structures would allow.
+	 * Such a batch cannot be a retry: a batch is stored atomically, so a retry finds every key or
+	 * none. One of its events collides with a different event holding its key, and the rest are
+	 * unknown to the store. The two silent answers both lie — storing the unknown events leaves the
+	 * caller believing the colliding fact landed too, and swallowing the batch loses the unknown
+	 * events with nothing to say so — and the second is the one an all-or-nothing rule reaches for by
+	 * default, which is why this scenario exists. Partial storage is also not an answer every backend
+	 * can give: Postgres writes the batch as a single multi-row insert paired with the input by
+	 * position, so it inserts all of them or none.
 	 */
 	@ForEachBackend
-	void aBatchIsSwallowedWholeWhenAnyOfItsKeysWasStoredBefore ( ) {
+	void aBatchMixingStoredAndNewKeysIsRefusedAndStoresNothing ( ) {
 
 		stream.append(AppendCriteria.none(),
 				Event.of(new FirstDomainEvent("1"), Tags.none()).withIdempotencyKey("order-4711"));
 
-		List<Event<MockDomainEvent>> mixed = stream.append(AppendCriteria.none(), List.of(
-				Event.of(new FirstDomainEvent("2"), Tags.none()).withIdempotencyKey("order-4712"),
-				Event.of(new FirstDomainEvent("3"), Tags.none()).withIdempotencyKey("order-4711"),
-				Event.of(new FirstDomainEvent("4"), Tags.none())));
-		assertEquals(0, mixed.size());
+		IdempotencyKeyConflictException conflict = assertThrows(IdempotencyKeyConflictException.class, () ->
+				stream.append(AppendCriteria.none(), List.of(
+						Event.of(new FirstDomainEvent("2"), Tags.none()).withIdempotencyKey("order-4712"),
+						Event.of(new FirstDomainEvent("3"), Tags.none()).withIdempotencyKey("order-4711"),
+						Event.of(new FirstDomainEvent("4"), Tags.none()).withIdempotencyKey("order-4713"))));
+		assertEquals(Set.of("order-4711"), conflict.storedKeys());
+		assertEquals(Set.of("order-4712", "order-4713"), conflict.newKeys());
 
 		List<Event<MockDomainEvent>> stored = stream.query(EventQuery.matchAll()).toList();
-		assertEquals(1, stored.size(), "a batch holding a stored key must store none of its events");
+		assertEquals(1, stored.size(), "a refused batch must store none of its events");
 		assertEquals(new FirstDomainEvent("1"), stored.getFirst().data());
 
-		// the key that was new in the swallowed batch was not consumed by it: it is still free to use
-		List<Event<MockDomainEvent>> later = stream.append(AppendCriteria.none(),
-				Event.of(new FirstDomainEvent("2"), Tags.none()).withIdempotencyKey("order-4712"));
-		assertEquals(1, later.size());
+		// the keys that were new in the refused batch were not consumed by it: they are still free to use
+		List<Event<MockDomainEvent>> later = stream.append(AppendCriteria.none(), List.of(
+				Event.of(new FirstDomainEvent("2"), Tags.none()).withIdempotencyKey("order-4712"),
+				Event.of(new FirstDomainEvent("4"), Tags.none()).withIdempotencyKey("order-4713")));
+		assertEquals(2, later.size());
+	}
+
+	/**
+	 * An event carrying no key rides along with the keyed events of its batch: on a retry it is
+	 * swallowed with them, and nothing can tell that retry from a batch reusing the key with
+	 * different unkeyed events. That is the one blind spot the mixed-batch refusal leaves, and the
+	 * reason a command should key every event it emits.
+	 */
+	@ForEachBackend
+	void anUnkeyedEventIsSwallowedWithTheKeyedEventsOfItsBatchOnARetry ( ) {
+
+		List<Event<MockDomainEvent>> first = stream.append(AppendCriteria.none(), List.of(
+				Event.of(new FirstDomainEvent("1"), Tags.none()).withIdempotencyKey("cmd-4711"),
+				Event.of(new FirstDomainEvent("2"), Tags.none())));
+		assertEquals(2, first.size());
+
+		List<Event<MockDomainEvent>> retry = stream.append(AppendCriteria.none(), List.of(
+				Event.of(new FirstDomainEvent("1"), Tags.none()).withIdempotencyKey("cmd-4711"),
+				Event.of(new FirstDomainEvent("2"), Tags.none())));
+		assertEquals(0, retry.size());
+		assertEquals(2, stream.query(EventQuery.matchAll()).count());
 	}
 
 	/**
@@ -258,16 +287,17 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 			Counter deduplicated = registry.find("sliceworkz.eventstore.append.deduplicated").counter();
 			assertNotNull(deduplicated);
 
-			meteredStream.append(AppendCriteria.none(),
-					Event.of(new FirstDomainEvent("1"), Tags.none()).withIdempotencyKey("cmd-4711/1"));
+			List<EphemeralEvent<? extends MockDomainEvent>> batch = List.of(
+					Event.<MockDomainEvent>of(new FirstDomainEvent("1"), Tags.none()).withIdempotencyKey("cmd-4711/1"),
+					Event.<MockDomainEvent>of(new FirstDomainEvent("2"), Tags.none()).withIdempotencyKey("cmd-4711/2"),
+					Event.<MockDomainEvent>of(new FirstDomainEvent("3"), Tags.none()));
+
+			meteredStream.append(AppendCriteria.none(), batch);
 			assertEquals(0.0, deduplicated.count());
 
-			meteredStream.append(AppendCriteria.none(), List.of(
-					Event.of(new FirstDomainEvent("1"), Tags.none()).withIdempotencyKey("cmd-4711/1"),
-					Event.of(new FirstDomainEvent("2"), Tags.none()).withIdempotencyKey("cmd-4711/2"),
-					Event.of(new FirstDomainEvent("3"), Tags.none())));
+			meteredStream.append(AppendCriteria.none(), batch);
 			assertEquals(3.0, deduplicated.count(), "every event of a swallowed batch is de-duplicated");
-			assertEquals(1, meteredStream.query(EventQuery.matchAll()).count());
+			assertEquals(3, meteredStream.query(EventQuery.matchAll()).count());
 		}
 	}
 

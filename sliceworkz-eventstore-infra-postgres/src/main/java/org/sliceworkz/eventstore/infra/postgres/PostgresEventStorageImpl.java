@@ -89,6 +89,7 @@ import org.sliceworkz.eventstore.spi.EventStorageException;
 import org.sliceworkz.eventstore.spi.EventToImport;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
+import org.sliceworkz.eventstore.stream.IdempotencyKeyConflictException;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 
 import tools.jackson.databind.json.JsonMapper;
@@ -1970,7 +1971,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 					// also swallows an event_id or primary-key violation whenever the table prefix happens to
 					// contain the word "idempotency".
 					if ( isIdempotencyKeyViolation(e) ) {
-						return Collections.emptyList();
+						return deduplicatedOrConflicting(writeConnection, events, e);
 					} else {
 						throw new EventStorageException("SQLException during append", e);
 					}
@@ -1983,6 +1984,69 @@ public class PostgresEventStorageImpl implements EventStorage {
 		
 		return storedEvents;
 			
+	}
+
+	/**
+	 * Decides what a unique violation on the idempotency index means for the batch: a retry, or a
+	 * conflict.
+	 * <p>
+	 * The server reports the first violating row only, so a batch carrying several keys needs one
+	 * lookup of them on its stream — run on the same connection after the rollback — to tell the two
+	 * apart. Every key stored is a retry of an atomically stored batch, swallowed whole and reported
+	 * as an empty result. Some keys stored and some not is a batch the store cannot hold and never
+	 * held, raised as {@link IdempotencyKeyConflictException} with nothing stored. No key stored at
+	 * all can only mean the writer that held the key rolled back after rejecting this one, which is a
+	 * transient {@link EventStorageException} to retry. A batch carrying a single key skips the
+	 * lookup: the violation names the whole of what it carries.
+	 */
+	private List<StoredEvent> deduplicatedOrConflicting ( Connection connection, List<EventToStore> events, SQLException violation ) throws SQLException {
+		Map<EventStreamId,Set<String>> keysByStream = new LinkedHashMap<>();
+		for ( EventToStore event : events ) {
+			if ( event.idempotencyKey() != null ) {
+				keysByStream.computeIfAbsent(event.stream(), s -> new HashSet<>()).add(event.idempotencyKey());
+			}
+		}
+		if ( keysByStream.size() == 1 && keysByStream.values().iterator().next().size() == 1 ) {
+			return Collections.emptyList();
+		}
+		Set<String> storedKeys = new HashSet<>();
+		Set<String> newKeys = new HashSet<>();
+		EventStreamId keyedStream = null;
+		for ( Map.Entry<EventStreamId,Set<String>> entry : keysByStream.entrySet() ) {
+			keyedStream = entry.getKey();
+			Set<String> stored = storedIdempotencyKeys(connection, entry.getKey(), entry.getValue());
+			storedKeys.addAll(stored);
+			for ( String key : entry.getValue() ) {
+				if ( !stored.contains(key) ) {
+					newKeys.add(key);
+				}
+			}
+		}
+		if ( storedKeys.isEmpty() ) {
+			throw new EventStorageException("SQLException during append", violation);
+		}
+		if ( !newKeys.isEmpty() ) {
+			throw new IdempotencyKeyConflictException(keyedStream, storedKeys, newKeys);
+		}
+		return Collections.emptyList();
+	}
+
+	/** Which of the given keys events on the stream already hold; answered from the idempotency index. */
+	private Set<String> storedIdempotencyKeys ( Connection connection, EventStreamId stream, Set<String> keys ) throws SQLException {
+		Set<String> stored = new HashSet<>();
+		try ( PreparedStatement stmt = connection.prepareStatement(
+				"SELECT idempotency_key FROM %sevents WHERE stream_context = ? AND stream_purpose = ? AND idempotency_key = ANY(?)".formatted(prefix)) ) {
+			stmt.setString(1, stream.context());
+			stmt.setString(2, stream.purpose());
+			stmt.setArray(3, connection.createArrayOf("text", keys.toArray(new String[0])));
+			try ( ResultSet rs = stmt.executeQuery() ) {
+				while ( rs.next() ) {
+					stored.add(rs.getString(1));
+				}
+			}
+			connection.commit();
+		}
+		return stored;
 	}
 
 	/**

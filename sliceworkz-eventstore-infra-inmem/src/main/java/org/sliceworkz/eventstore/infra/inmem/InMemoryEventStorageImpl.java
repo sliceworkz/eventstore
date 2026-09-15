@@ -52,6 +52,7 @@ import org.sliceworkz.eventstore.spi.EventStorageException;
 import org.sliceworkz.eventstore.spi.EventToImport;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
+import org.sliceworkz.eventstore.stream.IdempotencyKeyConflictException;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 
 import tools.jackson.core.JacksonException;
@@ -407,19 +408,33 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	}
 
 	/**
-	 * Adds the batch to the event log, or nothing of it: a batch is swallowed whole when any of its
-	 * idempotency keys was stored on its stream before. That is the one answer every backend can give
-	 * -- Postgres writes a batch as a single multi-row insert, which its unique index rejects as a
-	 * whole -- and the one a retried command needs: its batch either landed entirely or not at all, so
-	 * on the retry either every key is known or none is. The alternative -- skipping the duplicate
-	 * events and storing the rest -- looks reasonable in memory and is unavailable on Postgres, where
-	 * the append pairs the returned rows with the input by position and so cannot insert a subset.
+	 * Adds the batch to the event log, or nothing of it. A batch every key of which was stored on its
+	 * stream before is a retry of an atomically stored batch and is swallowed whole; a batch mixing
+	 * stored and new keys is not a retry of anything the store holds and is refused with
+	 * {@link IdempotencyKeyConflictException}, nothing stored. That is the one answer every backend can
+	 * give -- Postgres writes a batch as a single multi-row insert, which its unique index rejects as a
+	 * whole -- and the honest one: storing the events with new keys would leave the caller believing
+	 * the colliding fact landed too, and swallowing them would lose them silently. The alternative --
+	 * skipping the duplicate events and storing the rest -- looks reasonable in memory and is
+	 * unavailable on Postgres, where the append pairs the returned rows with the input by position and
+	 * so cannot insert a subset.
 	 */
 	private List<StoredEvent> addAndNotifyListeners ( List<EventToStore> events ) {
+		Set<String> storedKeys = new HashSet<>();
+		Set<String> newKeys = new HashSet<>();
+		EventStreamId keyedStream = null;
 		for ( EventToStore event : events ) {
-			if ( event.idempotencyKey() != null && idempotencyKeys.contains(new IdempotencyScope(event.stream(), event.idempotencyKey())) ) {
-				return Collections.emptyList();
+			if ( event.idempotencyKey() != null ) {
+				keyedStream = event.stream();
+				boolean stored = idempotencyKeys.contains(new IdempotencyScope(event.stream(), event.idempotencyKey()));
+				(stored ? storedKeys : newKeys).add(event.idempotencyKey());
 			}
+		}
+		if ( !storedKeys.isEmpty() ) {
+			if ( !newKeys.isEmpty() ) {
+				throw new IdempotencyKeyConflictException(keyedStream, storedKeys, newKeys);
+			}
+			return Collections.emptyList();
 		}
 
 		long tx = ++txCounter;

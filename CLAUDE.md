@@ -678,14 +678,22 @@ persisted on the row and surfaced on `StoredEvent`, never on the public `Event`.
 - **A command producing several events gets a key per event, derived from the command's id**
   (`cmd-4711/1`, `cmd-4711/2`). Keys are per event because that is what storage holds — one column,
   one stream-scoped unique index — and the events of one batch must carry *distinct* keys.
-- **The batch is swallowed whole when any key in it was stored before**, the events with new keys and
-  the events with no key included. A batch is stored atomically, so a retry finds either every key
-  or none; the mixed case only arises from a caller reusing a key across commands, and then the
-  batch is not the one the store already holds. The alternative — storing the events whose keys are
-  new and skipping the rest — loses because it is not an answer every backend can give: Postgres
-  writes a batch as a single multi-row insert and pairs the rows it returns with the input by
-  position, so it inserts all or none, and a batch that is one command's output has no meaningful
-  fragment to store. The in-memory stores could store the subset and deliberately do not.
+- **The batch is swallowed whole only as a retry: when every key in it was stored before.** A batch
+  is stored atomically, so a retry finds every key or none, and an event with no key rides along
+  with the keyed ones. **A batch mixing stored and new keys is refused with
+  `IdempotencyKeyConflictException`, nothing stored.** It cannot be a retry: one of its events
+  collides with a different event holding its key, and the rest are unknown to the store. Both
+  silent answers lie — storing the unknown events leaves the caller believing the colliding fact
+  landed too, and swallowing the batch loses the unknown events with nothing to say so — and the
+  second is what an all-or-nothing rule reaches for by default, which is why the exception exists.
+  It extends `RuntimeException` directly, not `EventStorageException`, because it is never worth
+  retrying. Partial storage is also not an answer every backend can give: Postgres writes a batch as
+  a single multi-row insert and pairs the rows it returns with the input by position, so it inserts
+  all or none; the server reports the first violating row only, so after the rollback the backend
+  runs one lookup of the batch's keys on the stream to tell a retry from a conflict (no key present
+  at all means the writer that held it rolled back, a transient `EventStorageException`). The one
+  blind spot: a batch reusing a key with *different* unkeyed events cannot be told from a retry, so
+  a command should key every event it emits.
 - **A batch repeating a key is refused with `IllegalArgumentException`, storing nothing.** Left to
   the server, the unique index rejects the second row and the append path reads that as "appended
   before", so the first ever attempt at such a batch would store nothing and report a successful
@@ -695,7 +703,8 @@ persisted on the row and surfaced on `StoredEvent`, never on the public `Event`.
   `OptimisticLockingException` whether or not its keys are duplicates; the de-duplication is only
   seen by an append that was admitted.
 - `EventStreamIdempotencyTest` pins the stream-level contract per backend and `AppendIdempotencyTest`
-  the SPI one: a swallowed batch stores nothing and notifies nobody, and a rejected batch spends no key.
+  the SPI one: a retried batch stores nothing and notifies nobody, a mixed batch throws and stores
+  nothing, and a refused batch spends no key.
 
 ### Leases: electing one processor among several instances
 
@@ -1709,9 +1718,10 @@ that bind everywhere:
 - **Idempotency keys are scoped per stream** (partial unique index `idx_events_stream_idempotency`);
   a duplicate is recognised by the constraint name the server reports, never by message text, and a
   swallowed duplicate returns an empty result. A batch is one multi-row insert, so a duplicate in it
-  swallows the whole batch — the all-or-nothing rule under "Idempotent appends" above — and a batch
-  repeating a key is refused in Java before the insert, since the server would report it as the same
-  violation.
+  rejects the whole batch, and one lookup of the batch's keys after the rollback tells a retry (every
+  key stored, swallowed) from a conflict (some stored, `IdempotencyKeyConflictException`) — the rule
+  under "Idempotent appends" above. A batch repeating a key is refused in Java before the insert,
+  since the server would report it as the same violation.
 - Append notifications are emitted once per stream per statement, not per row; `timestamptz` keeps
   microseconds (the one lossy step of an inmem → Postgres → inmem round trip); and a `db.properties`
   *value* never reaches an error message or log line — only the key does.

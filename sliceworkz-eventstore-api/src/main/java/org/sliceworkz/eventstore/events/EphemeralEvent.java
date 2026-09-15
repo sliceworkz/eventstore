@@ -103,10 +103,12 @@ public record EphemeralEvent<DOMAIN_EVENT_TYPE> ( EventType type, DOMAIN_EVENT_T
 	 * <p>
 	 * A key is per event, and the events of one batch must carry distinct keys — a batch repeating a
 	 * key is rejected with {@link IllegalArgumentException} and stores nothing. A batch is
-	 * de-duplicated as a whole: if any key in it was stored on the stream before, none of the batch
-	 * is stored. So a command producing several events is made idempotent by giving each of them its
-	 * own key derived from the command's — {@code commandId + "/1"}, {@code commandId + "/2"} — and its
-	 * retry is then swallowed entirely. See {@link org.sliceworkz.eventstore.stream.EventSink#append(org.sliceworkz.eventstore.stream.AppendCriteria, java.util.List)}.
+	 * de-duplicated as a whole, and only as a retry: when every key it carries was stored on the
+	 * stream before, none of the batch is stored; when some were and some were not, it is refused
+	 * with {@link org.sliceworkz.eventstore.stream.IdempotencyKeyConflictException} and nothing is
+	 * stored either. So a command producing several events is made idempotent by giving each of them
+	 * its own key derived from the command's — {@code commandId + "/1"}, {@code commandId + "/2"} —
+	 * and its retry is then swallowed entirely. See {@link org.sliceworkz.eventstore.stream.EventSink#append(org.sliceworkz.eventstore.stream.AppendCriteria, java.util.List)}.
 	 *
 	 * @param idempotencyKey the idempotency key to attach to the event, or null for no idempotency check
 	 * @return a new EphemeralEvent instance with the specified idempotency key

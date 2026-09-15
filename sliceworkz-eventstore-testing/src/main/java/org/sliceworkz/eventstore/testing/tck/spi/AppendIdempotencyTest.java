@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.sliceworkz.eventstore.events.EventType;
@@ -38,6 +39,7 @@ import org.sliceworkz.eventstore.spi.EventStorage.QueryDirection;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
+import org.sliceworkz.eventstore.stream.IdempotencyKeyConflictException;
 import org.sliceworkz.eventstore.testing.AbstractEventStoreTest;
 import org.sliceworkz.eventstore.testing.ForEachBackend;
 
@@ -48,11 +50,12 @@ import org.sliceworkz.eventstore.testing.ForEachBackend;
  * {@link EventToStore} directly — where the storage is the only thing standing between a caller and a
  * batch stored in part or reported as de-duplicated when it never was.
  * <p>
- * The contract: a batch is de-duplicated as a whole, so any stored key in it stores nothing of it,
- * and a batch repeating a key is refused as an {@link IllegalArgumentException} before anything is
- * stored. The second matters on a backend whose unique index would reject such a batch on its own:
- * the rejection arrives as the same violation a duplicate of an earlier append raises, and a storage
- * reading it as one reports a first attempt as a successful de-duplication.
+ * The contract: a batch every key of which was stored before is a retry, swallowed whole; a batch
+ * mixing stored and new keys is refused as an {@link IdempotencyKeyConflictException} with nothing
+ * stored; and a batch repeating a key is refused as an {@link IllegalArgumentException} before
+ * anything is stored. The last two matter on a backend whose unique index rejects such batches on
+ * its own: the rejection arrives as the same violation a retry raises, and a storage reading every
+ * violation as a retry reports a first attempt, or a lost batch, as a successful de-duplication.
  */
 public class AppendIdempotencyTest extends AbstractEventStoreTest {
 
@@ -79,10 +82,7 @@ public class AppendIdempotencyTest extends AbstractEventStoreTest {
 		assertEquals(1, append(event("1", "cmd-4711")).size());
 	}
 
-	@ForEachBackend
-	void aBatchWithAStoredKeyStoresNothingAndNotifiesNobody ( ) {
-		assertEquals(1, append(event("1", "order-4711")).size());
-
+	private List<AppendsToEventStoreNotification> recordNotifications ( ) {
 		List<AppendsToEventStoreNotification> received = new CopyOnWriteArrayList<>();
 		eventStorage().subscribe(new EventStoreListener() {
 			@Override
@@ -91,20 +91,46 @@ public class AppendIdempotencyTest extends AbstractEventStoreTest {
 			}
 			@Override
 			public void notify ( BookmarkPlacedNotification bookmarkPlaced ) {
-				// not what this scenario asserts
+				// not what these scenarios assert
 			}
 		});
+		return received;
+	}
 
-		// one stored key, one new key, one event without a key: none of them is stored
-		List<StoredEvent> mixed = append(event("2", "order-4712"), event("3", "order-4711"), event("4", null));
-		assertTrue(mixed.isEmpty(), "a batch holding a stored key must be reported as de-duplicated");
-		assertEquals(1, allEvents().size(), "a batch holding a stored key must store none of its events");
+	@ForEachBackend
+	void aRetriedBatchStoresNothingAndNotifiesNobody ( ) {
+		assertEquals(3, append(event("1", "cmd-4711/1"), event("2", "cmd-4711/2"), event("3", null)).size());
+
+		List<AppendsToEventStoreNotification> received = recordNotifications();
+
+		// every key stored before: a retry, swallowed whole, the unkeyed event included
+		List<StoredEvent> retry = append(event("1", "cmd-4711/1"), event("2", "cmd-4711/2"), event("3", null));
+		assertTrue(retry.isEmpty(), "a retried batch must be reported as de-duplicated");
+		assertEquals(3, allEvents().size(), "a retried batch must store none of its events");
 
 		// and a batch that stored nothing announces nothing: the next real append is what proves the
 		// listener is wired, and it is the only notification that may arrive
-		assertEquals(1, append(event("5", "order-4712")).size());
+		assertEquals(1, append(event("4", "cmd-4712")).size());
 		waitBecauseOfEventualConsistency(() -> !received.isEmpty());
 		assertEquals(1, received.size(), "a swallowed batch must not be announced to listeners");
 		assertEquals(allEvents().getLast().reference(), received.getFirst().atLeastUntil());
+	}
+
+	@ForEachBackend
+	void aBatchMixingStoredAndNewKeysIsRefusedAndStoresNothing ( ) {
+		assertEquals(1, append(event("1", "order-4711")).size());
+
+		List<AppendsToEventStoreNotification> received = recordNotifications();
+
+		// one stored key, one new key: not a retry of anything the store holds
+		IdempotencyKeyConflictException conflict = assertThrows(IdempotencyKeyConflictException.class,
+				() -> append(event("2", "order-4712"), event("3", "order-4711")));
+		assertEquals(Set.of("order-4711"), conflict.storedKeys());
+		assertEquals(Set.of("order-4712"), conflict.newKeys());
+		assertEquals(1, allEvents().size(), "a refused batch must store none of its events");
+
+		assertEquals(1, append(event("4", "order-4712")).size());
+		waitBecauseOfEventualConsistency(() -> !received.isEmpty());
+		assertEquals(1, received.size(), "a refused batch must not be announced to listeners");
 	}
 }

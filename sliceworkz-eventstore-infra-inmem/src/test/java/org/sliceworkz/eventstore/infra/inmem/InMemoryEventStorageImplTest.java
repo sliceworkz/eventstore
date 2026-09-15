@@ -22,16 +22,28 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.Instant;
 import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventDeserializationException;
+import org.sliceworkz.eventstore.events.EventId;
+import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImplTest.ProblematicParsing.ProblematicParsingRecord;
+import org.sliceworkz.eventstore.query.EventQuery;
+import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
+import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
+import org.sliceworkz.eventstore.spi.EventStorage.QueryDirection;
+import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
+import org.sliceworkz.eventstore.spi.EventToImport;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
@@ -113,6 +125,97 @@ public class InMemoryEventStorageImplTest {
 		assertEquals("must be at least 6", e.getMessage());
 	}
 	
+	private static final EventStreamId STREAM = EventStreamId.forContext("ctx").withPurpose("p");
+
+	private static StoredEvent storedAt ( long position, long tx ) {
+		return new StoredEvent(STREAM, EventType.ofType("Something"), EventReference.create(position, tx), "{}", Tags.none(), Instant.now());
+	}
+
+	private static List<Long> positions ( java.util.stream.Stream<StoredEvent> events ) {
+		return events.map(e -> e.reference().position()).toList();
+	}
+
+	/**
+	 * The cursor is a boundary in the {@code (tx, position)} order, as it is on Postgres, where the two
+	 * columns are assigned independently and can disagree: an event holding a lower position and a
+	 * higher transaction than one committed before it is after that event for every reader. A cursor
+	 * read as a positional skip does not see it.
+	 */
+	@Test
+	void cursorIsTheTupleOrderNotAPositionalSkip ( ) {
+		StoredEvent first = storedAt(2, 1);   // committed first: position 2, transaction 1
+		StoredEvent second = storedAt(1, 2);  // committed second: position 1, transaction 2
+		EventStorage storage = new InMemoryEventStorageImpl("tuple", Limit.none(), List.of(second, first), Map.of());
+
+		assertEquals(List.of(2L, 1L), positions(storage.query(EventQuery.matchAll(), Optional.empty(), null, Limit.none(), QueryDirection.FORWARD)),
+				"the log is read in (tx, position) order, whatever order it was preloaded in");
+		assertEquals(List.of(1L), positions(storage.query(EventQuery.matchAll(), Optional.empty(), first.reference(), Limit.none(), QueryDirection.FORWARD)),
+				"the event after (tx 1, position 2) is (tx 2, position 1)");
+		assertEquals(List.of(), positions(storage.query(EventQuery.matchAll(), Optional.empty(), second.reference(), Limit.none(), QueryDirection.FORWARD)),
+				"nothing is after the newest event");
+		assertEquals(List.of(2L), positions(storage.query(EventQuery.matchAll(), Optional.empty(), second.reference(), Limit.none(), QueryDirection.BACKWARD)),
+				"going backward from (tx 2, position 1) reaches (tx 1, position 2)");
+		assertEquals(List.of(), positions(storage.query(EventQuery.matchAll(), Optional.empty(), first.reference(), Limit.none(), QueryDirection.BACKWARD)),
+				"nothing is before the oldest event");
+	}
+
+	/**
+	 * A cursor compares stored events: the index a reference carries names one of the events a stored
+	 * event upcasts into, and the storage never sees those, so a cursor into the middle of a stored
+	 * event still starts after the whole of it.
+	 */
+	@Test
+	void cursorWithAnIndexStartsAfterTheWholeStoredEvent ( ) {
+		StoredEvent first = storedAt(1, 1);
+		StoredEvent second = storedAt(2, 1);
+		EventStorage storage = new InMemoryEventStorageImpl("index", Limit.none(), List.of(first, second), Map.of());
+
+		EventReference intoFirst = EventReference.of(first.reference().id(), 1, 1, 3);
+		assertEquals(List.of(2L), positions(storage.query(EventQuery.matchAll(), Optional.empty(), intoFirst, Limit.none(), QueryDirection.FORWARD)));
+		assertEquals(List.of(), positions(storage.query(EventQuery.matchAll(), Optional.empty(), intoFirst, Limit.none(), QueryDirection.BACKWARD)));
+	}
+
+	/**
+	 * A cursor this log never assigned -- one from another store, or a reloaded log missing its tail --
+	 * is an ordinary boundary: everything is before it going backward, nothing after it going forward.
+	 * Neither direction may throw.
+	 */
+	@Test
+	void cursorBeyondTheEndOfTheLogIsABoundaryNotAnError ( ) {
+		EventStorage storage = new InMemoryEventStorageImpl("beyond", Limit.none(), List.of(storedAt(1, 1), storedAt(2, 1)), Map.of());
+		EventReference beyond = EventReference.create(10, 1);
+
+		assertEquals(List.of(2L, 1L), positions(storage.query(EventQuery.matchAll(), Optional.empty(), beyond, Limit.none(), QueryDirection.BACKWARD)));
+		assertEquals(List.of(), positions(storage.query(EventQuery.matchAll(), Optional.empty(), beyond, Limit.none(), QueryDirection.FORWARD)));
+	}
+
+	/**
+	 * A log reloaded with a gap in it -- the filesystem-backed storage after a crash between two writes
+	 * that landed out of order -- has fewer events than its highest position. The next position comes
+	 * from a counter seeded from that highest position, never from the size of the log, so no stored
+	 * event ever shares a position with another; and the cursor, being the tuple, walks over the gap.
+	 */
+	@Test
+	void appendAfterAReloadWithAGapDoesNotReissueAPosition ( ) {
+		StoredEvent afterTheGap = storedAt(4, 2);
+		EventStorage storage = new InMemoryEventStorageImpl("gap", Limit.none(), List.of(storedAt(1, 1), storedAt(2, 1), afterTheGap), Map.of());
+
+		List<StoredEvent> appended = storage.append(AppendCriteria.none(), Optional.of(STREAM),
+				List.of(new EventToStore(STREAM, EventType.ofType("Something"), "{}", Tags.none(), null)));
+		assertEquals(5L, appended.get(0).reference().position());
+		assertEquals(3L, appended.get(0).reference().tx());
+
+		List<StoredEvent> imported = storage.importEvents(
+				List.of(new EventToImport(STREAM, EventType.ofType("Something"), EventId.create(), "{}", Tags.none(), Instant.now(), null)),
+				EventStorage.ImportMode.FAIL_ON_EXISTING_ID);
+		assertEquals(6L, imported.get(0).reference().position());
+
+		assertEquals(List.of(4L, 5L, 6L), positions(storage.query(EventQuery.matchAll(), Optional.empty(), EventReference.create(2, 1), Limit.none(), QueryDirection.FORWARD)),
+				"a cursor before the gap reads everything after it");
+		assertEquals(List.of(5L, 6L), positions(storage.query(EventQuery.matchAll(), Optional.empty(), afterTheGap.reference(), Limit.none(), QueryDirection.FORWARD)),
+				"a cursor at the event after the gap reads only what was appended since");
+	}
+
 	public record Name ( String value ) {
 		
 		// never to be called directly from code, only here for deserialization purposes

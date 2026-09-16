@@ -208,7 +208,8 @@ public class UpcastTest extends AbstractEventStoreTest {
 		assertEquals(1, current.query(EventQuery.forEvents(EventTypesFilter.of(CustomerRenamed.class), customer)).count());
 
 		// a raw stream registers no legacy types: the stored name is read as stored
-		assertEquals(1, eventStore().getEventStream(streamId).query(EventQuery.forEvents(EventTypesFilter.of(Set.of(EventType.ofType("CustomerNameChanged"))), customer)).count());
+		EventStream<?> raw = eventStore().getEventStream(streamId);
+		assertEquals(1, raw.query(EventQuery.forEvents(EventTypesFilter.of(Set.of(EventType.ofType("CustomerNameChanged"))), customer)).count());
 		// and on a typed stream where the name is a current type, the filter is an ordinary one
 		assertEquals(1, asWritten.query(EventQuery.forEvents(EventTypesFilter.of(OriginalEvent.CustomerNameChanged.class), customer)).count());
 	}

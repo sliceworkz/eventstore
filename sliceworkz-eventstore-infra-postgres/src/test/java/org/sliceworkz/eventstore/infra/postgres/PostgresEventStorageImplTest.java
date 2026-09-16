@@ -17,6 +17,7 @@
  */
 package org.sliceworkz.eventstore.infra.postgres;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import org.junit.jupiter.api.Test;
@@ -63,6 +64,44 @@ public class PostgresEventStorageImplTest {
 	void testPrefixUnderscore ( ) {
 		String prefix = "_";
 		assertThrows(IllegalArgumentException.class, ()->PostgresEventStorageImpl.validatePrefix(prefix));
+	}
+
+	@Test
+	void testPrefixIsReturnedAsGivenWhenAlreadyLowercase ( ) {
+		assertEquals("tenant1_", PostgresEventStorageImpl.validatePrefix("tenant1_"));
+		assertEquals("", PostgresEventStorageImpl.validatePrefix(""));
+	}
+
+	/**
+	 * PostgreSQL folds the unquoted identifier the prefix is used as, so the prefix is folded the same
+	 * way: what comes back is the name the catalog holds, and every place the prefix is used as a
+	 * string (the bound table name of validation, the trigger guard, the channel literal) agrees with
+	 * every place it is used as an identifier.
+	 */
+	@Test
+	void testPrefixWithUppercaseLettersIsFoldedToLowercase ( ) {
+		assertEquals("tenant_", PostgresEventStorageImpl.validatePrefix("Tenant_"));
+		assertEquals("tenant_", PostgresEventStorageImpl.validatePrefix("TENANT_"));
+		assertEquals("acme_tenant1_", PostgresEventStorageImpl.validatePrefix("Acme_Tenant1_"));
+	}
+
+	/** {@code 1tenant_events} is not an identifier PostgreSQL parses unquoted, so it is refused here. */
+	@Test
+	void testPrefixStartingWithADigitIsRejected ( ) {
+		assertThrows(IllegalArgumentException.class, ()->PostgresEventStorageImpl.validatePrefix("1tenant_"));
+		assertThrows(IllegalArgumentException.class, ()->PostgresEventStorageImpl.validatePrefix("1_"));
+	}
+
+	@Test
+	void testPrefixMayStartWithAnUnderscoreOrContainDigits ( ) {
+		assertEquals("_tenant_", PostgresEventStorageImpl.validatePrefix("_tenant_"));
+		assertEquals("t1_", PostgresEventStorageImpl.validatePrefix("t1_"));
+	}
+
+	@Test
+	void testPrefixTooLongIsRejected ( ) {
+		assertThrows(IllegalArgumentException.class, ()->PostgresEventStorageImpl.validatePrefix("a".repeat(32) + "_"));
+		assertEquals("a".repeat(31) + "_", PostgresEventStorageImpl.validatePrefix("A".repeat(31) + "_"));
 	}
 	
 }

@@ -69,78 +69,78 @@ public class EventStoreBasicTest extends AbstractEventStoreTest {
 
 	@ForEachBackend
 	void testQueryEmptyStorageAll ( ) {
-		assertEquals(0, eventStore().getEventStream(EventStreamId.anyContext().anyPurpose()).query(EventQuery.matchAll()).count());
+		assertEquals(0, eventStore().getRawEventStream(EventStreamId.anyContext().anyPurpose()).query(EventQuery.matchAll()).count());
 	}
 
 	@ForEachBackend
 	void testQueryEmptyStorageDomain ( ) {
-		assertEquals(0, eventStore().getEventStream(EventStreamId.forContext("a").withPurpose("domain")).query(EventQuery.matchAll()).count());
+		assertEquals(0, eventStore().getRawEventStream(EventStreamId.forContext("a").withPurpose("domain")).query(EventQuery.matchAll()).count());
 	}
 
 	@ForEachBackend
 	void testQueryOneEvent ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
-		assertEquals(1, eventStore().getEventStream(EventStreamId.forContext("a").withPurpose("domain")).query(EventQuery.matchAll()).count());
+		assertEquals(1, eventStore().getRawEventStream(EventStreamId.forContext("a").withPurpose("domain")).query(EventQuery.matchAll()).count());
 	}
 
 	@ForEachBackend
 	void testQueryAnyStreamAnyPurpose ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
-		assertEquals(1, eventStore().getEventStream(EventStreamId.anyContext().anyPurpose()).query(EventQuery.matchAll()).count());
+		assertEquals(1, eventStore().getRawEventStream(EventStreamId.anyContext().anyPurpose()).query(EventQuery.matchAll()).count());
 	}
 
 	@ForEachBackend
 	void testQueryEmptyStream ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
-		assertEquals(0, eventStore().getEventStream(EventStreamId.forContext("b").anyPurpose()).query(EventQuery.matchAll()).count());
+		assertEquals(0, eventStore().getRawEventStream(EventStreamId.forContext("b").anyPurpose()).query(EventQuery.matchAll()).count());
 	}
 
 	@ForEachBackend
 	void testQuerySpecificStreamSpecificPurposeNoMatch ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
-		assertEquals(0, eventStore().getEventStream(EventStreamId.forContext("a").withPurpose("p")).query(EventQuery.matchAll()).count());
+		assertEquals(0, eventStore().getRawEventStream(EventStreamId.forContext("a").withPurpose("p")).query(EventQuery.matchAll()).count());
 	}
 
 	@ForEachBackend
 	void testQuerySpecificStreamSpecificPurposeMatch ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("p"));
-		assertEquals(1, eventStore().getEventStream(EventStreamId.forContext("a").withPurpose("p")).query(EventQuery.matchAll()).count());
+		assertEquals(1, eventStore().getRawEventStream(EventStreamId.forContext("a").withPurpose("p")).query(EventQuery.matchAll()).count());
 	}
 
 	@ForEachBackend
 	void testQuerySpecificStreamAnyPurpose ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("p"));
-		assertEquals(1, eventStore().getEventStream(EventStreamId.forContext("a").anyPurpose()).query(EventQuery.matchAll()).count());
+		assertEquals(1, eventStore().getRawEventStream(EventStreamId.forContext("a").anyPurpose()).query(EventQuery.matchAll()).count());
 	}
 
 	@ForEachBackend
 	void testQuerySpecificStreamAnyPurposeOnApplication ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
-		assertEquals(1, eventStore().getEventStream(EventStreamId.forContext("a").anyPurpose()).query(EventQuery.matchAll()).count());
+		assertEquals(1, eventStore().getRawEventStream(EventStreamId.forContext("a").anyPurpose()).query(EventQuery.matchAll()).count());
 	}
 
 	@ForEachBackend
 	void testQueryAnyStreamSpecificPurpose ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("p"));
-		assertEquals(1, eventStore().getEventStream(EventStreamId.anyContext().withPurpose("p")).query(EventQuery.matchAll()).count());
+		assertEquals(1, eventStore().getRawEventStream(EventStreamId.anyContext().withPurpose("p")).query(EventQuery.matchAll()).count());
 	}
 
 	@ForEachBackend
 	void testQuerySpecificStreamApplicationPurpose ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
-		assertEquals(1, eventStore().getEventStream(EventStreamId.forContext("a").withPurpose("domain")).query(EventQuery.matchAll()).count());
+		assertEquals(1, eventStore().getRawEventStream(EventStreamId.forContext("a").withPurpose("domain")).query(EventQuery.matchAll()).count());
 	}
 
 	@ForEachBackend
 	void testQueryAnyStreamApplicationPurpose ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
-		assertEquals(1, eventStore().getEventStream(EventStreamId.anyContext().withPurpose("domain")).query(EventQuery.matchAll()).count());
+		assertEquals(1, eventStore().getRawEventStream(EventStreamId.anyContext().withPurpose("domain")).query(EventQuery.matchAll()).count());
 	}
 
 	@ForEachBackend
 	void testQueryByEventTypeMatch ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
-		assertEquals(1, eventStore().getEventStream(EventStreamId.anyContext().anyPurpose()).query(
+		assertEquals(1, eventStore().getRawEventStream(EventStreamId.anyContext().anyPurpose()).query(
 				EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())
 		).count());
 	}
@@ -148,7 +148,7 @@ public class EventStoreBasicTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void testQueryByEventTypeNoMatch ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
-		assertEquals(0, eventStore().getEventStream(EventStreamId.anyContext().anyPurpose()).query(
+		assertEquals(0, eventStore().getRawEventStream(EventStreamId.anyContext().anyPurpose()).query(
 				EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.none())
 		).count());
 	}
@@ -156,7 +156,7 @@ public class EventStoreBasicTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void testQueryBySingleTagNoMatch ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
-		assertEquals(0, eventStore().getEventStream(EventStreamId.anyContext().anyPurpose()).query(
+		assertEquals(0, eventStore().getRawEventStream(EventStreamId.anyContext().anyPurpose()).query(
 				EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("a:2"))
 		).count());
 	}
@@ -164,7 +164,7 @@ public class EventStoreBasicTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void testQueryBySingleTagMatch ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
-		assertEquals(1, eventStore().getEventStream(EventStreamId.anyContext().anyPurpose()).query(
+		assertEquals(1, eventStore().getRawEventStream(EventStreamId.anyContext().anyPurpose()).query(
 				EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("b:2"))
 		).count());
 	}
@@ -172,7 +172,7 @@ public class EventStoreBasicTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void testQueryByMultipleTagsNoMatch ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
-		assertEquals(0, eventStore().getEventStream(EventStreamId.anyContext().anyPurpose()).query(
+		assertEquals(0, eventStore().getRawEventStream(EventStreamId.anyContext().anyPurpose()).query(
 				EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("a:1", "b:2", "c:4"))
 		).count());
 	}
@@ -180,7 +180,7 @@ public class EventStoreBasicTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void testQueryByMultipleTagsMatch ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
-		assertEquals(1, eventStore().getEventStream(EventStreamId.anyContext().anyPurpose()).query(
+		assertEquals(1, eventStore().getRawEventStream(EventStreamId.anyContext().anyPurpose()).query(
 				EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("a:1", "c:3"))
 		).count());
 	}
@@ -188,7 +188,7 @@ public class EventStoreBasicTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void testQueryByAllTagsMatch ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
-		assertEquals(1, eventStore().getEventStream(EventStreamId.anyContext().anyPurpose()).query(
+		assertEquals(1, eventStore().getRawEventStream(EventStreamId.anyContext().anyPurpose()).query(
 				EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("a:1", "b:2", "c:3"))
 		).count());
 	}
@@ -196,7 +196,7 @@ public class EventStoreBasicTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void testQueryByEventTypeAndAllTagsMatch ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
-		assertEquals(1, eventStore().getEventStream(EventStreamId.anyContext().anyPurpose()).query(
+		assertEquals(1, eventStore().getRawEventStream(EventStreamId.anyContext().anyPurpose()).query(
 				EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.parse("a:1", "b:2", "c:3"))
 		).count());
 	}

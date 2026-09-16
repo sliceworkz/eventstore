@@ -376,8 +376,9 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		assertTrue(batch.getFirst().reference().happenedAfter(single.getFirst().reference()));
 		assertTrue(batch.getLast().reference().happenedAfter(batch.getFirst().reference()));
 
-		waitBecauseOfEventualConsistency(()->appendListener.count()>=2);
-		assertEquals(batch.getLast().reference(), appendListener.lastReference());
+		// one or two notifications, depending on whether the second append landed before the first
+		// was offered to the listener: what is certain is that the listener ends up at the newest event
+		waitBecauseOfEventualConsistency(()->batch.getLast().reference().equals(appendListener.lastReference()));
 
 		assertEquals(
 			List.of(single.getFirst().reference(), batch.getFirst().reference(), batch.getLast().reference()),

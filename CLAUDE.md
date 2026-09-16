@@ -394,6 +394,10 @@ mvn clean install -DskipTests
   same store, in the same transaction, and resume from it. Two stores that cannot share a transaction
   cannot be made exactly-once any other way. `sliceworkz-eventmodeling`'s `SqlReadModelProjector` is the
   worked example
+- **`readBookmark()` and a run never overlap.** Both take the projector's lock, so a manual bookmark read
+  while a run is in progress — a subscribed projector runs on the storage's notification thread — waits
+  for the run to finish and then resets the position, rather than moving a cursor the run is about to
+  overwrite with its own progress. `ProjectorTest.testReadBookmarkWaitsForARunInProgress` pins it
 - `ProjectorBatchDurabilityTest` in the TCK pins all of it per backend: the bookmark visible from inside
   the *second* batch already names the first, a failed commit is a `ProjectorException` and its events
   come round again, and a failing rollback keeps the cause
@@ -405,6 +409,10 @@ mvn clean install -DskipTests
 - Savepoint events are pure domain events — no special framework support needed
 - When no savepoint exists, the main `eventQuery()` replays from the beginning (graceful degradation)
 - When bookmarking is enabled on the `Projector`, `initQuery()` is ignored (a warning is logged at build time)
+- A savepoint handler that throws fails the run as a `ProjectorException` naming the savepoint event, exactly
+  as a failing batch does, and the cursor goes back to where the run started, so the next run re-runs
+  `initQuery()` rather than skipping it and starting the main query from a read model that was never
+  initialised. `ProjectorTest.testProjectorWrapsAFailingSavepointHandlerInAProjectorException` pins it per backend
 - The `initQuery()` and `eventQuery()` should query different event types to avoid double-processing and to allow recovery from buggy savepoints
 
 ### Storage Implementations

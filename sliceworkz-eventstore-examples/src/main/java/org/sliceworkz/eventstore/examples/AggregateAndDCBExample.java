@@ -327,13 +327,13 @@ class RegistrationDecisionModel implements EventHandler<LearningDomainEvent> {
 	
 	public EventQuery getEventQuery ( ) {
 		// this query will deliver all events linked to the student at hand, including subscriptions to other courses
-		EventQuery studentQuery = EventQuery.forEvents(EventTypesFilter.of(StudentSubscribedToCourse.class), Tags.of("student", studentId));
+		EventQuery studentQuery = EventQuery.forTypes(StudentSubscribedToCourse.class).tagged("student", studentId);
 		
 		// this query will deliver all events linked to the course at hand, including subscriptions from other students
-		EventQuery courseQuery = EventQuery.forEvents(EventTypesFilter.of(CourseDefined.class, CourseCapacityUpdated.class, StudentSubscribedToCourse.class), Tags.of("course", courseId));
+		EventQuery courseQuery = EventQuery.forTypes(CourseDefined.class, CourseCapacityUpdated.class, StudentSubscribedToCourse.class).tagged("course", courseId);
 		
 		// ask for all matching events (union query)
-		return studentQuery.combineWith(courseQuery);
+		return studentQuery.or(courseQuery);
 	}
 	
 

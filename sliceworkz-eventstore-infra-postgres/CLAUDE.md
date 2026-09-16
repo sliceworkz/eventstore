@@ -386,6 +386,26 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   (measured: 64 of 80 fail to start, on PG17 and PG18 alike). One transaction across *all* scripts also
   makes `INITIALIZE`'s drop-then-ensure indivisible, so a second instance cannot drop what the first has just
   recreated
+- **The table prefix is folded to lowercase, and may not start with a digit.** The prefix is an
+  *unquoted* identifier everywhere it names an object — the DDL, every statement the store issues,
+  the monitors' `LISTEN` — and PostgreSQL folds those to lowercase. It is a *string* everywhere
+  else: the `table_name` schema validation binds, the `relname` the trigger-shape guard compares,
+  the constraint name a unique violation is matched against, the channel the trigger's
+  `pg_notify` literal names, and the advisory-lock key. Left as given, a prefix of `Tenant_`
+  creates `tenant_events` and then fails `ENSURE` looking for `Tenant_events`; under `NONE` it
+  starts, the monitors listen on `tenant_event_appended`, the trigger notifies
+  `Tenant_event_appended`, `notifications.up` reads 1 and nothing ever arrives — the silent
+  failure the fail-fast startup exists to prevent. So `validatePrefix` folds it (`Locale.ROOT`,
+  over the ASCII the pattern admits) and the builder passes the folded prefix to the key store as
+  well, which makes the prefix the name the catalog holds in every use at once. The alternative —
+  rejecting uppercase, as `Tag` rejects what it cannot store — loses because the folded name is
+  the one PostgreSQL has already given such a store: its tables exist as `tenant_*` with its
+  events in them, and a rejection would refuse to start it on upgrade where folding starts it with
+  its notifications working. A leading digit is rejected instead, since `1tenant_events` is not an
+  identifier the server parses unquoted at all (every statement fails with "trailing junk after
+  numeric literal", naming nothing about the prefix). `PostgresEventStorageImplTest` pins the
+  rules; `PostgresPrefixCaseTest` pins per version that a mixed-case prefix validates under
+  `ENSURE`, delivers notifications, and is the same store as its lowercase spelling
 - **What is still missing: a version marker, and validation of an object's shape.** `checkDatabase()` checks
   that named tables, columns (type + nullability), functions and indexes *exist*, and that each trigger
   exists with the expected `action_orientation`; it does not check
@@ -508,7 +528,7 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     `CREATE UNIQUE INDEX`, and compared case-insensitively against `<prefix>idx_events_stream_idempotency`
     because PostgreSQL folds the unquoted identifier in the DDL. Two things make the message text unusable
     here, and only one of them is obvious. The subtle one is the table prefix: it is caller-supplied and
-    validated only as `[a-zA-Z0-9_]+_`, so a prefix containing the word "idempotency" puts that word into
+    validated only as `[a-zA-Z_][a-zA-Z0-9_]*_` (and folded to lowercase), so a prefix containing the word "idempotency" puts that word into
     `<prefix>events_pkey` and `<prefix>events_event_id_key` as well, and a substring match then swallows
     *every* unique violation the table can raise — reporting a successful de-duplication for an append that
     wrote nothing. (The other, message translation under a non-English `lc_messages`, turns out **not** to

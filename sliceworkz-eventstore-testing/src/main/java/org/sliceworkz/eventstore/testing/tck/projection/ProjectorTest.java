@@ -18,6 +18,7 @@
 package org.sliceworkz.eventstore.testing.tck.projection;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -307,6 +308,48 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		assertEquals(2,  accumulatedMetrics.eventsStreamed());
 		assertEquals(2,  accumulatedMetrics.eventsHandled());
 		assertEquals(refThree, accumulatedMetrics.lastEventReference());
+	}
+
+	/**
+	 * A projector configured with nothing but a reader name reads its bookmark before every execution.
+	 * That default is what makes bookmarking resume a projection after a restart: a second projector
+	 * built the same way picks up where the first one left off, and a bookmark moved elsewhere between
+	 * two runs is followed rather than overrun.
+	 */
+	@ForEachBackend
+	void testProjectorReadsTheBookmarkBeforeEachExecutionByDefault ( ) {
+		EventReference refOne = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "one"))).findFirst().get().reference();
+		EventReference refTwo = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "two"))).findFirst().get().reference();
+		EventReference refThree = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "three"))).findFirst().get().reference();
+		EventReference refFour = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).findFirst().get().reference();
+
+		// the "first process": no mode chosen, runs one batch and bookmarks it
+		TestProjection first = new TestProjection();
+		var firstProjector = Projector.from(es).towards(first).bookmarkProgress().withReader("someReader").done().inBatchesOf(1).build();
+
+		ProjectorMetrics projectorMetrics = firstProjector.runSingleBatch();
+		assertEquals(1, first.counter());
+		assertEquals(refOne, projectorMetrics.lastEventReference());
+		assertEquals(refOne, es.getBookmark("someReader").orElse(null));
+
+		// the "restarted process": a projector built with only the reader name resumes at the bookmark,
+		// rather than replaying from the start as one that never reads its bookmark would
+		TestProjection second = new TestProjection();
+		var secondProjector = Projector.from(es).towards(second).bookmarkProgress().withReader("someReader").done().inBatchesOf(1).build();
+
+		projectorMetrics = secondProjector.runSingleBatch();
+		assertEquals(1, second.counter());
+		assertEquals(refThree, projectorMetrics.lastEventReference()); // the next matching event after the bookmark, not the first in the stream
+		assertEquals(refThree, es.getBookmark("someReader").orElse(null));
+
+		// a bookmark rewound between two executions of the same projector is followed, where a projector
+		// that kept its own cursor would have gone on to the event tagged "four"
+		es.placeBookmark("someReader", refTwo, Tags.none());
+
+		projectorMetrics = secondProjector.runSingleBatch();
+		assertEquals(2, second.counter());
+		assertEquals(refThree, projectorMetrics.lastEventReference());
+		assertNotEquals(refFour, projectorMetrics.lastEventReference());
 	}
 
 	@ForEachBackend

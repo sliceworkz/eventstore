@@ -78,7 +78,7 @@ public class EventQueryUntilBoundaryTest extends AbstractEventStoreTest {
 		append(new FirstDomainEvent("4"));          // 6
 		append(new SecondDomainEvent("head"));      // 7
 
-		this.all = stream.query(EventQuery.matchAll()).toList();
+		this.all = stream.query(EventQuery.matchAll());
 		assertEquals(7, all.size(), "fixture");
 	}
 
@@ -230,16 +230,16 @@ public class EventQueryUntilBoundaryTest extends AbstractEventStoreTest {
 		return all.get(position - 1).reference();
 	}
 
-	private static List<String> values ( java.util.stream.Stream<Event<MockDomainEvent>> events ) {
-		return events.map(e -> switch ( e.data() ) {
+	private static List<String> values ( List<Event<MockDomainEvent>> events ) {
+		return events.stream().map(e -> switch ( e.data() ) {
 			case FirstDomainEvent f -> f.value();
 			case SecondDomainEvent s -> s.value();
 			case ThirdDomainEvent t -> t.value();
 		}).toList();
 	}
 
-	private static List<EventReference> references ( java.util.stream.Stream<Event<MockDomainEvent>> events ) {
-		return events.map(Event::reference).toList();
+	private static List<EventReference> references ( List<Event<MockDomainEvent>> events ) {
+		return events.stream().map(Event::reference).toList();
 	}
 
 }

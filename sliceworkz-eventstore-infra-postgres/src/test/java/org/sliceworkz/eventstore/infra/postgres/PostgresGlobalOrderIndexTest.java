@@ -115,7 +115,7 @@ public class PostgresGlobalOrderIndexTest {
 				seed(storage);
 				analyze(dataSource, prefix);
 
-				List<StoredEvent> all = storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), QueryDirection.FORWARD).toList();
+				List<StoredEvent> all = storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), QueryDirection.FORWARD);
 				String plan = explainPage(storage, dataSource, prefix, EventStreamId.anyContext(), all.get(all.size() / 2).reference());
 
 				assertTrue(plan.contains("Index Scan using " + prefix + "idx_events_tx_position"), () ->
@@ -157,7 +157,7 @@ public class PostgresGlobalOrderIndexTest {
 				analyze(dataSource, prefix);
 
 				EventStreamId context = EventStreamId.forContext(CONTEXT).anyPurpose();
-				List<StoredEvent> all = storage.query(EventFilter.matchAll(), context, null, Limit.none(), QueryDirection.FORWARD).toList();
+				List<StoredEvent> all = storage.query(EventFilter.matchAll(), context, null, Limit.none(), QueryDirection.FORWARD);
 				String plan = explainPage(storage, dataSource, prefix, context, all.get(all.size() / 2).reference());
 
 				assertTrue(plan.contains("Index Scan using " + prefix + "idx_events_context_tx_position"), () ->

@@ -169,7 +169,7 @@ public class SerdeFailureTest extends AbstractEventStoreTest {
 		assertTrue(e.getCause() != null, "Jackson's own failure should be preserved as the cause");
 
 		// nothing was stored
-		assertEquals(0, eventStore().getEventStream(streamId, UnwritableEvent.class).query(EventQuery.matchAll()).count());
+		assertEquals(0, eventStore().getEventStream(streamId, UnwritableEvent.class).query(EventQuery.matchAll()).size());
 	}
 
 	// --- read side ----------------------------------------------------------------------------------
@@ -182,7 +182,7 @@ public class SerdeFailureTest extends AbstractEventStoreTest {
 		EventStream<OrderEvent> orderStream = eventStore().getEventStream(streamId, OrderEvent.class);
 
 		EventDeserializationException e = assertThrows(EventDeserializationException.class,
-				() -> orderStream.query(EventQuery.matchAll()).toList());
+				() -> orderStream.query(EventQuery.matchAll()));
 
 		assertEquals(EventType.ofType("ParcelShipped"), e.getEventType());
 		assertTrue(e.getMessage().contains("No mapping found for event type 'ParcelShipped'"), e.getMessage());
@@ -199,7 +199,7 @@ public class SerdeFailureTest extends AbstractEventStoreTest {
 		// wrong thing, and the message says which. Object.class is the way to reach it: passing at least
 		// one root class selects the typed serde, and Object.class contributes no mappings to it.
 		EventDeserializationException e = assertThrows(EventDeserializationException.class,
-				() -> eventStore().getEventStream(streamId, Object.class).query(EventQuery.matchAll()).toList());
+				() -> eventStore().getEventStream(streamId, Object.class).query(EventQuery.matchAll()));
 
 		assertEquals(EventType.ofType("OrderPlaced"), e.getEventType());
 		assertTrue(e.getMessage().contains("Pass the Event root Class when creating the EventStream"), e.getMessage());
@@ -223,7 +223,7 @@ public class SerdeFailureTest extends AbstractEventStoreTest {
 
 		// the same failure on the read path, carrying the same reference
 		EventDeserializationException onRead = assertThrows(EventDeserializationException.class,
-				() -> eventStore().getEventStream(streamId, UnreadableEvent.class).query(EventQuery.matchAll()).toList());
+				() -> eventStore().getEventStream(streamId, UnreadableEvent.class).query(EventQuery.matchAll()));
 		assertEquals(reference.id(), onRead.getReference().orElseThrow().id());
 	}
 
@@ -236,7 +236,7 @@ public class SerdeFailureTest extends AbstractEventStoreTest {
 		EventStream<CurrentEvent> current = eventStore().getEventStream(streamId, CurrentEvent.class, Historical.LegacyPlaced.class);
 
 		EventDeserializationException e = assertThrows(EventDeserializationException.class,
-				() -> current.query(EventQuery.matchAll()).toList());
+				() -> current.query(EventQuery.matchAll()));
 
 		assertTrue(e.getMessage().contains(ThrowingUpcast.class.getName()),
 				"the upcaster that threw should be named, not just the event: " + e.getMessage());

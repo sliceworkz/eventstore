@@ -274,14 +274,14 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	 * @param after the reference to start after; events after this position are included
 	 * @param limit soft limit on the number of results; may be overridden by absolute limit
 	 * @param direction the direction to traverse the event log (FORWARD or BACKWARD)
-	 * @return a Stream of StoredEvent instances matching the criteria
+	 * @return the StoredEvent instances matching the criteria
 	 * @throws EventStorageException if the result exceeds the configured absolute limit
 	 * @see EventFilter
 	 * @see EventReference
 	 * @see QueryDirection
 	 */
 	@Override
-	public synchronized Stream<StoredEvent> query(EventFilter filter, EventStreamId stream, EventReference after, Limit limit, QueryDirection direction ) {
+	public synchronized List<StoredEvent> query(EventFilter filter, EventStreamId stream, EventReference after, Limit limit, QueryDirection direction ) {
 		checkNotClosed();
 		requireStream(stream);
 		Stream<StoredEvent> on;
@@ -340,13 +340,13 @@ public class InMemoryEventStorageImpl implements EventStorage {
 			result = result.limit(effectiveLimit.value());
 		}
 
-		var returnValue = new ArrayList<>(result.toList()); // to list and back to avoid ConcurrentUpdateExceptions when writing next event in log (?)
+		List<StoredEvent> returnValue = result.toList(); // a copy: the log is mutated by the next append
 		
 		if ( absoluteLimit != null && absoluteLimit.isSet() && returnValue.size() > absoluteLimit.value() ) {
 			throw new EventStorageException("query returned more results than the configured absolute limit of %d".formatted(absoluteLimit.value()));
 		}
 		
-		return returnValue.stream();
+		return returnValue;
 	}
 	
 	/**
@@ -408,9 +408,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 			
 			// we query the stream with the event filter from the last event known as our reference
 			// we only need to fetch max 1 event to prove a locking issue
-			Stream<StoredEvent> newEventStream = query(appendCriteria.eventFilter(), streamId, appendCriteria.expectedLastEventReference().orElse(null), Limit.to(1), QueryDirection.FORWARD);
-
-			List<StoredEvent> newEvents = newEventStream.toList();
+			List<StoredEvent> newEvents = query(appendCriteria.eventFilter(), streamId, appendCriteria.expectedLastEventReference().orElse(null), Limit.to(1), QueryDirection.FORWARD);
 
 			// if there are no new events in the stream ...
 			if ( newEvents.isEmpty() ) {

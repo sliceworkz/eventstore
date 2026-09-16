@@ -22,7 +22,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import java.math.BigDecimal;
 import java.util.Collections;
 import java.util.List;
-import java.util.stream.Stream;
 import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
@@ -99,7 +98,7 @@ public class EventStoreQueryTest extends AbstractEventStoreTest {
 	}
 
 	List<Event<Object>> allEvents ( ) {
-		return allEventsStream.query(EventQuery.matchAll()).toList();
+		return allEventsStream.query(EventQuery.matchAll());
 	}
 
 	@ForEachBackend
@@ -109,53 +108,53 @@ public class EventStoreQueryTest extends AbstractEventStoreTest {
 
 	@ForEachBackend
 	void testCountMatchAll ( ) {
-		query(EventQuery.matchAll()).map(Object::toString).forEach(System.out::println);
-		assertEquals(9, query(EventQuery.matchAll()).count());
+		query(EventQuery.matchAll()).stream().map(Object::toString).forEach(System.out::println);
+		assertEquals(9, query(EventQuery.matchAll()).size());
 	}
 
 	@ForEachBackend
 	void testCountMatchAllUntil ( ) {
-		query(EventQuery.matchAll()).map(Object::toString).forEach(System.out::println);
+		query(EventQuery.matchAll()).stream().map(Object::toString).forEach(System.out::println);
 
 		EventReference until = allEvents().get(0).reference();
-		assertEquals(1, query(EventQuery.matchAll().until(until)).count()); // index 0, is in our stream
+		assertEquals(1, query(EventQuery.matchAll().until(until)).size()); // index 0, is in our stream
 
 		until = allEvents().get(1).reference();
-		assertEquals(2, query(EventQuery.matchAll().until(until)).count()); // index 0 and index 1, both in our stream
+		assertEquals(2, query(EventQuery.matchAll().until(until)).size()); // index 0 and index 1, both in our stream
 
 		until = allEvents().get(5).reference();
-		assertEquals(5, query(EventQuery.matchAll().until(until)).count()); // without index 5, which is not in our stream
+		assertEquals(5, query(EventQuery.matchAll().until(until)).size()); // without index 5, which is not in our stream
 
 		until = allEvents().get(6).reference();
-		assertEquals(6, query(EventQuery.matchAll().until(until)).count()); // without index 5, which is not in our stream
+		assertEquals(6, query(EventQuery.matchAll().until(until)).size()); // without index 5, which is not in our stream
 
 		until = allEvents().get(7).reference();
-		assertEquals(7, query(EventQuery.matchAll().until(until)).count()); // without index 5, which is not in our stream
+		assertEquals(7, query(EventQuery.matchAll().until(until)).size()); // without index 5, which is not in our stream
 
 		until = allEvents().get(9).reference();
-		assertEquals(8, query(EventQuery.matchAll().until(until)).count()); // without index 5 and 8, which are not in our stream
+		assertEquals(8, query(EventQuery.matchAll().until(until)).size()); // without index 5 and 8, which are not in our stream
 
 	}
 
 	@ForEachBackend
 	void testCountMatchNone ( ) {
-		assertEquals(0, query(EventQuery.matchNone()).count());
+		assertEquals(0, query(EventQuery.matchNone()).size());
 	}
 
 	@ForEachBackend
 	void testCountMatchByType ( ) {
-		assertEquals(3, query(EventQuery.forEvents(EventTypesFilter.of(AccountOpened.class), Tags.none())).count());
-		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.of(MoneyDeposited.class), Tags.none())).count());
-		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.of(MoneyWithdrawn.class), Tags.none())).count());
-		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.of(MoneyTransfered.class), Tags.none())).count());
-		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.of(AccountClosed.class), Tags.none())).count());
+		assertEquals(3, query(EventQuery.forEvents(EventTypesFilter.of(AccountOpened.class), Tags.none())).size());
+		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.of(MoneyDeposited.class), Tags.none())).size());
+		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.of(MoneyWithdrawn.class), Tags.none())).size());
+		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.of(MoneyTransfered.class), Tags.none())).size());
+		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.of(AccountClosed.class), Tags.none())).size());
 
-		assertEquals(4, query(EventQuery.forEvents(EventTypesFilter.of(AccountOpened.class, AccountClosed.class), Tags.none())).count());
-		assertEquals(3, query(EventQuery.forEvents(EventTypesFilter.of(MoneyDeposited.class, MoneyWithdrawn.class), Tags.none())).count());
-		assertEquals(9, query(EventQuery.forEvents(EventTypesFilter.of(AccountOpened.class, AccountClosed.class, MoneyDeposited.class, MoneyWithdrawn.class, MoneyTransfered.class), Tags.none())).count());
+		assertEquals(4, query(EventQuery.forEvents(EventTypesFilter.of(AccountOpened.class, AccountClosed.class), Tags.none())).size());
+		assertEquals(3, query(EventQuery.forEvents(EventTypesFilter.of(MoneyDeposited.class, MoneyWithdrawn.class), Tags.none())).size());
+		assertEquals(9, query(EventQuery.forEvents(EventTypesFilter.of(AccountOpened.class, AccountClosed.class, MoneyDeposited.class, MoneyWithdrawn.class, MoneyTransfered.class), Tags.none())).size());
 
 		// should find another app's events!
-		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())).count());
+		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())).size());
 		assertEquals(1, queryOther(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())));
 	}
 
@@ -166,9 +165,9 @@ public class EventStoreQueryTest extends AbstractEventStoreTest {
 
 		EventQuery q = q1.or(q2);
 
-		assertEquals(3, query(q1).count());
-		assertEquals(2, query(q2).count());
-		assertEquals(5, query(q).count());
+		assertEquals(3, query(q1).size());
+		assertEquals(2, query(q2).size());
+		assertEquals(5, query(q).size());
 	}
 
 	@ForEachBackend
@@ -178,117 +177,117 @@ public class EventStoreQueryTest extends AbstractEventStoreTest {
 
 		EventQuery q = q1.or(q2);
 
-		assertEquals(4, query(q1).count());
-		assertEquals(3, query(q2).count());
-		assertEquals(6, query(q).count());
+		assertEquals(4, query(q1).size());
+		assertEquals(3, query(q2).size());
+		assertEquals(6, query(q).size());
 	}
 
 	@ForEachBackend
 	void testCountMatchByTag ( ) {
-		assertEquals(5, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).count());
-		assertEquals(allEvents().get(0).reference(), query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).toList().get(0).reference());
-		assertEquals(allEvents().get(3).reference(), query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).toList().get(1).reference());
-		assertEquals(allEvents().get(6).reference(), query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).toList().get(2).reference());
-		assertEquals(allEvents().get(7).reference(), query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).toList().get(3).reference());
-		assertEquals(allEvents().get(9).reference(), query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).toList().get(4).reference());
+		assertEquals(5, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).size());
+		assertEquals(allEvents().get(0).reference(), query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).get(0).reference());
+		assertEquals(allEvents().get(3).reference(), query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).get(1).reference());
+		assertEquals(allEvents().get(6).reference(), query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).get(2).reference());
+		assertEquals(allEvents().get(7).reference(), query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).get(3).reference());
+		assertEquals(allEvents().get(9).reference(), query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).get(4).reference());
 
 		// first one on account:1 has position 1
-		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).findFirst().get().reference().position());
+		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).stream().findFirst().get().reference().position());
 
 		// first one on account:2 has position 2
-		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:2"))).findFirst().get().reference().position());
+		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:2"))).stream().findFirst().get().reference().position());
 
 		// first one on account:3 has position 3
-		assertEquals(3, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:3"))).findFirst().get().reference().position());
+		assertEquals(3, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:3"))).stream().findFirst().get().reference().position());
 
-		assertEquals(5, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).count());
-		assertEquals(3, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(3)).count());
-		assertEquals(allEvents().get(9).reference(), queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).toList().get(0).reference());
-		assertEquals(allEvents().get(7).reference(), queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).toList().get(1).reference());
-		assertEquals(allEvents().get(6).reference(), queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).toList().get(2).reference());
-		assertEquals(allEvents().get(3).reference(), queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).toList().get(3).reference());
-		assertEquals(allEvents().get(0).reference(), queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).toList().get(4).reference());
+		assertEquals(5, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).size());
+		assertEquals(3, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(3)).size());
+		assertEquals(allEvents().get(9).reference(), queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).get(0).reference());
+		assertEquals(allEvents().get(7).reference(), queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).get(1).reference());
+		assertEquals(allEvents().get(6).reference(), queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).get(2).reference());
+		assertEquals(allEvents().get(3).reference(), queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).get(3).reference());
+		assertEquals(allEvents().get(0).reference(), queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).get(4).reference());
 
 		// last one on account:1
-		assertEquals(10, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).findFirst().get().reference().position());
+		assertEquals(10, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1"))).stream().findFirst().get().reference().position());
 
 		// last one on account:2
-		assertEquals(11, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:2"))).findFirst().get().reference().position());
+		assertEquals(11, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:2"))).stream().findFirst().get().reference().position());
 
 		// last one on account:3
-		assertEquals(10, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:3"))).findFirst().get().reference().position());
+		assertEquals(10, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:3"))).stream().findFirst().get().reference().position());
 
-		assertEquals(3, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(3)).count());
-		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(1)).count());
+		assertEquals(3, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(3)).size());
+		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(1)).size());
 
 		// after certain event
-		assertEquals(4, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(0)).count());
-		assertEquals(4, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(1)).count());
-		assertEquals(4, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(2)).count());
-		assertEquals(3, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(3)).count());
-		assertEquals(3, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(4)).count());
-		assertEquals(3, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(5)).count()); // "after" event is not in the stream, but query is taking it into account nonetheless
-		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(6)).count());
-		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(7)).count());
-		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(8)).count()); // "after" event is not in the stream, but query is taking it into account nonetheless
-		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(9)).count());
-		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(10)).count());
+		assertEquals(4, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(0)).size());
+		assertEquals(4, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(1)).size());
+		assertEquals(4, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(2)).size());
+		assertEquals(3, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(3)).size());
+		assertEquals(3, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(4)).size());
+		assertEquals(3, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(5)).size()); // "after" event is not in the stream, but query is taking it into account nonetheless
+		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(6)).size());
+		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(7)).size());
+		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(8)).size()); // "after" event is not in the stream, but query is taking it into account nonetheless
+		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(9)).size());
+		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(10)).size());
 
 		// before certain event (backwards)
-		assertEquals(0, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(0)).count());
-		assertEquals(1, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(1)).count());
-		assertEquals(1, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(2)).count());
-		assertEquals(1, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(3)).count());
-		assertEquals(2, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(4)).count());
-		assertEquals(2, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(5)).count()); // "after" event is not in the stream, but query is taking it into account nonetheless
-		assertEquals(2, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(6)).count());
-		assertEquals(3, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(7)).count());
-		assertEquals(4, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(8)).count()); // "after" event is not in the stream, but query is taking it into account nonetheless
-		assertEquals(4, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(9)).count());
-		assertEquals(5, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(10)).count());
+		assertEquals(0, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(0)).size());
+		assertEquals(1, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(1)).size());
+		assertEquals(1, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(2)).size());
+		assertEquals(1, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(3)).size());
+		assertEquals(2, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(4)).size());
+		assertEquals(2, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(5)).size()); // "after" event is not in the stream, but query is taking it into account nonetheless
+		assertEquals(2, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(6)).size());
+		assertEquals(3, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(7)).size());
+		assertEquals(4, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(8)).size()); // "after" event is not in the stream, but query is taking it into account nonetheless
+		assertEquals(4, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(9)).size());
+		assertEquals(5, queryReversed(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.none(), allEvents().get(10)).size());
 
 		// after certain event and limit count
-		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(2), allEvents().get(0)).count());
-		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(2), allEvents().get(1)).count());
-		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(2), allEvents().get(2)).count());
-		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(2), allEvents().get(3)).count());
-		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(2), allEvents().get(4)).count());
-		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(2), allEvents().get(5)).count());
-		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(2), allEvents().get(6)).count());
-		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(2), allEvents().get(7)).count());
-		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(2), allEvents().get(8)).count());
-		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(2), allEvents().get(9)).count());
-		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(2), allEvents().get(10)).count());
+		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(2), allEvents().get(0)).size());
+		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(2), allEvents().get(1)).size());
+		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(2), allEvents().get(2)).size());
+		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(2), allEvents().get(3)).size());
+		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(2), allEvents().get(4)).size());
+		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(2), allEvents().get(5)).size());
+		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(2), allEvents().get(6)).size());
+		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(2), allEvents().get(7)).size());
+		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(2), allEvents().get(8)).size());
+		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(2), allEvents().get(9)).size());
+		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1")), Limit.to(2), allEvents().get(10)).size());
 
-		assertEquals(4, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:2"))).count());
-		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:2")), Limit.to(2)).count());
+		assertEquals(4, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:2"))).size());
+		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:2")), Limit.to(2)).size());
 
-		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:3"))).count());
-		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1", "account:2"))).count());
-		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1", "account:3"))).count());
-		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:2", "account:3"))).count());
-		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("from-account:1"))).count());
-		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("from-account:2"))).count());
-		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("from-account:3"))).count());
-		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("to-account:1"))).count());
-		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("to-account:2"))).count());
-		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("to-account:3"))).count());
+		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:3"))).size());
+		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1", "account:2"))).size());
+		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:1", "account:3"))).size());
+		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("account:2", "account:3"))).size());
+		assertEquals(2, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("from-account:1"))).size());
+		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("from-account:2"))).size());
+		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("from-account:3"))).size());
+		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("to-account:1"))).size());
+		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("to-account:2"))).size());
+		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("to-account:3"))).size());
 
-		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("to-account:3", "account:3", "from-account:1", "account:1"))).count());
-		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("to-account:3", "to-account:3", "to-account:3", "to-account:3", "account:3", "from-account:1", "account:1"))).count());
+		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("to-account:3", "account:3", "from-account:1", "account:1"))).size());
+		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("to-account:3", "to-account:3", "to-account:3", "to-account:3", "account:3", "from-account:1", "account:1"))).size());
 
 		// should find another app's events!
-		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("otherapp:tag"))).count());
+		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("otherapp:tag"))).size());
 		assertEquals(1, queryOther(EventQuery.forEvents(EventTypesFilter.any(), Tags.parse("otherapp:tag"))));
 	}
 
 	@ForEachBackend
 	void testCountMatchByTypeAndTags ( ) {
-		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.of(MoneyTransfered.class), Tags.parse("to-account:3", "account:3", "from-account:1", "account:1"))).count());
-		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.of(MoneyWithdrawn.class), Tags.parse("to-account:3", "account:3", "from-account:1", "account:1"))).count());
+		assertEquals(1, query(EventQuery.forEvents(EventTypesFilter.of(MoneyTransfered.class), Tags.parse("to-account:3", "account:3", "from-account:1", "account:1"))).size());
+		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.of(MoneyWithdrawn.class), Tags.parse("to-account:3", "account:3", "from-account:1", "account:1"))).size());
 
 		// should find another app's events!
-		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.parse("otherapp:tag"))).count());
+		assertEquals(0, query(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.parse("otherapp:tag"))).size());
 		assertEquals(1, queryOther(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.parse("otherapp:tag"))));
 	}
 
@@ -312,23 +311,23 @@ public class EventStoreQueryTest extends AbstractEventStoreTest {
 		assertEquals(expectedQueries, prj.accumulatedMetrics().queriesDone());
 	}
 
-	private Stream<Event<BankDomainEvent>> query ( EventQuery eventQuery ) {
+	private List<Event<BankDomainEvent>> query ( EventQuery eventQuery ) {
 		return query(eventQuery, null, null);
 	}
-	private Stream<Event<BankDomainEvent>> query ( EventQuery eventQuery, Limit limit ) {
+	private List<Event<BankDomainEvent>> query ( EventQuery eventQuery, Limit limit ) {
 		return query(eventQuery, limit, null);
 	}
-	private Stream<Event<BankDomainEvent>> query ( EventQuery eventQuery, Limit limit, Event<?> after ) {
+	private List<Event<BankDomainEvent>> query ( EventQuery eventQuery, Limit limit, Event<?> after ) {
 		return eventStore().getEventStream(EventStreamId.forContext("app").withPurpose("domain"), BankDomainEvent.class).query(limited(eventQuery, limit), after==null?null:after.reference());
 	}
 
-	private Stream<Event<BankDomainEvent>> queryReversed ( EventQuery eventQuery ) {
+	private List<Event<BankDomainEvent>> queryReversed ( EventQuery eventQuery ) {
 		return queryReversed(eventQuery, null, null);
 	}
-	private Stream<Event<BankDomainEvent>> queryReversed ( EventQuery eventQuery, Limit limit ) {
+	private List<Event<BankDomainEvent>> queryReversed ( EventQuery eventQuery, Limit limit ) {
 		return queryReversed(eventQuery, limit, null);
 	}
-	private Stream<Event<BankDomainEvent>> queryReversed ( EventQuery eventQuery, Limit limit, Event<?> before ) {
+	private List<Event<BankDomainEvent>> queryReversed ( EventQuery eventQuery, Limit limit, Event<?> before ) {
 		return eventStore().getEventStream(EventStreamId.forContext("app").withPurpose("domain"), BankDomainEvent.class).query(limited(eventQuery.backwards(), limit), before==null?null:before.reference());
 	}
 
@@ -337,7 +336,7 @@ public class EventStoreQueryTest extends AbstractEventStoreTest {
 	}
 
 	private long queryOther ( EventQuery eventQuery ) {
-		return eventStore().getRawEventStream(EventStreamId.forContext("otherApp").withPurpose("domain")).query(eventQuery).count();
+		return eventStore().getRawEventStream(EventStreamId.forContext("otherApp").withPurpose("domain")).query(eventQuery).size();
 	}
 
 	EphemeralEvent<BankDomainEvent> accountOpened ( String accountId ) {

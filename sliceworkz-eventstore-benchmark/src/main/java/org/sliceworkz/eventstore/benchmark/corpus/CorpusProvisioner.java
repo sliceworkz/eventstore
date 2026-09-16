@@ -39,7 +39,6 @@ import org.sliceworkz.eventstore.benchmark.env.BenchmarkTarget;
 import org.sliceworkz.eventstore.benchmark.env.TargetFactory;
 import org.sliceworkz.eventstore.benchmark.env.TargetSpec;
 import org.sliceworkz.eventstore.events.Event;
-import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.stream.EventSource;
 import org.sliceworkz.eventstore.stream.EventStream;
@@ -354,7 +353,7 @@ public final class CorpusProvisioner {
 		EventStream<InventoryEvent> inventory = target.store()
 				.getEventStream(EventStreamId.forContext("inventory").anyPurpose(), InventoryEvent.class);
 
-		long inventoryCount = inventory.query(EventQuery.matchAll()).count();
+		long inventoryCount = inventory.query(EventQuery.matchAll()).size();
 
 		String midCursor = referenceAt(inventory, Math.max(inventoryCount / 2, 1));
 		String replayUntil = referenceAt(inventory, Math.min(REPLAY_BOUND_EVENTS, Math.max(inventoryCount, 1)));
@@ -368,11 +367,8 @@ public final class CorpusProvisioner {
 
 	/** The reference of the n-th event of a stream, rendered for storage in the manifest. */
 	private static String referenceAt ( EventStream<InventoryEvent> stream, long ordinal ) {
-		return stream.query(EventQuery.matchAll().limit(ordinal))
-				.map(Event::reference)
-				.reduce(( first, second ) -> second)
-				.map(EventReference::toString)
-				.orElse(null);
+		List<Event<InventoryEvent>> events = stream.query(EventQuery.matchAll().limit(ordinal));
+		return events.isEmpty() ? null : events.getLast().reference().toString();
 	}
 
 	/**
@@ -415,7 +411,7 @@ public final class CorpusProvisioner {
 	private void requireProtectedValuesReadable ( BenchmarkTarget target ) {
 		EventStream<CrmEvent> crm = target.store()
 				.getEventStream(EventStreamId.forContext("crm").anyPurpose(), CrmEvent.class);
-		List<Event<CrmEvent>> sample = crm.query(EventQuery.matchAll().limit(VERIFY_SAMPLE_SIZE)).toList();
+		List<Event<CrmEvent>> sample = crm.query(EventQuery.matchAll().limit(VERIFY_SAMPLE_SIZE));
 
 		if ( sample.isEmpty() ) {
 			throw new IllegalStateException(
@@ -445,7 +441,7 @@ public final class CorpusProvisioner {
 
 		List<Event<T>> sample;
 		try {
-			sample = stream.query(EventQuery.matchAll().limit(VERIFY_SAMPLE_SIZE)).toList();
+			sample = stream.query(EventQuery.matchAll().limit(VERIFY_SAMPLE_SIZE));
 		} catch ( RuntimeException e ) {
 			throw new IllegalStateException(
 					"the corpus was written but its '%s' events cannot be read back: the generator's payload JSON does not match what the store's serde expects"
@@ -465,7 +461,7 @@ public final class CorpusProvisioner {
 	public static OptionalDouble meanPayloadBytes ( BenchmarkTarget target, String context, int sampleSize ) {
 		EventSource<Object> raw = target.store()
 				.getRawEventStream(EventStreamId.forContext(context).anyPurpose());
-		return raw.query(EventQuery.matchAll().limit(sampleSize))
+		return raw.query(EventQuery.matchAll().limit(sampleSize)).stream()
 				.mapToInt(event -> JSON.writeValueAsString(event.data()).length())
 				.average();
 	}

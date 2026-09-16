@@ -80,7 +80,7 @@ public class SubscribeToAppendsExample {
 				public synchronized EventReference eventsAppended(EventReference atLeastUntil) {
 
 					// each time we are notified, we query any events after the last we've seen ...
-					List<Event<Object>> events = stream.query(EventQuery.matchAll(), lastSeen.get()).toList();
+					List<Event<Object>> events = stream.query(EventQuery.matchAll(), lastSeen.get());
 					events.forEach(System.out::println);
 
 					// and change our reference point

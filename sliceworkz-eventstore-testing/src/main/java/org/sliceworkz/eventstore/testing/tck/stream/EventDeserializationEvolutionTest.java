@@ -85,7 +85,7 @@ public class EventDeserializationEvolutionTest extends AbstractEventStoreTest {
 		// Now read the same stream using V2 schema (which has an additional "email" field)
 		EventStream<OrderEventV2WithAddedField> v2Stream = eventStore().getEventStream(streamId,
 				OrderEventV2WithAddedField.class);
-		List<Event<OrderEventV2WithAddedField>> events = v2Stream.query(EventQuery.matchAll()).toList();
+		List<Event<OrderEventV2WithAddedField>> events = v2Stream.query(EventQuery.matchAll());
 
 		assertEquals(1, events.size());
 		OrderEventV2WithAddedField.OrderPlaced data = (OrderEventV2WithAddedField.OrderPlaced) events.get(0).data();
@@ -112,7 +112,7 @@ public class EventDeserializationEvolutionTest extends AbstractEventStoreTest {
 
 		// This should fail because the stored JSON contains "product" which is unknown to V3
 		EventDeserializationException exception = assertThrows(EventDeserializationException.class,
-				() -> v3Stream.query(EventQuery.matchAll()).toList());
+				() -> v3Stream.query(EventQuery.matchAll()));
 
 		assertEquals(EventType.ofType("OrderPlaced"), exception.getEventType());
 		assertEquals(true, exception.getMessage().contains("Failed to deserialize stored event type 'OrderPlaced'"),

@@ -140,7 +140,7 @@ public class EventNameTest extends AbstractEventStoreTest {
 
 		// and so does the stored row, seen without any type mapping at all
 		EventSource<Object> raw = eventStore().getRawEventStream(customers);
-		List<Event<Object>> stored = raw.query(EventQuery.matchAll()).toList();
+		List<Event<Object>> stored = raw.query(EventQuery.matchAll());
 		assertEquals(1, stored.size());
 		assertEquals("CustomerRegistered", stored.getFirst().type().name());
 		assertEquals("CustomerRegistered", stored.getFirst().storedType().name());
@@ -151,7 +151,7 @@ public class EventNameTest extends AbstractEventStoreTest {
 		writeHistoryUnderTheOldClassName();
 
 		EventStream<CustomerEvent> stream = eventStore().getEventStream(customers, CustomerEvent.class);
-		List<Event<CustomerEvent>> events = stream.query(EventQuery.matchAll()).toList();
+		List<Event<CustomerEvent>> events = stream.query(EventQuery.matchAll());
 
 		assertEquals(1, events.size());
 		CustomerEvent.CustomerSignedUp signedUp = assertInstanceOf(CustomerEvent.CustomerSignedUp.class, events.getFirst().data());
@@ -160,7 +160,7 @@ public class EventNameTest extends AbstractEventStoreTest {
 		assertEquals("CustomerRegistered", events.getFirst().type().name());
 		assertEquals("CustomerRegistered", events.getFirst().storedType().name());
 
-		// and getEventById, which is eager where query is lazy, agrees
+		// and getEventById agrees
 		List<Event<CustomerEvent>> byId = stream.getEventById(events.getFirst().reference().id());
 		assertEquals(1, byId.size());
 		assertInstanceOf(CustomerEvent.CustomerSignedUp.class, byId.getFirst().data());
@@ -174,18 +174,18 @@ public class EventNameTest extends AbstractEventStoreTest {
 
 		// by class: the filter is built from EventType.of(Class), so it carries the declared name
 		List<Event<CustomerEvent>> byClass = stream.query(
-				EventQuery.forEvents(EventTypesFilter.of(CustomerEvent.CustomerSignedUp.class), Tags.of("customer", "c1"))).toList();
+				EventQuery.forEvents(EventTypesFilter.of(CustomerEvent.CustomerSignedUp.class), Tags.of("customer", "c1")));
 		assertEquals(1, byClass.size());
 		assertInstanceOf(CustomerEvent.CustomerSignedUp.class, byClass.getFirst().data());
 
 		// by name: the declared name is the stored name
 		List<Event<CustomerEvent>> byName = stream.query(
-				EventQuery.forEvents(EventTypesFilter.of(Set.of(EventType.ofType("CustomerRegistered"))), Tags.none())).toList();
+				EventQuery.forEvents(EventTypesFilter.of(Set.of(EventType.ofType("CustomerRegistered"))), Tags.none()));
 		assertEquals(1, byName.size());
 
 		// the class's simple name is not a stored name of anything
 		List<Event<CustomerEvent>> bySimpleName = stream.query(
-				EventQuery.forEvents(EventTypesFilter.of(Set.of(EventType.ofType("CustomerSignedUp"))), Tags.none())).toList();
+				EventQuery.forEvents(EventTypesFilter.of(Set.of(EventType.ofType("CustomerSignedUp"))), Tags.none()));
 		assertTrue(bySimpleName.isEmpty());
 
 		// and the filter is honoured by the lock check as well as by the read
@@ -201,7 +201,7 @@ public class EventNameTest extends AbstractEventStoreTest {
 		writeHistoryUnderTheOldClassName();
 
 		EventStream<CustomerEventV3> stream = eventStore().getEventStream(customers, CustomerEventV3.class, CustomerLegacyEvent.class);
-		List<Event<CustomerEventV3>> events = stream.query(EventQuery.matchAll()).toList();
+		List<Event<CustomerEventV3>> events = stream.query(EventQuery.matchAll());
 
 		assertEquals(1, events.size());
 		CustomerEventV3.CustomerRegisteredV3 upcast = assertInstanceOf(CustomerEventV3.CustomerRegisteredV3.class, events.getFirst().data());
@@ -212,7 +212,7 @@ public class EventNameTest extends AbstractEventStoreTest {
 
 		// a filter on the current type reaches the legacy name through the upcaster's mapping
 		List<Event<CustomerEventV3>> byCurrentType = stream.query(
-				EventQuery.forEvents(EventTypesFilter.of(CustomerEventV3.CustomerRegisteredV3.class), Tags.none())).toList();
+				EventQuery.forEvents(EventTypesFilter.of(CustomerEventV3.CustomerRegisteredV3.class), Tags.none()));
 		assertEquals(1, byCurrentType.size());
 	}
 
@@ -227,7 +227,7 @@ public class EventNameTest extends AbstractEventStoreTest {
 
 		// both hierarchies register on one stream: no duplicate name, since only one of them stores 'Created'
 		EventStream<Object> everything = eventStore().getEventStream(EventStreamId.anyContext(), Set.of(OrderEvent.class, VacancyEvent.class));
-		List<Event<Object>> events = everything.query(EventQuery.matchAll()).toList();
+		List<Event<Object>> events = everything.query(EventQuery.matchAll());
 
 		assertEquals(2, events.size());
 		Event<Object> order = events.stream().filter(e -> e.stream().context().equals("order")).findFirst().orElseThrow();
@@ -238,8 +238,8 @@ public class EventNameTest extends AbstractEventStoreTest {
 		assertEquals("Created", vacancy.type().name());
 
 		// each read through its own class finds its own context's events, and only those
-		assertEquals(1, everything.query(EventQuery.forEvents(EventTypesFilter.of(OrderEvent.Created.class), Tags.none())).count());
-		assertEquals(1, everything.query(EventQuery.forEvents(EventTypesFilter.of(VacancyEvent.Created.class), Tags.none())).count());
+		assertEquals(1, everything.query(EventQuery.forEvents(EventTypesFilter.of(OrderEvent.Created.class), Tags.none())).size());
+		assertEquals(1, everything.query(EventQuery.forEvents(EventTypesFilter.of(VacancyEvent.Created.class), Tags.none())).size());
 	}
 
 	@ForEachBackend

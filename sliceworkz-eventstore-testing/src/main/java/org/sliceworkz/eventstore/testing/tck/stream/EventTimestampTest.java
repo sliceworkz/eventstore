@@ -57,7 +57,7 @@ public class EventTimestampTest extends AbstractEventStoreTest {
 		stream.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("instant-test"), Tags.none()));
 		Instant afterAppend = Instant.now();
 
-		Event<MockDomainEvent> event = stream.query(EventQuery.matchAll()).findFirst().orElseThrow();
+		Event<MockDomainEvent> event = stream.query(EventQuery.matchAll()).stream().findFirst().orElseThrow();
 
 		assertNotNull(event.timestamp(), "Event timestamp should not be null");
 
@@ -76,7 +76,7 @@ public class EventTimestampTest extends AbstractEventStoreTest {
 		EventStream<MockDomainEvent> stream = eventStore().getEventStream(streamId, MockDomainEvent.class);
 
 		Event<MockDomainEvent> appended = stream.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("stored-test"), Tags.none())).get(0);
-		Event<MockDomainEvent> queried = stream.query(EventQuery.matchAll()).findFirst().orElseThrow();
+		Event<MockDomainEvent> queried = stream.query(EventQuery.matchAll()).stream().findFirst().orElseThrow();
 		StoredEvent stored = eventStorage().getEventById(appended.reference().id()).orElseThrow();
 
 		assertEquals(stored.timestamp(), appended.timestamp(), "the events append returns carry the stored instant");
@@ -90,7 +90,7 @@ public class EventTimestampTest extends AbstractEventStoreTest {
 
 		stream.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("render-test"), Tags.none()));
 
-		Event<MockDomainEvent> event = stream.query(EventQuery.matchAll()).findFirst().orElseThrow();
+		Event<MockDomainEvent> event = stream.query(EventQuery.matchAll()).stream().findFirst().orElseThrow();
 		Instant timestamp = event.timestamp();
 
 		// the instant is the same whichever zone it is rendered in; only the wall-clock reading differs

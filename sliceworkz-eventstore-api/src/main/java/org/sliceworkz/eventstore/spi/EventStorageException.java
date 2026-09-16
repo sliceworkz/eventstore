@@ -43,7 +43,7 @@ package org.sliceworkz.eventstore.spi;
  * <pre>{@code
  * public class PostgresEventStorage implements EventStorage {
  *     @Override
- *     public Stream<StoredEvent> query(EventQuery query, ...) {
+ *     public List<StoredEvent> query(EventQuery query, ...) {
  *         try {
  *             // Execute database query
  *             return executeQuery(query);

@@ -40,8 +40,8 @@ import org.sliceworkz.eventstore.events.Event;
  * events, and over one that upcasts into none returns zero — while having read exactly one stored
  * event either way, which is what was asked for. Trimming the surplus would hand back a fragment of
  * a stored event and leave a cursor pointing into its middle, so the count read is what the limit
- * governs. Where the distinction matters, apply your own {@code .limit(n)} to the returned
- * {@link java.util.stream.Stream}: cheap, since it operates on events already read.
+ * governs. Where the distinction matters, take a {@code subList} of the returned {@link java.util.List}:
+ * cheap, since the events are already read.
  *
  * <p><strong>Usage Examples:</strong>
  * <pre>{@code

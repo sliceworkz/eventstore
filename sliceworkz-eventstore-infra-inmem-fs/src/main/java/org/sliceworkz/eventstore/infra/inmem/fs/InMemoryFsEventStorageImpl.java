@@ -113,7 +113,7 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 	}
 
 	@Override
-	public Stream<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit, QueryDirection queryDirection ) {
+	public List<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit, QueryDirection queryDirection ) {
 		return delegate.query(filter, stream, after, limit, queryDirection);
 	}
 

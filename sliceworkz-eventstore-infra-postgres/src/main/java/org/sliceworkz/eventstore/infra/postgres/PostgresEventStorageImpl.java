@@ -1464,12 +1464,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 	}
 
 	@Override
-	public Stream<StoredEvent> query(EventFilter filter, EventStreamId stream, EventReference after, Limit limit, QueryDirection direction ) {
+	public List<StoredEvent> query(EventFilter filter, EventStreamId stream, EventReference after, Limit limit, QueryDirection direction ) {
 		checkNotClosed();
 		requireStream(stream);
 		// Handle the case where the filter matches none - return empty stream
 		if (filter.isMatchNone()) {
-			return Stream.empty();
+			return List.of();
 		}
 
 		StringBuilder sqlBuilder = new StringBuilder();
@@ -1531,7 +1531,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 					if ( absoluteLimit != null && absoluteLimit.isSet() && events.size() > absoluteLimit.value() ) {
 						throw new EventStorageException("query returned more results than the configured absolute limit of %d".formatted(absoluteLimit.value()));
 					}
-					return events.stream();
+					return Collections.unmodifiableList(events);
 				}
 			}
 		} catch (SQLException e) {

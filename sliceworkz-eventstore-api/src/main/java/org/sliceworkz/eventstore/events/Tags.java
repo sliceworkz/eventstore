@@ -78,7 +78,7 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
  * <pre>{@code
  * // Find all events for a specific customer across all event types
  * EventQuery query = EventQuery.forTags(Tags.of("customer", "123"));
- * Stream<Event<CustomerEvent>> events = stream.query(query);
+ * List<Event<CustomerEvent>> events = stream.query(query);
  *
  * // Find events matching multiple tags (EU customers with high priority)
  * EventQuery query = EventQuery.forTags(Tags.of("region", "EU", "priority", "high"));
@@ -102,7 +102,7 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
  * EventReference head = stream.head().orElse(null);
  *
  * // Query relevant events up to the boundary and make a business decision
- * List<Event<CustomerEvent>> events = stream.query(query.until(head)).toList();
+ * List<Event<CustomerEvent>> events = stream.query(query.until(head));
  *
  * // Append new events only if no new relevant events appeared after the boundary
  * stream.append(

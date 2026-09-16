@@ -144,14 +144,17 @@ mvn clean install -DskipTests
   a context or one of its streams depending only on the id it was opened with (the raw stream, whose
   read-only nature *is* static, is a separate case). `EventStreamTest.testAppendToNonSpecificStream`
   and `testAppendToWildcardPurposeStream` pin it per backend
-- **`query()` returns a `Stream`, but it is already in memory.** Storage has finished reading by the
-  time the stream comes back — the whole result set is fetched and the stream iterates a list. So
-  `findFirst()`, `.limit(10)` and `takeWhile` on the returned stream discard work already done, and a
-  query with no limit against a storage with no `resultLimit` reads everything matching into heap: an
-  OOM rather than a slow stream, with no back-pressure to arrive at. Bound the read with
-  `EventQuery.limit(n)`, which is the limit storage is given. Nothing needs closing — no database
-  resource is held open behind the stream, so it is safe to abandon half-consumed (`EventSource.close()`
-  is about subscriptions, not queries)
+- **`query()` returns a `List`, read in full.** Storage has finished reading by the time the list
+  comes back, and every event in it is deserialized and upcast, so the type says what a query costs:
+  a query with no limit against a storage with no `resultLimit` reads everything matching into heap,
+  an OOM rather than a slow read, with no back-pressure to arrive at. Bound the read with
+  `EventQuery.limit(n)`, which is the limit storage is given; nothing applied to the result bounds
+  anything. The alternative — returning a `Stream` — loses because the type promises a laziness the
+  storage does not deliver: `findFirst()` on it reads as though it bounded the read and does not, and
+  a poison event fails from whichever terminal operation the caller wrote rather than from the query.
+  `.stream()` is one call away for a caller who wants stream operations over events already read.
+  Nothing needs closing — no database resource is held open behind the list (`EventSource.close()` is
+  about subscriptions, not queries)
 - **A full replay is a loop, not one unbounded query.** `Projector` already reads in batches of 500,
   carrying a cursor between them, and is the right tool for a stream of unknown size. By hand, read
   with `page(q.limit(n), cursor)`, which answers an `EventPage`: the events, the number of stored
@@ -160,9 +163,9 @@ mvn clean install -DskipTests
   involved: a limit counts stored events, an `@Upcast` may turn one into several or into none, so a
   page holding no events may sit in the middle of a stream and the reference to continue from may
   be on no event returned. A page shorter than its limit is the last one. `query(q, cursor)` is the
-  same read without that account, and deserializes lazily where a page is read whole (an
-  `EventDeserializationException` comes from `page()` itself, and a page holding a poison event
-  hands out none of its events). `EventPageTest` pins it per backend. The unlimited path exists for
+  same read without that account, read whole exactly as a page is (an `EventDeserializationException`
+  comes from the call itself, and a page or a query holding a poison event hands out none of its
+  events). `EventPageTest` pins it per backend. The unlimited path exists for
   callers who know their result set is small, or who genuinely want it all at once — it is not a
   way to process a large stream incrementally
 - **`head()` is the reference of the newest stored event of the stream, answered without reading it.**
@@ -381,8 +384,8 @@ mvn clean install -DskipTests
   so `.limit(1)` over an event upcasting into two returns two, and over one upcasting into none
   returns zero — having read exactly one stored event either way. Trimming the surplus would return a
   fragment of a stored event and leave a cursor pointing into its middle; `Projector` counts stored
-  events for exactly this reason. Where a caller needs exactly n, `.limit(n)` the returned `Stream` —
-  cheap, since those events are already read. `UpcastMultiTest` pins this per backend
+  events for exactly this reason. Where a caller needs exactly n, take a `subList` of the returned
+  list — cheap, since those events are already read. `UpcastMultiTest` pins this per backend
 
 **AppendCriteria:**
 - Controls optimistic locking when appending events
@@ -1035,10 +1038,10 @@ EventStream<CustomerEvent> stream = eventstore.getEventStream(streamId, Customer
 stream.append(Event.of(new CustomerRegistered("John"), Tags.none()));
 
 // 4. Query all events
-Stream<Event<CustomerEvent>> events = stream.query(EventQuery.matchAll());
+List<Event<CustomerEvent>> events = stream.query(EventQuery.matchAll());
 
 // 5. Query with filters
-Stream<Event<CustomerEvent>> filtered = stream.query(
+List<Event<CustomerEvent>> filtered = stream.query(
     EventQuery.forEvents(EventTypesFilter.of(CustomerRegistered.class), Tags.of("region", "EU"))
 );
 
@@ -1047,7 +1050,7 @@ Stream<Event<CustomerEvent>> filtered = stream.query(
 //    needs no special case -- there is no getLast() to throw on an empty result
 EventQuery customerQuery = EventQuery.forTags(Tags.of("customer", "123"));
 EventReference head = stream.head().orElse(null);
-List<Event<CustomerEvent>> existingEvents = stream.query(customerQuery.until(head)).toList();
+List<Event<CustomerEvent>> existingEvents = stream.query(customerQuery.until(head));
 
 stream.append(
     AppendCriteria.of(customerQuery, head),
@@ -1283,11 +1286,11 @@ apart either retries forever on a poison event or gives up on a blip.
   `EventPage`, deserialized whole before the first of its events is handed over, and a batch that
   fails takes the cursor back to where it started. `EventDeserializationException.getReference()`
   is the one that names the poison event.
-- **Deserialization is lazy, so it surfaces from the caller's terminal operation**, not from `query()`.
-  `page()` is the exception: a page is read whole, so it throws from the call and hands out nothing.
-  `getEventById` is eager and throws directly. `append` deserializes the events it just wrote in order to
-  return them, so a payload that serializes but cannot be read back fails *there*, as a deserialization
-  failure, with the event already stored.
+- **It is thrown by `query()` and `page()` themselves.** Both read their result in full before
+  returning it, so a poison event fails the call that reads it and nothing is returned; `getEventById`
+  throws the same way. `append` deserializes the events it just wrote in order to return them, so a
+  payload that serializes but cannot be read back fails *there*, as a deserialization failure, with the
+  event already stored.
 
 **Misconfiguration is `IllegalArgumentException`, not a serde type.** A `@LegacyEvent` on a class registered
 as current, a current class registered as legacy, an upcaster that cannot be instantiated, an upcaster

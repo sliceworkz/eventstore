@@ -53,7 +53,7 @@ public class StreamScopeTest extends AbstractEventStoreTest {
 	}
 
 	private List<StoredEvent> read ( EventStreamId scope ) {
-		return eventStorage().query(EventFilter.matchAll(), scope, null, Limit.none(), QueryDirection.FORWARD).toList();
+		return eventStorage().query(EventFilter.matchAll(), scope, null, Limit.none(), QueryDirection.FORWARD);
 	}
 
 	@ForEachBackend

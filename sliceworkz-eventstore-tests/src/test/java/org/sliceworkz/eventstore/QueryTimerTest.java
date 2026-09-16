@@ -22,8 +22,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.events.Event;
@@ -42,16 +42,15 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
  * Pins what {@code sliceworkz.eventstore.query.duration} measures: the storage fetch, recorded when
  * the query is issued.
  * <p>
- * The timer used to wrap the whole expression that builds the event stream — the storage call plus
- * the lazy {@code peek}/{@code flatMap}/{@code filter} chain hung off it. Everything after the
- * storage call is lazy, so that timed the construction of a pipeline rather than any work, and it
- * reported the fetch only because {@link EventStorage#query} materialises its whole result set
- * before returning. Should a backend ever stream its result set instead, the metric would silently
- * fall to zero for every user of the library, with nothing failing to say so.
+ * The timer covers the {@link EventStorage#query} call and nothing else. Deserialising and upcasting
+ * the result happen inside the same {@code query} call, since it returns a list, but they are the
+ * cost of the stream's mappings rather than of the store, and are counted separately per event type
+ * by {@code sliceworkz.eventstore.query.event}. The alternative — timing the whole of the stream's
+ * {@code query}, fetch and conversion together — loses because a store that is slow and a mapping
+ * that is slow then read identically on the dashboard.
  * <p>
- * This test fails on that arrangement: it asks a storage whose {@code query} is slow, and never
- * consumes the returned stream, so a timer covering anything other than the storage call records
- * nothing.
+ * This test asks a storage whose {@code query} is slow and checks that the timer saw the whole of
+ * that delay: a timer that wrapped anything but the storage call would record less.
  */
 class QueryTimerTest {
 
@@ -74,17 +73,15 @@ class QueryTimerTest {
 
 			stream.append(AppendCriteria.none(), Event.of(new TestEvent.Ping("1"), Tags.none()));
 
-			// deliberately NOT consumed: the timer must have recorded the fetch already
-			Stream<Event<TestEvent>> unconsumed = stream.query(EventQuery.matchAll());
+			List<Event<TestEvent>> events = stream.query(EventQuery.matchAll());
+			assertTrue(events.size() == 1, "expected the one appended event, got " + events.size());
 
 			Timer timer = meterRegistry.find("sliceworkz.eventstore.query.duration").timer();
 			assertTrue(timer != null, "no sliceworkz.eventstore.query.duration timer was registered");
 			assertTrue(timer.count() == 1, "expected exactly one recorded query, got " + timer.count());
 			assertTrue(timer.totalTime(TimeUnit.MILLISECONDS) >= STORAGE_QUERY_DELAY_MS,
-					"query.duration recorded %.1f ms for a storage query that took at least %d ms — the timer is measuring the construction of the lazy pipeline, not the fetch"
+					"query.duration recorded %.1f ms for a storage query that took at least %d ms — the timer is not measuring the storage fetch"
 						.formatted(timer.totalTime(TimeUnit.MILLISECONDS), STORAGE_QUERY_DELAY_MS));
-
-			unconsumed.close();
 		}
 	}
 

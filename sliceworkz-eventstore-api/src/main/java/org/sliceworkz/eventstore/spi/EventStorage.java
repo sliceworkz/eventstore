@@ -22,7 +22,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.stream.Stream;
 
 import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.events.Lease;
@@ -89,14 +88,14 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  *     }
  *
  *     @Override
- *     public Stream<StoredEvent> query(EventFilter filter, EventStreamId stream,
- *                                      EventReference after, Limit limit, QueryDirection direction) {
+ *     public List<StoredEvent> query(EventFilter filter, EventStreamId stream,
+ *                                    EventReference after, Limit limit, QueryDirection direction) {
  *         // 1. Filter events by stream (a wildcard component reads across it)
  *         // 2. Apply event type filters from the filter
  *         // 3. Apply tag filters and the until boundary from the filter
  *         // 4. Filter events after 'after' reference
  *         // 5. Apply limit and direction
- *         // 6. Return stream of StoredEvent records
+ *         // 6. Return the list of StoredEvent records
  *     }
  *
  *     @Override
@@ -244,38 +243,33 @@ public interface EventStorage extends AutoCloseable {
 	 * exclude an event the filter would keep. Note that a limit is applied <em>after</em> the boundary:
 	 * spending it on events beyond the boundary that are discarded later returns too few events, or none.
 	 * <p>
-	 * The Returned Stream:
+	 * The Returned List:
 	 * <p>
-	 * The return type is a {@link Stream}, but laziness is not part of this contract, and callers do not
-	 * get to assume it. Every in-tree backend reads its whole result set before returning and hands back
-	 * a stream over a list; {@link org.sliceworkz.eventstore.stream.EventSource} documents that to
-	 * callers as the behaviour to expect. So {@code limit} is what bounds the work and the memory of a
-	 * query — a caller that passes {@link Limit#none()} is asking to have everything matching read into
-	 * heap, and gets it.
-	 * <p>
-	 * An implementation <em>may</em> stream its result set lazily, but then it owns two obligations this
-	 * SPI does not otherwise impose. First, nothing above it closes the returned stream — neither
-	 * {@code EventSource} nor {@link org.sliceworkz.eventstore.projection.Projector} does, and user code
-	 * receives a bare {@code Stream} it has never been told to close — so any resource held open behind
-	 * it (a connection, a cursor) leaks on every query, including one abandoned half-consumed. Second, a
-	 * cursor held open for the caller's whole traversal is a long-running transaction, which on
-	 * PostgreSQL holds down {@code pg_snapshot_xmin} and thereby stalls what every reader of that
-	 * database can see. Neither is a reason not to do it; both have to be solved deliberately rather
-	 * than discovered.
+	 * The result is complete when it is returned, read in full, and {@code limit} is what bounds the work
+	 * and the memory of a query — a caller that passes {@link Limit#none()} is asking to have everything
+	 * matching read into heap, and gets it. Nothing above this SPI closes or releases anything
+	 * afterwards — neither {@link org.sliceworkz.eventstore.stream.EventSource} nor
+	 * {@link org.sliceworkz.eventstore.projection.Projector} does, and user code receives a plain list —
+	 * so an implementation must not hold a resource (a connection, a server-side cursor) open behind the
+	 * result: everything the read needs is released before this method returns. The alternative — a lazy
+	 * result set streamed as it is consumed — loses because a cursor held open for the caller's whole
+	 * traversal is a long-running transaction, which on PostgreSQL holds down {@code pg_snapshot_xmin} and
+	 * thereby stalls what every reader of that database can see, and because nothing above would ever
+	 * close it.
 	 *
 	 * @param filter the event filter defining type and tag criteria and the until boundary
 	 * @param stream the stream to read, with a wildcard component to read across it; never null
 	 * @param after the reference point to start querying after (exclusive - events after this reference), or null
 	 * @param limit maximum number of events to read; {@link Limit#none()} reads everything matching
 	 * @param queryDirection the direction of query traversal (FORWARD or BACKWARD)
-	 * @return a stream of stored events matching the filter, which callers must not assume is lazy
+	 * @return the stored events matching the filter, read in full
 	 * @throws IllegalArgumentException if the stream is null
 	 * @throws EventStorageException if an error occurs during query execution
 	 * @see EventFilter
 	 * @see QueryDirection
 	 * @see StoredEvent
 	 */
-	Stream<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit, QueryDirection queryDirection );
+	List<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit, QueryDirection queryDirection );
 
 	/**
 	 * Queries events from storage in forward (chronological) direction.
@@ -287,12 +281,12 @@ public interface EventStorage extends AutoCloseable {
 	 * @param stream the stream to read, with a wildcard component to read across it; never null
 	 * @param after the reference point to start querying from (events after this reference), or null
 	 * @param limit maximum number of events to return
-	 * @return a stream of stored events matching the filter in chronological order
+	 * @return the stored events matching the filter in chronological order, read in full
 	 * @throws IllegalArgumentException if the stream is null
 	 * @throws EventStorageException if an error occurs during query execution
 	 * @see #query(EventFilter, EventStreamId, EventReference, Limit, QueryDirection)
 	 */
-	default Stream<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit ) {
+	default List<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit ) {
 		return query ( filter, stream, after, limit, QueryDirection.FORWARD);
 	}
 
@@ -432,6 +426,7 @@ public interface EventStorage extends AutoCloseable {
 	 */
 	default Optional<EventReference> head ( EventStreamId stream ) {
 		return query(EventFilter.matchAll(), stream, null, Limit.to(1), QueryDirection.BACKWARD)
+				.stream()
 				.findFirst()
 				.map(StoredEvent::reference);
 	}
@@ -620,7 +615,7 @@ public interface EventStorage extends AutoCloseable {
 	 * Typical Usage:
 	 * <pre>{@code
 	 * // Process events and bookmark progress
-	 * Stream<Event> events = eventStream.query(EventQuery.matchAll());
+	 * List<Event> events = eventStream.query(EventQuery.matchAll());
 	 * events.forEach(event -> {
 	 *     processEvent(event);
 	 *     storage.bookmark("my-projection", event.reference(), Tags.of("status", "processed"));

@@ -53,10 +53,10 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 		Event<MockDomainEvent> firstEventStored = eventStream.append(AppendCriteria.none(), Collections.singletonList(firstEvent)).get(0);
 
 		// Verify event was appended
-		assertEquals(1, eventStream.query(EventQuery.matchAll()).count(), "First event should be appended successfully");
+		assertEquals(1, eventStream.query(EventQuery.matchAll()).size(), "First event should be appended successfully");
 
 		// check that the reference (both id and position in the stream) is correctly registered
-		EventReference er = eventStream.query(EventQuery.matchAll()).toList().get(0).reference();
+		EventReference er = eventStream.query(EventQuery.matchAll()).get(0).reference();
 		assertNotNull(er);
 		assertEquals(1, er.position());
 		assertEquals(firstEventStored.reference().id(), er.id());
@@ -71,7 +71,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 		eventStream.append(AppendCriteria.none(), Collections.singletonList(firstEvent));
 
 		// Get the event ID of the first event
-		EventReference lastEventInStream = eventStream.query(EventQuery.matchAll())
+		EventReference lastEventInStream = eventStream.query(EventQuery.matchAll()).stream()
 			.map(Event::reference)
 			.reduce((first, second) -> second).orElse(null); // Get last event ID
 
@@ -81,7 +81,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 		eventStream.append(criteria, Collections.singletonList(secondEvent));
 
 		// Verify both events are in store
-		assertEquals(2, eventStream.query(EventQuery.matchAll()).count(), "Both events should be in the store");
+		assertEquals(2, eventStream.query(EventQuery.matchAll()).size(), "Both events should be in the store");
 	}
 
 	@ForEachBackend
@@ -103,7 +103,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 		eventStream.append(criteria, Collections.singletonList(secondEvent));
 
 		// Verify only first event is in store (second was not appended)
-		assertEquals(2, eventStream.query(EventQuery.matchAll()).count(), "Second event was expected to be appended as well");
+		assertEquals(2, eventStream.query(EventQuery.matchAll()).size(), "Second event was expected to be appended as well");
 	}
 
 	@ForEachBackend
@@ -128,7 +128,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 		}, "Should throw OptimisticLockingException when expecting empty stream but events exist");
 
 		// Verify only first event is in store
-		assertEquals(2, eventStream.query(EventQuery.matchAll()).count(), "Only first event should remain in store after failed append");
+		assertEquals(2, eventStream.query(EventQuery.matchAll()).size(), "Only first event should remain in store after failed append");
 	}
 
 	@ForEachBackend
@@ -141,7 +141,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 		eventStream.append(criteria, Collections.singletonList(firstEvent));
 
 		// Verify event was appended
-		assertEquals(1, eventStream.query(EventQuery.matchAll()).count(), "Event should be appended to empty stream when expected");
+		assertEquals(1, eventStream.query(EventQuery.matchAll()).size(), "Event should be appended to empty stream when expected");
 	}
 
 	@ForEachBackend
@@ -165,7 +165,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 		eventStream.append(AppendCriteria.none(), Collections.singletonList(firstEvent));
 
 		// Verify event was appended
-		assertEquals(2, eventStream.query(EventQuery.matchAll()).count(), "Event should be appended to stream when expected");
+		assertEquals(2, eventStream.query(EventQuery.matchAll()).size(), "Event should be appended to stream when expected");
 	}
 
 	@ForEachBackend
@@ -181,7 +181,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 
 		// Query only for FirstDomainEvent types
 		EventQuery firstEventQuery = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none());
-		EventReference idOfFirstEvent = eventStream.query(firstEventQuery)
+		EventReference idOfFirstEvent = eventStream.query(firstEventQuery).stream()
 			.map(Event::reference)
 			.reduce((first, second) -> second).orElse(null);
 
@@ -191,8 +191,8 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 		eventStream.append(criteria, Collections.singletonList(thirdEvent));
 
 		// Verify all events are in store
-		assertEquals(3, eventStream.query(EventQuery.matchAll()).count(), "All three events should be in the store");
-		assertEquals(2, eventStream.query(firstEventQuery).count(), "Should have two FirstDomainEvent instances");
+		assertEquals(3, eventStream.query(EventQuery.matchAll()).size(), "All three events should be in the store");
+		assertEquals(2, eventStream.query(firstEventQuery).size(), "Should have two FirstDomainEvent instances");
 	}
 
 	@ForEachBackend
@@ -206,7 +206,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 
 		// Use a backwards query with limit 1 to get the most recent FirstDomainEvent
 		EventQuery backwardsQuery = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).backwards().limit(1);
-		Event<MockDomainEvent> mostRecent = eventStream.query(backwardsQuery).findFirst().orElse(null);
+		Event<MockDomainEvent> mostRecent = eventStream.query(backwardsQuery).stream().findFirst().orElse(null);
 
 		assertNotNull(mostRecent, "Should find the most recent FirstDomainEvent");
 		assertEquals("e3", ((FirstDomainEvent) mostRecent.data()).value());
@@ -217,8 +217,8 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 		eventStream.append(criteria, Collections.singletonList(Event.of(new FirstDomainEvent("e4"), Tags.none())));
 
 		// Verify the append succeeded
-		assertEquals(4, eventStream.query(EventQuery.matchAll()).count());
-		assertEquals(3, eventStream.query(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())).count());
+		assertEquals(4, eventStream.query(EventQuery.matchAll()).size());
+		assertEquals(3, eventStream.query(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())).size());
 	}
 
 	@ForEachBackend
@@ -231,7 +231,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 
 		// Query the most recent FirstDomainEvent using backwards + limit 1
 		EventQuery backwardsQuery = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).backwards().limit(1);
-		Event<MockDomainEvent> mostRecent = eventStream.query(backwardsQuery).findFirst().orElse(null);
+		Event<MockDomainEvent> mostRecent = eventStream.query(backwardsQuery).stream().findFirst().orElse(null);
 
 		assertNotNull(mostRecent);
 		assertEquals("e1", ((FirstDomainEvent) mostRecent.data()).value());
@@ -246,7 +246,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 			eventStream.append(criteria, Collections.singletonList(Event.of(new FirstDomainEvent("e3"), Tags.none())));
 		}, "Should detect the conflicting FirstDomainEvent appended after our read");
 
-		assertEquals(3, eventStream.query(EventQuery.matchAll()).count(), "Failed append should not have added an event");
+		assertEquals(3, eventStream.query(EventQuery.matchAll()).size(), "Failed append should not have added an event");
 	}
 
 	@ForEachBackend
@@ -262,7 +262,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 
 		// Use backwards query with limit 3 — gets the 3 most recent FirstDomainEvents (e5, e3, e1)
 		EventQuery backwardsQuery = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).backwards().limit(3);
-		var recentEvents = eventStream.query(backwardsQuery).toList();
+		var recentEvents = eventStream.query(backwardsQuery);
 
 		assertEquals(3, recentEvents.size());
 		// Backwards order: newest first
@@ -278,8 +278,8 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 		eventStream.append(criteria, Collections.singletonList(Event.of(new FirstDomainEvent("e6"), Tags.none())));
 
 		// Verify the append succeeded
-		assertEquals(6, eventStream.query(EventQuery.matchAll()).count());
-		assertEquals(4, eventStream.query(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())).count());
+		assertEquals(6, eventStream.query(EventQuery.matchAll()).size());
+		assertEquals(4, eventStream.query(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())).size());
 	}
 
 	@ForEachBackend
@@ -293,7 +293,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 
 		// Query the 5 most recent FirstDomainEvents backwards (only 2 exist: e3, e1)
 		EventQuery backwardsQuery = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).backwards().limit(5);
-		var recentEvents = eventStream.query(backwardsQuery).toList();
+		var recentEvents = eventStream.query(backwardsQuery);
 
 		assertEquals(2, recentEvents.size());
 		assertEquals("e3", ((FirstDomainEvent) recentEvents.get(0).data()).value());
@@ -311,7 +311,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 			eventStream.append(criteria, Collections.singletonList(Event.of(new FirstDomainEvent("e4"), Tags.none())));
 		}, "Should detect the conflicting FirstDomainEvent appended after our read");
 
-		assertEquals(4, eventStream.query(EventQuery.matchAll()).count(), "Failed append should not have added an event");
+		assertEquals(4, eventStream.query(EventQuery.matchAll()).size(), "Failed append should not have added an event");
 	}
 
 	private EventStream<MockDomainEvent> createEventStream() {

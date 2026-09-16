@@ -36,11 +36,10 @@ import org.openjdk.jmh.infra.Blackhole;
  * workload never means adding a benchmark class. JMH still reports each parameter value as its own
  * row, so nothing is lost in the output.
  *
- * <p><b>The result is consumed, and that is not a formality.</b> A read workload returns an
- * already-materialised list precisely so this blackhole has something real to swallow: the store's
- * {@code query()} defers deserialization to the caller's terminal operation, so handing JMH an
- * unconsumed {@code Stream} would time the SQL and skip the serde entirely. The discipline lives in
- * the workloads; this is where it pays off.
+ * <p><b>The result is consumed, and that is not a formality.</b> A read workload returns the list the
+ * store's {@code query()} hands back -- read and deserialized in full before it returns -- precisely
+ * so this blackhole has something real to swallow, and the JIT cannot discard the work being timed.
+ * The discipline lives in the workloads; this is where it pays off.
  *
  * <p>The annotations here are defaults for someone running a class directly. A real run overrides
  * every one of them from the profile, through {@link JmhRunner} -- so changing an iteration count

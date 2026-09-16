@@ -233,9 +233,9 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	void testProjectorWithBookmarkAtCreation( ) {
 		TestProjection projection = new TestProjection();
 
-		EventReference refTwo = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "two"))).findFirst().get().reference();
-		EventReference refThree = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "three"))).findFirst().get().reference();
-		EventReference refFour = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).findFirst().get().reference();
+		EventReference refTwo = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "two"))).stream().findFirst().get().reference();
+		EventReference refThree = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "three"))).stream().findFirst().get().reference();
+		EventReference refFour = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).stream().findFirst().get().reference();
 
 		es.placeBookmark("someReader", refTwo, Tags.none());
 
@@ -274,9 +274,9 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	void testProjectorWithBookmarkOnFirstExecution( ) {
 		TestProjection projection = new TestProjection();
 
-		EventReference refTwo = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "two"))).findFirst().get().reference();
-		EventReference refThree = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "three"))).findFirst().get().reference();
-		EventReference refFour = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).findFirst().get().reference();
+		EventReference refTwo = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "two"))).stream().findFirst().get().reference();
+		EventReference refThree = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "three"))).stream().findFirst().get().reference();
+		EventReference refFour = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).stream().findFirst().get().reference();
 
 		es.placeBookmark("someReader", refFour, Tags.none());
 
@@ -317,9 +317,9 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	void testProjectorWithBookmarkOnEachExecution( ) {
 		TestProjection projection = new TestProjection();
 
-		EventReference refTwo = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "two"))).findFirst().get().reference();
-		EventReference refThree = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "three"))).findFirst().get().reference();
-		EventReference refFour = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).findFirst().get().reference();
+		EventReference refTwo = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "two"))).stream().findFirst().get().reference();
+		EventReference refThree = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "three"))).stream().findFirst().get().reference();
+		EventReference refFour = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).stream().findFirst().get().reference();
 
 		es.placeBookmark("someReader", refFour, Tags.none());
 
@@ -364,10 +364,10 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	 */
 	@ForEachBackend
 	void testProjectorReadsTheBookmarkBeforeEachExecutionByDefault ( ) {
-		EventReference refOne = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "one"))).findFirst().get().reference();
-		EventReference refTwo = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "two"))).findFirst().get().reference();
-		EventReference refThree = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "three"))).findFirst().get().reference();
-		EventReference refFour = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).findFirst().get().reference();
+		EventReference refOne = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "one"))).stream().findFirst().get().reference();
+		EventReference refTwo = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "two"))).stream().findFirst().get().reference();
+		EventReference refThree = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "three"))).stream().findFirst().get().reference();
+		EventReference refFour = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).stream().findFirst().get().reference();
 
 		// the "first process": no mode chosen, runs one batch and bookmarks it
 		TestProjection first = new TestProjection();
@@ -402,10 +402,10 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	void testProjectorWithBookmarkManualTrigger ( ) {
 		TestProjection projection = new TestProjection();
 
-		EventReference refOne = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "one"))).findFirst().get().reference();
-		EventReference refTwo = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "two"))).findFirst().get().reference();
-		EventReference refThree = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "three"))).findFirst().get().reference();
-		EventReference refFour = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).findFirst().get().reference();
+		EventReference refOne = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "one"))).stream().findFirst().get().reference();
+		EventReference refTwo = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "two"))).stream().findFirst().get().reference();
+		EventReference refThree = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "three"))).stream().findFirst().get().reference();
+		EventReference refFour = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).stream().findFirst().get().reference();
 
 		es.placeBookmark("someReader", refFour, Tags.none());
 
@@ -549,7 +549,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	void testProjectorQueryUntilCertainEvent ( ) {
 		TestProjection projection = new TestProjection();
 
-		EventReference ref = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).findFirst().get().reference();
+		EventReference ref = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).stream().findFirst().get().reference();
 
 		var projector = Projector.from(es).towards(projection).build();
 
@@ -605,8 +605,8 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	void testProjectorStartInStreamQueryUntilCertainEvent ( ) {
 		TestProjection projection = new TestProjection();
 
-		EventReference refAfter = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "one"))).findFirst().get().reference();
-		EventReference refUntil = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).findFirst().get().reference();
+		EventReference refAfter = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "one"))).stream().findFirst().get().reference();
+		EventReference refUntil = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).stream().findFirst().get().reference();
 
 		var projector = Projector.from(es).towards(projection).startingAfter(refAfter).build();
 
@@ -727,8 +727,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		append(initEs, new ThirdDomainEvent("savepoint:15"), Tags.none());
 		append(initEs, new FirstDomainEvent("3"), Tags.none());
 
-		EventReference until = initEs.query(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()))
-				.toList().get(1).reference(); // the "5", written before the second savepoint
+		EventReference until = initEs.query(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())).get(1).reference(); // the "5", written before the second savepoint
 
 		InitQueryProjection projection = new InitQueryProjection();
 		var projector = Projector.from(initEs).towards(projection).build();
@@ -846,7 +845,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		BackwardsLimitProjection projection = new BackwardsLimitProjection();
 		var projector = Projector.from(es).towards(projection).build();
 
-		EventReference refFour = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).findFirst().get().reference();
+		EventReference refFour = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).stream().findFirst().get().reference();
 
 		ProjectorMetrics metrics = projector.run();
 		assertEquals(refFour, metrics.mostRecentEventReference());
@@ -858,8 +857,8 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		BackwardsLimit3Projection projection = new BackwardsLimit3Projection();
 		var projector = Projector.from(es).towards(projection).build();
 
-		EventReference refThree = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "three"))).findFirst().get().reference();
-		EventReference refSix = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "six"))).findFirst().get().reference();
+		EventReference refThree = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "three"))).stream().findFirst().get().reference();
+		EventReference refSix = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "six"))).stream().findFirst().get().reference();
 
 		ProjectorMetrics metrics = projector.run();
 		assertEquals(3, projection.counter());

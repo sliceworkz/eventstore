@@ -24,7 +24,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Stream;
 
 
 import org.sliceworkz.eventstore.EventStore;
@@ -96,8 +95,8 @@ public class HeadTest extends AbstractEventStoreTest {
 		return stream.append(AppendCriteria.none(), Event.of(event, Tags.none())).getFirst();
 	}
 
-	private static List<EventReference> references ( Stream<? extends Event<?>> events ) {
-		return events.map(e -> e.reference()).toList();
+	private static List<EventReference> references ( List<? extends Event<?>> events ) {
+		return events.stream().map(e -> e.reference()).toList();
 	}
 
 	// --- what the head is -----------------------------------------------------------------------
@@ -120,7 +119,7 @@ public class HeadTest extends AbstractEventStoreTest {
 		Event<MockDomainEvent> c = append(stream, new FirstDomainEvent("c"));
 
 		assertEquals(Optional.of(c.reference()), stream.head(), "the head must move with every append");
-		assertEquals(stream.query(EventQuery.matchAll()).toList().getLast().reference(), stream.head().orElseThrow(),
+		assertEquals(stream.query(EventQuery.matchAll()).getLast().reference(), stream.head().orElseThrow(),
 				"the head is the last event a full read returns");
 		assertEquals(stream.head(), eventStorage().head(streamId),
 				"the stream and the SPI must agree on the head");
@@ -225,7 +224,7 @@ public class HeadTest extends AbstractEventStoreTest {
 		EventReference head = current.head().orElseThrow();
 
 		// what the typed read makes of the stream: Renamed, then the split registration as two events
-		List<Event<CurrentEvent>> all = current.query(EventQuery.matchAll()).toList();
+		List<Event<CurrentEvent>> all = current.query(EventQuery.matchAll());
 		assertEquals(3, all.size(), "fixture");
 		assertEquals(0, head.index(), "the head is the stored event's own reference");
 		assertEquals(all.get(1).reference(), head, "the stored reference is the first event it upcasts into");
@@ -233,9 +232,9 @@ public class HeadTest extends AbstractEventStoreTest {
 		assertEquals(head, eventStorage().head(streamId).orElseThrow());
 
 		// until bounds stored events: every event the head upcasts into is at or before it
-		assertEquals(references(all.stream()), references(current.query(EventQuery.matchAll().until(head))),
+		assertEquals(references(all), references(current.query(EventQuery.matchAll().until(head))),
 				"an until at the head must include every event the stored event at the head upcasts into");
-		assertEquals(references(all.stream()).reversed(), references(current.query(EventQuery.matchAll().until(head).backwards())));
+		assertEquals(references(all).reversed(), references(current.query(EventQuery.matchAll().until(head).backwards())));
 
 		// and so does a projector bounded at the head
 		CountingProjection projection = new CountingProjection();
@@ -254,7 +253,7 @@ public class HeadTest extends AbstractEventStoreTest {
 		EventStream<CurrentEvent> current = eventStore().getEventStream(streamId, CurrentEvent.class, LegacyEvents.class);
 
 		// the idiom the head replaces cannot answer: reading one stored event yields no event at all
-		assertEquals(0, current.query(EventQuery.matchAll().backwards().limit(1)).count(),
+		assertEquals(0, current.query(EventQuery.matchAll().backwards().limit(1)).size(),
 				"fixture: the newest stored event upcasts into nothing");
 
 		assertEquals(Optional.of(audit.reference()), current.head(),
@@ -279,7 +278,7 @@ public class HeadTest extends AbstractEventStoreTest {
 
 		EventStream<OrderEvent> orders = eventStore().getEventStream(streamId, OrderEvent.class);
 
-		assertThrows(EventDeserializationException.class, () -> orders.query(EventQuery.matchAll()).toList(),
+		assertThrows(EventDeserializationException.class, () -> orders.query(EventQuery.matchAll()),
 				"fixture: this stream cannot read the event at the head");
 
 		assertEquals(Optional.of(shipped.reference()), orders.head(),
@@ -302,7 +301,7 @@ public class HeadTest extends AbstractEventStoreTest {
 		keyStore.failing = true;
 
 		EventStream<ProfileEvent> reading = eventStoreWithShredding(keyStore).getEventStream(streamId, ProfileEvent.class);
-		assertThrows(ShreddingException.class, () -> reading.query(EventQuery.matchAll()).toList(),
+		assertThrows(ShreddingException.class, () -> reading.query(EventQuery.matchAll()),
 				"fixture: reading the event at the head needs the key store");
 
 		assertEquals(Optional.of(recorded.reference()), reading.head(),
@@ -324,7 +323,7 @@ public class HeadTest extends AbstractEventStoreTest {
 			meteredStream.head();
 			assertEquals(1.0, head.count());
 
-			meteredStream.query(EventQuery.matchAll().backwards().limit(1)).count();
+			meteredStream.query(EventQuery.matchAll().backwards().limit(1));
 			assertEquals(1.0, head.count(), "a query is not a head lookup");
 			assertEquals(1.0, registry.find("sliceworkz.eventstore.query").counter().count(),
 					"and a head lookup is not a query");

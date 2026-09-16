@@ -64,7 +64,7 @@ import org.sliceworkz.eventstore.events.EphemeralEvent;
  * // head is an empty stream, and a valid boundary, so a new customer needs no special case
  * EventQuery customer = EventQuery.forTags(Tags.of("customer", "123"));
  * EventReference head = stream.head().orElse(null);
- * List<Event<CustomerEvent>> relevantEvents = stream.query(customer.until(head)).toList();
+ * List<Event<CustomerEvent>> relevantEvents = stream.query(customer.until(head));
  *
  * // Make decision based on relevant facts, then attempt the conditional append - it fails if
  * // new relevant facts have emerged after the boundary

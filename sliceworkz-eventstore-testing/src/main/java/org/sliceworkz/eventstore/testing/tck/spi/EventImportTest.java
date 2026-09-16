@@ -108,7 +108,7 @@ public class EventImportTest extends AbstractEventStoreTest {
 	}
 
 	private List<StoredEvent> allEventsIn ( EventStorage storage ) {
-		return storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), QueryDirection.FORWARD).toList();
+		return storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), QueryDirection.FORWARD);
 	}
 
 	private List<EventToImport> toImport ( List<StoredEvent> storedEvents ) {
@@ -181,8 +181,8 @@ public class EventImportTest extends AbstractEventStoreTest {
 
 		target.importEvents(toImport(sourceEvents), ImportMode.FAIL_ON_EXISTING_ID);
 
-		List<StoredEvent> inApp = target.query(EventFilter.matchAll(), stream, null, Limit.none(), QueryDirection.FORWARD).toList();
-		List<StoredEvent> inOther = target.query(EventFilter.matchAll(), otherStream, null, Limit.none(), QueryDirection.FORWARD).toList();
+		List<StoredEvent> inApp = target.query(EventFilter.matchAll(), stream, null, Limit.none(), QueryDirection.FORWARD);
+		List<StoredEvent> inOther = target.query(EventFilter.matchAll(), otherStream, null, Limit.none(), QueryDirection.FORWARD);
 		assertEquals(2, inApp.size());
 		assertEquals(1, inOther.size());
 	}
@@ -626,7 +626,7 @@ public class EventImportTest extends AbstractEventStoreTest {
 		assertEquals(3, report.imported());
 		assertEquals(6, allEventsIn(source).size());
 
-		List<StoredEvent> cloned = source.query(EventFilter.matchAll(), clone, null, Limit.none(), QueryDirection.FORWARD).toList();
+		List<StoredEvent> cloned = source.query(EventFilter.matchAll(), clone, null, Limit.none(), QueryDirection.FORWARD);
 		assertEquals(3, cloned.size());
 		assertFalse(idsOf(cloned).stream().anyMatch(idsOf(allEventsIn(source).subList(0, 3))::contains),
 				"the clone must carry fresh identifiers");

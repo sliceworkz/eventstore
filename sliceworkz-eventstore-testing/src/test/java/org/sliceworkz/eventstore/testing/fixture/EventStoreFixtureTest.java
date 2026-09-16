@@ -157,7 +157,7 @@ class EventStoreFixtureTest {
 
 		boolean subscribe ( String studentId, String courseId ) {
 			EventQuery relevant = EventQuery.forEvents(EventTypesFilter.any(), Tags.of("course", courseId));
-			List<Event<LearningEvent>> facts = stream.query(relevant).toList();
+			List<Event<LearningEvent>> facts = stream.query(relevant);
 
 			if ( facts.stream().noneMatch(e -> e.data() instanceof CourseDefined) ) {
 				throw new IllegalStateException("no such course: " + courseId);

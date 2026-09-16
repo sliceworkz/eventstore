@@ -82,7 +82,7 @@ public class PostgresShreddingBuilderTest {
 				EventStream<ContactEvent> contacts = store.getEventStream(STREAM, ContactEvent.class);
 				contacts.append(AppendCriteria.none(), Event.of(new ContactRecorded("c-1", Shreddable.of("Alice Martin", ALICE)), Tags.none()));
 
-				ContactRecorded before = (ContactRecorded) contacts.query(EventQuery.matchAll()).findFirst().orElseThrow().data();
+				ContactRecorded before = (ContactRecorded) contacts.query(EventQuery.matchAll()).stream().findFirst().orElseThrow().data();
 				assertEquals("Alice Martin", before.name().map(n -> n).orElse("[erased]"));
 
 				// the key landed in this store's own table, which is what the no-arg shredding() promises
@@ -91,7 +91,7 @@ public class PostgresShreddingBuilderTest {
 
 				assertEquals(1, store.erase(ALICE, ErasureReason.of("GDPR art.17 request #4711")).keysShredded());
 
-				ContactRecorded after = (ContactRecorded) contacts.query(EventQuery.matchAll()).findFirst().orElseThrow().data();
+				ContactRecorded after = (ContactRecorded) contacts.query(EventQuery.matchAll()).stream().findFirst().orElseThrow().data();
 				Shreddable.Shredded<String> shredded = assertInstanceOf(Shreddable.Shredded.class, after.name());
 				assertEquals(ALICE, shredded.subject());
 				assertEquals(1, audit.totals().shreddedKeys());

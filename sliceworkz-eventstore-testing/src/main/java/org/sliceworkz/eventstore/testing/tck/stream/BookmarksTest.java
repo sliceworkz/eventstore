@@ -54,7 +54,7 @@ public class BookmarksTest extends AbstractEventStoreTest {
 	private EventReference appendOne ( ) {
 		EventStream<MockDomainEvent> s = stream();
 		s.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FirstDomainEvent("e"), Tags.none())));
-		return s.query(EventQuery.matchAll().backwards().limit(1)).findFirst().orElseThrow().reference();
+		return s.query(EventQuery.matchAll().backwards().limit(1)).stream().findFirst().orElseThrow().reference();
 	}
 
 	@ForEachBackend

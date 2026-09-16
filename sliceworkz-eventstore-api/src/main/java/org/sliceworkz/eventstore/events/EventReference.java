@@ -46,7 +46,7 @@ package org.sliceworkz.eventstore.events;
  * // empty stream, which is a valid boundary
  * EventQuery customer = EventQuery.forTags(Tags.of("customer", "123"));
  * EventReference head = stream.head().orElse(null);
- * List<Event<CustomerEvent>> events = stream.query(customer.until(head)).toList();
+ * List<Event<CustomerEvent>> events = stream.query(customer.until(head));
  *
  * stream.append(
  *     AppendCriteria.of(customer, head),

@@ -103,7 +103,7 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
  * // make a business decision. An absent head is an empty stream, and a valid boundary
  * EventQuery query = EventQuery.forTags(Tags.of(customerTag));
  * EventReference head = stream.head().orElse(null);
- * List<Event<CustomerEvent>> events = stream.query(query.until(head)).toList();
+ * List<Event<CustomerEvent>> events = stream.query(query.until(head));
  *
  * // Append new events only if no new customer events appeared after the boundary
  * stream.append(

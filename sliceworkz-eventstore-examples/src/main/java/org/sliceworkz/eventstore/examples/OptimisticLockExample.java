@@ -18,7 +18,6 @@
 package org.sliceworkz.eventstore.examples;
 
 import java.util.List;
-import java.util.stream.Stream;
 
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.Event;
@@ -50,14 +49,14 @@ public class OptimisticLockExample {
 		stream.append(AppendCriteria.none(), Event.of(new CustomerChurned("124"), Tags.of("customer", "124")));
 
 		// Two registration events of different customers, queried by Event Type
-		Stream<Event<CustomerEvent>> registrations = 
+		List<Event<CustomerEvent>> registrations = 
 				stream.query(EventQuery.forEvents(EventTypesFilter.of(CustomerRegistered.class), Tags.none()));
 		registrations.forEach(System.out::println);
 		
 		
 		// One churn event, queried by Event Type
 		List<Event<CustomerEvent>> churns = 
-				stream.query(EventQuery.forEvents(EventTypesFilter.of(CustomerChurned.class), Tags.none())).toList();
+				stream.query(EventQuery.forEvents(EventTypesFilter.of(CustomerChurned.class), Tags.none()));
 		churns.forEach(System.out::println);
 		
 		
@@ -70,7 +69,7 @@ public class OptimisticLockExample {
 		EventReference head = stream.head().orElse(null);
 		
 		// Read the facts up to the boundary and decide; nothing appended after the head is seen here
-		List<Event<CustomerEvent>> singleCustomer = stream.query(customer123.until(head)).toList();
+		List<Event<CustomerEvent>> singleCustomer = stream.query(customer123.until(head));
 		singleCustomer.forEach(System.out::println);
 
 		// A conditional append: only if no fact about this customer landed after the head
@@ -89,7 +88,7 @@ public class OptimisticLockExample {
 		// read and feeds the check, and the read comes back empty
 		EventQuery customer125 = EventQuery.forTags(Tags.of("customer", "125"));
 		EventReference headBeforeRegistering = stream.head().orElse(null);
-		if ( stream.query(customer125.until(headBeforeRegistering)).findAny().isEmpty() ) {
+		if ( stream.query(customer125.until(headBeforeRegistering)).isEmpty() ) {
 			stream.append(AppendCriteria.of(customer125, headBeforeRegistering),
 					Event.of(new CustomerRegistered("125", "Anne"), Tags.of("customer", "125")));
 		}

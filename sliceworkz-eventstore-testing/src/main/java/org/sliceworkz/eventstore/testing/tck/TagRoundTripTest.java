@@ -81,7 +81,7 @@ public class TagRoundTripTest extends AbstractEventStoreTest {
 	}
 
 	private static List<Event<MockDomainEvent>> queryFor ( EventStream<MockDomainEvent> stream, Tag tag ) {
-		return stream.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of(tag))).toList();
+		return stream.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of(tag)));
 	}
 
 	@ForEachBackend
@@ -136,7 +136,7 @@ public class TagRoundTripTest extends AbstractEventStoreTest {
 			assertEquals(1, queryFor(stream, tag).size(), "the event should be found by its tag " + tag);
 		}
 
-		Tags readBack = stream.query(EventQuery.matchAll()).toList().getFirst().tags();
+		Tags readBack = stream.query(EventQuery.matchAll()).getFirst().tags();
 		assertEquals(tags, readBack, "four distinct tags must not collapse on the way through storage");
 	}
 

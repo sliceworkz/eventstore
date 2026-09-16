@@ -45,10 +45,10 @@ package org.sliceworkz.eventstore.stream;
  * stream.append(Event.of(new CustomerRegistered("John Doe"), Tags.of("region", "EU")));
  *
  * // Query all events from the stream
- * List<Event<CustomerEvent>> events = stream.query(EventQuery.matchAll()).toList();
+ * List<Event<CustomerEvent>> events = stream.query(EventQuery.matchAll());
  *
  * // Query with filters
- * Stream<Event<CustomerEvent>> euCustomers = stream.query(
+ * List<Event<CustomerEvent>> euCustomers = stream.query(
  *     EventQuery.forEvents(EventTypesFilter.any(), Tags.of("region", "EU"))
  * );
  *
@@ -56,7 +56,7 @@ package org.sliceworkz.eventstore.stream;
  * // before reading, bound the read with it, and hand the same reference to the append
  * EventQuery customer = EventQuery.forTags(Tags.of("customer", "123"));
  * EventReference head = stream.head().orElse(null);   // absent for an empty stream: a valid boundary
- * List<Event<CustomerEvent>> relevantEvents = stream.query(customer.until(head)).toList();
+ * List<Event<CustomerEvent>> relevantEvents = stream.query(customer.until(head));
  *
  * stream.append(
  *     AppendCriteria.of(customer, head),

@@ -103,13 +103,13 @@ public class EventStoreLimitTest extends AbstractEventStoreTest {
 
 		EventStream<MockDomainEvent> eventStream = eventStore().getEventStream(stream, MockDomainEvent.class);
 
-		EventReference cursor = eventStream.query(EventQuery.matchAll().limit(1))
+		EventReference cursor = eventStream.query(EventQuery.matchAll().limit(1)).stream()
 				.findFirst().orElseThrow().reference();
 
-		assertEquals(2, eventStream.query(EventQuery.matchAll().limit(2)).count(),
+		assertEquals(2, eventStream.query(EventQuery.matchAll().limit(2)).size(),
 				"limit carried by the query itself");
 
-		assertEquals(2, eventStream.query(EventQuery.matchAll().limit(2), cursor).count(),
+		assertEquals(2, eventStream.query(EventQuery.matchAll().limit(2), cursor).size(),
 				"limit carried by the query, with a cursor -- the paging idiom");
 
 		assertEquals(2, eventStream.page(EventQuery.matchAll().limit(2), cursor).storedEventCount(),

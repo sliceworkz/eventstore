@@ -338,7 +338,7 @@ public final class EventStoreImporter {
 			EventFilter pageFilter = filter.until(boundary);
 
 			while ( true ) {
-				List<StoredEvent> page = source.query(pageFilter, scope, cursor, Limit.to(batchSize), QueryDirection.FORWARD).toList();
+				List<StoredEvent> page = source.query(pageFilter, scope, cursor, Limit.to(batchSize), QueryDirection.FORWARD);
 				if ( page.isEmpty() ) {
 					break;
 				}

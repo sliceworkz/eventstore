@@ -41,9 +41,8 @@ import java.util.Optional;
  * </ul>
  *
  * <h2>Where it surfaces</h2>
- * Deserialization is lazy: it happens as the {@link java.util.stream.Stream} returned by
- * {@code query()} is consumed, so this is thrown from the caller's terminal operation, not from
- * {@code query()} itself. It also surfaces from
+ * A query result is read and deserialized in full before it is returned, so this is thrown from the
+ * {@code query()} call itself, and nothing of that result is returned. It also surfaces from
  * {@link org.sliceworkz.eventstore.stream.EventSink#append} (which reads the appended events back) and
  * from {@link org.sliceworkz.eventstore.stream.EventSource#getEventById}.
  * <p>
@@ -51,8 +50,9 @@ import java.util.Optional;
  * throws {@link org.sliceworkz.eventstore.projection.ProjectorException}, whose {@code getCause()} is
  * this exception. Note that
  * {@link org.sliceworkz.eventstore.projection.ProjectorException#getEventReference()} then names the
- * last event the projection successfully <em>handled</em> — the offending event never reached it, so it
- * cannot be the one reported there. {@link #getReference()} is what names the event that failed.
+ * last event the projection successfully <em>handled</em> — the offending event never reached it, and
+ * neither did the other events of the batch that held it, so it cannot be the one reported there.
+ * {@link #getReference()} is what names the event that failed.
  *
  * <h2>Handling: skipping a poison event</h2>
  * <pre>{@code

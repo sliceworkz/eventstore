@@ -93,7 +93,9 @@ other module and export every package, so nothing in them is encapsulated.
 - **Stream.** `EventStreamId.forContext("customer")` names a stream; an optional purpose
   (`.withPurpose("123")`) splits a context into several. A stream scopes reads and writes; it is not a
   type namespace, so keep event class names unique across the whole store.
-- **Query.** `EventQuery.forEvents(types, tags)` selects events by type and tag. `query()` returns a
+- **Query.** `EventQuery.forTypes(CustomerEvent.class).tagged("customer", id)` selects events by type
+  and tag, a sealed root standing for its whole hierarchy; `EventQuery.forEvents(types, tags)` builds the
+  same query from its two halves at once, and `.or(other)` unites two. `query()` returns a
   `Stream`, but the whole result is already in memory, so bound a read over a large stream with
   `.limit(n)` and page with `page(query, cursor)`, or let a `Projector` do that for you.
 - **Conditional append.** `AppendCriteria.of(query, lastReference)` makes an append fail with
@@ -115,7 +117,6 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.query.EventQuery;
-import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -144,7 +145,7 @@ public class HelloEventstore {
                 Event.of(new CustomerEvent.CustomerRegistered("124", "Jane"), Tags.of("customer", "124"))));
 
             // 4. read one customer's history by tag
-            EventQuery customer123 = EventQuery.forEvents(EventTypesFilter.any(), Tags.of("customer", "123"));
+            EventQuery customer123 = EventQuery.forTypes(CustomerEvent.class).tagged("customer", "123");
             List<Event<CustomerEvent>> history = customers.query(customer123).toList();
             EventReference lastKnown = history.getLast().reference();
 

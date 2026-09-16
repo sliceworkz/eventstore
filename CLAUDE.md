@@ -295,8 +295,18 @@ mvn clean install -DskipTests
 - Does not carry traversal semantics (direction, limit) — those belong to `EventQuery`
 - Can match all (`EventFilter.matchAll()`), none (`EventFilter.matchNone()`), or specific criteria
 - Created via `EventFilter.forEvents(eventTypesFilter, tags)`, or `EventFilter.forTags(tags)` for events of
-  any type carrying the tags
+  any type carrying the tags, or as a chain: `EventFilter.forTypes(CustomerEvent.class).tagged("customer", id)`
 - Used by `AppendCriteria` for optimistic locking (where direction/limit are irrelevant)
+- **The fluent form and the two-halves form build the same filter.** `forTypes(classes...)` is
+  `forEvents(EventTypesFilter.of(classes...), Tags.none())`, and `tagged(key, value)` narrows what is
+  there: every item gets the tag on top of the tags it already requires, chained calls accumulate, and
+  the `until` boundary is kept. Narrowing distributes over a union — `a.or(b).tagged(t)` is
+  `a.tagged(t).or(b.tagged(t))` — which is what makes it well-defined on a filter of several items;
+  a match-all narrowed is `forTags(t)`, a match-none stays match-none. `or` is the union: the items of
+  both side by side, match-all on either side making the union match-all, and the same `until` on both
+  or `IllegalArgumentException`. `combineWith` is the deprecated name of `or`, delegating to it. Both
+  spellings resolve to the same `EventFilterItem`s, so a query built one way compares equal to the same
+  query built the other way. `EventFilterTest` pins each rule, `EventQueryTest` the mirror on the query
 - **A sealed interface in a type filter stands for every event type under it.** An event is stored
   under the simple name of its record, never under an interface it implements, so
   `EventTypesFilter.of(Class...)` resolves a sealed interface into the event types it permits,
@@ -338,7 +348,12 @@ mvn clean install -DskipTests
 - Can match all (`EventQuery.matchAll()`), none (`EventQuery.matchNone()`), or specific criteria
 - Supports backward direction (`.backwards()`) and result limits (`.limit(n)`)
 - Created via `EventQuery.forEvents(eventTypesFilter, tags)`, or `EventQuery.forTags(tags)` for events of
-  any type carrying the tags — the usual shape of a consistency boundary
+  any type carrying the tags — the usual shape of a consistency boundary — or as a chain,
+  `EventQuery.forTypes(CustomerEvent.class).tagged("customer", id)`, where a sealed root names its
+  whole hierarchy. `EventQuery` re-exposes every `EventFilter` method: `forTypes`, `tagged` and `or`
+  behave as they do on the filter (see EventFilter above), `tagged` keeping the query's direction and
+  limit, `or` refusing two directions or a limit on either side, since a shared limit over a union does
+  not mean "the last of each"
 - **`.limit(n)` means "read n stored events", and it is pushed into the storage query** — a SQL
   `LIMIT` on Postgres, a short-circuiting `Stream.limit` in memory — not applied to the result. That
   is what makes it bound memory as well as output: a storage query materialises its whole result set

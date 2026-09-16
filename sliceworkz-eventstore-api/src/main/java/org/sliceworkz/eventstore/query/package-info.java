@@ -39,27 +39,26 @@
  *
  * <h3>Filter by Event Type:</h3>
  * <pre>{@code
- * EventQuery query = EventQuery.forEvents(
- *     EventTypesFilter.of(CustomerRegistered.class, CustomerNameChanged.class),
- *     Tags.none()
- * );
+ * // Two event types, or every event type under a sealed root: EventQuery.forTypes(CustomerEvent.class)
+ * EventQuery query = EventQuery.forTypes(CustomerRegistered.class, CustomerNameChanged.class);
  * Stream<Event<CustomerEvent>> events = stream.query(query);
  * }</pre>
  *
  * <h3>Filter by Tags (DCB Pattern):</h3>
  * <pre>{@code
  * // Find all events related to a specific customer
- * EventQuery query = EventQuery.forEvents(
- *     EventTypesFilter.any(),
- *     Tags.of("customer", "cust-123")
- * );
+ * EventQuery query = EventQuery.forTags(Tags.of("customer", "cust-123"));
  * Stream<Event<CustomerEvent>> events = stream.query(query);
  * }</pre>
  *
- * <h3>Combined Filters:</h3>
+ * <h3>Types and Tags:</h3>
  * <pre>{@code
- * // Find registration and name change events for EU customers
- * EventQuery query = EventQuery.forEvents(
+ * // Find registration and name change events for EU customers: the types first, then the tags
+ * // every matching event must carry
+ * EventQuery query = EventQuery.forTypes(CustomerRegistered.class, CustomerNameChanged.class).tagged("region", "EU");
+ *
+ * // The same query built from its two halves at once
+ * EventQuery same = EventQuery.forEvents(
  *     EventTypesFilter.of(CustomerRegistered.class, CustomerNameChanged.class),
  *     Tags.of("region", "EU")
  * );
@@ -73,12 +72,10 @@
  * Stream<Event<CustomerEvent>> events = stream.query(query);
  * }</pre>
  *
- * <h3>Complex OR Queries:</h3>
+ * <h3>Union Queries:</h3>
  * <pre>{@code
  * // Events with tag1:value1 OR tag2:value2
- * EventQuery query1 = EventQuery.forEvents(EventTypesFilter.any(), Tags.of("tag1", "value1"));
- * EventQuery query2 = EventQuery.forEvents(EventTypesFilter.any(), Tags.of("tag2", "value2"));
- * EventQuery combined = query1.combineWith(query2);
+ * EventQuery query = EventQuery.forTags(Tags.of("tag1", "value1")).or(EventQuery.forTags(Tags.of("tag2", "value2")));
  * }</pre>
  *
  * <h2>DCB Integration:</h2>

@@ -50,20 +50,26 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
  * // Query all events
  * EventQuery allEvents = EventQuery.matchAll();
  *
- * // Query specific event types with tags
+ * // Query every event of one hierarchy about one customer: the types first, then the tags
+ * // every matching event must carry. A sealed root stands for every event type under it
+ * EventQuery customer = EventQuery.forTypes(CustomerEvent.class).tagged("customer", "123");
+ *
+ * // The same query built from its two halves at once
  * EventQuery customerEvents = EventQuery.forEvents(
  *     EventTypesFilter.of(CustomerRegistered.class, CustomerUpdated.class),
  *     Tags.of("region", "EU")
  * );
  *
  * // Query every event about one customer, whatever its type
- * EventQuery customer = EventQuery.forTags(Tags.of("customer", "123"));
+ * EventQuery anyAboutCustomer = EventQuery.forTags(Tags.of("customer", "123"));
+ *
+ * // A decision spanning two boundaries: the union of both
+ * EventQuery either = EventQuery.forTypes(StudentSubscribed.class).tagged("student", studentId)
+ *                               .or(EventQuery.forTypes(CourseEvent.class).tagged("course", courseId));
  *
  * // Query backwards (newest first) with limit
- * EventQuery mostRecent = EventQuery.forEvents(
- *     EventTypesFilter.of(CustomerRegistered.class),
- *     Tags.of("customer", "123")
- * ).backwards().limit(1);
+ * EventQuery mostRecent = EventQuery.forTypes(CustomerRegistered.class).tagged("customer", "123")
+ *                                   .backwards().limit(1);
  *
  * // Extract the filter for optimistic locking
  * EventFilter filter = mostRecent.filter();
@@ -235,24 +241,53 @@ public record EventQuery ( EventFilter filter, Direction direction, Limit limit 
 	}
 
 	/**
-	 * Creates a new EventQuery that combines the criteria of this query with another (UNION operation).
-	 * The resulting query will match events that match either this query or the other query.
+	 * Narrows this query to events carrying the given tags, keeping its direction and limit; the
+	 * filter is narrowed as {@link EventFilter#tagged(Tags)} narrows it, so the tags apply to every
+	 * item and chained calls accumulate.
 	 *
-	 * <p>The underlying filters are combined via {@link EventFilter#combineWith(EventFilter)}.
+	 * @param tags the tags every matching event must carry, on top of the tags its item already requires
+	 * @return a new EventQuery narrowed to events carrying the tags
+	 * @throws IllegalArgumentException if {@code tags} is {@code null}
+	 */
+	public EventQuery tagged ( Tags tags ) {
+		return new EventQuery(filter.tagged(tags), direction, limit);
+	}
+
+	/**
+	 * Narrows this query to events carrying the given tag; {@link #tagged(Tags)} with
+	 * {@link Tags#of(String, String)}.
+	 * <pre>{@code
+	 * EventQuery customer = EventQuery.forTypes(CustomerEvent.class).tagged("customer", "123");
+	 * }</pre>
+	 *
+	 * @param key the tag's key
+	 * @param value the tag's value
+	 * @return a new EventQuery narrowed to events carrying the tag
+	 * @throws IllegalArgumentException for a tag that cannot be constructed, see {@link org.sliceworkz.eventstore.events.Tag#of(String, String)}
+	 */
+	public EventQuery tagged ( String key, String value ) {
+		return tagged(Tags.of(key, value));
+	}
+
+	/**
+	 * Creates a new EventQuery that is the union of this query and another: the result matches
+	 * every event that matches either.
+	 *
+	 * <p>The underlying filters are united via {@link EventFilter#or(EventFilter)}.
 	 * Both queries must share the same direction, and neither query may have a limit set.
 	 *
-	 * <p>Limited queries cannot be combined because a shared limit over the union does not
+	 * <p>Limited queries cannot be united because a shared limit over the union does not
 	 * preserve per-query semantics: e.g. two {@code backwards().limit(1)} savepoint queries
-	 * combined into {@code (A OR B) limit 1} would return the single most-recent event of
+	 * united into {@code (A OR B) limit 1} would return the single most-recent event of
 	 * <em>either</em> type, not the last of A <em>and</em> the last of B. Limited queries must
 	 * therefore be executed separately.
 	 *
-	 * @param other the other query to combine with this one
+	 * @param other the other query to unite with this one
 	 * @return a new EventQuery representing the union of both queries
 	 * @throws IllegalArgumentException if the directions differ, the "until" references are
 	 *         incompatible, or either query has a limit set
 	 */
-	public EventQuery combineWith ( EventQuery other ) {
+	public EventQuery or ( EventQuery other ) {
 		if ( this.direction != other.direction ) {
 			throw new IllegalArgumentException("can't combine two EventQuery with different directions");
 		}
@@ -261,8 +296,22 @@ public record EventQuery ( EventFilter filter, Direction direction, Limit limit 
 			throw new IllegalArgumentException("can't combine an EventQuery that has a limit set");
 		}
 
-		EventFilter combinedFilter = this.filter.combineWith(other.filter);
+		EventFilter combinedFilter = this.filter.or(other.filter);
 		return new EventQuery(combinedFilter, this.direction, Limit.none());
+	}
+
+	/**
+	 * The union of this query and another.
+	 *
+	 * @param other the other query to unite with this one
+	 * @return a new EventQuery representing the union of both queries
+	 * @throws IllegalArgumentException if the directions differ, the "until" references are
+	 *         incompatible, or either query has a limit set
+	 * @deprecated a union is an <em>or</em>, and the method is called that: use {@link #or(EventQuery)}
+	 */
+	@Deprecated(since = "0.11.0", forRemoval = true)
+	public EventQuery combineWith ( EventQuery other ) {
+		return or(other);
 	}
 
 	/**
@@ -286,8 +335,9 @@ public record EventQuery ( EventFilter filter, Direction direction, Limit limit 
 	}
 
 	/**
-	 * Creates a query for events matching the specified event types and tags.
-	 * This is the primary way to create a specific query.
+	 * Creates a query for events matching the specified event types and tags: the general form, built
+	 * from both halves at once. {@link #forTypes(Class...)} followed by {@link #tagged(String, String)}
+	 * builds the same query as a chain.
 	 *
 	 * @param eventTypes the filter specifying which event types to match
 	 * @param tags the tags that events must contain (all tags must be present)
@@ -295,6 +345,25 @@ public record EventQuery ( EventFilter filter, Direction direction, Limit limit 
 	 */
 	public static final EventQuery forEvents ( EventTypesFilter eventTypes, Tags tags ) {
 		return forEvents(new EventFilterItem(eventTypes, tags));
+	}
+
+	/**
+	 * Creates a query for events of the specified types, whatever tags they carry: the start of the
+	 * fluent form, narrowed with {@link #tagged(String, String)} where a decision is about one entity.
+	 * <pre>{@code
+	 * EventQuery customer = EventQuery.forTypes(CustomerEvent.class).tagged("customer", "123");
+	 * }</pre>
+	 * The classes are resolved as {@link EventTypesFilter#of(Class...)} resolves them, so a sealed
+	 * interface stands for every event type under it and the root of a hierarchy names all of it. It is
+	 * {@link #forEvents(EventTypesFilter, Tags)} with {@link Tags#none()}, and equivalent to it in every
+	 * respect.
+	 *
+	 * @param eventClasses the event classes to match; a sealed interface stands for every event type under it
+	 * @return an EventQuery matching events of the types, whatever their tags
+	 * @throws IllegalArgumentException for an interface that is not sealed
+	 */
+	public static final EventQuery forTypes ( Class<?>... eventClasses ) {
+		return forEvents(EventTypesFilter.of(eventClasses), Tags.none());
 	}
 
 	/**

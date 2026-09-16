@@ -95,7 +95,7 @@ other module and export every package, so nothing in them is encapsulated.
   type namespace, so keep event class names unique across the whole store.
 - **Query.** `EventQuery.forEvents(types, tags)` selects events by type and tag. `query()` returns a
   `Stream`, but the whole result is already in memory, so bound a read over a large stream with
-  `.limit(n)` and page with a cursor, or let a `Projector` do that for you.
+  `.limit(n)` and page with `page(query, cursor)`, or let a `Projector` do that for you.
 - **Conditional append.** `AppendCriteria.of(query, lastReference)` makes an append fail with
   `OptimisticLockingException` when a new event matching the query has landed after the reference.
   That is the DCB idea in one line: decide on the relevant facts, then append only if no new relevant

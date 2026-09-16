@@ -33,7 +33,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import org.slf4j.Logger;
@@ -63,7 +62,6 @@ import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventFilterItem;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
-import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageClosedException;
 import org.sliceworkz.eventstore.spi.EventStorage.AppendsToEventStoreNotification;
@@ -73,6 +71,7 @@ import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
 import org.sliceworkz.eventstore.spi.EventStorage.QueryDirection;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
+import org.sliceworkz.eventstore.stream.EventPage;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentBookmarkListener;
@@ -726,13 +725,42 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		@Override
-		public Stream<Event<EVENT_TYPE>> query(EventQuery query, EventReference cursor, Limit limit, Consumer<EventReference> storedEventCursorTracker ) {
+		public Stream<Event<EVENT_TYPE>> query ( EventQuery query, EventReference cursor ) {
+			QueryDirection direction = directionOf(query);
+			return enrichAfterQuery(fetch(query, cursor, direction), query.filter(), direction);
+		}
+
+		/**
+		 * A page is the same read as a query, with the stored events counted and the last of them kept
+		 * before they are enriched: the stored list is what storage handed back, so its size and last
+		 * element are known before a single payload is converted, and they stay right when the
+		 * enrichment turns a stored event into several events or into none. The events are then read
+		 * whole, so a poison event fails the page here rather than from a terminal operation of the
+		 * caller's.
+		 */
+		@Override
+		public EventPage<EVENT_TYPE> page ( EventQuery query, EventReference cursor ) {
+			QueryDirection direction = directionOf(query);
+			List<StoredEvent> storedEvents = fetch(query, cursor, direction).toList();
+			List<Event<EVENT_TYPE>> events = enrichAfterQuery(storedEvents.stream(), query.filter(), direction).toList();
+			Optional<EventReference> lastStored = storedEvents.isEmpty() ? Optional.empty() : Optional.of(storedEvents.getLast().reference());
+			return new EventPage<>(events, storedEvents.size(), lastStored);
+		}
+
+		private QueryDirection directionOf ( EventQuery query ) {
+			return query.isBackwards() ? QueryDirection.BACKWARD : QueryDirection.FORWARD;
+		}
+
+		/**
+		 * The storage read behind both {@link #query(EventQuery, EventReference)} and
+		 * {@link #page(EventQuery, EventReference)}: one query counted, the fetch timed, the limit the
+		 * query's own.
+		 */
+		private Stream<StoredEvent> fetch ( EventQuery query, EventReference cursor, QueryDirection direction ) {
 			checkStoreNotClosed();
 			meterQuery.increment(); // one query done
-			QueryDirection direction = query.isBackwards() ? QueryDirection.BACKWARD : QueryDirection.FORWARD;
-			EventFilter originalFilter = query.filter();
 
-			// Time the storage fetch itself, and nothing else. The pipeline built on top of it -- peek,
+			// Time the storage fetch itself, and nothing else. The pipeline built on top of it --
 			// upcasting, filtering -- is lazy, so wrapping the whole expression in timerQuery.record(...)
 			// would time the construction of that pipeline rather than any work: microseconds, whatever
 			// the query costs. It happens to report the fetch today only because every backend
@@ -743,11 +771,16 @@ public class EventStoreImpl implements EventStore {
 			// Deserialisation and upcasting are deliberately outside this timer: they happen per element
 			// as the caller consumes, are counted separately by sliceworkz.eventstore.query.event, and
 			// are the caller's pace, not the store's.
-			Stream<StoredEvent> storedEvents =
-				timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query), Optional.of(eventStreamId), cursor, limit, direction));
+			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query), Optional.of(eventStreamId), cursor, query.limit(), direction));
+		}
 
+		/**
+		 * Enriches what storage handed back: deserialized and upcast per element, then re-checked
+		 * against the caller's own filter, since the storage query was widened to the legacy types that
+		 * upcast into the ones asked for.
+		 */
+		private Stream<Event<EVENT_TYPE>> enrichAfterQuery ( Stream<StoredEvent> storedEvents, EventFilter originalFilter, QueryDirection direction ) {
 			return storedEvents
-				.peek(se -> storedEventCursorTracker.accept(se.reference()))
 				.flatMap(se->enrichAfterQuery(se, direction))
 				.filter(e->originalFilter.matches(e));
 		}

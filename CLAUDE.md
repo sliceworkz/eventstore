@@ -123,10 +123,18 @@ mvn clean install -DskipTests
   resource is held open behind the stream, so it is safe to abandon half-consumed (`EventSource.close()`
   is about subscriptions, not queries)
 - **A full replay is a loop, not one unbounded query.** `Projector` already reads in batches of 500,
-  carrying a cursor between them, and is the right tool for a stream of unknown size. By hand, page with
-  `query(q.limit(n), cursor)`, advancing `cursor` to the last reference of each page. The unlimited path
-  exists for callers who know their result set is small, or who genuinely want it all at once — it is
-  not a way to process a large stream incrementally
+  carrying a cursor between them, and is the right tool for a stream of unknown size. By hand, read
+  with `page(q.limit(n), cursor)`, which answers an `EventPage`: the events, the number of stored
+  events read, and the reference of the last stored event read, which is the cursor of the next
+  page. The last two are what paging needs and the events alone cannot say once upcasting is
+  involved: a limit counts stored events, an `@Upcast` may turn one into several or into none, so a
+  page holding no events may sit in the middle of a stream and the reference to continue from may
+  be on no event returned. A page shorter than its limit is the last one. `query(q, cursor)` is the
+  same read without that account, and deserializes lazily where a page is read whole (an
+  `EventDeserializationException` comes from `page()` itself, and a page holding a poison event
+  hands out none of its events). `EventPageTest` pins it per backend. The unlimited path exists for
+  callers who know their result set is small, or who genuinely want it all at once — it is not a
+  way to process a large stream incrementally
 - **`head()` is the reference of the newest stored event of the stream, answered without reading it.**
   It exists to pin a consistency boundary *before* a decision is read: take the head, bound every read
   with `until(head)` or `Projector.runUntil(head)`, and hand the same reference to `AppendCriteria`.
@@ -305,9 +313,13 @@ mvn clean install -DskipTests
   `LIMIT` on Postgres, a short-circuiting `Stream.limit` in memory — not applied to the result. That
   is what makes it bound memory as well as output: a storage query materialises its whole result set
   before returning it, so an unbounded query over a large stream is a heap problem rather than a slow
-  one. A cursor does not change this: `query(q.limit(500), cursor)` reads 500, same as `query(q)`
-  would with the limit on `q`. Pass `Limit.none()` to the three-argument overload to read to the end
-  of a stream deliberately
+  one. A cursor does not change this: `query(q.limit(500), cursor)` and `page(q.limit(500), cursor)`
+  read 500, same as `query(q)` would with the limit on `q`. A query with no limit reads to the end of
+  a stream, deliberately. The limit is a property of the query: `Limit` is the type of
+  `EventQuery.limit()`, and of the SPI's `EventStorage.query`, and is not an argument of any read on
+  `EventSource` — the alternative, a read taking a `Limit` beside the query's own, loses because two
+  limits for one read is one more than a caller can keep straight, and the projector's page size is
+  just `eventQuery().limit(n)`
 - **Without upcasting, n stored events are n events back. With it, they are not.** An `@Upcast`
   method may turn one stored event into several or into none, and the limit is spent before it runs,
   so `.limit(1)` over an event upcasting into two returns two, and over one upcasting into none
@@ -1164,8 +1176,12 @@ apart either retries forever on a poison event or gives up on a blip.
   `ProjectorException`, so a dropped connection and an unreadable event arrive identically; `getCause()`
   being an `EventDeserializationException` is what separates them. Careful:
   `ProjectorException.getEventReference()` is the last event *handled*, and the offending event never
-  reached the projection — `EventDeserializationException.getReference()` is the one that names it.
+  reached the projection — nor did any event of its batch, since the projector reads a batch as one
+  `EventPage`, deserialized whole before the first of its events is handed over, and a batch that
+  fails takes the cursor back to where it started. `EventDeserializationException.getReference()`
+  is the one that names the poison event.
 - **Deserialization is lazy, so it surfaces from the caller's terminal operation**, not from `query()`.
+  `page()` is the exception: a page is read whole, so it throws from the call and hands out nothing.
   `getEventById` is eager and throws directly. `append` deserializes the events it just wrote in order to
   return them, so a payload that serializes but cannot be read back fails *there*, as a deserialization
   failure, with the event already stored.

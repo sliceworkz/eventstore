@@ -395,6 +395,18 @@ import, a fixture, a third-party caller writing `EventToStore` directly); it is 
 path cannot pass a test against the in-memory store and fail in production. `AppendPayloadTest` and
 `EventImportTest.testInvalidJsonPayloadIsRejected` in the TCK pin it per backend.
 
+Correctness-equivalent also includes the order: the log is kept in `(tx, position)` order, and the
+cursor a query starts after is a boundary in that order, found by binary search and compared over
+stored events (`storedEventHappenedAfter`, so the index a reference carries plays no part) — exactly
+the row comparison Postgres runs. The alternative — skipping `position` elements — loses because it
+reads a position as a list index, which holds only while positions are dense and assigned in
+transaction order: a reference from another store, a reloaded log with a gap, or a transaction and
+position assigned in different orders then skip the wrong events or throw. Positions come from a
+counter seeded from the highest loaded position, never from the size of the log, so a file-backed
+log reloaded with a gap (a crash between two writes that landed out of order) never reissues a
+position to the next append. `InMemoryEventStorageImplTest` pins the cursor, the gap and a
+preloaded log put in order; `InMemoryFsEventStorageImplTest` the reload with a gap.
+
 ```java
 EventStorage storage = InMemoryEventStorage.newBuilder().build();
 EventStore store = EventStoreFactory.get().eventStore(storage);

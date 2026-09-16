@@ -21,6 +21,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
@@ -30,6 +31,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -132,6 +134,15 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	private JsonMapper jsonMapper;
 	private Limit absoluteLimit;
 	private long txCounter;
+
+	/**
+	 * The highest position ever assigned in this log, seeded from the preloaded events. A position is
+	 * taken from here, never derived from the log's size: a log reloaded with a gap in it (see the
+	 * filesystem-backed storage, where a crash between two writes that landed out of order leaves one)
+	 * would otherwise reissue the position after the gap to the next append, and two stored events
+	 * would share a position.
+	 */
+	private long positionCounter;
 	// This backend holds no threads, connections or file handles, so close() has nothing to release.
 	// It still marks itself closed, so that the post-close behaviour required by EventStorage.close()
 	// is the same here as on a backend that does — code that outlives its storage fails the same way
@@ -195,7 +206,15 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		this.jsonMapper = JsonMapper.builder().build();
 		this.absoluteLimit = absoluteLimit;
 		this.shreddingCodec = shreddingCodec;
-		this.eventlog.addAll(initialEvents);
+		// The log is kept in (tx, position) order -- the order every read walks, the cursor is found in,
+		// and the until short-circuits and head() rely on. Appends produce it by construction, since both
+		// counters advance under the same lock; a preloaded log is put in it here rather than trusted
+		List<StoredEvent> ordered = new ArrayList<>(initialEvents);
+		ordered.sort(Comparator
+				.<StoredEvent, Long>comparing(e -> e.reference().tx())
+				.thenComparing(e -> e.reference().position())
+				.thenComparing(e -> e.reference().index()));
+		this.eventlog.addAll(ordered);
 		// a persisted bookmark is trusted for its id only: the reference kept is the loaded event's own,
 		// so a bookmark file written beside a log that has since been re-imported (positions and
 		// transactions reassigned, ids preserved) still names the right event. One whose event is not
@@ -213,6 +232,10 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		});
 		this.txCounter = initialEvents.stream()
 				.mapToLong(e -> e.reference().tx())
+				.max()
+				.orElse(0);
+		this.positionCounter = initialEvents.stream()
+				.mapToLong(e -> e.reference().position())
 				.max()
 				.orElse(0);
 
@@ -241,7 +264,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	 * <ul>
 	 *   <li>Stream filtering (if a stream ID is provided)</li>
 	 *   <li>Event query matching (type and tag filters)</li>
-	 *   <li>Reference-based positioning (starting after the specified reference)</li>
+	 *   <li>Reference-based positioning (starting after the specified reference, in the {@code (tx, position)} order)</li>
 	 *   <li>Optional "until" reference from the query</li>
 	 *   <li>Result limits (both soft and absolute)</li>
 	 * </ul>
@@ -271,11 +294,20 @@ public class InMemoryEventStorageImpl implements EventStorage {
 				on = eventlog.stream();
 		}
 
+		// The cursor is a boundary in the (tx, position) order, exactly as it is on Postgres (a row
+		// comparison against the same tuple), and it compares stored events, so the index a reference
+		// may carry plays no part. The log is in that order, so the cursor's place in it is found by
+		// binary search and everything up to it is sliced off. The alternative -- skipping
+		// after.position() elements -- loses because it reads a position as a list index, which holds
+		// only while positions are dense and assigned in transaction order: a reference from another
+		// store, a reloaded log with a gap, or a transaction and position assigned in different orders
+		// then either skip the wrong events or, going backward past the end of the log, throw on a
+		// negative skip.
 		if ( after != null ) {
 			if ( direction == QueryDirection.FORWARD ) {
-				on = on.skip(after.position());
+				on = on.skip(countNotAfter(after));
 			} else {
-				on = on.skip(eventlog.size()-after.position()+1);
+				on = on.skip(eventlog.size() - countBefore(after));
 			}
 		}
 		
@@ -319,6 +351,41 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		return returnValue.stream();
 	}
 	
+	/**
+	 * How many stored events of the log sit at or before the given reference in the {@code (tx, position)}
+	 * order -- which, the log being in that order, is the index of the first event after it.
+	 */
+	private int countNotAfter ( EventReference reference ) {
+		return firstIndexWhere(e -> e.reference().storedEventHappenedAfter(reference));
+	}
+
+	/**
+	 * How many stored events of the log sit strictly before the given reference in the
+	 * {@code (tx, position)} order -- the index of the first event at or after it.
+	 */
+	private int countBefore ( EventReference reference ) {
+		return firstIndexWhere(e -> !reference.storedEventHappenedAfter(e.reference()));
+	}
+
+	/**
+	 * Binary search over the ordered log for the first index whose event satisfies the predicate, given
+	 * that the predicate is false for a prefix of the log and true for the rest; the log's size when it
+	 * holds for no event.
+	 */
+	private int firstIndexWhere ( Predicate<StoredEvent> predicate ) {
+		int low = 0;
+		int high = eventlog.size();
+		while ( low < high ) {
+			int mid = (low + high) >>> 1;
+			if ( predicate.test(eventlog.get(mid)) ) {
+				high = mid;
+			} else {
+				low = mid + 1;
+			}
+		}
+		return low;
+	}
+
 	/*
 	 *  Synchronized method, to allow re-querying and storing in one shot (required for optimistic locking)
 	 */
@@ -461,8 +528,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 			idempotencyKeys.add(new IdempotencyScope(event.stream(), event.idempotencyKey()));
 		}
 
-		long position = eventlog.size() + 1;
-		EventReference reference = EventReference.create(position, tx);
+		EventReference reference = EventReference.create(++positionCounter, tx);
 		StoredEvent storedEvent = event.positionAt(reference, Instant.now());
 		eventlog.add(storedEvent);
 		eventsById.put(reference.id(), storedEvent);
@@ -525,7 +591,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		List<StoredEvent> imported = new ArrayList<>(toInsert.size());
 		for ( EventToImport event : toInsert ) {
 			// position and tx are assigned here; the id and timestamp travel with the imported event
-			StoredEvent storedEvent = event.positionAt(eventlog.size() + 1, tx);
+			StoredEvent storedEvent = event.positionAt(++positionCounter, tx);
 			eventlog.add(storedEvent);
 			eventsById.put(storedEvent.reference().id(), storedEvent);
 			if ( event.idempotencyKey() != null ) {

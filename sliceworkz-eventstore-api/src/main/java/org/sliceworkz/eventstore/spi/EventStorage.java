@@ -30,7 +30,7 @@ import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.query.EventQuery;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -89,18 +89,18 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  *     }
  *
  *     @Override
- *     public Stream<StoredEvent> query(EventQuery query, Optional<EventStreamId> stream,
+ *     public Stream<StoredEvent> query(EventFilter filter, EventStreamId stream,
  *                                      EventReference after, Limit limit, QueryDirection direction) {
- *         // 1. Filter events by stream (if specified)
- *         // 2. Apply event type filters from query
- *         // 3. Apply tag filters from query
+ *         // 1. Filter events by stream (a wildcard component reads across it)
+ *         // 2. Apply event type filters from the filter
+ *         // 3. Apply tag filters and the until boundary from the filter
  *         // 4. Filter events after 'after' reference
  *         // 5. Apply limit and direction
  *         // 6. Return stream of StoredEvent records
  *     }
  *
  *     @Override
- *     public List<StoredEvent> append(AppendCriteria criteria, Optional<EventStreamId> stream,
+ *     public List<StoredEvent> append(AppendCriteria criteria, EventStreamId stream,
  *                                     List<EventToStore> events) {
  *         // 1. Check optimistic locking via criteria
  *         // 2. Assign references and timestamps to events
@@ -135,7 +135,7 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  * @see StoredEvent
  * @see EventToStore
  * @see AppendCriteria
- * @see EventQuery
+ * @see EventFilter
  * @see org.sliceworkz.eventstore.stream.OptimisticLockingException
  */
 public interface EventStorage extends AutoCloseable {
@@ -199,15 +199,25 @@ public interface EventStorage extends AutoCloseable {
 	/**
 	 * Queries events from storage based on specified criteria with directional control.
 	 * <p>
-	 * This method retrieves events matching the provided query, optionally filtered by stream,
-	 * starting from a specific reference point, with configurable limit and direction.
-	 * The query supports filtering by event types and tags as defined in the {@link EventQuery}.
+	 * This method retrieves the events matching the filter — event types, tags and the {@code until}
+	 * boundary — from the given stream, starting after a reference point, in the given direction and
+	 * up to the given limit.
+	 * <p>
+	 * Direction and limit are parameters of this method and nothing else: the matching criteria arrive
+	 * as an {@link EventFilter}, which carries neither, rather than as an
+	 * {@link org.sliceworkz.eventstore.query.EventQuery}, which carries both. A backend is therefore
+	 * never handed two limits or two directions and left to decide which wins. The stream layer derives
+	 * both from the query it was given and passes them here; a caller overriding the query's own limit
+	 * — a projector paging in batches — passes its own.
 	 * <p>
 	 * Query Parameters:
 	 * <ul>
-	 *   <li><b>query</b> - Defines which events to retrieve based on types and tags</li>
-	 *   <li><b>stream</b> - Optional stream filter; if present, only events from matching streams are returned</li>
-	 *   <li><b>after</b> - Starting reference point; events after this reference are returned</li>
+	 *   <li><b>filter</b> - Defines which events to retrieve based on types, tags and the until boundary</li>
+	 *   <li><b>stream</b> - The stream to read, never null. A wildcard component reads across it:
+	 *       {@code EventStreamId.forContext("x").anyPurpose()} reads every stream of the context and
+	 *       {@link EventStreamId#anyContext()} reads the whole storage</li>
+	 *   <li><b>after</b> - Starting reference point; events after this reference are returned. Null
+	 *       starts at the beginning (or, going backward, at the end)</li>
 	 *   <li><b>limit</b> - Maximum number of events to return (or unlimited)</li>
 	 *   <li><b>queryDirection</b> - Direction of traversal (FORWARD or BACKWARD)</li>
 	 * </ul>
@@ -220,9 +230,9 @@ public interface EventStorage extends AutoCloseable {
 	 * <p>
 	 * The Until Boundary:
 	 * <p>
-	 * {@link EventQuery#until()} is a matching criterion, not a traversal one. It is the <em>inclusive
+	 * {@link EventFilter#until()} is a matching criterion, not a traversal one. It is the <em>inclusive
 	 * upper bound</em> over the total {@code (tx, position, index)} order that
-	 * {@link org.sliceworkz.eventstore.query.EventFilter#matches(StoredEvent)} implements, and it selects
+	 * {@link EventFilter#matches(StoredEvent)} implements, and it selects
 	 * the same events in both directions — direction decides only the order they come back in. An
 	 * implementation must not read it as "traverse until you reach it", which turns it into a lower bound
 	 * when going backward and returns the events on the far side of it. Nor may it compare positions
@@ -253,35 +263,37 @@ public interface EventStorage extends AutoCloseable {
 	 * database can see. Neither is a reason not to do it; both have to be solved deliberately rather
 	 * than discovered.
 	 *
-	 * @param query the event query defining type and tag filters
-	 * @param stream optional stream identifier to filter events by stream
-	 * @param after the reference point to start querying after (exclusive - events after this reference)
+	 * @param filter the event filter defining type and tag criteria and the until boundary
+	 * @param stream the stream to read, with a wildcard component to read across it; never null
+	 * @param after the reference point to start querying after (exclusive - events after this reference), or null
 	 * @param limit maximum number of events to read; {@link Limit#none()} reads everything matching
 	 * @param queryDirection the direction of query traversal (FORWARD or BACKWARD)
-	 * @return a stream of stored events matching the query criteria, which callers must not assume is lazy
+	 * @return a stream of stored events matching the filter, which callers must not assume is lazy
+	 * @throws IllegalArgumentException if the stream is null
 	 * @throws EventStorageException if an error occurs during query execution
-	 * @see EventQuery
+	 * @see EventFilter
 	 * @see QueryDirection
 	 * @see StoredEvent
 	 */
-	Stream<StoredEvent> query ( EventQuery query, Optional<EventStreamId> stream, EventReference after, Limit limit, QueryDirection queryDirection );
+	Stream<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit, QueryDirection queryDirection );
 
 	/**
 	 * Queries events from storage in forward (chronological) direction.
 	 * <p>
-	 * This is a convenience method that delegates to {@link #query(EventQuery, Optional, EventReference, Limit, QueryDirection)}
+	 * This is a convenience method that delegates to {@link #query(EventFilter, EventStreamId, EventReference, Limit, QueryDirection)}
 	 * with {@link QueryDirection#FORWARD}. Events are returned in chronological order from oldest to newest.
 	 *
-	 * @param query the event query defining type and tag filters
-	 * @param stream optional stream identifier to filter events by stream
-	 * @param after the reference point to start querying from (events after this reference)
+	 * @param filter the event filter defining type and tag criteria and the until boundary
+	 * @param stream the stream to read, with a wildcard component to read across it; never null
+	 * @param after the reference point to start querying from (events after this reference), or null
 	 * @param limit maximum number of events to return
-	 * @return a stream of stored events matching the query criteria in chronological order
+	 * @return a stream of stored events matching the filter in chronological order
+	 * @throws IllegalArgumentException if the stream is null
 	 * @throws EventStorageException if an error occurs during query execution
-	 * @see #query(EventQuery, Optional, EventReference, Limit, QueryDirection)
+	 * @see #query(EventFilter, EventStreamId, EventReference, Limit, QueryDirection)
 	 */
-	default Stream<StoredEvent> query ( EventQuery query, Optional<EventStreamId> stream, EventReference after, Limit limit ) {
-		return query ( query, stream, after, limit, QueryDirection.FORWARD);
+	default Stream<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit ) {
+		return query ( filter, stream, after, limit, QueryDirection.FORWARD);
 	}
 
 	/**
@@ -322,12 +334,14 @@ public interface EventStorage extends AutoCloseable {
 	 * as a de-duplication.
 	 *
 	 * @param appendCriteria criteria defining optimistic locking constraints (or none for simple append)
-	 * @param stream optional stream identifier to append events to a specific stream
+	 * @param stream the stream the criteria are checked against, never null; every event carries its
+	 *        own stream. A wildcard component widens the check ({@link EventStreamId#anyContext()}
+	 *        checks the whole storage)
 	 * @param events list of events to append (must not be empty)
 	 * @return list of stored events with assigned references and timestamps; empty when the batch was
 	 *         de-duplicated on an idempotency key
 	 * @throws org.sliceworkz.eventstore.stream.OptimisticLockingException if append criteria are violated
-	 * @throws IllegalArgumentException if two events of the batch carry the same idempotency key
+	 * @throws IllegalArgumentException if the stream is null, or two events of the batch carry the same idempotency key
 	 * @throws org.sliceworkz.eventstore.stream.IdempotencyKeyConflictException if some of the batch's
 	 *         idempotency keys are already stored on the stream and others are not; nothing is stored
 	 * @throws EventStorageException if an error occurs during append operation
@@ -336,13 +350,13 @@ public interface EventStorage extends AutoCloseable {
 	 * @see StoredEvent
 	 * @see org.sliceworkz.eventstore.stream.OptimisticLockingException
 	 */
-	List<StoredEvent> append ( AppendCriteria appendCriteria, Optional<EventStreamId> stream, List<EventToStore> events );
+	List<StoredEvent> append ( AppendCriteria appendCriteria, EventStreamId stream, List<EventToStore> events );
 
 	/**
 	 * Imports events into storage, preserving their identity, timestamp and idempotency key.
 	 * <p>
 	 * This is the write path used to move events between storage backends. It is deliberately <em>not</em>
-	 * {@link #append(AppendCriteria, Optional, List)}: an import performs no optimistic locking, accepts a
+	 * {@link #append(AppendCriteria, EventStreamId, List)}: an import performs no optimistic locking, accepts a
 	 * caller-supplied {@link EventId} and timestamp, and may span multiple streams in a single call.
 	 * <p>
 	 * What is preserved and what is not:
@@ -397,8 +411,7 @@ public interface EventStorage extends AutoCloseable {
 	Optional<StoredEvent> getEventById ( EventId eventId );
 
 	/**
-	 * The reference of the newest stored event of the given stream, or of the whole storage when no
-	 * stream is given, or empty when there is none.
+	 * The reference of the newest stored event of the given stream, or empty when there is none.
 	 * <p>
 	 * The stream-level counterpart is {@link org.sliceworkz.eventstore.stream.EventSource#head()},
 	 * whose javadoc carries the contract. For a backend the two halves that matter are:
@@ -409,16 +422,16 @@ public interface EventStorage extends AutoCloseable {
 	 *   <li>Nothing but the reference is needed, so a backend should read nothing else: no payload, no
 	 *       tags. The default below is correct but reads a whole stored event to discard it.</li>
 	 * </ul>
-	 * The wildcard stream ({@code EventStreamId.anyContext().anyPurpose()}) and an absent stream both
-	 * mean the storage-wide head.
+	 * The wildcard stream ({@link EventStreamId#anyContext()}) means the storage-wide head.
 	 *
-	 * @param stream the stream whose head to return, or empty for the storage-wide head
+	 * @param stream the stream whose head to return, never null
 	 * @return the reference of the newest stored event, or empty when there is none
+	 * @throws IllegalArgumentException if the stream is null
 	 * @throws EventStorageException if an error occurs during retrieval
 	 * @throws EventStorageClosedException if the storage has been closed
 	 */
-	default Optional<EventReference> head ( Optional<EventStreamId> stream ) {
-		return query(EventQuery.matchAll(), stream, null, Limit.to(1), QueryDirection.BACKWARD)
+	default Optional<EventReference> head ( EventStreamId stream ) {
+		return query(EventFilter.matchAll(), stream, null, Limit.to(1), QueryDirection.BACKWARD)
 				.findFirst()
 				.map(StoredEvent::reference);
 	}
@@ -516,7 +529,7 @@ public interface EventStorage extends AutoCloseable {
 	 * This enum controls how events are ordered when retrieved from storage.
 	 * The direction affects the order of results but not which events are matched.
 	 *
-	 * @see #query(EventQuery, Optional, EventReference, Limit, QueryDirection)
+	 * @see #query(EventFilter, EventStreamId, EventReference, Limit, QueryDirection)
 	 */
 	enum QueryDirection {
 		/**
@@ -876,7 +889,7 @@ public interface EventStorage extends AutoCloseable {
 	 * @param stream the event stream where new events were appended
 	 * @param atLeastUntil reference indicating new events exist at least up to this point, and are readable
 	 * @see EventStoreListener#notify(AppendsToEventStoreNotification)
-	 * @see #append(AppendCriteria, Optional, List)
+	 * @see #append(AppendCriteria, EventStreamId, List)
 	 */
 	record AppendsToEventStoreNotification ( EventStreamId stream, EventReference atLeastUntil ) {
 
@@ -999,7 +1012,7 @@ public interface EventStorage extends AutoCloseable {
 	 * @param tags key-value pairs for dynamic event retrieval and consistency boundaries
 	 * @param idempotencyKey the idempotency key the event is appended with, or {@code null} if none
 	 * @see StoredEvent
-	 * @see #append(AppendCriteria, Optional, List)
+	 * @see #append(AppendCriteria, EventStreamId, List)
 	 */
 	public record EventToStore ( EventStreamId stream, EventType type, String immutableData, Tags tags, String idempotencyKey ) {
 
@@ -1042,7 +1055,7 @@ public interface EventStorage extends AutoCloseable {
 	 *                       scoped to the event stream (context and purpose)
 	 * @see EventToStore
 	 * @see EventReference
-	 * @see #query(EventQuery, Optional, EventReference, Limit, QueryDirection)
+	 * @see #query(EventFilter, EventStreamId, EventReference, Limit, QueryDirection)
 	 */
 	public record StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String immutableData, Tags tags, Instant timestamp, String idempotencyKey ) {
 

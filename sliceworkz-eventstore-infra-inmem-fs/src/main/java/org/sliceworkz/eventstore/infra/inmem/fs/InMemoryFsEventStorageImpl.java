@@ -36,7 +36,7 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Lease;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
-import org.sliceworkz.eventstore.query.EventQuery;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.serialization.json.JsonBookmark;
 import org.sliceworkz.eventstore.serialization.json.JsonBookmarkCodec;
@@ -113,12 +113,12 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 	}
 
 	@Override
-	public Stream<StoredEvent> query ( EventQuery query, Optional<EventStreamId> stream, EventReference after, Limit limit, QueryDirection queryDirection ) {
-		return delegate.query(query, stream, after, limit, queryDirection);
+	public Stream<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit, QueryDirection queryDirection ) {
+		return delegate.query(filter, stream, after, limit, queryDirection);
 	}
 
 	@Override
-	public List<StoredEvent> append ( AppendCriteria appendCriteria, Optional<EventStreamId> stream, List<EventToStore> events ) {
+	public List<StoredEvent> append ( AppendCriteria appendCriteria, EventStreamId stream, List<EventToStore> events ) {
 		List<StoredEvent> stored = delegate.append(appendCriteria, stream, events);
 		for ( StoredEvent event : stored ) {
 			persistEvent(event);
@@ -142,7 +142,7 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 	}
 
 	@Override
-	public Optional<EventReference> head ( Optional<EventStreamId> stream ) {
+	public Optional<EventReference> head ( EventStreamId stream ) {
 		return delegate.head(stream);
 	}
 

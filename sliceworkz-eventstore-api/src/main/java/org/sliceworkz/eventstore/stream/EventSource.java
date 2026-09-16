@@ -272,6 +272,11 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 *
 	 * @param query the query criteria specifying which events to retrieve
 	 * @return a Stream of events matching the query criteria, fully realised before it is returned
+	 * @throws IllegalArgumentException if the query names a legacy event type of this stream — one
+	 *         registered as a {@link org.sliceworkz.eventstore.events.LegacyEvent}. A filter names
+	 *         current types: it is the query for the current type that returns the legacy events
+	 *         upcast into it, and one naming the legacy type could not be answered (its events would
+	 *         read as a type it does not name), so it is refused rather than answered empty
 	 */
 	default Stream<Event<DOMAIN_EVENT_TYPE>> query ( EventQuery query ) {
 		return query(query, null);

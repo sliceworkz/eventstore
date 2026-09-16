@@ -43,7 +43,6 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
 import org.sliceworkz.eventstore.spi.EventStorage;
-import java.util.Optional;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
@@ -253,7 +252,7 @@ public class PostgresSchemaDriftTest {
 					.name("unit-test").prefix(prefix).dataSource(dataSource)
 					.databaseInitMode(DatabaseInitMode.NONE).build() ) {
 				EventStreamId stream = EventStreamId.forContext("account").withPurpose("1");
-				List<StoredEvent> stored = storage.append(AppendCriteria.none(), Optional.of(stream),
+				List<StoredEvent> stored = storage.append(AppendCriteria.none(), stream,
 					List.of(new EventToStore(stream, new EventType("Opened"), "{}", Tags.none(), null)));
 				EventStorageException e = assertThrows(EventStorageException.class, () ->
 					storage.bookmark("reader", stored.getFirst().reference(), Tags.none()));
@@ -266,7 +265,7 @@ public class PostgresSchemaDriftTest {
 					.name("unit-test").prefix(prefix).dataSource(dataSource)
 					.validateDatabase().build() ) {
 				EventStreamId stream = EventStreamId.forContext("account").withPurpose("1");
-				storage.bookmark("reader", storage.head(Optional.of(stream)).orElseThrow(), Tags.none());
+				storage.bookmark("reader", storage.head(stream).orElseThrow(), Tags.none());
 				assertTrue(storage.getBookmark("reader").isPresent());
 			}
 

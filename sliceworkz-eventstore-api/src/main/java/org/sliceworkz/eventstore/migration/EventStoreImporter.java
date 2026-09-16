@@ -26,7 +26,6 @@ import java.util.function.Function;
 
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.query.EventFilter;
-import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorage.ImportMode;
@@ -324,7 +323,7 @@ public final class EventStoreImporter {
 		// finding the events it just wrote and never terminate. A filter carrying its own, earlier
 		// boundary narrows the range further; it never widens it past the head.
 		EventReference boundary = boundedBy(filter, headOf(source));
-		Optional<EventStreamId> scope = Optional.ofNullable(stream);
+		EventStreamId scope = stream == null ? EventStreamId.anyContext() : stream;
 		EventReference cursor = after;
 
 		long read = 0;
@@ -336,10 +335,10 @@ public final class EventStoreImporter {
 
 		if ( boundary != null && ( cursor == null || cursor.happenedBefore(boundary) ) ) {
 
-			EventQuery pageQuery = new EventQuery(filter.until(boundary), EventQuery.Direction.FORWARD, Limit.none());
+			EventFilter pageFilter = filter.until(boundary);
 
 			while ( true ) {
-				List<StoredEvent> page = source.query(pageQuery, scope, cursor, Limit.to(batchSize), QueryDirection.FORWARD).toList();
+				List<StoredEvent> page = source.query(pageFilter, scope, cursor, Limit.to(batchSize), QueryDirection.FORWARD).toList();
 				if ( page.isEmpty() ) {
 					break;
 				}
@@ -380,7 +379,7 @@ public final class EventStoreImporter {
 	 * Returns the reference of the last event in the storage, or null when it holds none.
 	 */
 	private static EventReference headOf ( EventStorage storage ) {
-		return storage.head(Optional.empty()).orElse(null);
+		return storage.head(EventStreamId.anyContext()).orElse(null);
 	}
 
 	/**

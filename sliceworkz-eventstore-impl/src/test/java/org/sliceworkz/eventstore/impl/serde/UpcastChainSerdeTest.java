@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.junit.jupiter.api.Test;
@@ -94,9 +95,23 @@ class UpcastChainSerdeTest {
 
 		assertEquals(Set.of(EventType.ofType("V3"), EventType.ofType("V2"), EventType.ofType("V1")),
 				serde.determineLegacyTypes(Set.of(EventType.ofType("V3"))));
-		// a legacy type is never a current one: a query for it fetches nothing but itself
+		// a legacy type is never a current one, so nothing traces back to it; the stream refuses a
+		// filter naming one before this is asked, on what legacyTypesAmong answers below
 		assertEquals(Set.of(EventType.ofType("V2")), serde.determineLegacyTypes(Set.of(EventType.ofType("V2"))));
 		assertEquals(Set.of(EventType.ofType("Churned")), serde.determineLegacyTypes(Set.of(EventType.ofType("Churned"))));
+	}
+
+	@Test
+	void theLegacyTypesAmongAFilterAreNamedWithTheCurrentTypesTheirChainsEndIn ( ) {
+		EventPayloadSerializerDeserializer serde = serdeOver(Current.class, Legacy.class);
+
+		// each legacy type is mapped to the end of its chain, not to its next hop; a current type and a
+		// name this serde does not register are not legacy
+		assertEquals(Map.of(EventType.ofType("V1"), Set.of(EventType.ofType("V3")), EventType.ofType("V2"), Set.of(EventType.ofType("V3"))),
+				serde.legacyTypesAmong(Set.of(EventType.ofType("V1"), EventType.ofType("V2"), EventType.ofType("V3"), EventType.ofType("Churned"), EventType.ofType("Unknown"))));
+		assertEquals(Map.of(), serde.legacyTypesAmong(Set.of(EventType.ofType("V3"), EventType.ofType("Unknown"))));
+		// raw mode registers no legacy types
+		assertEquals(Map.of(), EventPayloadSerializerDeserializer.raw().legacyTypesAmong(Set.of(EventType.ofType("V1"))));
 	}
 
 	@Test

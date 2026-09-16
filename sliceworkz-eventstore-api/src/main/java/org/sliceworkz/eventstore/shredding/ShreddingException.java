@@ -23,8 +23,8 @@ package org.sliceworkz.eventstore.shredding;
  *
  * <h2>This is never how a shredded value is reported</h2>
  * A key that is gone is not a failure — it is the mechanism working. It surfaces as
- * {@link Shreddable.Shredded} on the event, and {@link ShreddingCodec#unseal} signals it by returning
- * an empty {@code Optional}. This exception is for everything else: a Vault outage, an expired token,
+ * {@link Shreddable.Shredded} on the event, and {@link ShreddingCodec#open} signals it by answering
+ * {@link ShreddingCodec.Unsealed.Erased}. This exception is for everything else: a Vault outage, an expired token,
  * a connection timeout, a corrupt envelope, an algorithm the codec does not implement.
  * <p>
  * The distinction is load-bearing, and getting it wrong is the worst failure this subsystem has.
@@ -38,7 +38,7 @@ package org.sliceworkz.eventstore.shredding;
  * worth retrying). A {@code ShreddingException} is on the retryable side: the same read may well
  * succeed once the key store is reachable again.
  *
- * @see ShreddingCodec#unseal(ShreddingCodec.Sealed)
+ * @see ShreddingCodec#open(ShreddingCodec.Sealed)
  * @see Shreddable.Shredded
  */
 public class ShreddingException extends RuntimeException {

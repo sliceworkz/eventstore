@@ -40,6 +40,7 @@ import org.sliceworkz.eventstore.projection.Projection;
 import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.projection.Projector.ProjectorMetrics;
 import org.sliceworkz.eventstore.projection.ProjectorException;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.shredding.AesGcmShreddingCodec;
 import org.sliceworkz.eventstore.shredding.DataSubject;
@@ -99,7 +100,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		// read back with no domain classes and no codec: raw mode hands back the sealed envelope as it
 		// is stored, which is exactly what an import or an export sees
 		String stored = eventStorage()
-				.query(EventQuery.matchAll(), Optional.of(STREAM), null, org.sliceworkz.eventstore.query.Limit.none())
+				.query(EventFilter.matchAll(), STREAM, null, org.sliceworkz.eventstore.query.Limit.none())
 				.findFirst().orElseThrow().immutableData();
 
 		assertFalse(stored.contains("Alice Martin"), "the payload still holds personal data in the clear: " + stored);
@@ -378,10 +379,9 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 	void aKeyThisStoreNeverHeldThrowsRatherThanReadingAsErased ( ) {
 		ShreddingKeyStore own = backend().shreddingKeyStore(eventStorage());
 
-		// at the seam: neither erased nor denied, on both lookups
+		// at the seam: neither erased nor denied
 		KeyId neverMinted = KeyId.of("k-never-minted-here");
 		assertThrows(ShreddingException.class, () -> own.resolveKey(neverMinted));
-		assertThrows(ShreddingException.class, () -> own.resolve(neverMinted));
 
 		// through the store: sealed under another key store's keys, read through this one
 		EventStream<PaymentEvent> elsewhere = eventStoreWithShredding(new InMemoryShreddingKeyStore()).getEventStream(STREAM, PaymentEvent.class);
@@ -805,11 +805,11 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		}
 
 		@Override
-		public Optional<SecretKey> resolve ( KeyId key ) {
+		public KeyResolution resolveKey ( KeyId key ) {
 			if ( failing ) {
 				throw new ShreddingException("simulated key store outage");
 			}
-			return delegate.resolve(key);
+			return delegate.resolveKey(key);
 		}
 
 		@Override
@@ -838,12 +838,6 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 			ActiveKey key = delegate.keyFor(subject);
 			minted.add(key.id());
 			return key;
-		}
-
-		@Override
-		public Optional<SecretKey> resolve ( KeyId key ) {
-			resolutions.add(key);
-			return delegate.resolve(key);
 		}
 
 		@Override
@@ -884,14 +878,6 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		@Override
 		public ActiveKey keyFor ( DataSubject subject ) {
 			return delegate.keyFor(subject);
-		}
-
-		@Override
-		public Optional<SecretKey> resolve ( KeyId key ) {
-			if ( denying ) {
-				throw new ShreddingException("a caller of the two-answer method cannot be told about a denial");
-			}
-			return delegate.resolve(key);
 		}
 
 		@Override

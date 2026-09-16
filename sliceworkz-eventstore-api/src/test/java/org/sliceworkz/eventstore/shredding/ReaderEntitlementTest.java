@@ -65,10 +65,6 @@ public class ReaderEntitlementTest {
 		Unsealed.Withheld withheld = assertInstanceOf(Unsealed.Withheld.class, namesOnly.open(street));
 		assertTrue(withheld.reason().contains("address"), withheld.reason());
 		assertEquals(List.of(name.key()), keyStore.resolved, "the withheld category must not reach the key store");
-
-		// the two-answer method cannot say withheld, and must not say erased
-		assertEquals(Optional.of("\"Alice\""), namesOnly.unseal(name));
-		assertThrows(ShreddingException.class, () -> namesOnly.unseal(street));
 	}
 
 	@Test
@@ -115,13 +111,13 @@ public class ReaderEntitlementTest {
 	@Test
 	void aKeyStoreOrCodecWithoutCrossCategoryErasureIsToldRatherThanNarrowed ( ) {
 		MapKeyStore keyStore = new MapKeyStore();
-		AesGcmShreddingCodec overOldKeyStore = AesGcmShreddingCodec.over(new TwoAnswerKeyStore(keyStore));
+		AesGcmShreddingCodec overOldKeyStore = AesGcmShreddingCodec.over(new OldKeyStore(keyStore));
 		Sealed name = overOldKeyStore.seal("\"Alice\"", IDENTITY);
 		Sealed street = overOldKeyStore.seal("\"Rue Haute 1\"", ADDRESS);
 
 		assertThrows(UnsupportedOperationException.class,
 				() -> overOldKeyStore.shredAllCategories("customer", "alice-42", ErasureReason.of("art.17")));
-		ShreddingCodec oldCodec = new TwoAnswerCodec(AesGcmShreddingCodec.over(keyStore));
+		ShreddingCodec oldCodec = new OldCodec(AesGcmShreddingCodec.over(keyStore));
 		assertThrows(UnsupportedOperationException.class,
 				() -> oldCodec.shredAllCategories("customer", "alice-42", ErasureReason.of("art.17")));
 
@@ -144,7 +140,6 @@ public class ReaderEntitlementTest {
 		ShreddingCodec none = ShreddingCodec.withholdingAll();
 
 		assertInstanceOf(Unsealed.Withheld.class, none.open(name));
-		assertThrows(ShreddingException.class, () -> none.unseal(name), "must not report withheld as erased");
 		assertThrows(ShreddingException.class, () -> none.seal("\"Alice\"", IDENTITY));
 		assertThrows(UnsupportedOperationException.class, () -> none.shred(IDENTITY, ErasureReason.of("art.17")));
 		assertThrows(UnsupportedOperationException.class, () -> none.shredAllCategories("customer", "alice-42", ErasureReason.of("art.17")));
@@ -161,34 +156,9 @@ public class ReaderEntitlementTest {
 		keyStore.denying = true;
 		Unsealed.Withheld withheld = assertInstanceOf(Unsealed.Withheld.class, codec.open(name));
 		assertEquals("simulated 403", withheld.reason());
-		assertThrows(ShreddingException.class, () -> codec.unseal(name), "the two-answer method cannot say withheld");
 
 		keyStore.denying = false;
 		assertEquals(new Unsealed.Plaintext("\"Alice\""), codec.open(name));
-	}
-
-	@Test
-	void theDefaultResolveKeyDerivesResolvedAndErasedFromResolveAndNeverDenied ( ) {
-		MapKeyStore keyStore = new MapKeyStore();
-		KeyId key = keyStore.keyFor(IDENTITY).id();
-
-		KeyResolution.Resolved resolved = assertInstanceOf(KeyResolution.Resolved.class, new TwoAnswerKeyStore(keyStore).resolveKey(key));
-		assertEquals(keyStore.resolve(key).orElseThrow(), resolved.key());
-
-		keyStore.shred(IDENTITY, ErasureReason.of("art.17"));
-		assertEquals(KeyResolution.Erased.INSTANCE, new TwoAnswerKeyStore(keyStore).resolveKey(key));
-	}
-
-	@Test
-	void theDefaultOpenDerivesPlaintextAndErasedFromUnsealAndNeverWithheld ( ) {
-		MapKeyStore keyStore = new MapKeyStore();
-		AesGcmShreddingCodec codec = AesGcmShreddingCodec.over(keyStore);
-		Sealed name = codec.seal("\"Alice\"", IDENTITY);
-
-		ShreddingCodec twoAnswers = new TwoAnswerCodec(codec);
-		assertEquals(new Unsealed.Plaintext("\"Alice\""), twoAnswers.open(name));
-		keyStore.shred(IDENTITY, ErasureReason.of("art.17"));
-		assertEquals(Unsealed.Erased.INSTANCE, twoAnswers.open(name));
 	}
 
 	@Test
@@ -224,14 +194,14 @@ public class ReaderEntitlementTest {
 	}
 
 	/**
-	 * A key store written against the two-answer contract only, to check the defaults derive the
-	 * three-answer one from it.
+	 * A key store written before cross-category erasure existed: the required methods and nothing
+	 * optional.
 	 */
-	private static final class TwoAnswerKeyStore implements ShreddingKeyStore {
+	private static final class OldKeyStore implements ShreddingKeyStore {
 
 		private final ShreddingKeyStore delegate;
 
-		private TwoAnswerKeyStore ( ShreddingKeyStore delegate ) {
+		private OldKeyStore ( ShreddingKeyStore delegate ) {
 			this.delegate = delegate;
 		}
 
@@ -241,8 +211,8 @@ public class ReaderEntitlementTest {
 		}
 
 		@Override
-		public Optional<SecretKey> resolve ( KeyId key ) {
-			return delegate.resolve(key);
+		public KeyResolution resolveKey ( KeyId key ) {
+			return delegate.resolveKey(key);
 		}
 
 		@Override
@@ -253,13 +223,13 @@ public class ReaderEntitlementTest {
 	}
 
 	/**
-	 * A codec written against the two-answer contract only.
+	 * A codec written before cross-category erasure existed: the required methods and nothing optional.
 	 */
-	private static final class TwoAnswerCodec implements ShreddingCodec {
+	private static final class OldCodec implements ShreddingCodec {
 
 		private final ShreddingCodec delegate;
 
-		private TwoAnswerCodec ( ShreddingCodec delegate ) {
+		private OldCodec ( ShreddingCodec delegate ) {
 			this.delegate = delegate;
 		}
 
@@ -269,8 +239,8 @@ public class ReaderEntitlementTest {
 		}
 
 		@Override
-		public Optional<String> unseal ( Sealed sealed ) {
-			return delegate.unseal(sealed);
+		public Unsealed open ( Sealed sealed ) {
+			return delegate.open(sealed);
 		}
 
 		@Override
@@ -303,17 +273,13 @@ public class ReaderEntitlementTest {
 		}
 
 		@Override
-		public Optional<SecretKey> resolve ( KeyId key ) {
-			resolved.add(key);
-			return Optional.ofNullable(material.get(key));
-		}
-
-		@Override
 		public KeyResolution resolveKey ( KeyId key ) {
 			if ( denying ) {
 				return new KeyResolution.Denied("simulated 403");
 			}
-			return ShreddingKeyStore.super.resolveKey(key);
+			resolved.add(key);
+			SecretKey secret = material.get(key);
+			return secret == null ? KeyResolution.Erased.INSTANCE : new KeyResolution.Resolved(secret);
 		}
 
 		@Override

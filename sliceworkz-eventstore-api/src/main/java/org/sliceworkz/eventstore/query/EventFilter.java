@@ -142,7 +142,7 @@ public record EventFilter ( List<EventFilterItem> items, EventReference until ) 
 	 * Creates a new EventFilter with the specified "until" reference.
 	 * The resulting filter will only match events up to and including the specified reference.
 	 *
-	 * @param until the reference to match up to (events after this reference will not match)
+	 * @param until the reference to match up to (events after this reference will not match), or null for no boundary
 	 * @return a new EventFilter with the "until" reference set
 	 */
 	public EventFilter until ( EventReference until ) {

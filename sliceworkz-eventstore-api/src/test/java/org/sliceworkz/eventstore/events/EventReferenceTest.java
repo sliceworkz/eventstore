@@ -269,12 +269,6 @@ public class EventReferenceTest {
 	}
 
 	@Test
-	void testNone ( ) {
-		EventReference r = EventReference.none();
-		assertNull(r);
-	}
-
-	@Test
 	void testToStringWithoutIndex (  ) {
 		EventId id = EventId.of("550e8400-e29b-41d4-a716-446655440000");
 		EventReference r = EventReference.of(id, 42, 10);

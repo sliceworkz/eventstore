@@ -42,7 +42,7 @@ import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Lease;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.query.EventQuery;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.spi.EventImportConflictException;
@@ -80,7 +80,7 @@ import tools.jackson.databind.json.JsonMapper;
  *
  * <h2>Optimistic Locking:</h2>
  * Optimistic locking is implemented by synchronizing both the query and append operations within the
- * {@link #append(AppendCriteria, Optional, List)} method. This ensures that checking for new events
+ * {@link #append(AppendCriteria, EventStreamId, List)} method. This ensures that checking for new events
  * and appending are atomic, preventing race conditions in concurrent scenarios.
  *
  * <h2>Event Validation:</h2>
@@ -269,20 +269,21 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	 *   <li>Result limits (both soft and absolute)</li>
 	 * </ul>
 	 *
-	 * @param query the event query specifying which events to retrieve
-	 * @param stream optional stream ID to filter events; if empty, events from all streams are considered
+	 * @param filter the event filter specifying which events to retrieve
+	 * @param stream the stream to read; a wildcard component reads across it, and the wildcard stream reads the whole log
 	 * @param after the reference to start after; events after this position are included
 	 * @param limit soft limit on the number of results; may be overridden by absolute limit
 	 * @param direction the direction to traverse the event log (FORWARD or BACKWARD)
 	 * @return a Stream of StoredEvent instances matching the criteria
 	 * @throws EventStorageException if the result exceeds the configured absolute limit
-	 * @see EventQuery
+	 * @see EventFilter
 	 * @see EventReference
 	 * @see QueryDirection
 	 */
 	@Override
-	public synchronized Stream<StoredEvent> query(EventQuery query, Optional<EventStreamId> stream, EventReference after, Limit limit, QueryDirection direction ) {
+	public synchronized Stream<StoredEvent> query(EventFilter filter, EventStreamId stream, EventReference after, Limit limit, QueryDirection direction ) {
 		checkNotClosed();
+		requireStream(stream);
 		Stream<StoredEvent> on;
 
 		switch ( direction ) {
@@ -315,10 +316,10 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		// matching criterion, not a traversal one: it is an inclusive upper bound over the total
 		// (tx, position, index) order and means the same thing in both directions. So the events beyond
 		// it are a suffix of a forward traversal and a prefix of a backward one -- hence takeWhile vs
-		// dropWhile. This is purely a short-circuit; the boundary itself is enforced by query::matches
+		// dropWhile. This is purely a short-circuit; the boundary itself is enforced by filter::matches
 		// below, which is where the exact comparison lives.
-		if ( query.until() != null ) {
-			EventReference until = query.until();
+		if ( filter.until() != null ) {
+			EventReference until = filter.until();
 			if ( direction == QueryDirection.BACKWARD ) {
 				on = on.dropWhile(e->e.reference().happenedAfter(until));
 			} else {
@@ -328,13 +329,10 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		
 		Stream<StoredEvent> result = on;
 
-		if ( stream.isPresent() ) {
-			result = result.filter(e->stream.get().canRead(e.stream()));
-		} else {
-			// no stream specified, considering all streams present in the store
-		}
+		// a wildcard stream reads everything, so canRead is the whole of the stream scoping
+		result = result.filter(e->stream.canRead(e.stream()));
 		
-		result = result.filter(query::matches);
+		result = result.filter(filter::matches);
 
 		Limit effectiveLimit = effectiveLimit(limit);
 		
@@ -390,8 +388,9 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	 *  Synchronized method, to allow re-querying and storing in one shot (required for optimistic locking)
 	 */
 	@Override
-	public synchronized List<StoredEvent> append(AppendCriteria appendCriteria, Optional<EventStreamId> streamId, List<EventToStore> events) {
+	public synchronized List<StoredEvent> append(AppendCriteria appendCriteria, EventStreamId streamId, List<EventToStore> events) {
 		checkNotClosed();
+		requireStream(streamId);
 		
 		verifyPersistableJson(events);
 		rejectRepeatedIdempotencyKeys(events);
@@ -409,8 +408,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 			
 			// we query the stream with the event filter from the last event known as our reference
 			// we only need to fetch max 1 event to prove a locking issue
-			EventQuery lockingQuery = new EventQuery(appendCriteria.eventFilter(), EventQuery.Direction.FORWARD, Limit.none());
-			Stream<StoredEvent> newEventStream = query(lockingQuery, streamId, appendCriteria.expectedLastEventReference().orElse(null), Limit.to(1), QueryDirection.FORWARD);
+			Stream<StoredEvent> newEventStream = query(appendCriteria.eventFilter(), streamId, appendCriteria.expectedLastEventReference().orElse(null), Limit.to(1), QueryDirection.FORWARD);
 
 			List<StoredEvent> newEvents = newEventStream.toList();
 
@@ -631,13 +629,23 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	 * issued at the same instant would return last.
 	 */
 	@Override
-	public synchronized Optional<EventReference> head ( Optional<EventStreamId> stream ) {
+	public synchronized Optional<EventReference> head ( EventStreamId stream ) {
 		checkNotClosed();
-		Stream<StoredEvent> newestFirst = eventlog.reversed().stream();
-		if ( stream.isPresent() ) {
-			newestFirst = newestFirst.filter(e -> stream.get().canRead(e.stream()));
+		requireStream(stream);
+		return eventlog.reversed().stream()
+				.filter(e -> stream.canRead(e.stream()))
+				.findFirst()
+				.map(StoredEvent::reference);
+	}
+
+	/**
+	 * The stream scope of a read or a check is never absent: the whole storage is
+	 * {@link EventStreamId#anyContext()}, a wildcard the scoping code handles like any other.
+	 */
+	private static void requireStream ( EventStreamId stream ) {
+		if ( stream == null ) {
+			throw new IllegalArgumentException("stream cannot be null; use EventStreamId.anyContext() for the whole storage");
 		}
-		return newestFirst.findFirst().map(StoredEvent::reference);
 	}
 
 	@Override

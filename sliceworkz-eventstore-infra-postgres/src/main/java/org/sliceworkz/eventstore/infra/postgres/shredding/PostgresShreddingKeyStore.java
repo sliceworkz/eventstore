@@ -317,20 +317,6 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 	}
 
 	@Override
-	public Optional<SecretKey> resolve ( KeyId key ) {
-		return switch ( resolveKey(key) ) {
-			case KeyResolution.Resolved resolved -> Optional.of(resolved.key());
-			case KeyResolution.Erased erased -> Optional.empty();
-			// The two-answer method cannot say "denied", and reporting it as erased is the one thing this
-			// subsystem must never do. Nothing in the library calls this method; a caller that does is
-			// told through the exception.
-			case KeyResolution.Denied denied -> throw new ShreddingException(
-					"this role is not entitled to key %s in %s (%s); resolve it through resolveKey, which can say so"
-							.formatted(key, tableName, denied.reason()));
-		};
-	}
-
-	@Override
 	public KeyResolution resolveKey ( KeyId key ) {
 		if ( key == null ) {
 			throw new IllegalArgumentException("key cannot be null");

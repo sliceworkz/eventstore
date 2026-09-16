@@ -202,20 +202,6 @@ public class AesGcmShreddingCodec implements ShreddingCodec {
 	}
 
 	@Override
-	public Optional<String> unseal ( Sealed sealed ) {
-		return switch ( open(sealed) ) {
-			case Unsealed.Plaintext plaintext -> Optional.of(plaintext.json());
-			case Unsealed.Erased erased -> Optional.empty();
-			// The two-answer method cannot say "withheld", and reporting it as erased is the one
-			// conflation this subsystem must never make. Nothing in the library calls this method; a
-			// caller that does is told through the exception rather than through a lie.
-			case Unsealed.Withheld withheld -> throw new ShreddingException(
-					"the value for subject %s under key %s is withheld (%s); read it through open(Sealed), which can say so"
-							.formatted(sealed.subject(), sealed.key(), withheld.reason()));
-		};
-	}
-
-	@Override
 	public Unsealed open ( Sealed sealed ) {
 		if ( sealed == null ) {
 			throw new IllegalArgumentException("sealed cannot be null");

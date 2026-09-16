@@ -18,8 +18,10 @@
 package org.sliceworkz.eventstore.impl;
 
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -33,6 +35,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.slf4j.Logger;
@@ -46,6 +49,7 @@ import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventDeserializationException;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
+import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.shredding.DataSubject;
@@ -772,7 +776,7 @@ public class EventStoreImpl implements EventStore {
 			// Deserialisation and upcasting are deliberately outside this timer: they happen per element
 			// as the caller consumes, are counted separately by sliceworkz.eventstore.query.event, and
 			// are the caller's pace, not the store's.
-			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query), Optional.of(eventStreamId), cursor, query.limit(), direction));
+			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query.filter()), eventStreamId, cursor, query.limit(), direction));
 		}
 
 		/**
@@ -886,7 +890,7 @@ public class EventStoreImpl implements EventStore {
 			List<Event<EVENT_TYPE>> appendedEvents;
 			try {
 				List<EventToStore> eventsToStore = reduce(events);
-				List<StoredEvent> storedEvents = timerAppend.record(()->eventStorage.append(storageCriteria, Optional.of(eventStreamId), eventsToStore));
+				List<StoredEvent> storedEvents = timerAppend.record(()->eventStorage.append(storageCriteria, eventStreamId, eventsToStore));
 				appendedEvents = storedEvents.stream().flatMap(se->enrich(se, QueryDirection.FORWARD)).toList();
 				meterAppend.increment();
 
@@ -932,13 +936,6 @@ public class EventStoreImpl implements EventStore {
 		/**
 		 * Traces back all current event types to their legacy historical ones, so a full query is done on older and newer ones
 		 */
-		private EventQuery includeLegacyEventTypes ( EventQuery query ) {
-			if ( query.items() == null ) {
-				return query; // match-all, nothing to modify
-			} else {
-				return new EventQuery(includeLegacyEventTypes(query.filter()), query.direction(), query.limit());
-			}
-		}
 
 		/**
 		 * The same trace-back for a consistency boundary: a legacy event that upcasts into a type of the
@@ -948,13 +945,20 @@ public class EventStoreImpl implements EventStore {
 		 * append does not.
 		 */
 		private AppendCriteria includeLegacyEventTypes ( AppendCriteria criteria ) {
-			if ( criteria.eventFilter().items() == null ) {
-				return criteria; // match-all, nothing to modify
+			if ( criteria.eventFilter().isMatchAll() ) {
+				return criteria; // nothing to modify, and the caller's own criteria is what storage's exception then names
 			}
 			return new AppendCriteria(includeLegacyEventTypes(criteria.eventFilter()), criteria.expectedLastEventReference());
 		}
 
+		/**
+		 * The same trace-back for a filter, which is what storage is asked with: a query for a current
+		 * type has to fetch the legacy events that upcast into it.
+		 */
 		private EventFilter includeLegacyEventTypes ( EventFilter filter ) {
+			if ( filter.isMatchAll() ) {
+				return filter; // match-all has no items to trace back
+			}
 			return new EventFilter(filter.items().stream().map(this::includeLegacyEventTypes).toList(), filter.until());
 		}
 
@@ -979,7 +983,35 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		private EventTypesFilter includeLegacyEventTypes ( EventTypesFilter typesFilter ) {
+			rejectLegacyEventTypes(typesFilter.eventTypes());
 			return EventTypesFilter.of(serde.determineLegacyTypes(typesFilter.eventTypes()));
+		}
+
+		/**
+		 * A filter on a typed stream names current types. A legacy type in it is refused, for a query
+		 * and for a consistency boundary alike, because neither can be answered: storage would fetch
+		 * the legacy events, the read would upcast them into their current types, and the filter,
+		 * re-applied to what was read, would drop every one of them for not being the type it names --
+		 * a query returning nothing, while the same filter as a boundary, checked over stored names,
+		 * counts the very events the query cannot return. Mapping the name forward instead would
+		 * answer a question the caller did not ask: a filter over the legacy type would return every
+		 * event of the current type, the ones never stored under the legacy name included. Refused
+		 * here, in the one place both paths pass through, so they cannot come to disagree again.
+		 */
+		private void rejectLegacyEventTypes ( Set<EventType> eventTypes ) {
+			Map<EventType, Set<EventType>> legacy = serde.legacyTypesAmong(eventTypes);
+			if ( legacy.isEmpty() ) {
+				return;
+			}
+			String named = legacy.keySet().stream()
+					.sorted(Comparator.comparing(EventType::name))
+					.map(type -> legacy.get(type).isEmpty()
+							? "'%s' (a legacy type upcasting into no current type, so no query on this stream can return it and no boundary can count it)".formatted(type.name())
+							: "'%s' (a legacy type, read as %s)".formatted(type.name(), legacy.get(type).stream().map(t -> "'" + t.name() + "'").sorted().collect(Collectors.joining(", "))))
+					.collect(Collectors.joining(", "));
+			throw new IllegalArgumentException(
+					"a query or a consistency boundary on this stream names the current event types, and it returns and counts the legacy events that upcast into them; it cannot name a legacy type: %s"
+							.formatted(named));
 		}
 
 		@Override
@@ -1148,7 +1180,7 @@ public class EventStoreImpl implements EventStore {
 			// straight to the storage: the head is a stored event's reference and nothing about it goes
 			// through this stream's mappings -- no legacy-type widening, no upcasting, no decryption --
 			// which is what lets it be answered for a head this stream could not read
-			return timerHead.record(() -> eventStorage.head(Optional.of(eventStreamId)));
+			return timerHead.record(() -> eventStorage.head(eventStreamId));
 		}
 
 	}

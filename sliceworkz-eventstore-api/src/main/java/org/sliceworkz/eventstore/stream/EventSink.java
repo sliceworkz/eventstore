@@ -143,7 +143,9 @@ public interface EventSink<DOMAIN_EVENT_TYPE> {
 	 *         was de-duplicated on an idempotency key
 	 * @throws OptimisticLockingException if append criteria are violated (new relevant facts detected)
 	 * @throws IllegalArgumentException if this stream is a wildcard stream, if an event's type is not one this
-	 *         stream has a mapping for, or if two events of the batch carry the same idempotency key
+	 *         stream has a mapping for, if two events of the batch carry the same idempotency key, or if
+	 *         the criteria's filter names a legacy event type of this stream — a boundary names current
+	 *         types, exactly as a query does, and counts the legacy events that upcast into them
 	 * @throws IdempotencyKeyConflictException if some of the batch's idempotency keys are already stored on
 	 *         the stream and others are not; nothing is stored
 	 * @throws org.sliceworkz.eventstore.events.EventSerializationException if an event's payload cannot be

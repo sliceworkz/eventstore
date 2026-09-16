@@ -33,7 +33,6 @@ import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
 import java.time.Duration;
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
@@ -450,7 +449,7 @@ class PostgresNotificationStartupTest {
 				}
 
 				EventStreamId stream = EventStreamId.forContext("junk").withPurpose("p");
-				StoredEvent stored = storage.append(AppendCriteria.none(), Optional.of(stream),
+				StoredEvent stored = storage.append(AppendCriteria.none(), stream,
 					List.of(new EventToStore(stream, EventType.ofType("SomethingHappened"), "{}", Tags.none(), null))).getFirst();
 				storage.bookmark("reader", stored.reference(), Tags.none());
 

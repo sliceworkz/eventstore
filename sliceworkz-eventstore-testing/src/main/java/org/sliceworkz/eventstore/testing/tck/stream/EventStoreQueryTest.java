@@ -319,7 +319,7 @@ public class EventStoreQueryTest extends AbstractEventStoreTest {
 		return query(eventQuery, limit, null);
 	}
 	private Stream<Event<BankDomainEvent>> query ( EventQuery eventQuery, Limit limit, Event<?> after ) {
-		return eventStore().getEventStream(EventStreamId.forContext("app").withPurpose("domain"), BankDomainEvent.class).query(eventQuery, after==null?null:after.reference(), limit);
+		return eventStore().getEventStream(EventStreamId.forContext("app").withPurpose("domain"), BankDomainEvent.class).query(limited(eventQuery, limit), after==null?null:after.reference());
 	}
 
 	private Stream<Event<BankDomainEvent>> queryReversed ( EventQuery eventQuery ) {
@@ -329,7 +329,11 @@ public class EventStoreQueryTest extends AbstractEventStoreTest {
 		return queryReversed(eventQuery, limit, null);
 	}
 	private Stream<Event<BankDomainEvent>> queryReversed ( EventQuery eventQuery, Limit limit, Event<?> before ) {
-		return eventStore().getEventStream(EventStreamId.forContext("app").withPurpose("domain"), BankDomainEvent.class).query(eventQuery.backwards(), before==null?null:before.reference(), limit);
+		return eventStore().getEventStream(EventStreamId.forContext("app").withPurpose("domain"), BankDomainEvent.class).query(limited(eventQuery.backwards(), limit), before==null?null:before.reference());
+	}
+
+	private static EventQuery limited ( EventQuery eventQuery, Limit limit ) {
+		return limit == null ? eventQuery : eventQuery.limit(limit);
 	}
 
 	private long queryOther ( EventQuery eventQuery ) {

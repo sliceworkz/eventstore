@@ -19,7 +19,6 @@ package org.sliceworkz.eventstore.stream;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import org.sliceworkz.eventstore.events.Bookmark;
@@ -28,7 +27,6 @@ import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventQuery;
-import org.sliceworkz.eventstore.query.Limit;
 
 /**
  * Interface for reading events from an event stream.
@@ -40,7 +38,7 @@ import org.sliceworkz.eventstore.query.Limit;
  * <ul>
  *   <li>Flexible querying with {@link EventQuery} for filtering by event types and tags</li>
  *   <li>Forward and backward iteration through events</li>
- *   <li>Pagination support via {@link Limit} and {@link EventReference}</li>
+ *   <li>Paging with a cursor, via {@link #page(EventQuery, EventReference)}</li>
  *   <li>The stream {@link #head() head}, to pin a consistency boundary before a decision is read</li>
  *   <li>Event subscriptions for reactive processing</li>
  *   <li>Bookmarking for tracking read positions</li>
@@ -82,8 +80,10 @@ import org.sliceworkz.eventstore.query.Limit;
  * already does this — it reads in batches of
  * {@value org.sliceworkz.eventstore.projection.Projector.Builder#DEFAULT_MAX_EVENTS_PER_QUERY} and
  * carries a cursor between them — and is the right tool for replaying a stream of unknown size. To do
- * it by hand, page with {@link #query(EventQuery, EventReference)} and a limited query, advancing the
- * cursor to the last reference of each page.
+ * it by hand, read with {@link #page(EventQuery, EventReference)} and a limited query, advancing the
+ * cursor to the {@link EventPage#lastStoredEventReference() last stored event} of each page: that is
+ * a reference the page always carries, where the last <em>event</em> of a page is missing whenever
+ * its stored events all upcast into nothing.
  *
  * <h2>Example Usage:</h2>
  * <pre>{@code
@@ -103,19 +103,16 @@ import org.sliceworkz.eventstore.query.Limit;
  *     )
  * );
  *
- * // Paginated query (first 10 events)
- * Stream<Event<CustomerEvent>> page1 = stream.query(
- *     EventQuery.matchAll(),
- *     null, // start from beginning
- *     Limit.of(10)
+ * // Paged read (first 10 stored events)
+ * EventPage<CustomerEvent> page1 = stream.page(
+ *     EventQuery.matchAll().limit(10),
+ *     null // start from beginning
  * );
  *
- * // Next page (after last event from page1)
- * EventReference lastRef = page1.reduce((first, second) -> second).get().reference();
- * Stream<Event<CustomerEvent>> page2 = stream.query(
- *     EventQuery.matchAll(),
- *     lastRef,
- *     Limit.of(10)
+ * // Next page (after the last stored event page1 read)
+ * EventPage<CustomerEvent> page2 = stream.page(
+ *     EventQuery.matchAll().limit(10),
+ *     page1.lastStoredEventReference().orElse(null)
  * );
  *
  * // Backward query (most recent 10 events)
@@ -183,85 +180,72 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	}
 
 	/**
-	 * Queries events from the stream with full control over pagination and raw cursor tracking: the
-	 * paging primitive.
+	 * Queries events from the stream starting from a cursor, respecting the query's own direction and
+	 * limit.
 	 * <p>
-	 * The other {@code query} overloads are conveniences over this one. What it adds is the
-	 * {@code storedEventCursorTracker}, invoked once for each stored event read from storage,
-	 * <em>before</em> upcasting and filtering, with that stored event's reference. It exists because a
-	 * page is a page of <em>stored</em> events, and a stored event may upcast into nothing: a page
-	 * whose every stored event does so returns an empty stream, and a caller advancing its cursor by
-	 * the last event it received would then re-read the same page forever. The tracker hands over the
-	 * cursor the returned events cannot — the reference of the last stored event read — so the caller
-	 * advances past the page whatever it upcast into. {@link org.sliceworkz.eventstore.projection.Projector}
-	 * pages with it, and so should any code paging by hand over a stream with legacy types; a caller
-	 * that never pages needs nothing here.
-	 * <p>
-	 * The cursor reference enables pagination:
+	 * The cursor says where to start reading, not how much to read or what matches:
 	 * <ul>
 	 *   <li><strong>Forward queries:</strong> the cursor acts as "after" — only events after this reference are returned</li>
 	 *   <li><strong>Backward queries:</strong> the cursor acts as "before" — only events before this reference are returned</li>
 	 * </ul>
-	 * The cursor is purely a technical optimization — it does not affect which events match the query,
-	 * only where the scan starts. The 'until' reference in the EventQuery is the functional boundary
-	 * that determines query results.
+	 * It is a technical starting point and never a functional boundary; the {@code until} reference of
+	 * the {@link EventQuery} is the boundary that determines what a query sees. The direction comes from
+	 * the query ({@link EventQuery#backwards()}) and so does the limit ({@link EventQuery#limit(long)}),
+	 * exactly as for {@link #query(EventQuery)}, so {@code query(q.limit(500), cursor)} reads 500 stored
+	 * events past the cursor and a query with no limit reads to the end. The alternative — a cursor
+	 * overload that reads to the end regardless of the query's limit — loses because it turns the
+	 * natural way to page, a limited query and a cursor, into a full read of everything past the cursor:
+	 * fetched from storage and held in heap, the caller still receiving its first 500 events and paying
+	 * for all of them, with nothing to say so.
 	 * <p>
 	 * <strong>Deserialization is lazy.</strong> Storage has finished reading by the time this returns, but
 	 * each event's payload is converted as the returned Stream is consumed — so an
 	 * {@link org.sliceworkz.eventstore.events.EventDeserializationException} for a stored event this
 	 * stream's type mappings cannot read is thrown from the caller's terminal operation, not from here.
-	 *
-	 * @param query the query criteria specifying which events to retrieve and in which direction
-	 * @param cursor optional reference for pagination (after for forward, before for backward), null to start from the beginning/end
-	 * @param limit how many stored events to read (overrides the query's own limit); see {@link #query(EventQuery)} for why that is not always the number of events returned
-	 * @param storedEventCursorTracker callback invoked with each raw stored event's reference before upcasting, useful for advancing cursors past events that upcast to zero enriched events
-	 * @return a Stream of events matching the query criteria
-	 * @see EventQuery
-	 * @see Limit
-	 */
-	Stream<Event<DOMAIN_EVENT_TYPE>> query ( EventQuery query, EventReference cursor, Limit limit, Consumer<EventReference> storedEventCursorTracker );
-
-	/**
-	 * Queries events from the stream with full control over pagination.
 	 * <p>
-	 * This is a convenience overload that delegates to
-	 * {@link #query(EventQuery, EventReference, Limit, Consumer)} with a no-op cursor tracker.
-	 *
-	 * @param query the query criteria specifying which events to retrieve and in which direction
-	 * @param cursor optional reference for pagination (after for forward, before for backward), null to start from the beginning/end
-	 * @param limit how many stored events to read (overrides the query's own limit); see {@link #query(EventQuery)} for why that is not always the number of events returned
-	 * @return a Stream of events matching the query criteria
-	 * @see EventQuery
-	 * @see Limit
-	 */
-	default Stream<Event<DOMAIN_EVENT_TYPE>> query ( EventQuery query, EventReference cursor, Limit limit ) {
-		return query(query, cursor, limit, ref -> {});
-	}
-
-	/**
-	 * Queries events from the stream starting from a specific cursor reference, respecting the query's
-	 * own direction and limit.
-	 * <p>
-	 * Convenience method for paginated queries. The direction comes from the query
-	 * ({@link EventQuery#backwards()}) and so does the limit ({@link EventQuery#limit(long)}), exactly
-	 * as for {@link #query(EventQuery)} — a cursor says where to start reading, not how much to read.
-	 * To override the query's own limit, pass one explicitly through
-	 * {@link #query(EventQuery, EventReference, Limit)}, or {@link Limit#none()} there to read to the
-	 * end of the stream.
-	 * <p>
-	 * This overload used to substitute {@link Limit#none()} for the query's limit, which made the
-	 * natural way to page — {@code query(q.limit(500), cursor)} — an unbounded read of everything past
-	 * the cursor: fetched from storage and held in heap, since a storage query materialises its whole
-	 * result set before returning it. It degraded silently, the caller still receiving its first 500
-	 * events, having paid for all of them.
+	 * To page through a stream, prefer {@link #page(EventQuery, EventReference)}: it answers, beside
+	 * the events, how many stored events were read and the reference to continue from, which the events
+	 * alone cannot say once upcasting is involved.
 	 *
 	 * @param query the query criteria specifying which events to retrieve, in which direction, and how many
-	 * @param cursor optional reference for pagination, null to start from the beginning/end
+	 * @param cursor optional reference for pagination (after for forward, before for backward), null to start from the beginning/end
 	 * @return a Stream of events matching the query criteria
+	 * @see #page(EventQuery, EventReference)
 	 */
-	default Stream<Event<DOMAIN_EVENT_TYPE>> query ( EventQuery query, EventReference cursor ) {
-		return query(query, cursor, query.limit());
-	}
+	Stream<Event<DOMAIN_EVENT_TYPE>> query ( EventQuery query, EventReference cursor );
+
+	/**
+	 * Reads one page of events from the stream, starting from a cursor: the events a
+	 * {@link #query(EventQuery, EventReference) query} with the same arguments would return, together
+	 * with how many stored events were read to produce them and the reference of the last of those.
+	 * <p>
+	 * This is the read to page through a stream with. The events alone are not enough to page
+	 * correctly, because the query's limit counts <em>stored</em> events and an
+	 * {@link org.sliceworkz.eventstore.events.Upcast @Upcast} may turn a stored event into several or
+	 * into none: a page holding no events can sit in the middle of a stream, and the reference to
+	 * continue from can be on no event returned. {@link EventPage#storedEventCount()} says whether the
+	 * page was short of the limit it was read with, which is what ends a paged read, and
+	 * {@link EventPage#lastStoredEventReference()} is the cursor of the next page whatever the events
+	 * upcast into. {@link org.sliceworkz.eventstore.projection.Projector} pages this way.
+	 * <p>
+	 * The cursor and the limit mean what they mean for {@link #query(EventQuery, EventReference)}: the
+	 * cursor is where the read starts, the query's own {@link EventQuery#limit(long) limit} is how many
+	 * stored events it reads, and a query with no limit reads everything past the cursor as one page —
+	 * into heap, so a paged read carries a limit.
+	 * <p>
+	 * <strong>A page is read whole.</strong> Unlike the query overloads, every payload is converted
+	 * before this returns, so an {@link org.sliceworkz.eventstore.events.EventDeserializationException}
+	 * for a stored event this stream's type mappings cannot read is thrown from here, and a page that
+	 * holds a poison event hands out none of its events.
+	 *
+	 * @param query the query criteria specifying which events to retrieve, in which direction, and how many stored events to read
+	 * @param cursor optional reference for pagination (after for forward, before for backward), null to start from the beginning/end
+	 * @return the page read: its events, the number of stored events read, and the reference of the last of them
+	 * @throws org.sliceworkz.eventstore.events.EventDeserializationException if a stored event read for
+	 *         this page cannot be read through this stream's type mappings
+	 * @see EventPage
+	 */
+	EventPage<DOMAIN_EVENT_TYPE> page ( EventQuery query, EventReference cursor );
 
 	/**
 	 * Queries events from the stream, respecting the query's own direction and limit.
@@ -283,7 +267,7 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * in memory (see the class javadoc), so {@code query(EventQuery.matchAll())} on a large stream is an
 	 * {@link OutOfMemoryError} rather than something that can be consumed a piece at a time, and
 	 * {@code query(q).findFirst()} pays for the whole result set. Give the query a limit and page with
-	 * {@link #query(EventQuery, EventReference)}, or use
+	 * {@link #page(EventQuery, EventReference)}, or use
 	 * {@link org.sliceworkz.eventstore.projection.Projector}, which does that for you.
 	 *
 	 * @param query the query criteria specifying which events to retrieve
@@ -295,7 +279,7 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 *         read as a type it does not name), so it is refused rather than answered empty
 	 */
 	default Stream<Event<DOMAIN_EVENT_TYPE>> query ( EventQuery query ) {
-		return query(query, null, query.limit());
+		return query(query, null);
 	}
 
 	/**

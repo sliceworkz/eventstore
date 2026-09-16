@@ -31,7 +31,6 @@ import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
-import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -157,7 +156,7 @@ public class EventQueryUntilBoundaryTest extends AbstractEventStoreTest {
 		assertEquals(List.of("1", "2", "3", "4"), values(stream.query(firsts.until(at(7)))));
 		assertEquals(List.of("1", "2", "3"), values(stream.query(firsts.until(at(4)))));
 		assertEquals(List.of("1"), values(stream.query(firsts.until(at(1)))));
-		assertEquals(List.of("1", "2"), values(stream.query(firsts.until(at(4)), null, Limit.to(2))));
+		assertEquals(List.of("1", "2"), values(stream.query(firsts.until(at(4)).limit(2), null)));
 	}
 
 	/**

@@ -17,12 +17,8 @@
  */
 package org.sliceworkz.eventstore.query;
 
-import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
@@ -284,7 +280,7 @@ public record EventQuery ( EventFilter filter, Direction direction, Limit limit 
 	 * preserve per-query semantics: e.g. two {@code backwards().limit(1)} savepoint queries
 	 * united into {@code (A OR B) limit 1} would return the single most-recent event of
 	 * <em>either</em> type, not the last of A <em>and</em> the last of B. Limited queries must
-	 * therefore be executed separately (see {@link #merge(java.util.Collection)}).
+	 * therefore be executed separately.
 	 *
 	 * @param other the other query to unite with this one
 	 * @return a new EventQuery representing the union of both queries
@@ -316,87 +312,6 @@ public record EventQuery ( EventFilter filter, Direction direction, Limit limit 
 	@Deprecated(since = "0.11.0", forRemoval = true)
 	public EventQuery combineWith ( EventQuery other ) {
 		return or(other);
-	}
-
-	/**
-	 * Grouping key for {@link #merge(Collection)}: queries can only be merged when they share
-	 * the same direction and the same "until" boundary. {@link EventReference} is value-equal
-	 * and may be {@code null} (no boundary); the record key handles {@code null} components.
-	 */
-	private record GroupKey ( Direction direction, EventReference until ) { }
-
-	/**
-	 * Merges a collection of {@code x} queries into the minimal set of {@code y <= x} compatible
-	 * merged queries, returning a {@link MergedEventQueries} that records which merged query
-	 * absorbed each original (so callers can run the merged queries and re-filter results per
-	 * original).
-	 *
-	 * <p>Merge rules:
-	 * <ul>
-	 *   <li><strong>Unlimited queries</strong> ({@code limit().isNotSet()}) are grouped by
-	 *       {@code (direction, until)} and folded into one merged query per group via
-	 *       {@link #or(EventQuery)}. Forward and backward queries, and queries with
-	 *       different {@code until} boundaries, therefore never merge.</li>
-	 *   <li><strong>Limited queries</strong> ({@code limit().isSet()}) are always kept separate
-	 *       (passed through unchanged) — a shared limit over a union does not preserve per-query
-	 *       semantics, so each limited query is its own merged query.</li>
-	 *   <li><strong>Match-all dominates its group:</strong> if any member of a group is match-all,
-	 *       the merged query is match-all (with that group's direction and until), as a union with
-	 *       everything is everything; the merged query is a superset of every member, so per-original
-	 *       re-filtering stays correct.</li>
-	 *   <li><strong>Match-none</strong> members are harmless no-ops in a fold; a group consisting
-	 *       only of match-none queries folds to match-none.</li>
-	 * </ul>
-	 *
-	 * <p>Because EventQuery is a value type, originals that are {@code equals} collapse to one
-	 * entry in the original-to-merged mapping and route identically.
-	 *
-	 * @param queries the queries to merge (must not be null or contain null elements; may be empty)
-	 * @return the merged queries together with the original-to-merged mapping
-	 * @throws IllegalArgumentException if {@code queries} is null or contains a null element
-	 */
-	public static MergedEventQueries merge ( Collection<EventQuery> queries ) {
-		if ( queries == null ) {
-			throw new IllegalArgumentException("queries collection must not be null");
-		}
-
-		List<EventQuery> mergedList = new ArrayList<>();
-		Map<EventQuery, EventQuery> originalToMerged = new LinkedHashMap<>();
-		Map<EventQuery, List<EventQuery>> mergedToOriginals = new LinkedHashMap<>();
-		Map<GroupKey, List<EventQuery>> groups = new LinkedHashMap<>();
-
-		// First pass: passthrough limited queries, bucket unlimited queries by group key.
-		for ( EventQuery q : queries ) {
-			if ( q == null ) {
-				throw new IllegalArgumentException("merge input must not contain null queries");
-			}
-			if ( q.limit().isSet() ) {
-				record(q, q, mergedList, originalToMerged, mergedToOriginals);
-			} else {
-				groups.computeIfAbsent(new GroupKey(q.direction(), q.until()), k -> new ArrayList<>()).add(q);
-			}
-		}
-
-		// Second pass: fold each group into a single merged query.
-		for ( List<EventQuery> members : groups.values() ) {
-			EventQuery merged = members.stream().reduce(EventQuery::or).orElseThrow();
-
-			for ( EventQuery member : members ) {
-				record(member, merged, mergedList, originalToMerged, mergedToOriginals);
-			}
-		}
-
-		return new MergedEventQueries(mergedList, originalToMerged, mergedToOriginals);
-	}
-
-	private static void record ( EventQuery original, EventQuery merged, List<EventQuery> mergedList,
-			Map<EventQuery, EventQuery> originalToMerged, Map<EventQuery, List<EventQuery>> mergedToOriginals ) {
-		originalToMerged.put(original, merged);
-		List<EventQuery> originals = mergedToOriginals.computeIfAbsent(merged, k -> new ArrayList<>());
-		if ( originals.isEmpty() ) {
-			mergedList.add(merged);
-		}
-		originals.add(original);
 	}
 
 	/**

@@ -28,7 +28,6 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
-import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorageException;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
@@ -91,13 +90,13 @@ public class EventStoreLimitTest extends AbstractEventStoreTest {
 	 * the failure this pins, since it is otherwise invisible: the caller still receives the two events
 	 * it asked for, having paid to fetch and materialise every event in the store.
 	 * <p>
-	 * Every overload is exercised, because they do not all carry the limit the same way: one takes it
-	 * from the query, one takes it as an argument, and the cursor overload used to substitute
-	 * {@link Limit#none()} for it — turning the natural way to page through a stream into a full read
-	 * of everything past the cursor.
+	 * Every read is exercised — the plain query, the query from a cursor and the page from a cursor —
+	 * because each of them takes the limit from the query and is the natural way to page through a
+	 * stream. The alternative for the cursor reads — substituting no limit for the query's own — loses
+	 * because it turns that paging into a full read of everything past the cursor, silently.
 	 */
 	@ForEachBackend(requires = Capability.RESULT_LIMIT)
-	void testAnAskedForLimitReachesTheStorageQueryOnEveryOverload ( ) {
+	void testAnAskedForLimitReachesTheStorageQueryOnEveryRead ( ) {
 		for ( int i = 0 ; i < 8 ; i++ ) {
 			storeEvent(stream, new MockDomainEvent.FirstDomainEvent("event-" + i), Tags.none());
 		}
@@ -113,11 +112,8 @@ public class EventStoreLimitTest extends AbstractEventStoreTest {
 		assertEquals(2, eventStream.query(EventQuery.matchAll().limit(2), cursor).count(),
 				"limit carried by the query, with a cursor -- the paging idiom");
 
-		assertEquals(2, eventStream.query(EventQuery.matchAll(), cursor, Limit.to(2)).count(),
-				"limit passed explicitly, overriding the query's own");
-
-		assertEquals(2, eventStream.query(EventQuery.matchAll().limit(5), cursor, Limit.to(2)).count(),
-				"explicit limit wins over the query's own");
+		assertEquals(2, eventStream.page(EventQuery.matchAll().limit(2), cursor).storedEventCount(),
+				"limit carried by the query, read as a page");
 	}
 
 }

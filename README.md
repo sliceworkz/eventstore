@@ -97,7 +97,7 @@ other module and export every package, so nothing in them is encapsulated.
   and tag, a sealed root standing for its whole hierarchy; `EventQuery.forEvents(types, tags)` builds the
   same query from its two halves at once, and `.or(other)` unites two. `query()` returns a
   `Stream`, but the whole result is already in memory, so bound a read over a large stream with
-  `.limit(n)` and page with a cursor, or let a `Projector` do that for you.
+  `.limit(n)` and page with `page(query, cursor)`, or let a `Projector` do that for you.
 - **Conditional append.** `AppendCriteria.of(query, lastReference)` makes an append fail with
   `OptimisticLockingException` when a new event matching the query has landed after the reference.
   That is the DCB idea in one line: decide on the relevant facts, then append only if no new relevant

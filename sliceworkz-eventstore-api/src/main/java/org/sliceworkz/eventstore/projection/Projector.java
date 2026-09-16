@@ -18,8 +18,6 @@
 package org.sliceworkz.eventstore.projection;
 
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,6 +26,7 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
+import org.sliceworkz.eventstore.stream.EventPage;
 import org.sliceworkz.eventstore.stream.EventSource;
 import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
 
@@ -351,10 +350,12 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 				throw new IllegalStateException("projection %s answered null to eventQuery(); a projection has to say which events it depends on".formatted(projection));
 			}
 
-			// in order to avoid memory issues, we'll loop in batches om MAX_EVENTS_PER_QUERY, until no more events are found in the stream
+			// in order to avoid memory issues, we'll loop in pages of MAX_EVENTS_PER_QUERY stored events, until
+			// no more events are found in the stream. The page size is the query's own limit where that is
+			// lower: a projection asking for the newest 10 gets 10, not a page of 500 trimmed to 10
 			Limit limit =  Limit.to(maxEventsPerQuery).orIfLower(eventQuery.limit());
 
-			EventQuery effectiveQuery = eventQuery.untilIfEarlier ( until );
+			EventQuery effectiveQuery = eventQuery.untilIfEarlier ( until ).limit ( limit );
 
 			Limit queryTotalLimit = eventQuery.limit();
 
@@ -374,32 +375,35 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 
 					queriesDone++;
 
-					AtomicReference<EventReference> rawCursor = new AtomicReference<>();
-					AtomicLong storedEventsCount = new AtomicLong(0);
+					// A page is read whole, so a stored event this stream cannot read fails the batch
+					// here, before any event of it reaches the projection; the catch below takes the
+					// cursor back to where the batch started.
+					EventPage<CONSUMED_EVENT_TYPE> page = es.page(effectiveQuery, lastRead);
 
-					lastRead = es.query(effectiveQuery, lastRead, limit, ref -> {
-						rawCursor.set(ref);
-						storedEventsCount.incrementAndGet();
-					}).map(e->offerEventToProjection(e, eventQuery, until, batch)).map(e->e.reference()).reduce((first, second) -> second).orElse(null);
+					for ( Event<CONSUMED_EVENT_TYPE> e : page.events() ) {
+						offerEventToProjection(e, eventQuery, until, batch);
+					}
 
-					// if we still read enriched data, keep the reference
-					if ( lastRead != null ) {
+					if ( !page.events().isEmpty() ) {
+						// the reference of the last event handed out, index included: what the run reports
+						// and what the bookmark is placed at
+						lastRead = page.events().getLast().reference();
 						lastEventReference = Optional.of(lastRead);
-					} else if ( rawCursor.get() != null ) {
+					} else if ( page.lastStoredEventReference().isPresent() ) {
 						// Storage returned stored events but upcasting produced zero enriched events
-						// (e.g., all events in this batch were filtered out by an upcaster returning List.of()).
+						// (e.g., all events in this page were filtered out by an upcaster returning List.of()).
 						// Advance the cursor past these vanished events to avoid re-querying them.
-						lastRead = rawCursor.get();
+						lastRead = page.lastStoredEventReference().get();
 						lastEventReference = Optional.of(lastRead);
-						// Do NOT set done — there may be more events beyond the vanished batch.
+						// Do NOT set done — there may be more events beyond the vanished page.
 					} else {
 						// No stored events returned at all — we are truly at end of stream.
 						done = true;
 					}
 
-					// If storage returned fewer events than the batch limit, we've exhausted the stream —
-					// no need for another query that would return zero results.
-					if ( !done && limit.isSet() && storedEventsCount.get() < limit.value() ) {
+					// If storage returned fewer stored events than the page size, we've exhausted the
+					// stream — no need for another query that would return zero results.
+					if ( !done && limit.isSet() && page.storedEventCount() < limit.value() ) {
 						done = true;
 					}
 
@@ -464,7 +468,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 			return lastEventReference;
 		}
 	
-		private Event<CONSUMED_EVENT_TYPE> offerEventToProjection ( Event<CONSUMED_EVENT_TYPE> e, EventQuery eventQuery, EventReference until, Batch batch ) {
+		private void offerEventToProjection ( Event<CONSUMED_EVENT_TYPE> e, EventQuery eventQuery, EventReference until, Batch batch ) {
 			this.eventsStreamed++;
 			if ( mostRecentEventReference == null || e.reference().happenedAfter(mostRecentEventReference) ) {
 				mostRecentEventReference = e.reference();
@@ -479,7 +483,6 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 					this.eventsHandled++;
 				}
 			}
-			return e;
 		}
 
 	}

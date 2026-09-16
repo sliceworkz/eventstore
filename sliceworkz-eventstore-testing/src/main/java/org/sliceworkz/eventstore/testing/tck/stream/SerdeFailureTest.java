@@ -20,6 +20,7 @@ package org.sliceworkz.eventstore.testing.tck.stream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -302,8 +303,13 @@ public class SerdeFailureTest extends AbstractEventStoreTest {
 		assertFalse(offending.equals(e.getEventReference()),
 				"the two references answer different questions and should not be confused");
 
-		// resuming past it makes progress possible again
-		assertEquals(1, projection.handled, "the readable event before the poison one was handled");
+		// A page is read whole, so the poison event fails its batch before any event of that batch is
+		// handed out: the readable event before it was not handled either, and is not re-handled when
+		// the batch comes round again. The alternative -- handing out the events before the poison one
+		// -- loses because the batch is rolled back to where it started anyway, so those events would
+		// be applied once more on every retry.
+		assertEquals(0, projection.handled, "nothing of the batch holding the poison event reached the projection");
+		assertNull(e.getEventReference(), "no event was handled, so there is no last handled event");
 	}
 
 	static class CountingProjection implements Projection<OrderEvent> {

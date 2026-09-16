@@ -167,7 +167,8 @@ public class EventStoreImpl implements EventStore {
 	 * Seals and unseals the {@link org.sliceworkz.eventstore.shredding.Shreddable} values in this store's
 	 * payloads, and destroys the keys behind them when a subject is erased. Null on a store configured
 	 * without shredding, in which case registering an event type that declares a protected component
-	 * fails rather than storing personal data in the clear.
+	 * fails rather than storing personal data in the clear, and an append carrying one the declaration
+	 * did not show fails the same way.
 	 * <p>
 	 * Not closed by {@link #close()}: a codec is handed in by the caller and may back several stores,
 	 * the same rule the library applies to a {@code DataSource}. The storage builders close the codecs

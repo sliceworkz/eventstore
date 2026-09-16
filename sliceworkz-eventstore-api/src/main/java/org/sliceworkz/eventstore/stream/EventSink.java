@@ -39,7 +39,9 @@ import org.sliceworkz.eventstore.events.EphemeralEvent;
  *
  * <h2>Append Modes:</h2>
  * <ul>
- *   <li><strong>Simple append</strong>: Use {@code AppendCriteria.none()} to append without any conditions</li>
+ *   <li><strong>Unconditional append</strong>: {@link #append(List)} and {@link #append(EphemeralEvent)} append
+ *       without any condition; they are {@code append(AppendCriteria.none(), ...)} spelled without the
+ *       criteria, and the two spellings are interchangeable</li>
  *   <li><strong>Conditional append (DCB)</strong>: Use {@code AppendCriteria.of(query, lastRef)} to implement
  *       optimistic locking based on relevant facts. The append will fail if new events matching the query
  *       have been added since the last reference.</li>
@@ -52,9 +54,8 @@ import org.sliceworkz.eventstore.events.EphemeralEvent;
  *     CustomerEvent.class
  * );
  *
- * // Simple append without conditions
+ * // Unconditional append: no boundary to check, so no criteria to pass
  * List<Event<CustomerEvent>> appended = stream.append(
- *     AppendCriteria.none(),
  *     Event.of(new CustomerRegistered("John Doe"), Tags.of("region", "EU"))
  * );
  *
@@ -76,14 +77,11 @@ import org.sliceworkz.eventstore.events.EphemeralEvent;
  *     // New relevant facts have emerged - retry decision
  * }
  *
- * // Batch append multiple events
- * List<Event<CustomerEvent>> batchAppended = stream.append(
- *     AppendCriteria.none(),
- *     List.of(
- *         Event.of(new CustomerAddressChanged("123 Main St"), Tags.of("customer", "123")),
- *         Event.of(new CustomerEmailChanged("john@example.com"), Tags.of("customer", "123"))
- *     )
- * );
+ * // Batch append multiple events, unconditionally
+ * List<Event<CustomerEvent>> batchAppended = stream.append(List.of(
+ *     Event.of(new CustomerAddressChanged("123 Main St"), Tags.of("customer", "123")),
+ *     Event.of(new CustomerEmailChanged("john@example.com"), Tags.of("customer", "123"))
+ * ));
  * }</pre>
  *
  * @param <DOMAIN_EVENT_TYPE> the type of domain events in this stream (typically a sealed interface)
@@ -177,6 +175,55 @@ public interface EventSink<DOMAIN_EVENT_TYPE> {
 	 */
 	default List<Event<DOMAIN_EVENT_TYPE>> append ( AppendCriteria appendCriteria, EphemeralEvent<? extends DOMAIN_EVENT_TYPE> event ) {
 		return append(appendCriteria, Collections.singletonList(event));
+	}
+
+	/**
+	 * Appends a list of events to the stream unconditionally.
+	 * <p>
+	 * The same append as {@link #append(AppendCriteria, List)} with {@link AppendCriteria#none()}, and
+	 * nothing else: no consistency boundary is checked, so nothing can raise
+	 * {@link OptimisticLockingException}, and on a backend that serializes conditional appends per stream
+	 * no lock is taken. Everything else the criteria-taking append does — the idempotency-key rules, the
+	 * serialization failure, the typed events with their assigned references handed back — is the same.
+	 * <p>
+	 * This is the append for an event that records a fact no decision was made on: an import, a fixture
+	 * seeding history, a log of things that happened elsewhere. An append that <em>follows</em> a read
+	 * of the stream is the other kind, whether or not it looks like it — the read was the decision, and
+	 * its boundary belongs in the criteria; see the class documentation for the shape. The alternative —
+	 * having {@code AppendCriteria.none()} be the only spelling, so the absence of a boundary is written
+	 * out — loses because the criteria a DCB append needs are not a flag but a filter and a reference the
+	 * caller already holds from its read, so the check is opted into by having something to present, and
+	 * an argument that is always {@code none()} where there is nothing to present marks nothing.
+	 *
+	 * @param events the list of ephemeral events to append
+	 * @return a list of fully-formed Events with assigned references and metadata; empty when the batch
+	 *         was de-duplicated on an idempotency key
+	 * @throws IllegalArgumentException if two events of the batch carry the same idempotency key
+	 * @throws IdempotencyKeyConflictException if some of the batch's idempotency keys are already stored on
+	 *         the stream and others are not; nothing is stored
+	 * @throws org.sliceworkz.eventstore.events.EventSerializationException if an event's payload cannot be
+	 *         written; nothing is stored
+	 * @see #append(AppendCriteria, List)
+	 */
+	default List<Event<DOMAIN_EVENT_TYPE>> append ( List<EphemeralEvent<? extends DOMAIN_EVENT_TYPE>> events ) {
+		return append(AppendCriteria.none(), events);
+	}
+
+	/**
+	 * Appends a single event to the stream unconditionally.
+	 * <p>
+	 * Convenience method for appending a single event without criteria. Delegates to {@link #append(List)}
+	 * with a single-element list, which is {@link #append(AppendCriteria, List)} with
+	 * {@link AppendCriteria#none()}.
+	 *
+	 * @param event the ephemeral event to append
+	 * @return a list containing the single fully-formed Event with assigned reference and metadata; empty
+	 *         when the event was de-duplicated on its idempotency key
+	 * @throws org.sliceworkz.eventstore.events.EventSerializationException if the event's payload cannot be written; nothing is stored
+	 * @see #append(List)
+	 */
+	default List<Event<DOMAIN_EVENT_TYPE>> append ( EphemeralEvent<? extends DOMAIN_EVENT_TYPE> event ) {
+		return append(Collections.singletonList(event));
 	}
 
 }

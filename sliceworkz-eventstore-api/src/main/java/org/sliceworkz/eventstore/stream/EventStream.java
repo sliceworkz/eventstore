@@ -41,11 +41,8 @@ package org.sliceworkz.eventstore.stream;
  * EventStreamId streamId = EventStreamId.forContext("customer").withPurpose("123");
  * EventStream<CustomerEvent> stream = eventStore.getEventStream(streamId, CustomerEvent.class);
  *
- * // Append events to the stream
- * stream.append(
- *     AppendCriteria.none(),
- *     Event.of(new CustomerRegistered("John Doe"), Tags.of("region", "EU"))
- * );
+ * // Append an event to the stream, unconditionally: no decision was read, so there is no boundary to check
+ * stream.append(Event.of(new CustomerRegistered("John Doe"), Tags.of("region", "EU")));
  *
  * // Query all events from the stream
  * List<Event<CustomerEvent>> events = stream.query(EventQuery.matchAll()).toList();

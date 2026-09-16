@@ -24,7 +24,7 @@ import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
-import org.sliceworkz.eventstore.events.EventWithMetaDataHandler;
+import org.sliceworkz.eventstore.events.EventHandler;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.projection.Projection;
@@ -126,7 +126,7 @@ public class AggregateExample {
 	/**
 	 * A simple eventsourced Aggregate example.
 	 */
-	class CustomerAggregate implements EventWithMetaDataHandler<CustomerEvent> {
+	class CustomerAggregate implements EventHandler<CustomerEvent> {
 
 		private String name;
 		private boolean registered;
@@ -183,11 +183,11 @@ public class AggregateExample {
 		
 		@Override
 		public void when(Event<CustomerEvent> event) {
-			when(event.data());
+			apply(event.data());
 			lastEventReference = event.reference();
 		}
 		
-		public void when ( CustomerEvent event ) {
+		private void apply ( CustomerEvent event ) {
 			switch(event) {
 				case CustomerEvent.CustomerRegistered r -> { this.name = r.name(); this.registered = true; }
 				case CustomerEvent.CustomerNameChanged n -> this.name = n.name();

@@ -48,8 +48,7 @@
  *
  * <h2>Event Processing:</h2>
  * <ul>
- *   <li>{@link org.sliceworkz.eventstore.events.EventHandler} - Simple event handler processing only event data</li>
- *   <li>{@link org.sliceworkz.eventstore.events.EventWithMetaDataHandler} - Handler with access to full event metadata</li>
+ *   <li>{@link org.sliceworkz.eventstore.events.EventHandler} - Handles events one at a time, each with its metadata</li>
  * </ul>
  *
  * <h2>Example Domain Event Model:</h2>

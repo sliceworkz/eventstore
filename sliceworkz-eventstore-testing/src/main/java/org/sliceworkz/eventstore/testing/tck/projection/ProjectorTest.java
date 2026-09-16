@@ -49,7 +49,6 @@ import org.sliceworkz.eventstore.testing.tck.mockdomain.MockDomainEvent.ThirdDom
 import org.sliceworkz.eventstore.testing.tck.mockdomain.MockDomainEvent;
 import org.sliceworkz.eventstore.projection.BatchAwareProjection;
 import org.sliceworkz.eventstore.projection.Projection;
-import org.sliceworkz.eventstore.projection.ProjectionWithoutMetaData;
 import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.projection.ProjectorException;
 import org.junit.jupiter.api.BeforeEach;
@@ -865,12 +864,12 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		return es.append(AppendCriteria.none(), Collections.singletonList(Event.of(event, tags)));
 	}
 
-	class TestProjection implements ProjectionWithoutMetaData<MockDomainEvent> {
+	class TestProjection implements Projection<MockDomainEvent> {
 
 		private int counter;
 
 		@Override
-		public void when(MockDomainEvent event) {
+		public void when(Event<MockDomainEvent> event) {
 			counter++;
 		}
 
@@ -988,12 +987,12 @@ public class ProjectorTest extends AbstractEventStoreTest {
 
 	}
 
-	class BackwardsLimit3Projection implements ProjectionWithoutMetaData<MockDomainEvent> {
+	class BackwardsLimit3Projection implements Projection<MockDomainEvent> {
 
 		private int counter;
 
 		@Override
-		public void when(MockDomainEvent event) {
+		public void when(Event<MockDomainEvent> event) {
 			counter++;
 		}
 
@@ -1008,15 +1007,15 @@ public class ProjectorTest extends AbstractEventStoreTest {
 
 	}
 
-	class BackwardsLimitProjection implements ProjectionWithoutMetaData<MockDomainEvent> {
+	class BackwardsLimitProjection implements Projection<MockDomainEvent> {
 
 		private int counter;
 		private String lastValue;
 
 		@Override
-		public void when(MockDomainEvent event) {
+		public void when(Event<MockDomainEvent> event) {
 			counter++;
-			if ( event instanceof FirstDomainEvent f ) {
+			if ( event.data() instanceof FirstDomainEvent f ) {
 				lastValue = f.value();
 			}
 		}
@@ -1139,7 +1138,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	 * Blocks inside the handler of the first event until released, so a test can act while a run is in
 	 * progress.
 	 */
-	class BlockingProjection implements ProjectionWithoutMetaData<MockDomainEvent> {
+	class BlockingProjection implements Projection<MockDomainEvent> {
 
 		private final CountDownLatch entered = new CountDownLatch(1);
 		private final CountDownLatch proceed = new CountDownLatch(1);
@@ -1151,7 +1150,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		}
 
 		@Override
-		public void when(MockDomainEvent event) {
+		public void when(Event<MockDomainEvent> event) {
 			counter++;
 			if ( counter == 1 ) {
 				entered.countDown();

@@ -21,18 +21,20 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.stream.Stream;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.events.Event;
+import org.sliceworkz.eventstore.events.EventHandler;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.projection.ProjectionTest.MockDomainEvent;
 import org.sliceworkz.eventstore.projection.ProjectionTest.MockDomainEvent.FirstDomainEvent;
 import org.sliceworkz.eventstore.projection.ProjectionTest.MockDomainEvent.SecondDomainEvent;
 import org.sliceworkz.eventstore.query.EventQuery;
@@ -68,59 +70,32 @@ public class ProjectionTest {
 	}
 
 	@Test
-	void testProjectIndividualEventWithMetaData ( ) {
+	void aProjectionHandlesOneEventAtATimeWithItsMetaData ( ) {
 		TestProjection projection = new TestProjection();
-		mockEvents.stream().forEach(projection::when);
-		assertEquals(mockEvents.size(), projection.counter());
-		assertEquals(0, projection.counterList());
-		assertEquals(0, projection.counterStream());
+		mockEvents.forEach(projection::when);
+		assertEquals(mockEvents, projection.handled());
 	}
 
+	/**
+	 * The handler contract is one method: {@code when(Event)}. A second {@code when} beside it -- a
+	 * payload-only overload, a {@code List} or {@code Stream} batch default -- is an entry point the
+	 * projector never calls, so an override of it runs for nobody; this pins that none exists on the
+	 * handler or on the projection, so one cannot come back as a convenience.
+	 */
 	@Test
-	void testProjectStreamOfEventsWithMetaData ( ) {
-		TestProjection projection = new TestProjection();
-		projection.when(mockEvents.stream());
-		assertEquals(mockEvents.size(), projection.counter());
-		assertEquals(0, projection.counterList());
-		assertEquals(1, projection.counterStream());
+	void theHandlerContractIsOneMethodTakingTheEvent ( ) {
+		for ( Class<?> type : List.of(EventHandler.class, Projection.class) ) {
+			List<Method> whens = Arrays.stream(type.getMethods())
+					.filter(m -> m.getName().equals("when"))
+					.toList();
+			assertEquals(1, whens.size(), () -> type.getSimpleName() + " declares " + whens);
+			Method when = whens.get(0);
+			assertTrue(Modifier.isAbstract(when.getModifiers()), "when is abstract");
+			assertEquals(1, when.getParameterCount());
+			assertEquals(Event.class, when.getParameterTypes()[0]);
+		}
 	}
 
-	@Test
-	void testProjectListOfEventsWithMetaData ( ) {
-		TestProjection projection = new TestProjection();
-		projection.when(mockEvents);
-		assertEquals(mockEvents.size(), projection.counter());
-		assertEquals(1, projection.counterList());
-		assertEquals(0, projection.counterStream());
-	}
-	
-	@Test
-	void testProjectIndividualEventWithoutMetaData ( ) {
-		TestProjectionWithoutMetaData projection = new TestProjectionWithoutMetaData();
-		mockEvents.stream().forEach(projection::when);
-		assertEquals(mockEvents.size(), projection.counter());
-		assertEquals(0, projection.counterList());
-		assertEquals(0, projection.counterStream());
-	}
-
-	@Test
-	void testProjectStreamOfEventsWithoutMetaData ( ) {
-		TestProjectionWithoutMetaData projection = new TestProjectionWithoutMetaData();
-		projection.when(mockEvents.stream());
-		assertEquals(mockEvents.size(), projection.counter());
-		assertEquals(0, projection.counterList());
-		assertEquals(1, projection.counterStream());
-	}
-
-	@Test
-	void testProjectListOfEventsWithoutMetaData ( ) {
-		TestProjectionWithoutMetaData projection = new TestProjectionWithoutMetaData();
-		projection.when(mockEvents);
-		assertEquals(mockEvents.size(), projection.counter());
-		assertEquals(1, projection.counterList());
-		assertEquals(0, projection.counterStream());
-	}
-	
 	sealed interface MockDomainEvent {
 		
 		public record FirstDomainEvent ( ) implements MockDomainEvent { } 
@@ -128,104 +103,25 @@ public class ProjectionTest {
 		public record SecondDomainEvent ( ) implements MockDomainEvent { } 
 		
 	}
+
+	static class TestProjection implements Projection<MockDomainEvent> {
+		
+		private final List<Event<MockDomainEvent>> handled = new ArrayList<>();
+		
+		@Override
+		public void when ( Event<MockDomainEvent> event ) {
+			handled.add(event);
+		}
+
+		@Override
+		public EventQuery eventQuery ( ) {
+			return EventQuery.matchAll();
+		}
+		
+		List<Event<MockDomainEvent>> handled ( ) {
+			return handled;
+		}
+
+	}
+
 }
-
-
-class TestProjection implements Projection<MockDomainEvent> {
-	
-	private int counter;
-	private int counterList;
-	private int counterStream;
-	
-	public TestProjection ( ) {
-	}
-
-	@Override
-	public void when(Event<MockDomainEvent> eventWithMeta) {
-		System.out.println("event handled: %s".formatted(eventWithMeta));
-		counter++;
-	}
-
-	@Override
-	public void when(List<Event<MockDomainEvent>> eventsWithMeta) {
-		System.out.println("list of events");
-		eventsWithMeta.forEach(this::when);
-		counterList++;
-	}
-
-	@Override
-	public void when(Stream<Event<MockDomainEvent>> eventsWithMeta) {
-		System.out.println("stream of events");
-		eventsWithMeta.forEach(this::when);
-		counterStream++;
-	}
-
-	@Override
-	public EventQuery eventQuery() {
-		return EventQuery.matchAll();
-	}
-	
-	public int counter ( ) {
-		return counter;
-	}
-	
-	public int counterList ( ) {
-		return counterList;
-	}
-
-	public int counterStream ( ) {
-		return counterStream;
-	}
-
-};
-
-
-class TestProjectionWithoutMetaData implements ProjectionWithoutMetaData<MockDomainEvent> {
-	
-	private int counter;
-	private int counterList;
-	private int counterStream;
-	
-	public TestProjectionWithoutMetaData ( ) {
-	}
-
-	@Override
-	public void when(MockDomainEvent eventWithMeta) {
-		System.out.println("event handled: %s".formatted(eventWithMeta));
-		counter++;
-	}
-
-	@Override
-	public void when(List<Event<MockDomainEvent>> eventsWithMeta) {
-		System.out.println("list of events ...");
-		eventsWithMeta.forEach(this::when);
-		counterList++;
-		System.out.println("... list of events done.");
-	}
-
-	@Override
-	public void when(Stream<Event<MockDomainEvent>> eventsWithMeta) {
-		System.out.println("stream of events ...");
-		eventsWithMeta.forEach(this::when);
-		counterStream++;
-		System.out.println("... stream of events done.");
-	}
-
-	@Override
-	public EventQuery eventQuery() {
-		return EventQuery.matchAll();
-	}
-	
-	public int counter ( ) {
-		return counter;
-	}
-	
-	public int counterList ( ) {
-		return counterList;
-	}
-
-	public int counterStream ( ) {
-		return counterStream;
-	}
-
-};

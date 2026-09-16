@@ -454,6 +454,20 @@ mvn clean install -DskipTests
 - Processes all events matching the query criteria
 - Used for building read models from event streams
 - Optionally defines an `initQuery()` for the savepoint pattern (see below)
+- **`EventHandler` is the one handler interface, and `when(Event<E>)` its one method.** The `Projector`
+  hands every matching event to it, one call per event, and a handler that needs only the domain
+  event switches on `event.data()`. The alternative — a second interface whose `when` takes the
+  payload alone, with a default `when(Event)` unwrapping into it, and a `WithoutMetaData` twin of
+  every interface built on the pair — loses because two methods of one name on one object, one to
+  call and one to implement, is a split the compiler does not enforce (an `@Override` on the wrong
+  one is found by the events that never arrive); because for a handler over `Object` the pair
+  collapses into `when(Object)` and `when(Event<Object>)`, where an `Event` *is* an `Object`; and
+  because it bought one `.data()` call per handler. Nor are there `when(List)`/`when(Stream)`
+  batch defaults: the projector never calls them, so an override runs for nobody, and batch-level
+  work has its seam in `BatchAwareProjection`. A payload-only convenience, if one is ever wanted,
+  gets a distinct method name, never an overload of `when`. `ProjectionTest` in the api module pins
+  the contract reflectively: one `when`, abstract, taking the `Event`, on both `EventHandler` and
+  `Projection`
 
 **BatchAwareProjection — the seam between a projection's own store and the bookmark:**
 - A `BatchAwareProjection` commits its own work in `afterBatch`, and the bookmark saying how far it has

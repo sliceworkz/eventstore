@@ -49,7 +49,7 @@ import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendLis
  * Example Usage - Basic Projection:
  * <pre>{@code
  * // Create a projection
- * class CustomerList implements ProjectionWithoutMetaData<CustomerEvent> {
+ * class CustomerList implements Projection<CustomerEvent> {
  *     private final List<String> customers = new ArrayList<>();
  *
  *     @Override
@@ -58,8 +58,8 @@ import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendLis
  *     }
  *
  *     @Override
- *     public void when(CustomerEvent event) {
- *         if (event instanceof CustomerRegistered reg) {
+ *     public void when(Event<CustomerEvent> event) {
+ *         if (event.data() instanceof CustomerRegistered reg) {
  *             customers.add(reg.name());
  *         }
  *     }
@@ -131,7 +131,6 @@ import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendLis
  *
  * @param <CONSUMED_EVENT_TYPE> the type of domain events processed by the projection
  * @see Projection
- * @see ProjectionWithoutMetaData
  * @see ProjectorMetrics
  * @see EventSource
  */

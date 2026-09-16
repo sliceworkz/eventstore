@@ -24,7 +24,6 @@ import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventHandler;
 import org.sliceworkz.eventstore.events.EventReference;
-import org.sliceworkz.eventstore.events.EventWithMetaDataHandler;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.examples.CourseDomainEvent.CourseCapacityUpdated;
 import org.sliceworkz.eventstore.examples.CourseDomainEvent.CourseDefined;
@@ -176,7 +175,7 @@ sealed interface CourseDomainEvent extends LearningDomainEvent {
     record CourseCancelled() implements CourseDomainEvent {}
 }
 
-class Course implements EventWithMetaDataHandler<CourseDomainEvent> {
+class Course implements EventHandler<CourseDomainEvent> {
     String courseId;
     String name;
     int capacity;
@@ -217,7 +216,7 @@ class Course implements EventWithMetaDataHandler<CourseDomainEvent> {
         return List.of(new CourseDomainEvent.CourseCancelled());
     }
 
-    private void when(CourseDomainEvent event) {
+    private void apply(CourseDomainEvent event) {
         switch(event) {
             case CourseDomainEvent.CourseDefined d -> {
                 this.name = d.name();
@@ -235,7 +234,7 @@ class Course implements EventWithMetaDataHandler<CourseDomainEvent> {
 
     @Override
     public void when(Event<CourseDomainEvent> event) {
-        when(event.data());
+        apply(event.data());
         this.lastEventReference = event.reference();
     }
 
@@ -245,7 +244,7 @@ class Course implements EventWithMetaDataHandler<CourseDomainEvent> {
 }
 
 
-class Student implements EventWithMetaDataHandler<StudentDomainEvent> {
+class Student implements EventHandler<StudentDomainEvent> {
     String studentId;
     String name;
     boolean active;
@@ -284,7 +283,7 @@ class Student implements EventWithMetaDataHandler<StudentDomainEvent> {
     }
 
     // Event handlers - apply state changes
-    private void when (StudentDomainEvent event) {
+    private void apply(StudentDomainEvent event) {
         switch(event) {
             case StudentDomainEvent.StudentRegistered r -> {
                 this.name = r.name();
@@ -301,7 +300,7 @@ class Student implements EventWithMetaDataHandler<StudentDomainEvent> {
 
     @Override
     public void when(Event<StudentDomainEvent> event) {
-        when(event.data());
+        apply(event.data());
         this.lastEventReference = event.reference();
     }
 
@@ -338,8 +337,8 @@ class RegistrationDecisionModel implements EventHandler<LearningDomainEvent> {
 	
 
 	@Override
-	public void when(LearningDomainEvent event) {
-		switch ( event ) {
+	public void when(Event<LearningDomainEvent> event) {
+		switch ( event.data() ) {
 			case RegistrationDomainEvent.StudentSubscribedToCourse s -> {
 				if ( s.studentId().equals(studentId) ) {
 					studentSubscriptions++; 

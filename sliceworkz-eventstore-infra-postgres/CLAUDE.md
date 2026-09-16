@@ -198,9 +198,26 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   projection and DCB check sees an empty store while `count(*)` shows the rows; and the first append
   gets a low id and sorts *before* all of history — a restored bookmark is then ahead of every new
   event, and a lock check referenced in history sees nothing after it. `start()` therefore runs
-  `clusterAheadOfHistorySql` before it starts the monitors and, if any stream head is at or above
-  `pg_snapshot_xmax(pg_current_snapshot())`, closes the storage and throws, naming the ids, the streams
-  and the remedies. Details that are load-bearing:
+  `clusterAheadOfHistorySql` before it starts the monitors and, if the newest stored event in the
+  `(event_tx, event_position)` order is at or above `pg_snapshot_xmax(pg_current_snapshot())`, closes
+  the storage and throws, naming the ids, how many events and streams are affected
+  (`historyAheadOfClusterDetailSql`, run on the failure path only) and the remedies. Details that
+  are load-bearing:
+  - **One probe, whatever the store holds.** The head of a stream is its newest event in the
+    `(event_tx, event_position)` order and every event belongs to one stream, so the highest
+    `event_tx` among the stream heads is the highest in the table: the last leaf of
+    `idx_events_tx_position`, read backwards with `ORDER BY event_tx::xid8 DESC, event_position DESC
+    LIMIT 1` — the `::xid8` cast is load-bearing there as on the read path, since the select list
+    renders the column as text. The alternative — enumerating the streams with a recursive
+    loose-index walk over `idx_events_stream_position` and probing each head — is exact too, but it
+    is a probe per stream on every start, and on the per-entity layout the benchmarks recommend
+    that is a probe per entity: 200.000 streams measure ~2.6s against ~0.4ms for the single probe.
+    Reading the newest row by *position* would be one probe too and is wrong: after the first
+    append to the restored store that row is the new, low-tx event, and the history above the
+    counter is invisible to it. The cost of leaning on the global order index is that a database
+    created before it existed and not migrated (see the README) answers the check with a scan of
+    the table under `NONE`; `ENSURE` creates the index first and `VALIDATE` reports it missing.
+    `PostgresRestoredIntoYoungerClusterTest` pins the plan shape.
   - **It runs under every `DatabaseInitMode`, `NONE` included** — that is the production mode and the
     one where nothing else touches the database before the monitors. So under `NONE` an unreachable main
     DataSource fails here, within the pool's connection timeout and naming the database, and the

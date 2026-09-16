@@ -320,7 +320,14 @@ mvn clean install -DskipTests
 - Controls optimistic locking when appending events
 - Contains an `EventFilter` and an optional `EventReference` for the expected last event
 - If new matching events are found after the reference, append fails with `OptimisticLockingException`
-- Use `AppendCriteria.none()` for simple appends without locking
+- Use `AppendCriteria.none()` for simple appends without locking, or the overloads that take no
+  criteria — `append(events)` and `append(event)` on `EventSink` — which are the same append with
+  `none()` and nothing else: no boundary checked, no `OptimisticLockingException` possible, and on
+  Postgres no advisory lock taken. The two spellings are interchangeable. The alternative — making
+  `none()` the only spelling, so that skipping the check is written out at every call — loses
+  because a DCB append is opted into by presenting a boundary the caller holds from its read, not by
+  the absence of an argument; an argument that is always `none()` where there is nothing to present
+  marks nothing. `EventStreamTest.anAppendWithoutCriteriaIsAnAppendWithNoCriteria` pins it per backend
 - Use `AppendCriteria.of(eventQuery, reference)` or `AppendCriteria.of(eventFilter, reference)` for conditional appends
 - **`expectedLastEventReference()` is never null**, whichever factory or constructor produced the criteria — the
   compact constructor normalises a null to `Optional.empty()`, so a backend can call `.isPresent()` on it
@@ -933,8 +940,9 @@ EventStore eventstore = InMemoryEventStorage.newBuilder().buildStore();
 EventStreamId streamId = EventStreamId.forContext("customer").withPurpose("123");
 EventStream<CustomerEvent> stream = eventstore.getEventStream(streamId, CustomerEvent.class);
 
-// 3. Append events (simple append)
-stream.append(AppendCriteria.none(), Event.of(new CustomerRegistered("John"), Tags.none()));
+// 3. Append events unconditionally: no decision was read, so there is no boundary to check.
+//    The same append as stream.append(AppendCriteria.none(), ...), which stays valid
+stream.append(Event.of(new CustomerRegistered("John"), Tags.none()));
 
 // 4. Query all events
 Stream<Event<CustomerEvent>> events = stream.query(EventQuery.matchAll());

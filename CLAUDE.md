@@ -484,7 +484,13 @@ EventStorage storage = PostgresEventStorage.newBuilder()
   store racing its database up succeeds rather than failing (`PostgresNotificationStartupTest`).
 - **A *running* store still repairs itself.** The same retry loop brings notifications back after an
   outage, with nothing to restart — the fail-fast is about not *starting* blind, not about tearing a live
-  store down when its connection drops.
+  store down when its connection drops. That includes a connection that drops *silently*: the monitors
+  wait for notifications with a bare socket read and send nothing meanwhile, so a peer that vanished
+  without closing (a dropped NAT or firewall state, a partition, a crashed host) would otherwise be read
+  forever as a quiet channel with the gauge reading 1. Every monitoring connection runs under a 5s
+  network timeout, and a monitor silent for `notificationProbeInterval` (30s by default) sends one
+  round trip and replaces a connection that does not answer. `PostgresMonitorLivenessTest` pins it
+  through a TCP proxy that swallows bytes without closing either side.
 - **Which configurations can reach this.** With `ENSURE` or `VALIDATE` the schema work runs first and
   fails with a clear error, so a dead *main* DataSource never reaches the wait; under
   `DatabaseInitMode.NONE` (recommended for production) the restored-history check below is the first
@@ -1786,6 +1792,12 @@ that bind everywhere:
 - **Conditional appends serialize per stream via `pg_advisory_xact_lock`** keyed on the prefix and
   `(stream_context, stream_purpose)`; unconditional appends take no lock. A hot stream is therefore
   a ceiling, and stream layout the fix — see the write-contention findings under Benchmarking.
+  **The wait for the lock is bounded** — the builder's `lockTimeout`, 10s by default, sent as
+  `SET LOCAL lock_timeout` in the lock's own round trip and scoped to that transaction — so a holder
+  that has stalled fails the appends queued behind it one at a time (`EventStorageException`, SQLSTATE
+  `55P03`, nothing written) instead of parking each in a pool connection until the pool is empty and
+  every operation of the store fails with it. The same bound covers the per-lease lock; the schema
+  lock is deliberately outside it. `PostgresLockTimeoutTest` pins it.
 - **A long-running *writing* transaction anywhere in the cluster freezes what this store can
   read** (the `pg_snapshot_xmin` barrier): reads stop advancing, projections go quiet, nothing
   fails, and read-your-own-writes breaks in a way a DCB retry loop cannot clear. Only

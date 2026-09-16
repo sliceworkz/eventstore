@@ -39,6 +39,52 @@ The lookup never walks into parent directories. When nothing is found, `build()`
 by giving each builder its own `.configuration(...)`, or by sharing one pool between them through
 `.dataSource(...)` when they live in one database under different prefixes.
 
+## Timeouts: a stalled lock holder, and a socket that dies silently
+
+Two waits in this backend have no natural end, and the builder bounds both:
+
+```java
+EventStorage storage = PostgresEventStorage.newBuilder()
+    .lockTimeout(Duration.ofSeconds(10))                // default; Duration.ZERO waits without bound
+    .notificationProbeInterval(Duration.ofSeconds(30))  // default
+    .build();
+```
+
+**`lockTimeout`** bounds how long a conditional append waits for its stream's advisory lock (and a
+lease request for its lease's lock). A healthy holder releases it within one INSERT, so the bound is
+never hit by ordinary contention; it is hit by a holder that has stalled — a paused process, a session
+the server still believes in after its client has gone. Without it, every conditional append to that
+stream parks behind the holder inside a checked-out pool connection until the pool is empty, and from
+then on every operation of the store fails on the pool's connection timeout, reads included, on every
+stream. With it, the parked appends fail one at a time with an `EventStorageException` naming the
+stream and the bound (the cause carries SQLSTATE `55P03`), nothing is written, and the store stays up
+for everything else. Find the holder with:
+
+```sql
+SELECT l.objid, a.pid, a.state, a.xact_start, a.application_name, a.client_addr, a.query
+FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+WHERE l.locktype = 'advisory' AND l.granted;
+```
+
+The bound is set with `SET LOCAL`, so it lives and dies with the append's transaction and never
+follows the connection back into the pool; the schema scripts' own lock is not under it.
+
+**`notificationProbeInterval`** bounds how long a LISTEN/NOTIFY monitoring connection may stay silent
+before its monitor asks the server whether it is still there. While waiting for notifications the
+driver sends nothing, so a socket whose peer has vanished without closing it — a NAT or firewall that
+dropped its state, a network partition, a crashed host — looks exactly like a quiet channel, and would
+otherwise be read forever with `sliceworkz.eventstore.notifications.up` reading 1. After the interval
+without traffic the monitor sends one round trip (bounded at 5 seconds, which is also the network
+timeout every monitoring connection runs under) and replaces a connection that does not answer. A busy
+channel is never probed.
+
+Both are library-level bounds and independent of the driver's. The driver's own settings are worth
+knowing about, and are yours to set in `db.properties` under `datasource.`: `tcpKeepAlive=true` detects
+the same dead socket, but only after the operating system's keepalive time (two hours by default on
+Linux); `socketTimeout=<seconds>` bounds *every* read on the pooled connections, so set it only above
+the longest statement the store legitimately runs — a large `importEvents` batch, a `CREATE INDEX`
+under `ENSURE` — or it becomes the failure it was meant to catch.
+
 
 
 ## Database privileges

@@ -786,11 +786,11 @@ public class EventStoreImpl implements EventStore {
 			});
 		}
 
-		private EventToStore reduce ( EphemeralEvent<? extends EVENT_TYPE> event, EventStreamId streamToAppendTo ) {
+		private EventToStore reduce ( EphemeralEvent<? extends EVENT_TYPE> event ) {
 			meterRegistry.counter("sliceworkz.eventstore.append.event", baseTags.and("eventtype", event.type().name())).increment();
 			TypeAndSerializedPayload data = serde.serialize(event.data());
 			Tags tags = withShreddingKeyTags(event.tags(), data.shreddingKeys());
-			return new EventToStore(streamToAppendTo, data.type(), data.immutablePayload(), tags, event.idempotencyKey());
+			return new EventToStore(eventStreamId, data.type(), data.immutablePayload(), tags, event.idempotencyKey());
 		}
 
 		/**
@@ -813,25 +813,18 @@ public class EventStoreImpl implements EventStore {
 					.toArray(Tag[]::new)));
 		}
 
-		private List<EventToStore> reduce ( List<? extends EphemeralEvent<? extends EVENT_TYPE>> events, EventStreamId streamToAppendTo ) {
-			return events.stream().map(e->this.reduce(e,streamToAppendTo)).toList();
+		private List<EventToStore> reduce ( List<? extends EphemeralEvent<? extends EVENT_TYPE>> events ) {
+			return events.stream().map(this::reduce).toList();
 		}
 
 		@Override
 		public List<Event<EVENT_TYPE>> append(AppendCriteria appendCriteria, List<EphemeralEvent<? extends EVENT_TYPE>> events) {
-			return append(appendCriteria, events, eventStreamId);
-			
-		}
-		@Override
-		public List<Event<EVENT_TYPE>> append(AppendCriteria appendCriteria, List<EphemeralEvent<? extends EVENT_TYPE>> events, EventStreamId streamToAppendTo) {
 			checkStoreNotClosed();
-			
-			if ( !streamToAppendTo.canAppendTo(eventStreamId)) {
-				throw new IllegalArgumentException("cannot append to eventstream %s using streamId %s".formatted(eventStreamId, streamToAppendTo));
-			}
-			
-			if ( streamToAppendTo.isReadOnly() ) {
-				throw new IllegalArgumentException("cannot append to non-specific eventstream %s".formatted(streamToAppendTo));
+
+			// A wildcard stream is a source. An event is stored in exactly one stream, and a wildcard
+			// names none -- see EventSink.append for why this is not an append with a target argument.
+			if ( eventStreamId.isAnyContext() || eventStreamId.isAnyPurpose() ) {
+				throw new IllegalArgumentException("cannot append to non-specific eventstream %s".formatted(eventStreamId));
 			}
 			
 			List<String> unAppendable = events.stream().map(e->e.type().name()).filter(t->!serde.canDeserialize(t)).toList();
@@ -859,8 +852,8 @@ public class EventStoreImpl implements EventStore {
 			// append events to the eventstore (with optimistic locking)
 			List<Event<EVENT_TYPE>> appendedEvents;
 			try {
-				List<EventToStore> eventsToStore = reduce(events, streamToAppendTo);
-				List<StoredEvent> storedEvents = timerAppend.record(()->eventStorage.append(storageCriteria, Optional.of(streamToAppendTo), eventsToStore));
+				List<EventToStore> eventsToStore = reduce(events);
+				List<StoredEvent> storedEvents = timerAppend.record(()->eventStorage.append(storageCriteria, Optional.of(eventStreamId), eventsToStore));
 				appendedEvents = storedEvents.stream().flatMap(se->enrich(se, QueryDirection.FORWARD)).toList();
 				meterAppend.increment();
 

@@ -55,7 +55,6 @@ import org.sliceworkz.eventstore.shredding.Shreddable;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventToImport;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
-import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
 import tools.jackson.databind.DeserializationFeature;
@@ -309,28 +308,30 @@ public final class CorpusGenerator {
 	}
 
 	/**
-	 * One context's typed stream, with the events waiting to go into it.
+	 * One context's events waiting to be appended, grouped by the stream each goes into.
 	 *
-	 * <p>Bound to an {@code anyPurpose} stream and appending with an explicit target, so one writer
+	 * <p>Grouped by stream because an append writes to one stream, and appended through a stream
+	 * opened on that stream's own id, since a wildcard stream is a source and not a sink. One writer
 	 * serves both stream designs: under {@code TAGGED} every event goes to the context's default
-	 * purpose, under {@code PER_ENTITY} each goes to its entity's own.
+	 * purpose and one stream takes them all; under {@code PER_ENTITY} each goes to its entity's own,
+	 * which makes the batches small -- one per entity -- a cost of the design rather than of this code.
 	 *
-	 * <p>Events are grouped by target stream because an append call writes to one stream. Under
-	 * {@code PER_ENTITY} that makes the batches small -- one per entity -- which is a cost of the
-	 * design rather than of this code.
+	 * <p>The stream is opened per batch rather than cached per entity: a handle costs microseconds and
+	 * shares its serde with every other stream of the same root, while a cache would hold one handle
+	 * per entity for the life of the generator.
 	 */
 	private static final class ContextWriter<T> {
 
+		private final EventStore store;
 		private final WebshopContext context;
 		private final Class<T> root;
-		private final EventStream<T> stream;
 		private final Map<EventStreamId, List<EphemeralEvent<? extends T>>> pending = new LinkedHashMap<>();
 		private int pendingCount;
 
-		private ContextWriter ( WebshopContext context, Class<T> root, EventStream<T> stream ) {
+		private ContextWriter ( EventStore store, WebshopContext context, Class<T> root ) {
+			this.store = store;
 			this.context = context;
 			this.root = root;
-			this.stream = stream;
 		}
 
 		static ContextWriter<?> open ( EventStore store, WebshopContext context ) {
@@ -345,8 +346,7 @@ public final class CorpusGenerator {
 		}
 
 		private static <T> ContextWriter<T> of ( EventStore store, WebshopContext context, Class<T> root ) {
-			return new ContextWriter<>(context, root,
-					store.getEventStream(EventStreamId.forContext(context.streamContext()).anyPurpose(), root));
+			return new ContextWriter<>(store, context, root);
 		}
 
 		void add ( EventStreamId target, Object payload, Tags tags ) {
@@ -364,7 +364,7 @@ public final class CorpusGenerator {
 			}
 			List<Event<T>> written = new ArrayList<>(pendingCount);
 			pending.forEach(( target, events ) ->
-					written.addAll(stream.append(AppendCriteria.none(), events, target)));
+					written.addAll(store.getEventStream(target, root).append(AppendCriteria.none(), events)));
 			pending.clear();
 			pendingCount = 0;
 			return written;

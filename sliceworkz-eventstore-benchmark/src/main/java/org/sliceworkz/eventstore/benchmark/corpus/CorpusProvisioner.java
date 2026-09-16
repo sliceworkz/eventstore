@@ -41,6 +41,7 @@ import org.sliceworkz.eventstore.benchmark.env.TargetSpec;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.query.EventQuery;
+import org.sliceworkz.eventstore.stream.EventSource;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
@@ -462,8 +463,8 @@ public final class CorpusProvisioner {
 	 * actually costs rather than what its name suggests.
 	 */
 	public static OptionalDouble meanPayloadBytes ( BenchmarkTarget target, String context, int sampleSize ) {
-		EventStream<Object> raw = target.store()
-				.getEventStream(EventStreamId.forContext(context).anyPurpose());
+		EventSource<Object> raw = target.store()
+				.getRawEventStream(EventStreamId.forContext(context).anyPurpose());
 		return raw.query(EventQuery.matchAll().limit(sampleSize))
 				.mapToInt(event -> JSON.writeValueAsString(event.data()).length())
 				.average();

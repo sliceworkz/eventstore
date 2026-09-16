@@ -180,7 +180,7 @@ public final class LoadCorrectness {
 
 		try {
 			return target.store()
-					.getEventStream(EventStreamId.anyContext().anyPurpose())
+					.getRawEventStream(EventStreamId.anyContext().anyPurpose())
 					.query(EventQuery.matchAll())
 					.count();
 		} catch ( RuntimeException e ) {

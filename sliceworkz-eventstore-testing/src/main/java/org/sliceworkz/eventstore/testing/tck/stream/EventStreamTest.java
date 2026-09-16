@@ -366,7 +366,9 @@ public class EventStreamTest extends AbstractEventStoreTest {
 
 	@ForEachBackend
 	void testAppendToNonSpecificStream ( ) {
-		var otherStream = eventStore().getEventStream(EventStreamId.anyContext());
+		// typed, so the append is admissible and the wildcard is the only thing stopping it: a raw
+		// stream is an EventSource and cannot append at all
+		EventStream<MockDomainEvent> otherStream = eventStore().getEventStream(EventStreamId.anyContext(), MockDomainEvent.class);
 		IllegalArgumentException e = assertThrows(IllegalArgumentException.class,()->otherStream.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FirstDomainEvent("1"), Tags.none()))));
 		assertEquals("cannot append to non-specific eventstream ", e.getMessage());
 	}

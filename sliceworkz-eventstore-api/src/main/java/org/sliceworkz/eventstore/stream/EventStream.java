@@ -71,7 +71,7 @@ package org.sliceworkz.eventstore.stream;
  * @see EventSource
  * @see EventSink
  * @see EventStreamId
- * @see org.sliceworkz.eventstore.EventStore#getEventStream(EventStreamId)
+ * @see org.sliceworkz.eventstore.EventStore#getRawEventStream(EventStreamId)
  */
 public interface EventStream<DOMAIN_EVENT_TYPE> extends EventSource<DOMAIN_EVENT_TYPE>, EventSink<DOMAIN_EVENT_TYPE> {
 

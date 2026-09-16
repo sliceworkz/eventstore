@@ -35,6 +35,7 @@ import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
+import org.sliceworkz.eventstore.stream.EventSource;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
@@ -87,7 +88,7 @@ class EventStreamSerdeSharingTest {
 	 * is invisible from the outside, and the alternative — asserting on timings — is exactly the kind
 	 * of test that passes for the wrong reason on a loaded CI machine.
 	 */
-	private static Object serdeOf ( EventStream<?> stream ) {
+	private static Object serdeOf ( EventSource<?> stream ) {
 		try {
 			Field field = stream.getClass().getDeclaredField("serde");
 			field.setAccessible(true);
@@ -141,7 +142,7 @@ class EventStreamSerdeSharingTest {
 
 			EventStream<ShopEvent> shop = eventStore.getEventStream(streamId, ShopEvent.class);
 			EventStream<OtherEvent> other = eventStore.getEventStream(streamId, OtherEvent.class);
-			EventStream<Object> raw = eventStore.getEventStream(streamId);
+			EventSource<Object> raw = eventStore.getRawEventStream(streamId);
 
 			assertNotSame(serdeOf(shop), serdeOf(other),
 					"two streams with different event root classes shared a serde — they do not have the same type mappings");

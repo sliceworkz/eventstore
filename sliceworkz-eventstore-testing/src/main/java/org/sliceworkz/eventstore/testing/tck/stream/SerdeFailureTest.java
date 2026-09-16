@@ -217,7 +217,7 @@ public class SerdeFailureTest extends AbstractEventStoreTest {
 				.orElseThrow(() -> new AssertionError("the stream layer should attach the reference of the failing stored event"));
 
 		// and it is genuinely the offending event: raw mode has no mapping to fail on, so it reads back
-		List<Event<Object>> raw = eventStore().getRawEventStream(EventStreamId.anyContext()).getEventById(reference.id());
+		List<Event<String>> raw = eventStore().getRawEventStream(EventStreamId.anyContext()).getEventById(reference.id());
 		assertEquals(1, raw.size(), "the reference should identify a real stored event");
 		assertEquals(EventType.ofType("Unreadable"), raw.getFirst().type());
 

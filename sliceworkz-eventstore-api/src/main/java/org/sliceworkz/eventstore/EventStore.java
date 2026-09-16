@@ -222,12 +222,21 @@ public interface EventStore extends AutoCloseable {
 	 * {@link EventSource#getEventById getEventById}, subscriptions and bookmarks — over any stream id,
 	 * concrete or wildcard.
 	 * <p>
-	 * <b>{@code data()} is the parsed JSON tree of the stored payload</b> — with the shipped implementation
-	 * a Jackson 3 {@code tools.jackson.databind.JsonNode} — declared as {@link Object} because this
-	 * module deliberately carries no Jackson. Nothing is upcast, so a legacy event comes back under its
-	 * stored type in its stored shape, and nothing is decrypted: a
+	 * <b>{@code data()} is the stored JSON document, a {@link String}</b>, as the storage answers it:
+	 * the same text {@link org.sliceworkz.eventstore.spi.EventStorage.StoredEvent#immutableData()}
+	 * carries and an import writes, parsed by nothing on the way out. It need not be byte for byte what
+	 * was appended — PostgreSQL hands back its {@code jsonb} rendering, and a file-backed store re-renders
+	 * what it reloaded — but it is the same document. A caller that wants to look inside parses it with
+	 * the JSON library of its choice; most callers of a raw stream never do. Nothing is upcast, so a
+	 * legacy event comes back under its stored type in its stored shape, and nothing is decrypted: a
 	 * {@link org.sliceworkz.eventstore.shredding.Shreddable} value comes back as the sealed envelope it
 	 * is stored as, which is what lets an export or an import move it without keys.
+	 * <p>
+	 * The alternative — an {@code EventSource<Object>} whose value is a parsed JSON tree — loses because
+	 * this module carries no JSON library and so cannot name the type: the value was a Jackson 3 node
+	 * behind an {@code Object}, of use only to a caller importing Jackson 3, and of none to an
+	 * application on Jackson 2 or another library; and because it paid a parse for every event on the
+	 * one read path that looks inside almost none of them.
 	 * <p>
 	 * What it is for: inspecting a stored event a typed stream cannot read (an
 	 * {@link org.sliceworkz.eventstore.events.EventDeserializationException} names it by reference, and
@@ -235,23 +244,25 @@ public interface EventStore extends AutoCloseable {
 	 * checking whether an event is present before an import — a typed stream would upcast, and report a
 	 * legacy event whose upcast yields nothing as absent.
 	 * <pre>{@code
-	 * EventSource<Object> everything = eventStore.getRawEventStream(EventStreamId.anyContext());
-	 * List<Event<Object>> stored = everything.getEventById(reference.id());
+	 * EventSource<String> everything = eventStore.getRawEventStream(EventStreamId.anyContext());
+	 * List<Event<String>> stored = everything.getEventById(reference.id());
+	 * String json = stored.getFirst().data();
 	 * }</pre>
 	 * The alternative — a {@code getEventStream(EventStreamId)} overload with a free type parameter —
 	 * loses because the caller then writes {@code EventStream<CustomerEvent> s = store.getEventStream(id)},
-	 * gets a JSON tree under that type, and finds out at the first {@code switch} over {@code data()},
+	 * gets a JSON document under that type, and finds out at the first {@code switch} over {@code data()},
 	 * as a {@code ClassCastException}; nothing at compile time objects. Here the type parameter is fixed,
 	 * so that assignment does not compile. A stream deliberately typed wider than its roots, and able
 	 * to append, is not a raw stream: that is {@link #getEventStream(EventStreamId, Set)} with the roots
 	 * it should carry.
 	 *
 	 * @param eventStreamId the identifier for the event stream, concrete or wildcard
-	 * @return a read-only stream over the stored events, with no type mapping
+	 * @return a read-only stream over the stored events, with no type mapping, each event's data the
+	 *         stored JSON document
 	 * @see EventSource#getEventById(org.sliceworkz.eventstore.events.EventId)
 	 */
-	default EventSource<Object> getRawEventStream ( EventStreamId eventStreamId ) {
-		return this.<Object>getEventStream(eventStreamId, Collections.emptySet(), Collections.emptySet());
+	default EventSource<String> getRawEventStream ( EventStreamId eventStreamId ) {
+		return this.<String>getEventStream(eventStreamId, Collections.emptySet(), Collections.emptySet());
 	}
 
 	/**

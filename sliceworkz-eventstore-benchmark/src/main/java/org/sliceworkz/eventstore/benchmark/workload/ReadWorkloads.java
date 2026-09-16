@@ -401,7 +401,7 @@ public final class ReadWorkloads {
 		return simple("query-wildcard",
 				"a page from a stream scoped to no context -- what a store-wide reader pays",
 				context -> {
-					EventSource<Object> raw = context.target().store()
+					EventSource<String> raw = context.target().store()
 							.getRawEventStream(EventStreamId.anyContext().anyPurpose());
 					return raw.query(EventQuery.matchAll().limit(PAGE_SIZE));
 				});

@@ -115,18 +115,26 @@ mvn clean install -DskipTests
   javac against probe snippets
 - Combines `EventSource` (reading) and `EventSink` (writing) interfaces
 - **Raw mode is its own method, with its own type: `getRawEventStream(id)` returns an
-  `EventSource<Object>`.** No event root classes, so no type mapping: every stored event reads as the
-  parsed JSON tree of its payload (a Jackson 3 `JsonNode` at runtime, declared `Object` because the api
-  carries no Jackson), under its stored type, nothing upcast and nothing decrypted — a `Shreddable` comes
-  back as its sealed envelope. It is an `EventSource` rather than an `EventStream` because a raw stream
-  cannot append (an append is admitted only for a type the stream maps, and a raw stream maps none), so
-  the type says so instead of every append failing at runtime. What it is for: reading the event an
+  `EventSource<String>`.** No event root classes, so no type mapping: every stored event reads as the
+  JSON document it is stored as — the same text `StoredEvent.immutableData()` carries, parsed by
+  nothing on the way out, so on Postgres the `jsonb` rendering rather than the bytes appended — under
+  its stored type, nothing upcast and nothing decrypted: a `Shreddable` comes back as its sealed
+  envelope. A caller that wants to look inside parses it with whatever JSON library it uses; most
+  never do. It is an `EventSource` rather than an `EventStream` because a raw stream cannot append (an
+  append is admitted only for a type the stream maps, and a raw stream maps none), so the type says so
+  instead of every append failing at runtime. What it is for: reading the event an
   `EventDeserializationException` names through `getEventById`, following every append in a store, and
-  the presence check before an import. The alternative — a `getEventStream(id)` overload with a free type
-  parameter — loses because `EventStream<CustomerEvent> s = store.getEventStream(id)` then compiles and
-  hands back JSON trees under the domain type, a `ClassCastException` at the first `switch`. A stream
-  typed wider than its roots that can still append is the `Set<Class<?>>` overload's job, not raw mode.
-  `EventStoreTypeParameterTest` pins both the acceptance and the rejections by running javac
+  the presence check before an import. Two alternatives lose. An `EventSource<Object>` whose value is
+  a parsed tree — a Jackson 3 `JsonNode` behind an `Object`, since the api carries no Jackson — names
+  no type the api can describe, is usable only by a caller importing Jackson 3 (and not by one on
+  Jackson 2 or another library), and pays a parse per event on the one read path that looks inside
+  almost none of them. A `getEventStream(id)` overload with a free type parameter loses because
+  `EventStream<CustomerEvent> s = store.getEventStream(id)` then compiles and hands back JSON
+  documents under the domain type, a `ClassCastException` at the first `switch`. A stream typed wider
+  than its roots that can still append is the `Set<Class<?>>` overload's job, not raw mode.
+  `EventStoreTypeParameterTest` pins the acceptance and the rejections by running javac;
+  `RawStreamTest` in the TCK pins per backend that the document is the storage's own text for the
+  event, through `query` and `getEventById` alike
 - **A wildcard stream is a source, not a sink.** An event is stored in exactly one stream, and a
   wildcard (`anyContext()`, or `anyPurpose()` within a context) names none, so a stream opened on
   one reads across every stream it matches and refuses `append` with `IllegalArgumentException`,

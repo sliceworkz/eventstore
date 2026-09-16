@@ -142,7 +142,7 @@ class EventStreamSerdeSharingTest {
 
 			EventStream<ShopEvent> shop = eventStore.getEventStream(streamId, ShopEvent.class);
 			EventStream<OtherEvent> other = eventStore.getEventStream(streamId, OtherEvent.class);
-			EventSource<Object> raw = eventStore.getRawEventStream(streamId);
+			EventSource<String> raw = eventStore.getRawEventStream(streamId);
 
 			assertNotSame(serdeOf(shop), serdeOf(other),
 					"two streams with different event root classes shared a serde — they do not have the same type mappings");

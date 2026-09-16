@@ -32,8 +32,8 @@ import org.sliceworkz.eventstore.shredding.KeyId;
  * <ul>
  *   <li><b>Typed Mode:</b> Events are mapped to/from Java classes using Jackson, providing type safety
  *       and supporting features like sealed interfaces, upcasting, and GDPR compliance.</li>
- *   <li><b>Raw Mode:</b> Events remain as JSON strings without type mapping, useful for schema-less
- *       event processing.</li>
+ *   <li><b>Raw Mode:</b> Events are read back as the JSON documents they are stored as, with no type
+ *       mapping, for the paths that look at events without their domain classes.</li>
  * </ul>
  * <p>
  * The serializer/deserializer supports advanced features including:
@@ -80,7 +80,7 @@ public interface EventPayloadSerializerDeserializer {
 	 * Deserializes a JSON representation back to zero or more domain event objects.
 	 * <p>
 	 * For typed mode, the event type name is used to determine the target Java class.
-	 * For raw mode, returns a Jackson JsonNode wrapped in a singleton list.
+	 * For raw mode, returns the stored JSON document itself, a {@link String}, wrapped in a singleton list.
 	 * <p>
 	 * This method supports multi-event upcasting where a single historical event can produce
 	 * zero or more current events. This is useful for:
@@ -235,8 +235,8 @@ public interface EventPayloadSerializerDeserializer {
 	/**
 	 * Creates a raw serializer/deserializer that works with JSON strings directly.
 	 * <p>
-	 * This mode is useful for schema-less event processing where event types are not
-	 * statically known. Events are deserialized as Jackson JsonNode objects.
+	 * This mode is for reading events without their domain classes: every event is handed back as the
+	 * JSON document it is stored as, a {@link String}, and nothing is parsed.
 	 *
 	 * @return a new raw serializer/deserializer instance
 	 * @see RawEventPayloadSerializerDeserializer
@@ -249,7 +249,8 @@ public interface EventPayloadSerializerDeserializer {
 	 * Container for an event type and its deserialized data object.
 	 *
 	 * @param type the event type
-	 * @param eventData the deserialized event data (Java object for typed mode, JsonNode for raw mode)
+	 * @param eventData the deserialized event data (a Java object in typed mode, the stored JSON document
+	 *        as a {@link String} in raw mode)
 	 */
 	public record TypeAndPayload ( EventType type, Object eventData ) { }
 

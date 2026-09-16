@@ -532,10 +532,11 @@ EventStorage storage = PostgresEventStorage.newBuilder()
   parked forever.
 
 - **A store restored logically into a younger cluster is refused too.** Before the monitors are
-  started, `start()` checks that no stream head carries a transaction id the cluster has not assigned yet —
-  the signature of a `pg_dump`/`pg_restore` into a fresh cluster, where the restored history sits
-  above the visibility barrier and reads as absent while every new append sorts before it. Fatal in
-  the same way, with the storage closed and the remedies named. See "Backup and restore" in the
+  started, `start()` checks that the newest stored event in the `(tx, position)` order does not carry
+  a transaction id the cluster has not assigned yet — the signature of a `pg_dump`/`pg_restore` into
+  a fresh cluster, where the restored history sits above the visibility barrier and reads as absent
+  while every new append sorts before it. One probe off the global order index, whatever the store
+  holds. Fatal in the same way, with the storage closed and the remedies named. See "Backup and restore" in the
   postgres module README, and the PostgreSQL notes below. It runs *before* the monitors, on a
   connection returned before they take theirs: the other order deadlocks several stores starting on one
   shared pool, since each monitor holds its connection for the life of the storage. While a caller is in
@@ -1875,8 +1876,9 @@ that bind everywhere:
 - **Back the cluster up physically; a logical dump restored into a fresh cluster does not work.**
   `pg_dump` copies `event_tx` as data, so the restored history carries ids above the new cluster's
   counter: every read sits behind the visibility barrier and sees an empty store, and the first
-  append sorts before all of history. `build()` refuses to start such a store (a bounded index walk
-  over the stream heads, under every init mode). Physical backups keep the counter and need nothing;
+  append sorts before all of history. `build()` refuses to start such a store (one probe off the
+  global order index, under every init mode — never a walk of the streams, which on a per-entity
+  layout is a probe per entity on every boot). Physical backups keep the counter and need nothing;
   moving a store between clusters is `EventStoreImporter`'s job, which reassigns both ordering
   columns — bookmarks copy across by id, keys and the `btree_gin` extension travel separately. The
   runbook, with the measured breakage and the `pg_resetwal` escape hatch, is "Backup and restore" in

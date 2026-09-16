@@ -27,22 +27,18 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Calendar;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.TimeZone;
 import java.util.UUID;
 import java.util.Collections;
 import java.util.Iterator;
@@ -89,6 +85,7 @@ import org.sliceworkz.eventstore.spi.EventStorageException;
 import org.sliceworkz.eventstore.spi.EventToImport;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
+import org.sliceworkz.eventstore.stream.IdempotencyKeyConflictException;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 
 import tools.jackson.databind.json.JsonMapper;
@@ -1790,6 +1787,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	@Override
 	public List<StoredEvent> append(AppendCriteria appendCriteria, Optional<EventStreamId> streamId, List<EventToStore> events) {
 		checkNotClosed();
+		rejectRepeatedIdempotencyKeys(events);
 		List<StoredEvent> storedEvents = new ArrayList<>();
 
 		if ( events.size() != 0 ) {
@@ -1938,13 +1936,13 @@ public class PostgresEventStorageImpl implements EventStorage {
 						while (rs.next()) {
 							long position = rs.getLong("event_position");
 							long tx = Long.parseUnsignedLong(rs.getString("event_tx"));
-							Timestamp timestamp = rs.getTimestamp("event_timestamp", Calendar.getInstance(TimeZone.getTimeZone("UTC")));
+							Instant timestamp = rs.getObject("event_timestamp", OffsetDateTime.class).toInstant();
 							EventId id = new EventId(rs.getString("event_id"));
 
 							EventToStore e = it.next();
 
 							EventReference reference = EventReference.of(id, position, tx);
-							storedEvents.add(e.positionAt(reference, timestamp.toInstant().atOffset(ZoneOffset.UTC).toLocalDateTime()));
+							storedEvents.add(e.positionAt(reference, timestamp));
 						}
 
 						if ( storedEvents.size() != events.size() ) {
@@ -1969,7 +1967,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 					// also swallows an event_id or primary-key violation whenever the table prefix happens to
 					// contain the word "idempotency".
 					if ( isIdempotencyKeyViolation(e) ) {
-						return Collections.emptyList();
+						return deduplicatedOrConflicting(writeConnection, events, e);
 					} else {
 						throw new EventStorageException("SQLException during append", e);
 					}
@@ -1982,6 +1980,86 @@ public class PostgresEventStorageImpl implements EventStorage {
 		
 		return storedEvents;
 			
+	}
+
+	/**
+	 * Decides what a unique violation on the idempotency index means for the batch: a retry, or a
+	 * conflict.
+	 * <p>
+	 * The server reports the first violating row only, so a batch carrying several keys needs one
+	 * lookup of them on its stream — run on the same connection after the rollback — to tell the two
+	 * apart. Every key stored is a retry of an atomically stored batch, swallowed whole and reported
+	 * as an empty result. Some keys stored and some not is a batch the store cannot hold and never
+	 * held, raised as {@link IdempotencyKeyConflictException} with nothing stored. No key stored at
+	 * all can only mean the writer that held the key rolled back after rejecting this one, which is a
+	 * transient {@link EventStorageException} to retry. A batch carrying a single key skips the
+	 * lookup: the violation names the whole of what it carries.
+	 */
+	private List<StoredEvent> deduplicatedOrConflicting ( Connection connection, List<EventToStore> events, SQLException violation ) throws SQLException {
+		Map<EventStreamId,Set<String>> keysByStream = new LinkedHashMap<>();
+		for ( EventToStore event : events ) {
+			if ( event.idempotencyKey() != null ) {
+				keysByStream.computeIfAbsent(event.stream(), s -> new HashSet<>()).add(event.idempotencyKey());
+			}
+		}
+		if ( keysByStream.size() == 1 && keysByStream.values().iterator().next().size() == 1 ) {
+			return Collections.emptyList();
+		}
+		Set<String> storedKeys = new HashSet<>();
+		Set<String> newKeys = new HashSet<>();
+		EventStreamId keyedStream = null;
+		for ( Map.Entry<EventStreamId,Set<String>> entry : keysByStream.entrySet() ) {
+			keyedStream = entry.getKey();
+			Set<String> stored = storedIdempotencyKeys(connection, entry.getKey(), entry.getValue());
+			storedKeys.addAll(stored);
+			for ( String key : entry.getValue() ) {
+				if ( !stored.contains(key) ) {
+					newKeys.add(key);
+				}
+			}
+		}
+		if ( storedKeys.isEmpty() ) {
+			throw new EventStorageException("SQLException during append", violation);
+		}
+		if ( !newKeys.isEmpty() ) {
+			throw new IdempotencyKeyConflictException(keyedStream, storedKeys, newKeys);
+		}
+		return Collections.emptyList();
+	}
+
+	/** Which of the given keys events on the stream already hold; answered from the idempotency index. */
+	private Set<String> storedIdempotencyKeys ( Connection connection, EventStreamId stream, Set<String> keys ) throws SQLException {
+		Set<String> stored = new HashSet<>();
+		try ( PreparedStatement stmt = connection.prepareStatement(
+				"SELECT idempotency_key FROM %sevents WHERE stream_context = ? AND stream_purpose = ? AND idempotency_key = ANY(?)".formatted(prefix)) ) {
+			stmt.setString(1, stream.context());
+			stmt.setString(2, stream.purpose());
+			stmt.setArray(3, connection.createArrayOf("text", keys.toArray(new String[0])));
+			try ( ResultSet rs = stmt.executeQuery() ) {
+				while ( rs.next() ) {
+					stored.add(rs.getString(1));
+				}
+			}
+			connection.commit();
+		}
+		return stored;
+	}
+
+	/**
+	 * Rejects a batch carrying one idempotency key on two of its events, before the insert. Left to the
+	 * server, the stream-scoped unique index rejects the second row and the catch in {@link #append}
+	 * reads that violation as "this key was appended before" — so the first ever attempt at such a
+	 * batch would store nothing and be reported as a successful de-duplication. The violation carries
+	 * no way to tell the two apart, and a batch that repeats a key has no meaning a storage could give
+	 * it, so it is refused as a caller error.
+	 */
+	private static void rejectRepeatedIdempotencyKeys ( List<EventToStore> events ) {
+		Set<List<Object>> scopes = new HashSet<>();
+		for ( EventToStore event : events ) {
+			if ( event.idempotencyKey() != null && !scopes.add(List.of(event.stream(), event.idempotencyKey())) ) {
+				throw new IllegalArgumentException("idempotency key '%s' is carried by more than one event of the batch on stream %s".formatted(event.idempotencyKey(), event.stream()));
+			}
+		}
 	}
 
 	/**
@@ -2095,11 +2173,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 			parameters.add(event.stream().context());
 			parameters.add(event.stream().purpose());
 			parameters.add(event.type().name());
-			// The timestamp travels with the event. Bound as an OffsetDateTime at UTC so the instant is
-			// unambiguous on the wire, mirroring the read path which renders event_timestamp back to a
-			// UTC LocalDateTime. Note timestamptz keeps microseconds and rounds anything finer, so a
-			// nanosecond-precision source timestamp lands up to half a microsecond off.
-			parameters.add(OffsetDateTime.of(event.timestamp(), ZoneOffset.UTC));
+			// The timestamp travels with the event. Bound as an OffsetDateTime at UTC, which the driver
+			// maps to timestamptz unambiguously; the read path hands the column back as the Instant it
+			// is. Note timestamptz keeps microseconds and rounds anything finer, so a nanosecond-precision
+			// source timestamp lands up to half a microsecond off.
+			parameters.add(OffsetDateTime.ofInstant(event.timestamp(), ZoneOffset.UTC));
 			parameters.add(event.immutableData());
 			parameters.add(event.tags().toStrings().toArray(new String[0]));
 		}
@@ -2413,7 +2491,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		String streamContext = rs.getString("stream_context");
 		String streamPurpose = rs.getString("stream_purpose");
 		String eventTypeName = rs.getString("event_type");
-		Timestamp timestamp = rs.getTimestamp("event_timestamp", Calendar.getInstance(TimeZone.getTimeZone("UTC")));
+		Instant timestamp = rs.getObject("event_timestamp", OffsetDateTime.class).toInstant();
 		String eventDataJson = rs.getString("event_data");
 		String[] tagsArray = null;
 		if (rs.getArray("event_tags") != null) {
@@ -2432,7 +2510,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		// Create Tags from tag array
 		Tags tags = Tags.parse(tagsArray);
 
-		return new StoredEvent(streamId, EventType.ofType(eventTypeName), eventReference, eventDataJson, tags, timestamp.toInstant().atOffset(ZoneOffset.UTC).toLocalDateTime(), idempotencyKey);
+		return new StoredEvent(streamId, EventType.ofType(eventTypeName), eventReference, eventDataJson, tags, timestamp, idempotencyKey);
 	}
 
 	
@@ -2922,8 +3000,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 					}
 					Tags tags = Tags.parse(tagsArray);
 
-					Timestamp updatedAtTs = rs.getTimestamp("updated_at", Calendar.getInstance(TimeZone.getTimeZone("UTC")));
-					Instant updatedAt = updatedAtTs != null ? updatedAtTs.toInstant() : Instant.EPOCH;
+					OffsetDateTime updatedAtColumn = rs.getObject("updated_at", OffsetDateTime.class);
+					Instant updatedAt = updatedAtColumn != null ? updatedAtColumn.toInstant() : Instant.EPOCH;
 
 					bookmarks.add(new Bookmark(reader, reference, tags, updatedAt));
 				}
@@ -3257,9 +3335,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 			try ( PreparedStatement stmt = readConnection.prepareStatement(sql);
 			      ResultSet rs = stmt.executeQuery() ) {
 				while ( rs.next() ) {
-					Calendar utc = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
-					Instant acquiredAt = rs.getTimestamp("acquired_at", utc).toInstant();
-					Instant heartbeatAt = rs.getTimestamp("heartbeat_at", utc).toInstant();
+					Instant acquiredAt = rs.getObject("acquired_at", OffsetDateTime.class).toInstant();
+					Instant heartbeatAt = rs.getObject("heartbeat_at", OffsetDateTime.class).toInstant();
 					leases.add(new Lease(
 							rs.getString("lease_name"),
 							rs.getString("lease_owner"),

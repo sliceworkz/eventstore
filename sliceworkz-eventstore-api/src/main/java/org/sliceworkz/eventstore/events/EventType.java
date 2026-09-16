@@ -121,6 +121,10 @@ public record EventType ( String name ) implements java.io.Serializable {
 	 * append, in a stream's type mappings, and in an {@link org.sliceworkz.eventstore.query.EventTypesFilter}.
 	 * The simple name is the intended case and the annotation the exception, for a class whose stored
 	 * name cannot be its own name — see {@link EventName} for when that is.
+	 * <p>
+	 * An interface's name is not the name of any stored event; to match every event type under a
+	 * sealed interface, build the filter from the class with
+	 * {@link org.sliceworkz.eventstore.query.EventTypesFilter#of(Class...)}, which resolves it.
 	 *
 	 * @param clazz the class representing the domain event type
 	 * @return an EventType named by the class's {@code @EventName}, or its simple name

@@ -17,7 +17,7 @@
  */
 package org.sliceworkz.eventstore.spi;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
@@ -73,12 +73,12 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  * @param id the globally unique event identifier to persist (required)
  * @param immutableData the serialized event payload (required, must be valid JSON)
  * @param tags key-value pairs for dynamic event retrieval and consistency boundaries (required, use {@link Tags#none()})
- * @param timestamp the moment the event was stored, always in UTC (required)
+ * @param timestamp the instant at which the event was stored (required)
  * @param idempotencyKey the idempotency key to persist, or {@code null} for none
  * @see EventStorage#importEvents(java.util.List, EventStorage.ImportMode)
  * @see StoredEvent
  */
-public record EventToImport ( EventStreamId stream, EventType type, EventId id, String immutableData, Tags tags, LocalDateTime timestamp, String idempotencyKey ) {
+public record EventToImport ( EventStreamId stream, EventType type, EventId id, String immutableData, Tags tags, Instant timestamp, String idempotencyKey ) {
 
 	/**
 	 * Constructs an EventToImport, validating everything the storage backends require.
@@ -94,7 +94,7 @@ public record EventToImport ( EventStreamId stream, EventType type, EventId id, 
 	 * @param id the event identifier (required)
 	 * @param immutableData the payload (required)
 	 * @param tags the tags (required, use {@link Tags#none()} if none)
-	 * @param timestamp the storage timestamp in UTC (required)
+	 * @param timestamp the instant at which the event was stored (required)
 	 * @param idempotencyKey the idempotency key (optional)
 	 * @throws IllegalArgumentException if a required field is null or blank
 	 */
@@ -148,7 +148,7 @@ public record EventToImport ( EventStreamId stream, EventType type, EventId id, 
 	 * transaction the target storage assigned.
 	 * <p>
 	 * Called by storage implementations once an import statement has committed. Mirrors
-	 * {@link EventStorage.EventToStore#positionAt(EventReference, LocalDateTime)}, except the timestamp comes
+	 * {@link EventStorage.EventToStore#positionAt(EventReference, Instant)}, except the timestamp comes
 	 * from the imported event rather than from the storage clock.
 	 *
 	 * @param position the position assigned by the target storage
@@ -222,10 +222,10 @@ public record EventToImport ( EventStreamId stream, EventType type, EventId id, 
 	 * Preserving the original timestamp is the default and usually the right choice — it is part of the fact.
 	 * Restamping is available for cases where the imported event is genuinely a new fact, such as a clone.
 	 *
-	 * @param timestamp the timestamp to store, in UTC
+	 * @param timestamp the instant to store
 	 * @return a new EventToImport with the specified timestamp
 	 */
-	public EventToImport withTimestamp ( LocalDateTime timestamp ) {
+	public EventToImport withTimestamp ( Instant timestamp ) {
 		return new EventToImport(stream, type, id, immutableData, tags, timestamp, idempotencyKey);
 	}
 

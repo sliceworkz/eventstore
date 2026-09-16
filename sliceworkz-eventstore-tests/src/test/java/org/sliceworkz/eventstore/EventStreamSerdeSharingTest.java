@@ -148,9 +148,10 @@ class EventStreamSerdeSharingTest {
 			assertNotSame(serdeOf(shop), serdeOf(raw),
 					"a typed stream and a raw stream shared a serde");
 
-			// and the mappings really are the ones asked for. The DOMAIN_EVENT_TYPE parameter normally
-			// makes this a compile error, so go around it to reach the runtime check the serde backs
-			EventStream<Object> shopWithoutItsTypeParameter = eventStore.getEventStream(streamId, ShopEvent.class);
+			// and the mappings really are the ones asked for. The single-class overload fixes the
+			// DOMAIN_EVENT_TYPE parameter and makes this a compile error, so go around it through the Set
+			// overload to reach the runtime check the serde backs
+			EventStream<Object> shopWithoutItsTypeParameter = eventStore.getEventStream(streamId, Set.of(ShopEvent.class));
 			other.append(AppendCriteria.none(),
 					Event.of(new OtherEvent.SomethingHappened("x"), Tags.none()));
 			assertThrows(IllegalArgumentException.class,

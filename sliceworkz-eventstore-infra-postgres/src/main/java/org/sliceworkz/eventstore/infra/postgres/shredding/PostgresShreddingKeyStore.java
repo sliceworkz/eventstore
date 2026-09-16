@@ -22,9 +22,9 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -436,7 +436,7 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 				while ( resultSet.next() ) {
 					shreddedByCategory.computeIfAbsent(resultSet.getString("subject_category"), category -> new ArrayList<>())
 							.add(KeyId.of(resultSet.getString("key_id")));
-					Timestamp stamped = resultSet.getTimestamp("shredded_at");
+					OffsetDateTime stamped = resultSet.getObject("shredded_at", OffsetDateTime.class);
 					shreddedAt = stamped == null ? Instant.now() : stamped.toInstant();
 				}
 			}
@@ -608,14 +608,14 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 			DataSubject subject = DataSubject.of(resultSet.getString("subject_type"), resultSet.getString("subject_id"))
 					.withCategory(resultSet.getString("subject_category"));
 
-			Timestamp shreddedAt = resultSet.getTimestamp("shredded_at");
+			OffsetDateTime shreddedAt = resultSet.getObject("shredded_at", OffsetDateTime.class);
 			String reason = resultSet.getString("shredded_reason");
 
 			return new KeyRecord(
 					KeyId.of(resultSet.getString("key_id")),
 					subject,
-					resultSet.getTimestamp("created_at").toInstant(),
-					Optional.ofNullable(shreddedAt).map(Timestamp::toInstant),
+					resultSet.getObject("created_at", OffsetDateTime.class).toInstant(),
+					Optional.ofNullable(shreddedAt).map(OffsetDateTime::toInstant),
 					Optional.ofNullable(reason).map(ErasureReason::of));
 		}
 

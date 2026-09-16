@@ -280,19 +280,6 @@ public class EventStreamTest extends AbstractEventStoreTest {
 	}
 
 	@ForEachBackend
-	void testAppendMultipleWithIdempotency ( ) {
-
-		// if at least one of the events carries an idempotency key, this is not possible
-		EphemeralEvent<MockDomainEvent> e1 = Event.<MockDomainEvent>of(new FirstDomainEvent("1"), Tags.none());
-		EphemeralEvent<MockDomainEvent> e2 = Event.<MockDomainEvent>of(new SecondDomainEvent("2"), Tags.none()).withIdempotencyKey("idempotency-key");
-
-		IllegalArgumentException iae = assertThrows(IllegalArgumentException.class, ()->
-			es.append(AppendCriteria.none(), List.of(e1, e2))
-		);
-		assertEquals("cannot append multiple events in combination with an idempotency key", iae.getMessage());
-	}
-
-	@ForEachBackend
 	void testIdempotencyIsScopedPerStream ( ) {
 
 		// The same idempotency key used on two *different* streams must NOT collide: dedup is
@@ -342,8 +329,10 @@ public class EventStreamTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void testAppendWithConcreteEventClass ( ) {
 
-		// this stream only contains this concrete event type (we use <Object> generic for test purposes only)
-		EventStream<Object> specialEs = eventStore().getEventStream(stream, FirstDomainEvent.class);
+		// this stream only contains this concrete event type. Opened through the Set overload so it can be typed
+		// <Object>: the single-class overload fixes the type parameter, which would make the append below a
+		// compile error instead of reaching the runtime check this test is about
+		EventStream<Object> specialEs = eventStore().getEventStream(stream, Set.of(FirstDomainEvent.class));
 
 		// should be ok
 		specialEs.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FirstDomainEvent("1"), Tags.none())));
@@ -356,8 +345,10 @@ public class EventStreamTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void testAppendWithConcreteEventClassWithMultipleComponents ( ) {
 
-		// this stream only contains this concrete event type (we use <Object> generic for test purposes only)
-		EventStream<Object> specialEs = eventStore().getEventStream(stream, FourthDomainEvent.class);
+		// this stream only contains this concrete event type. Opened through the Set overload so it can be typed
+		// <Object>: the single-class overload fixes the type parameter, which would make the append below a
+		// compile error instead of reaching the runtime check this test is about
+		EventStream<Object> specialEs = eventStore().getEventStream(stream, Set.of(FourthDomainEvent.class));
 
 		// should be ok
 		specialEs.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FourthDomainEvent("1", "someName"), Tags.none())));

@@ -36,6 +36,11 @@
 	<artifactId>sliceworkz-eventstore-tests</artifactId>
 	<packaging>jar</packaging>
 
+	<properties>
+		<!-- the name this jar has on the module path (see the parent pom) -->
+		<automatic.module.name>org.sliceworkz.eventstore.tests</automatic.module.name>
+	</properties>
+
 	<!--
 		Runs the shared TCK scenarios (which live in sliceworkz-eventstore-testing, so third parties
 		can run them too) against every backend this repository ships, plus the few tests that are

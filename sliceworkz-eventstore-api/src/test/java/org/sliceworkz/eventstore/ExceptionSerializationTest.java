@@ -28,6 +28,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
+import java.util.Set;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
@@ -39,6 +40,8 @@ import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.projection.ProjectorException;
 import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
+import org.sliceworkz.eventstore.stream.EventStreamId;
+import org.sliceworkz.eventstore.stream.IdempotencyKeyConflictException;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 
 /**
@@ -128,6 +131,16 @@ class ExceptionSerializationTest {
 
 		assertThrows(IllegalArgumentException.class,
 				() -> new EventReference(new EventId("x"), 0L, 1L, 0));
+	}
+
+	@Test
+	void anIdempotencyKeyConflictSurvivesWithBothSetsOfKeys ( ) throws Exception {
+		IdempotencyKeyConflictException restored = roundTrip(new IdempotencyKeyConflictException(
+				EventStreamId.forContext("orders").withPurpose("4711"), Set.of("a"), Set.of("b", "c")));
+
+		assertEquals(EventStreamId.forContext("orders").withPurpose("4711").toString(), restored.stream());
+		assertEquals(Set.of("a"), restored.storedKeys());
+		assertEquals(Set.of("b", "c"), restored.newKeys());
 	}
 
 	@SuppressWarnings ( "unchecked" )

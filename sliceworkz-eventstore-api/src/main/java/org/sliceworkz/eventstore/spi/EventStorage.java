@@ -18,7 +18,7 @@
 package org.sliceworkz.eventstore.spi;
 
 import java.time.Duration;
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -307,12 +307,29 @@ public interface EventStorage extends AutoCloseable {
 	 *   <li>Recording the current timestamp</li>
 	 *   <li>Persisting the event payload</li>
 	 * </ul>
+	 * <p>
+	 * <b>Idempotency keys.</b> An {@link EventToStore#idempotencyKey()} is scoped to its event's stream
+	 * (context and purpose). A batch is de-duplicated as a whole and only as a retry: when every key
+	 * the batch carries is already stored on its stream, the implementation stores nothing, notifies
+	 * nobody and returns an empty list. When some of its keys are stored and others are not, the
+	 * batch is not a retry of anything the storage holds, and the implementation stores nothing and
+	 * throws {@link org.sliceworkz.eventstore.stream.IdempotencyKeyConflictException} naming both
+	 * sets of keys — never a subset of the batch, and never silence. The events of one batch must
+	 * carry distinct keys; implementations must reject a batch repeating a key with
+	 * {@link IllegalArgumentException} before anything is stored. Both refusals matter on a backend
+	 * whose unique index rejects such batches on its own: the violation it reports is the same one a
+	 * retry raises, and reading every violation as a retry reports a first attempt, or a lost batch,
+	 * as a de-duplication.
 	 *
 	 * @param appendCriteria criteria defining optimistic locking constraints (or none for simple append)
 	 * @param stream optional stream identifier to append events to a specific stream
 	 * @param events list of events to append (must not be empty)
-	 * @return list of stored events with assigned references and timestamps
+	 * @return list of stored events with assigned references and timestamps; empty when the batch was
+	 *         de-duplicated on an idempotency key
 	 * @throws org.sliceworkz.eventstore.stream.OptimisticLockingException if append criteria are violated
+	 * @throws IllegalArgumentException if two events of the batch carry the same idempotency key
+	 * @throws org.sliceworkz.eventstore.stream.IdempotencyKeyConflictException if some of the batch's
+	 *         idempotency keys are already stored on the stream and others are not; nothing is stored
 	 * @throws EventStorageException if an error occurs during append operation
 	 * @see AppendCriteria
 	 * @see EventToStore
@@ -988,11 +1005,11 @@ public interface EventStorage extends AutoCloseable {
 		 * to create the final persisted representation of the event.
 		 *
 		 * @param reference the unique reference assigned to this event
-		 * @param timestamp the timestamp when this event was stored
+		 * @param timestamp the instant at which this event was stored, on the storage's clock
 		 * @return a StoredEvent with all metadata assigned
 		 * @see StoredEvent
 		 */
-		public StoredEvent positionAt ( EventReference reference, LocalDateTime timestamp) {
+		public StoredEvent positionAt ( EventReference reference, Instant timestamp ) {
 			return new StoredEvent(stream, type, reference, immutableData, tags, timestamp, idempotencyKey);
 		}
 	}
@@ -1015,14 +1032,14 @@ public interface EventStorage extends AutoCloseable {
 	 * @param reference the unique reference (ID and position) of this event
 	 * @param immutableData the serialized event payload, as stored
 	 * @param tags key-value pairs for dynamic event retrieval and consistency boundaries
-	 * @param timestamp the moment this event was stored, always in UTC
+	 * @param timestamp the instant at which this event was stored, on the storage's clock
 	 * @param idempotencyKey the idempotency key the event was appended with, or {@code null} if none;
 	 *                       scoped to the event stream (context and purpose)
 	 * @see EventToStore
 	 * @see EventReference
 	 * @see #query(EventQuery, Optional, EventReference, Limit, QueryDirection)
 	 */
-	public record StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String immutableData, Tags tags, LocalDateTime timestamp, String idempotencyKey ) {
+	public record StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String immutableData, Tags tags, Instant timestamp, String idempotencyKey ) {
 
 		/**
 		 * Convenience constructor for stored events without an idempotency key.
@@ -1035,9 +1052,9 @@ public interface EventStorage extends AutoCloseable {
 		 * @param reference the unique reference (ID and position) of this event
 		 * @param immutableData the serialized event payload, as stored
 		 * @param tags key-value pairs for dynamic event retrieval and consistency boundaries
-		 * @param timestamp the moment this event was stored, always in UTC
+		 * @param timestamp the instant at which this event was stored, on the storage's clock
 		 */
-		public StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String immutableData, Tags tags, LocalDateTime timestamp ) {
+		public StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String immutableData, Tags tags, Instant timestamp ) {
 			this(stream, type, reference, immutableData, tags, timestamp, null);
 		}
 

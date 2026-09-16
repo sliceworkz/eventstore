@@ -62,10 +62,10 @@ import java.lang.annotation.Target;
  * or written. Beyond that, treat the value the way you would a database column name: pick it once,
  * and keep it.
  * <p>
- * The annotation is not inherited, and it names one concrete event class. On a sealed interface in an
- * event hierarchy it only renames the alias under which
- * {@link org.sliceworkz.eventstore.query.EventTypesFilter#of(Class...)} expands that interface to its
- * permitted event classes, since an interface is never a stored type itself. It combines freely with
+ * The annotation is not inherited, and it names one concrete event class. On an interface it has no
+ * effect: an interface is never a stored type, and
+ * {@link org.sliceworkz.eventstore.query.EventTypesFilter#of(Class...)} resolves a sealed interface
+ * into the event classes under it, each taken by its own stored name. It combines freely with
  * {@link LegacyEvent}: a legacy class can carry the stored name of the history it upcasts, whatever
  * the class is called.
  * <p>

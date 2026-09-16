@@ -17,7 +17,7 @@
  */
 package org.sliceworkz.eventstore.events;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
@@ -49,6 +49,13 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  * Event<CustomerEvent> persistedEvent = stream.query(EventQuery.matchAll()).findFirst().get();
  * }</pre>
  *
+ * <h2>Timestamp:</h2>
+ * {@link #timestamp()} is the {@link Instant} at which the store persisted the event, taken from the storage's
+ * clock — the same kind of value as {@link Bookmark#updatedAt()} and the clocks on {@link Lease}, so the three
+ * compare without conversion. An instant carries no zone: the date or the wall-clock time it falls on is the
+ * reader's rendering, made with the zone the reader means, for instance
+ * {@code event.timestamp().atZone(ZoneId.of("Europe/Brussels")).toLocalDate()}.
+ *
  * @param <DOMAIN_EVENT_TYPE> the type of the domain event data
  * @param stream the event stream this event belongs to
  * @param type the current runtime type of the event (may differ from storedType if upcasted)
@@ -56,18 +63,18 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  * @param reference the unique reference containing ID and position in the stream
  * @param data the actual domain event data (typically a record implementing a sealed interface)
  * @param tags the tags attached to this event for querying and consistency boundaries
- * @param timestamp the time when this event was persisted to the store, always in UTC
+ * @param timestamp the instant at which this event was persisted to the store, on the storage's clock
  * @see EphemeralEvent
  * @see EventReference
  * @see Tags
  */
-public record Event<DOMAIN_EVENT_TYPE> ( EventStreamId stream, EventType type, EventType storedType, EventReference reference, DOMAIN_EVENT_TYPE data, Tags tags, LocalDateTime timestamp ) {
+public record Event<DOMAIN_EVENT_TYPE> ( EventStreamId stream, EventType type, EventType storedType, EventReference reference, DOMAIN_EVENT_TYPE data, Tags tags, Instant timestamp ) {
 
 	/**
 	 * Constructs an Event with validation of all required fields.
 	 * <p>
 	 * All parameters are required and must not be null. This constructor is typically not called directly;
-	 * instead, use the static factory method {@link #of(EventStreamId, EventReference, EventType, EventType, Object, Tags, LocalDateTime)}
+	 * instead, use the static factory method {@link #of(EventStreamId, EventReference, EventType, EventType, Object, Tags, Instant)}
 	 * or create {@link EphemeralEvent}s that are converted to Events upon appending.
 	 *
 	 * @param stream the event stream this event belongs to (required)
@@ -76,10 +83,10 @@ public record Event<DOMAIN_EVENT_TYPE> ( EventStreamId stream, EventType type, E
 	 * @param reference the unique reference for this event (required)
 	 * @param data the domain event data (required)
 	 * @param tags the tags for this event (required, use Tags.none() if no tags)
-	 * @param timestamp the timestamp when this event was persisted
+	 * @param timestamp the instant at which this event was persisted (required)
 	 * @throws IllegalArgumentException if any required parameter is null
 	 */
-	public Event ( EventStreamId stream, EventType type, EventType storedType, EventReference reference, DOMAIN_EVENT_TYPE data, Tags tags, LocalDateTime timestamp ) {
+	public Event ( EventStreamId stream, EventType type, EventType storedType, EventReference reference, DOMAIN_EVENT_TYPE data, Tags tags, Instant timestamp ) {
 		if ( stream == null ) {
 			throw new IllegalArgumentException("stream is required on event");
 		}
@@ -167,10 +174,10 @@ public record Event<DOMAIN_EVENT_TYPE> ( EventStreamId stream, EventType type, E
 	 * @param storedType the event type as stored in the database
 	 * @param data the domain event data
 	 * @param tags the tags for this event
-	 * @param timestamp the timestamp when this event was persisted
+	 * @param timestamp the instant at which this event was persisted (required)
 	 * @return a new Event instance
 	 */
-	public static final <DOMAIN_EVENT_TYPE> Event<DOMAIN_EVENT_TYPE> of ( EventStreamId stream, EventReference reference, EventType type, EventType storedType, DOMAIN_EVENT_TYPE data, Tags tags, LocalDateTime timestamp) {
+	public static final <DOMAIN_EVENT_TYPE> Event<DOMAIN_EVENT_TYPE> of ( EventStreamId stream, EventReference reference, EventType type, EventType storedType, DOMAIN_EVENT_TYPE data, Tags tags, Instant timestamp) {
 		return new Event<DOMAIN_EVENT_TYPE>(stream, type, storedType, reference, data, tags, timestamp);
 	}
 

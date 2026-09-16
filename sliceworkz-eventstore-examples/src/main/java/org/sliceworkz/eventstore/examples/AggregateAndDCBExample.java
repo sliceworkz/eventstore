@@ -73,12 +73,11 @@ public class AggregateAndDCBExample {
 		s = loadStudent("123");
 	}
 	
-	// Load aggregate from events. An event is stored under its record's simple name, so the filter names the
-	// records of the hierarchy, not the sealed interface they implement
+	// Load aggregate from events. The sealed interface stands for every event type under it
 	Student loadStudent(String studentId) {
 	    Student student = new Student(studentId);
 	    EventQuery query = EventQuery.forEvents(
-	        EventTypesFilter.of(StudentDomainEvent.class.getPermittedSubclasses()),
+	        EventTypesFilter.of(StudentDomainEvent.class),
 	        Tags.of("student", studentId)
 	    );
 	    stream.query(query)
@@ -91,7 +90,7 @@ public class AggregateAndDCBExample {
 	    stream.append(
 	        AppendCriteria.of(
 	            EventQuery.forEvents(
-        	        EventTypesFilter.of(StudentDomainEvent.class.getPermittedSubclasses()),
+        	        EventTypesFilter.of(StudentDomainEvent.class),
 	                Tags.of("student", student.studentId)
 	            ),
 	            student.lastEventReference()
@@ -106,7 +105,7 @@ public class AggregateAndDCBExample {
 	Course loadCourse(String courseId) {
 	    Course course = new Course(courseId);
 	    EventQuery query = EventQuery.forEvents(
-	        EventTypesFilter.of(CourseDomainEvent.class.getPermittedSubclasses()),
+	        EventTypesFilter.of(CourseDomainEvent.class),
 	        Tags.of("course", courseId)
 	    );
 	    stream.query(query)
@@ -119,7 +118,7 @@ public class AggregateAndDCBExample {
 	    stream.append(
 	        AppendCriteria.of(
 	            EventQuery.forEvents(
-	                EventTypesFilter.of(CourseDomainEvent.class.getPermittedSubclasses()),
+	                EventTypesFilter.of(CourseDomainEvent.class),
 	                Tags.of("course", course.courseId)
 	            ),
 	            course.lastEventReference()

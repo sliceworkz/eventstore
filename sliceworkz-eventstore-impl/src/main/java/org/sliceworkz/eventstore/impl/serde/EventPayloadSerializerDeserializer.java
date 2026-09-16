@@ -140,6 +140,11 @@ public interface EventPayloadSerializerDeserializer {
 	 * This method traces back the upcasting chain to find all historical event type names
 	 * that should be included when querying for events of the current types. This ensures
 	 * that queries match both current and legacy events.
+	 * <p>
+	 * The names are stored type names. A sealed interface in a filter is resolved into the event
+	 * types under it by {@link org.sliceworkz.eventstore.query.EventTypesFilter#of(java.util.List)}
+	 * when the filter is built, so none arrives here; a name that is no registered type passes
+	 * through unchanged.
 	 *
 	 * @param currentTypes the set of current event types to trace back
 	 * @return the set containing both current types and all legacy types that upcast to them

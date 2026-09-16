@@ -18,9 +18,9 @@
 package org.sliceworkz.eventstore.query;
 
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 import org.sliceworkz.eventstore.events.EventType;
 
@@ -50,6 +50,9 @@ import org.sliceworkz.eventstore.events.EventType;
  * List<Class<?>> eventClasses = List.of(OrderPlaced.class, OrderShipped.class);
  * EventTypesFilter fromList = EventTypesFilter.of(eventClasses);
  *
+ * // Match every event type of a sealed hierarchy, or of one branch of it
+ * EventTypesFilter wholeHierarchy = EventTypesFilter.of(CustomerEvent.class);
+ *
  * // Match from a set of EventTypes
  * Set<EventType> eventTypeSet = Set.of(
  *     EventType.of(PaymentReceived.class),
@@ -57,6 +60,14 @@ import org.sliceworkz.eventstore.events.EventType;
  * );
  * EventTypesFilter fromSet = EventTypesFilter.of(eventTypeSet);
  * }</pre>
+ *
+ * <p><strong>A sealed interface stands for every event type under it.</strong> An event is stored under
+ * the stored name of its record (its simple name, or its {@link org.sliceworkz.eventstore.events.EventName}),
+ * never under the name of an interface it implements, so
+ * {@link #of(List)} resolves a sealed interface into the event types it permits, recursively: the root
+ * of a hierarchy names all of it, a nested interface names its own branch. The filter then holds those
+ * names only. A filter built from {@link EventType}s is literal, since a name says nothing about a
+ * hierarchy.
  *
  * @param eventTypes the set of event types to match (empty set means match any type)
  *
@@ -102,12 +113,44 @@ public record EventTypesFilter ( Set<EventType> eventTypes ) {
 	/**
 	 * Creates a filter that matches events of the specified types from a list.
 	 * Multiple types represent an OR condition: events match if they are ANY of the specified types.
+	 * <p>
+	 * A sealed interface among the classes is resolved into the event types under it, recursively, so
+	 * that the root of a hierarchy names every event type of it and a nested interface names its own
+	 * branch; a class is taken by its stored name, exactly as {@link EventType#of(Class)} resolves it. The
+	 * resolution happens here, at construction, rather than wherever the filter is matched, because a
+	 * filter is matched in several places — the storage query, the store's re-check of the events it
+	 * upcasts, a {@code Projector}'s check of the events it is handed, the optimistic-locking check of an
+	 * append — and only some of them have the stream's type registrations at hand. Resolving once keeps
+	 * them in agreement. The alternative — resolving an interface by name inside the typed serde —
+	 * loses because a filter would then hold a name no stored event carries, matched correctly by
+	 * whichever path happens to consult the serde and by none of the others.
+	 * <p>
+	 * A non-sealed interface cannot be resolved, since its implementations cannot be enumerated, and is
+	 * refused with an {@link IllegalArgumentException} — the same refusal {@code getEventStream} gives it
+	 * as an event root. A filter naming it literally would match nothing, silently.
 	 *
-	 * @param eventClasses the list of event classes to match
+	 * @param eventClasses the list of event classes to match; a sealed interface stands for every event
+	 *        type under it
 	 * @return an EventTypesFilter that matches the specified event types
+	 * @throws IllegalArgumentException for an interface that is not sealed
 	 */
 	public static final EventTypesFilter of ( List<Class<?>> eventClasses ) {
-		return new EventTypesFilter(eventClasses.stream().map(EventType::of).collect(Collectors.<EventType>toSet()));
+		Set<EventType> eventTypes = new HashSet<>();
+		eventClasses.forEach(eventClass -> collectEventTypes(eventClass, eventTypes));
+		return new EventTypesFilter(eventTypes);
+	}
+
+	private static void collectEventTypes ( Class<?> eventClass, Set<EventType> into ) {
+		if ( eventClass.isInterface() ) {
+			if ( !eventClass.isSealed() ) {
+				throw new IllegalArgumentException("interface %s should be sealed to allow Event Type determination".formatted(eventClass.getName()));
+			}
+			for ( Class<?> permitted : eventClass.getPermittedSubclasses() ) {
+				collectEventTypes(permitted, into);
+			}
+		} else {
+			into.add(EventType.of(eventClass));
+		}
 	}
 
 	/**

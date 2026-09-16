@@ -17,7 +17,12 @@
  */
 package org.sliceworkz.eventstore.serialization.json;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.TemporalAccessor;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -49,10 +54,12 @@ import tools.jackson.databind.node.ObjectNode;
  *   "reference":     { "id": ..., "position": ..., "tx": ..., "index": ... },
  *   "immutableData": { ... } | null,
  *   "tags":          [ { "key": ..., "value": ... }, ... ],
- *   "timestamp":     "ISO-8601 LocalDateTime",
+ *   "timestamp":     "ISO-8601 instant, e.g. 2026-04-19T12:34:56.789Z",
  *   "idempotencyKey": "..." | null
  * }
  * </pre>
+ * The timestamp is written at UTC with its offset. On read, a timestamp carrying no offset is taken as
+ * UTC, so a file holding a bare {@code 2026-04-19T12:34:56.789} names the same instant.
  */
 public final class JsonEventCodec {
 
@@ -171,7 +178,7 @@ public final class JsonEventCodec {
 			}
 			Tags tags = new Tags(tagSet);
 
-			LocalDateTime timestamp = LocalDateTime.parse(node.get("timestamp").asText());
+			Instant timestamp = readTimestamp(node.get("timestamp").asText());
 
 			String idempotencyKey = node.has("idempotencyKey") && !node.get("idempotencyKey").isNull()
 					? node.get("idempotencyKey").asText()
@@ -181,6 +188,17 @@ public final class JsonEventCodec {
 		} catch ( JacksonException e ) {
 			throw new JsonCodecException("failed to deserialize event", e);
 		}
+	}
+
+	/**
+	 * Reads the {@code timestamp} field: an ISO-8601 date-time, taken as UTC when it carries no offset.
+	 */
+	private static Instant readTimestamp ( String text ) {
+		TemporalAccessor parsed = DateTimeFormatter.ISO_DATE_TIME.parseBest(text, OffsetDateTime::from, LocalDateTime::from);
+		if ( parsed instanceof OffsetDateTime withOffset ) {
+			return withOffset.toInstant();
+		}
+		return ( (LocalDateTime) parsed ).toInstant(ZoneOffset.UTC);
 	}
 
 }

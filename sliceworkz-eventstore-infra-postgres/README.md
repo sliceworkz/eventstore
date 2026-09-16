@@ -317,12 +317,36 @@ from ordinary ones any more — which is why it is worth catching on the first s
 1. **Restore physically instead.** If a physical backup exists, use it; nothing else is needed.
 2. **Move the counter, if nothing has been appended yet.** On the *stopped* restored cluster,
    `pg_resetwal -e <epoch> -x <xid>` sets the next transaction id; choose a value above the highest
-   stored `event_tx` (the error message carries it; `xid8` = epoch × 2³² + xid) and follow the
-   `pg_resetwal` documentation for choosing a safe one. Verified: after `pg_resetwal -e 1 -x 0x10100000`
-   on the cluster above, every event was visible again and the check passed. The one event appended
-   before the reset stayed ordered first — so this is only a fix while the restored store has not been
-   written to. Managed services do not expose `pg_resetwal`, which is one more reason the next option
-   is the portable one.
+   stored `event_tx` (the error message carries it) and follow the `pg_resetwal` documentation for
+   choosing a safe one. The error reports the id as one `xid8` number, and `pg_resetwal` takes its
+   two halves as separate flags — `xid8` = epoch × 2³² + xid, so the epoch is the high 32 bits and
+   the xid the low 32. Worked through, for an error reading
+   `transaction id (up to 4564383641, ...) is at or above the next id this PostgreSQL cluster will assign (757)`:
+
+   ```
+   4564383641 = 1 × 2³² + 269416345         -- epoch 1, xid 269416345 = 0x100EF799
+   ```
+
+   The xid then has to be rounded up the way the `pg_resetwal` documentation prescribes for a safe
+   value — to the next multiple of 0x100000 above it, since `pg_xact` is kept in segments of that
+   many ids and the counter must start on a segment boundary: `0x100EF799` lies in segment `0x100`,
+   so the next boundary is `(0x100 + 1) × 0x100000 = 0x10100000`. Both flags are needed: a fresh
+   cluster is at epoch 0, and `-x` alone would leave the counter at `0 × 2³² + 0x10100000`, still
+   below every stored id.
+
+   ```
+   pg_ctl stop -D <datadir>
+   pg_resetwal -e 1 -x 0x10100000 -D <datadir>
+   pg_ctl start -D <datadir>
+   ```
+
+   The counter is now `1 × 2³² + 0x10100000 = 4564451328`, above the reported 4564383641, which
+   `SELECT pg_snapshot_xmax(pg_current_snapshot())` confirms once the cluster is up; `pg_controldata`
+   shows the same value as `Latest checkpoint's NextXID: 1:269484032` (`epoch:xid`) while it is
+   stopped. Verified: after exactly that `pg_resetwal -e 1 -x 0x10100000` on the cluster above, every
+   event was visible again and the check passed. The one event appended before the reset stayed
+   ordered first — so this is only a fix while the restored store has not been written to. Managed
+   services do not expose `pg_resetwal`, which is one more reason the next option is the portable one.
 3. **Copy the events into a fresh store with `EventStoreImporter`.** This is the supported way to
    move a store between clusters — a major-version upgrade by dump, a cloud migration, a change of
    hosting. `importEvents` binds no `event_tx` and no `event_position`: the target assigns both, in

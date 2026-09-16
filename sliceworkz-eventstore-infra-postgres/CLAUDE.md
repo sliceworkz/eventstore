@@ -516,6 +516,16 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     Verified, not assumed.) `EventStreamIdempotencyTest` builds its store with exactly such a prefix and
     pins a generated `event_id` with a `BEFORE INSERT` trigger, so the misrouting fails the build rather
     than passing silently
+  - **A batch is one statement, so a duplicate key in it rejects the whole batch, and the server names
+    only the first violating row.** Whether that is a retry (every key of the batch stored, swallowed
+    whole) or a conflict (some stored, `IdempotencyKeyConflictException`, nothing stored) is decided
+    by `deduplicatedOrConflicting`: one `idempotency_key = ANY(?)` lookup on the stream, on the same
+    connection after the rollback, answered from the idempotency index; a batch carrying a single key
+    skips it. No key present at all means the writer that held it rolled back, reported as a transient
+    `EventStorageException`. What the server cannot tell apart either is a key repeated *within* the
+    batch: the second row violates the same index, and `append` would read the first ever attempt at
+    that batch as a retry. `rejectRepeatedIdempotencyKeys` refuses such a batch with
+    `IllegalArgumentException` before the insert. `AppendIdempotencyTest` pins all three
   - **Identifier length is a coupling to keep in mind.** PostgreSQL truncates identifiers at 63 bytes, which
     would break an exact-name comparison; `MAX_PREFIX_LENGTH` (32) keeps the longest generated index name at
     61 characters, so it cannot happen. Raising that cap needs this comparison revisited — and, more

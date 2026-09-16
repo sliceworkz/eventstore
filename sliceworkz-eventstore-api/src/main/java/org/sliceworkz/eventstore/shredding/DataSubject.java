@@ -35,6 +35,10 @@ package org.sliceworkz.eventstore.shredding;
  * <p>
  * This is the same discipline the library already asks for when tagging events: {@code Tag.of("customer",
  * customerId)} is safe to store and index precisely because {@code customerId} is pseudonymous.
+ * <p>
+ * The shipped codec binds the type, id and category into the metadata it authenticates, joined with
+ * {@value AesGcmShreddingCodec#AAD_SEPARATOR}, and refuses to seal a subject with that character in any
+ * of the three; see {@link AesGcmShreddingCodec}.
  *
  * <h2>Category: the unit of erasure, and the unit of access</h2>
  * Keys are held per {@code (type, id, category)}, not per subject, so a subject's data can be erased

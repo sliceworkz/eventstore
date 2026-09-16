@@ -19,6 +19,7 @@ package org.sliceworkz.eventstore.query;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
@@ -89,6 +90,18 @@ public class EventFilterTest {
 
 		assertTrue(bounded.matches(TYPE, Tags.none(), row("head", 10, 42, 2)));
 		assertFalse(bounded.matches(TYPE, Tags.none(), row("next", 11, 42, 0)));
+	}
+
+	/**
+	 * "No restriction" on a filter item is {@link EventTypesFilter#any()} and {@link Tags#none()}, never
+	 * {@code null}, and a null is refused with the exception every other value type here throws for a
+	 * bad argument -- not a {@code java.security} type a caller has no reason to expect from a query.
+	 */
+	@Test
+	void aNullHalfOfAFilterItemIsAnIllegalArgument ( ) {
+		assertThrows(IllegalArgumentException.class, () -> new EventFilterItem(null, Tags.none()));
+		assertThrows(IllegalArgumentException.class, () -> new EventFilterItem(EventTypesFilter.any(), null));
+		new EventFilterItem(EventTypesFilter.any(), Tags.none());
 	}
 
 }

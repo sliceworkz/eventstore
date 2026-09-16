@@ -20,6 +20,7 @@ package org.sliceworkz.eventstore.infra.inmem.fs;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -55,7 +56,8 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  */
 class InMemoryFsEventStorageImpl implements EventStorage {
 
-	private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd-HH-mm-ss-SSSS");
+	/** Renders an event's timestamp for its file name, at UTC: the name is for a human listing the directory and is never parsed back. */
+	private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd-HH-mm-ss-SSSS").withZone(ZoneOffset.UTC);
 
 	private final EventStorage delegate;
 	private final Path eventsDir;

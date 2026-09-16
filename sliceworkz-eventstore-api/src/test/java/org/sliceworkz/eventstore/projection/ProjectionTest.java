@@ -18,8 +18,10 @@
 package org.sliceworkz.eventstore.projection;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Stream;
@@ -46,13 +48,25 @@ public class ProjectionTest {
 		EventStreamId mockStream = EventStreamId.forContext("unit").withPurpose("test");
 		EventReference ref1 = EventReference.create(1, 1);
 		EventReference ref2 = EventReference.create(2, 2);
-		LocalDateTime now = LocalDateTime.now();
+		Instant now = Instant.now();
 		this.mockEvents = Arrays.asList(new Event[] {
 				Event.of(mockStream, ref1, EventType.of(new FirstDomainEvent()), EventType.of(new FirstDomainEvent()), new FirstDomainEvent(), Tags.none(), now),
 				Event.of(mockStream, ref2, EventType.of(new SecondDomainEvent()), EventType.of(new SecondDomainEvent()), new SecondDomainEvent(), Tags.none(), now)});
 	}
 	
 	
+	/**
+	 * "No initialization query" is spelled the way every absent filter in this API is spelled --
+	 * {@link EventQuery#matchNone()} -- so a caller reading the default gets a query it can inspect
+	 * rather than a null it has to guard.
+	 */
+	@Test
+	void theDefaultInitQueryIsMatchNone ( ) {
+		Projection<MockDomainEvent> projection = new TestProjection();
+		assertNotNull(projection.initQuery());
+		assertTrue(projection.initQuery().isMatchNone());
+	}
+
 	@Test
 	void testProjectIndividualEventWithMetaData ( ) {
 		TestProjection projection = new TestProjection();

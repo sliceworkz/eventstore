@@ -19,6 +19,21 @@ This is a Java-based EventStore library implementing the Dynamic Consistency Bou
 - `sliceworkz-eventstore-benchmark`: Capacity-characterisation suite (nothing runs during a build)
 - `sliceworkz-eventstore-parent-pom` / `sliceworkz-eventstore-bom`: Build parent and the bill of materials consumers import
 
+**Every jar declares its name on the module path.** The parent pom writes an `Automatic-Module-Name`
+into each jar's manifest from the module's `automatic.module.name` property, which is its root
+package (`org.sliceworkz.eventstore` for the api, `org.sliceworkz.eventstore.infra.postgres` for
+the Postgres backend, and so on — the README's module table lists them). Without it the JDK derives
+a name from the file name, which changes on a rename or relocation and breaks every consumer's
+`requires`; the declared name is a commitment, and the one a `module-info.java` would have to keep.
+An enforcer rule in the parent pom fails the build for a jar module without the property or with a
+name outside `org.sliceworkz.eventstore`, since the alternative — the literal `${automatic.module.name}`
+shipped in a manifest — is an invalid module name that fails nothing until a consumer puts the jar
+on the module path. There is deliberately no `module-info.java` yet: an automatic module reads
+everything and exports everything, so nothing in these jars is encapsulated, and a real module
+descriptor is a separate decision about what to encapsulate, taken for all the jars at once (the api
+would have to `uses EventStoreFactory` and the impl `provides` it, for a start, and every dependency
+would have to resolve on the module path).
+
 **What the published artifacts put on a consumer's classpath.** The parent pom declares no
 compile-scoped dependency: one there is inherited by every module and ships in every published POM,
 whether the module uses it or not. Each module declares what it imports, so the transitive set of an
@@ -90,7 +105,14 @@ mvn clean install -DskipTests
 - Identified by `EventStreamId` which consists of a context and optional purpose
 - Purpose is optional: `EventStreamId.forContext("x")` defaults purpose to `"default"`, so a context that needs only one stream can ignore purpose entirely. Set a purpose only to distinguish multiple streams within a context (e.g. per-instance, or separating event kinds). Whether to make the purpose an *entity id* — a stream per SKU rather than a stream per context — is the one layout decision with measured consequences on both reads and write contention; see the Benchmarking digest below, and "Choosing a stream design" in `sliceworkz-eventstore-benchmark/CLAUDE.md` for the figures
 - Supports both reading (via `query()`) and writing (via `append()`)
-- Type-safe through generic parameter `<DOMAIN_EVENT_TYPE>`
+- Type-safe through generic parameter `<DOMAIN_EVENT_TYPE>`, which the single-class overloads of
+  `getEventStream` fix from the root class: `getEventStream(id, CustomerEvent.class)` is an
+  `EventStream<CustomerEvent>`, and assigning it to an `EventStream<OrderEvent>` — or widening it to an
+  `EventStream<Object>`, which would let an append of a foreign event type compile — is a compile error
+  rather than a runtime append failure. The historical root class is not constrained, since legacy events
+  upcast into current ones. The `Set<Class<?>>` overloads carry no such constraint and are the way to open
+  a stream typed wider than its roots. `EventStoreTypeParameterTest` in the api module pins it by running
+  javac against probe snippets
 - Combines `EventSource` (reading) and `EventSink` (writing) interfaces
 - **`query()` returns a `Stream`, but it is already in memory.** Storage has finished reading by the
   time the stream comes back — the whole result set is fetched and the stream iterates a list. So
@@ -142,6 +164,17 @@ mvn clean install -DskipTests
 - Data is the actual domain event (typically a sealed interface with record implementations)
 - Tags enable dynamic querying and consistency boundaries
 - Created via `Event.of(data, tags)` for ephemeral events or full constructor for persisted events
+- **`timestamp` is an `Instant`**: the moment the store persisted the event, on the storage's clock — the
+  JVM's in memory, the server's on Postgres, where the column is a `timestamptz`. It is the same kind of
+  value as `Bookmark.updatedAt` and the clocks on `Lease`, so the three compare without conversion, and it
+  is what `StoredEvent`, `EventToStore.positionAt` and `EventToImport` carry too. An instant has no zone:
+  the day or wall-clock time it falls on is the reader's rendering, made with the zone the reader means
+  (`event.timestamp().atZone(zone)`). The alternative — a `LocalDateTime` documented as "always UTC" —
+  loses because the type does not carry the convention: nothing stops a reader comparing it with a
+  wall-clock reading in the JVM's zone, and every correct use starts by re-attaching the offset the type
+  dropped. The file codec writes it as an ISO-8601 instant at UTC and reads a value carrying no offset as
+  UTC, so an events directory holds one meaning of the field whichever shape a file carries.
+  `EventTimestampTest` pins per backend that the stamp is the instant of the append
 
 **EphemeralEvent:**
 - Lightweight event representation before persistence (no stream, reference, or timestamp)
@@ -149,12 +182,21 @@ mvn clean install -DskipTests
 - Created via `Event.of(data, tags)`
 
 **EventType:**
-- The stored name of an event: `EventType.of(Class)` is `Class.getSimpleName()`, with no override
+- The stored name of an event: `EventType.of(Class)` is `Class.getSimpleName()`, unless the class is
+  annotated `@EventName("...")`, in which case it is the annotation's value. That method is the one place
+  a class becomes a stored name, so the annotation is honoured on append, in a stream's type mappings, in
+  `EventTypesFilter.of(Class...)` and on a `@LegacyEvent`
+- **The plain class name is the intended setup; `@EventName` is for the class whose stored name cannot
+  be its own name** (a renamed class, a simple name another context already stores). Annotating every
+  event up front is not a best practice and buys nothing: a string literal is as permanent a commitment
+  as a class name, so it does not avoid the rename problem, only adds a second name to keep in step
+  with the first
 - Deliberately the *simple* name, not the fully qualified one, so moving a class between packages —
   the refactor people actually do — costs nothing
-- **The simple name is therefore wire format**, and it is global to a storage rather than scoped to a
+- **The stored name is therefore wire format**, and it is global to a storage rather than scoped to a
   stream. See "Event type names are wire format" under Naming Conventions before renaming an event class
-  or introducing a second class with an existing simple name
+  or introducing a second class with an existing simple name — `@EventName` is the answer to both, and
+  `EventNameTest` in the TCK pins it per backend
 
 **Tags:**
 - Key-value pairs attached to events for dynamic retrieval
@@ -217,6 +259,22 @@ mvn clean install -DskipTests
 - Created via `EventFilter.forEvents(eventTypesFilter, tags)`, or `EventFilter.forTags(tags)` for events of
   any type carrying the tags
 - Used by `AppendCriteria` for optimistic locking (where direction/limit are irrelevant)
+- **A sealed interface in a type filter stands for every event type under it.** An event is stored
+  under the simple name of its record, never under an interface it implements, so
+  `EventTypesFilter.of(Class...)` resolves a sealed interface into the event types it permits,
+  recursively, when the filter is built: the root of a hierarchy names all of it
+  (`EventTypesFilter.of(CustomerEvent.class)`), a nested interface names its own branch, and the
+  filter then holds those names only. Resolved at construction rather than where the filter is
+  matched, because a filter is matched in several places — the storage query, the store's re-check
+  of the events it upcasts, a `Projector`'s check of the events it is handed, the lock check of an
+  append — and only some of them have the stream's registrations at hand; resolving once keeps them
+  in agreement. The alternative — resolving an interface by name inside the typed serde — loses
+  because the filter then holds a name no stored event carries, honoured by whichever path consults
+  the serde and by none of the others; a lock check built on it admits every append, silently. A
+  non-sealed interface is refused with `IllegalArgumentException`, as `getEventStream` refuses it as
+  a root. A filter built from `EventType`s is literal: `EventType.of(SomeInterface.class)` names a
+  stored type no record has. `EventTypesFilterTest` pins the resolution,
+  `EventTypesFilterHierarchyTest` in the TCK pins the four paths per backend, legacy upcasts included
 - **`until` is an inclusive upper bound over *stored* events, in the `(tx, position)` order, and is
   direction-independent**: `.backwards()` returns the same events as forward, newest first. It is part of
   the filter, so it also bounds a consistency boundary — an event past it is not a new relevant fact and
@@ -274,6 +332,16 @@ mvn clean install -DskipTests
   `OptimisticLockingTest.testOptimisticLockingSucceedsWhenExpectingEmptyStreamAndStreamIsNotEmpty`). A backend
   skipping the check when the reference is absent is a silent loss of optimistic locking; `AppendCriteriaTest`
   in the TCK pins both halves down
+- **A boundary over a current type counts the legacy events that upcast into it**, exactly as a query for
+  that type returns them. Storage checks stored type names, so `EventStreamImpl.append` traces the
+  criteria's types back to their legacy names before handing it over, the same trace-back the query path
+  applies (`determineLegacyTypes`). Without it the two paths disagree on one filter: a decision read
+  through the query sees the legacy event and the lock check admits the append over it. The exception
+  names the boundary the caller decided on, never the stored names it was checked with — a caller
+  comparing `getFilter()` to its own criteria, as the fixture's `OptimisticLockingFailure` does, finds no
+  legacy names it never wrote; storage's exception is the cause. On a stream without legacy types the
+  trace-back changes nothing and storage's exception passes through untouched.
+  `UpcastTest.aBoundaryOverACurrentTypeCountsTheLegacyEventsUpcastIntoIt` pins it per backend
 
 **Projection:**
 - Combines an `EventQuery` with an `EventHandler`
@@ -311,7 +379,7 @@ mvn clean install -DskipTests
   come round again, and a failing rollback keeps the cause
 
 **Projection initQuery (Savepoint Pattern):**
-- Projections can define an optional `initQuery()` (default returns `null`) that runs before the main `eventQuery()`
+- Projections can define an optional `initQuery()` (default returns `EventQuery.matchNone()`; a `null` is tolerated and means the same) that runs before the main `eventQuery()`
 - Enables the savepoint pattern: a backward query with limit 1 finds the most recent savepoint event that summarizes prior state
 - The `Projector` executes `initQuery()` first, passes results to `when()`, then uses the last event's reference as the cursor for `eventQuery()`
 - Savepoint events are pure domain events — no special framework support needed
@@ -335,6 +403,18 @@ fail. The stream layer never produces such a payload, so this only shows on the 
 import, a fixture, a third-party caller writing `EventToStore` directly); it is checked here so that
 path cannot pass a test against the in-memory store and fail in production. `AppendPayloadTest` and
 `EventImportTest.testInvalidJsonPayloadIsRejected` in the TCK pin it per backend.
+
+Correctness-equivalent also includes the order: the log is kept in `(tx, position)` order, and the
+cursor a query starts after is a boundary in that order, found by binary search and compared over
+stored events (`storedEventHappenedAfter`, so the index a reference carries plays no part) — exactly
+the row comparison Postgres runs. The alternative — skipping `position` elements — loses because it
+reads a position as a list index, which holds only while positions are dense and assigned in
+transaction order: a reference from another store, a reloaded log with a gap, or a transaction and
+position assigned in different orders then skip the wrong events or throw. Positions come from a
+counter seeded from the highest loaded position, never from the size of the log, so a file-backed
+log reloaded with a gap (a crash between two writes that landed out of order) never reissues a
+position to the next append. `InMemoryEventStorageImplTest` pins the cursor, the gap and a
+preloaded log put in order; `InMemoryFsEventStorageImplTest` the reload with a gap.
 
 ```java
 EventStorage storage = InMemoryEventStorage.newBuilder().build();
@@ -673,6 +753,44 @@ later reference, which is after this one and so still delivered.
   ADD CONSTRAINT fk_bookmarks_event_id FOREIGN KEY (event_id) REFERENCES <prefix>events(event_id);` —
   no data migration is needed. `checkDatabase()` validates the constraint by name only, not its delete
   rule, so an un-migrated database still starts, with the old cascade behaviour
+
+### Idempotent appends: a key per event, and the batch as the unit of de-duplication
+
+An `EphemeralEvent.withIdempotencyKey(key)` makes an append safe to retry: a key already stored on
+the same stream is swallowed — nothing written, an empty list returned, counted on
+`sliceworkz.eventstore.append.deduplicated`. The key is scoped to the stream (context and purpose),
+persisted on the row and surfaced on `StoredEvent`, never on the public `Event`.
+
+- **A command producing several events gets a key per event, derived from the command's id**
+  (`cmd-4711/1`, `cmd-4711/2`). Keys are per event because that is what storage holds — one column,
+  one stream-scoped unique index — and the events of one batch must carry *distinct* keys.
+- **The batch is swallowed whole only as a retry: when every key in it was stored before.** A batch
+  is stored atomically, so a retry finds every key or none, and an event with no key rides along
+  with the keyed ones. **A batch mixing stored and new keys is refused with
+  `IdempotencyKeyConflictException`, nothing stored.** It cannot be a retry: one of its events
+  collides with a different event holding its key, and the rest are unknown to the store. Both
+  silent answers lie — storing the unknown events leaves the caller believing the colliding fact
+  landed too, and swallowing the batch loses the unknown events with nothing to say so — and the
+  second is what an all-or-nothing rule reaches for by default, which is why the exception exists.
+  It extends `RuntimeException` directly, not `EventStorageException`, because it is never worth
+  retrying. Partial storage is also not an answer every backend can give: Postgres writes a batch as
+  a single multi-row insert and pairs the rows it returns with the input by position, so it inserts
+  all or none; the server reports the first violating row only, so after the rollback the backend
+  runs one lookup of the batch's keys on the stream to tell a retry from a conflict (no key present
+  at all means the writer that held it rolled back, a transient `EventStorageException`). The one
+  blind spot: a batch reusing a key with *different* unkeyed events cannot be told from a retry, so
+  a command should key every event it emits.
+- **A batch repeating a key is refused with `IllegalArgumentException`, storing nothing.** Left to
+  the server, the unique index rejects the second row and the append path reads that as "appended
+  before", so the first ever attempt at such a batch would store nothing and report a successful
+  de-duplication. Both `EventStreamImpl.append` and every backend's SPI `append` check it before
+  anything is written, since the SPI is a public path too.
+- **The lock check runs first.** A conditional append that conflicts raises
+  `OptimisticLockingException` whether or not its keys are duplicates; the de-duplication is only
+  seen by an append that was admitted.
+- `EventStreamIdempotencyTest` pins the stream-level contract per backend and `AppendIdempotencyTest`
+  the SPI one: a retried batch stores nothing and notifies nobody, a mixed batch throws and stores
+  nothing, and a refused batch spends no key.
 
 ### Leases: electing one processor among several instances
 
@@ -1160,6 +1278,25 @@ PostgresEventStorage.newBuilder().shredding(myKmsCodec).buildStore(); // take ov
   (which the audit already requires): pruning one turns that subject's events from "erased" into
   unreadable, with an error naming the key. `ShreddableEventDataTest.aKeyThisStoreNeverHeldThrowsRatherThanReadingAsErased`
   pins it per backend, at the seam and through a projector.
+- **The shipped codec measures the key it seals under, and keeps the label it binds unambiguous.**
+  The JCE encrypts under a 128-, 192- or 256-bit AES key alike, so a key store minting the wrong
+  length would otherwise seal without complaint under an envelope recording `A256GCM` for a value
+  not sealed that way. `AesGcmShreddingCodec.seal` refuses a key that is not 256-bit AES material —
+  `ShreddingException` naming the key and its length, nothing sealed — and refuses a key whose
+  material it cannot see (`getEncoded()` null, an HSM-resident key), since the key-store seam hands
+  material into the JVM and a key that never leaves its hardware belongs behind a `ShreddingCodec` of
+  its own. `open` deliberately does not measure: what is sealed is sealed, and refusing to read it
+  would strand the data while protecting nothing. The metadata GCM authenticates is the algorithm,
+  key id, subject type, id and category joined with `|`, nothing escaped, so `seal` also refuses a
+  `|` in any of those — two labels differing only in where the `|` falls would otherwise authenticate
+  as one, and a sealed value could be relabelled between them with decryption still succeeding. The
+  alternative — escaping the fields — loses because the authenticated string is recomputed on both
+  sides and stored nowhere, so an escaped form stops authenticating every value already sealed whose
+  fields hold the escape character, with nothing on the envelope to say which form it was sealed
+  under; an envelope already carrying a `|` stays readable, ambiguous as it was written. The subject
+  rule applies to this codec only — a codec of your own binds what it likes — and a subject is refused
+  before the key store is asked, so it is not given a key row it will never use.
+  `AesGcmShreddingCodecTest` pins all of it, the layout of the authenticated bytes included.
 - **Nothing here needs post-quantum work.** The design uses no asymmetric cryptography, so Shor has no
   target; Grover leaves AES-256 at ~128 bits of effective security. Shredding is in fact a stronger
   position than encryption at rest generally is — the threat model is ciphertext recovered from a backup
@@ -1419,7 +1556,7 @@ See `EventStoreFixtureTest` for a worked example.
 **Timestamps are not assertable.** The in-memory store stamps events from the JVM clock; Postgres does
 not bind `event_timestamp` on append at all and lets the DDL default (`CURRENT_TIMESTAMP`, server
 clock) apply. There is no `Clock` seam anywhere. Assert on timestamps only with a tolerance window, as
-`EventTimestampUtcTest` does. The one path that writes a chosen timestamp is `importEvents`, which
+`EventTimestampTest` does. The one path that writes a chosen timestamp is `importEvents`, which
 bypasses `append()`.
 
 ## Benchmarking
@@ -1483,14 +1620,22 @@ sealed interface CustomerEvent {
 
 ### Event type names are wire format
 
-**An event class's simple name is stored data.** `EventType.of(Class)` is `Class.getSimpleName()` —
-there is no annotation, registry or builder hook to override it. That one string is
+**An event class's simple name is stored data, unless the class declares another.** `EventType.of(Class)`
+is `Class.getSimpleName()`, or the value of an `@EventName` annotation on the class — the one place a class
+is turned into a stored name, so nothing else needs to know about the annotation. The simple name is the
+intended case: most event classes carry no annotation, and should not. That one string is
 what goes into the `event_type` column, what `EventTypesFilter` matches on, and what keys the deserializer
-(`TypedEventPayloadSerializerDeserializer.deserializers`, a `Map<String, EventDeserializer>`).
+(`TypedEventPayloadSerializerDeserializer.deserializers`, a `Map<String, EventDeserializer>`). The
+annotation's value is used exactly as given (non-blank, no leading or trailing whitespace, or
+`IllegalArgumentException` at stream creation), is not inherited, and combines with `@LegacyEvent`.
+`EventNameTest` in the TCK pins per backend that the declared name goes through every path the class
+name goes through: the append, the typed read, a filter built from the class, the raw view, the lock
+check and a legacy class's registration.
 
 Using the *simple* name rather than the fully qualified one is deliberate and worth keeping in mind: moving a
 class to another package, splitting a hierarchy across packages, or reorganising modules changes nothing on
-disk. The package is not a wire commitment. **The class name is.**
+disk. The package is not a wire commitment. **The class name is** — for every class that does not carry
+`@EventName`, which is most of them.
 
 **Renaming an event class breaks reads of its history.** Stored events are immutable, so every event already
 written keeps the old name while the renamed class claims a new one. Reads then fail with:
@@ -1499,16 +1644,29 @@ written keeps the old name while the renamed class claims a new one. Reads then 
 No mapping found for event type 'CustomerRegistered'
 ```
 
-Every IDE offers that rename as an ordinary refactor, and nothing at compile time objects. Three ways out,
+Every IDE offers that rename as an ordinary refactor, and nothing at compile time objects. Four ways out,
 in the order you would normally reach for them:
 
-1. **Don't rename.** Pick the stored name deliberately when the event is created, and treat it afterwards
-   the way you would a database column name.
-2. **Keep the old name alive in code.** Move a class carrying the old name into a legacy hierarchy, annotate
-   it `@LegacyEvent(upcast = ...)`, and upcast it to the renamed class — see the upcasting sections. This
-   leaves storage untouched and is the only option that needs no access to the database, but it costs a
-   permanent extra class plus an upcaster for what was only a rename.
-3. **Rewrite the stored names.** `UPDATE <prefix>events SET event_type = 'New' WHERE event_type = 'Old';`
+1. **Don't rename.** Name the class deliberately when the event is created, and treat that name
+   afterwards the way you would a database column name. This is the intended setup and needs no
+   annotation — an `@EventName` on a class that is already called what it is stored as adds a second
+   copy of the same commitment and nothing else.
+2. **Rename the class, keep the stored name.** Annotate the renamed class with the name its history was
+   written under:
+   ```java
+   @EventName("CustomerRegistered")
+   record CustomerSignedUp ( String id, String name ) implements CustomerEvent { }
+   ```
+   Storage is untouched, nothing is upcast, and no database access is needed. The cost is that the
+   class and its stored name now differ, permanently, which is what the annotation makes visible at the
+   declaration rather than in a migration script. This is the fix for a rename; when the *shape* changed
+   too, it is not enough on its own.
+3. **Keep the old name alive in code.** Move a class carrying the old name into a legacy hierarchy, annotate
+   it `@LegacyEvent(upcast = ...)`, and upcast it to the renamed class — see the upcasting sections. The
+   legacy class can carry the stored name in an `@EventName` too, so it need not be called what the
+   history is called. This is the option when the event's shape changed as well as its name; for a bare
+   rename it costs a permanent extra class plus an upcaster that option 2 does not.
+4. **Rewrite the stored names.** `UPDATE <prefix>events SET event_type = 'New' WHERE event_type = 'Old';`
    is a valid migration: no foreign key, check constraint or unique index is keyed on `event_type`, so
    nothing else in the schema has to change. `idx_events_stream_type_position` includes the column, and
    Postgres maintains it transparently — on a large table budget for the row and index rewrite, and scope
@@ -1543,11 +1701,17 @@ is not. Reading one context's `Created` with the other context's class:
 Only the *narrower* reader is protected. The usual outcome is the wrong class silently populated with
 another context's data, which surfaces as bad numbers in a projection rather than as an error.
 
-**Practical rule: keep event class simple names unique across an entire storage, not just per stream.** Two
-bounded contexts sharing a store cannot both have a `Created`, a `StatusChanged` or an `Updated`. Prefix
-them (`OrderCreated`, `VacancyCreated`) or give each context its own storage. If two contexts must share a
-name, keep every read scoped to one stream — no wildcard streams, no store-wide projections — and know that
-nothing enforces that from here on.
+**Practical rule: keep stored event names unique across an entire storage, not just per stream.** Two
+bounded contexts sharing a store cannot both *store* a `Created`, a `StatusChanged` or an `Updated`. They
+can both have a class called that: give one of them a distinct stored name with
+`@EventName("OrderCreated")`, prefix the class names themselves (`OrderCreated`, `VacancyCreated`), or
+give each context its own storage. With the stored names distinct, both hierarchies register on one
+wildcard stream and a store-wide read resolves each context's events with its own class
+(`EventNameTest.twoContextsShareASimpleNameWhenOneDeclaresItsStoredName`). If two contexts must share a
+stored name, keep every read scoped to one stream — no wildcard streams, no store-wide projections — and
+know that nothing enforces that from here on. **Nothing can**: streams are opened independently and a
+storage never sees every type mapping at once, so uniqueness across contexts stays a convention; the
+annotation is the tool for keeping it where a class name cannot, not an enforcement of it.
 
 ## Key Design Principles
 
@@ -1691,7 +1855,11 @@ that bind everywhere:
   split, and an unprivileged role then starts against it silently.
 - **Idempotency keys are scoped per stream** (partial unique index `idx_events_stream_idempotency`);
   a duplicate is recognised by the constraint name the server reports, never by message text, and a
-  swallowed duplicate returns an empty result.
+  swallowed duplicate returns an empty result. A batch is one multi-row insert, so a duplicate in it
+  rejects the whole batch, and one lookup of the batch's keys after the rollback tells a retry (every
+  key stored, swallowed) from a conflict (some stored, `IdempotencyKeyConflictException`) — the rule
+  under "Idempotent appends" above. A batch repeating a key is refused in Java before the insert,
+  since the server would report it as the same violation.
 - Append notifications are emitted once per stream per statement, not per row; `timestamptz` keeps
   microseconds (the one lossy step of an inmem → Postgres → inmem round trip); and a `db.properties`
   *value* never reaches an error message or log line — only the key does.

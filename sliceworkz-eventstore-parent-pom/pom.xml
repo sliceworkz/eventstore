@@ -204,6 +204,27 @@
 				<artifactId>maven-compiler-plugin</artifactId>
 				<version>${maven.maven-compiler-plugin.version}</version>
 			</plugin>
+			<!--
+				Every jar carries an Automatic-Module-Name, so that on the module path it has the
+				name declared here rather than one the JDK derives from the file name. The derived
+				name is whatever the jar happens to be called, so a consumer's `requires` would
+				break on a rename or a relocation and every tool deriving it must agree; the
+				declared name is a commitment, and the one a later module-info.java has to keep.
+				Each jar module sets `automatic.module.name` (its root package name); the
+				`automatic-module-name` profile below fails the build for one that does not.
+			-->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-jar-plugin</artifactId>
+				<version>${maven.maven-jar-plugin.version}</version>
+				<configuration>
+					<archive>
+						<manifestEntries>
+							<Automatic-Module-Name>${automatic.module.name}</Automatic-Module-Name>
+						</manifestEntries>
+					</archive>
+				</configuration>
+			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-source-plugin</artifactId>
@@ -234,5 +255,51 @@
 			</plugin>
 		</plugins>
 	</build>
+
+	<profiles>
+		<!--
+			Guards the Automatic-Module-Name above: a jar module that does not set
+			`automatic.module.name` would ship the literal `${automatic.module.name}` in its
+			manifest, which is an invalid module name and breaks the jar on the module path
+			without failing anything here. Activated by the module's `src` directory so that it
+			runs in every code module and not in this pom, which builds no jar. The name is
+			checked against the package-style shape this project uses, so a typo cannot pass
+			either.
+		-->
+		<profile>
+			<id>automatic-module-name</id>
+			<activation>
+				<file>
+					<exists>${basedir}/src</exists>
+				</file>
+			</activation>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-enforcer-plugin</artifactId>
+						<executions>
+							<execution>
+								<id>require-automatic-module-name</id>
+								<goals>
+									<goal>enforce</goal>
+								</goals>
+								<configuration>
+									<rules>
+										<requireProperty>
+											<property>automatic.module.name</property>
+											<regex>org\.sliceworkz\.eventstore(\.[a-z][a-z0-9]*)*</regex>
+											<message>Every jar module must set automatic.module.name to its root package name (see sliceworkz-eventstore-parent-pom/pom.xml).</message>
+											<regexMessage>automatic.module.name must be a package-style name under org.sliceworkz.eventstore.</regexMessage>
+										</requireProperty>
+									</rules>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
 
 </project>

@@ -44,6 +44,10 @@ import java.lang.annotation.Target;
  *   <li>Type-safe through Java's sealed interfaces and generic constraints</li>
  * </ul>
  *
+ * A rename on its own needs none of this: a class annotated {@link EventName} with the name its history
+ * was stored under reads that history directly. Reach for an upcaster when the <em>shape</em> of the
+ * event changed, not only its name.
+ *
  * <h2>Typical Workflow:</h2>
  * <ol>
  *   <li>Create current event definitions in one sealed interface</li>
@@ -117,6 +121,7 @@ import java.lang.annotation.Target;
  * }</pre>
  *
  * @see Upcast
+ * @see EventName
  * @see org.sliceworkz.eventstore.stream.EventStream
  */
 @Retention(RetentionPolicy.RUNTIME)

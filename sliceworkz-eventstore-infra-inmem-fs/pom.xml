@@ -37,6 +37,8 @@
 	<packaging>jar</packaging>
 
 	<properties>
+		<!-- the name this jar has on the module path (see the parent pom) -->
+		<automatic.module.name>org.sliceworkz.eventstore.infra.inmem.fs</automatic.module.name>
 		<!-- client-facing: publish to the configured repository -->
 		<maven.deploy.skip>false</maven.deploy.skip>
 	</properties>

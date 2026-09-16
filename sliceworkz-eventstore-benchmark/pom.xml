@@ -40,6 +40,18 @@
 		<!-- the name this jar has on the module path (see the parent pom) -->
 		<automatic.module.name>org.sliceworkz.eventstore.benchmark</automatic.module.name>
 		<maven.deploy.skip>true</maven.deploy.skip>
+		<!--
+			No javadoc jar: the module is never deployed, so nothing would consume one. It also
+			cannot be built as the parent binds it. The shade plugin below replaces this module's
+			artifact with the runnable jar at `package`, and the javadoc plugin, running at `verify`,
+			takes that artifact as the module's own classes: the manifest names the module, so it
+			goes on javadoc's module path, where every Jackson and Logback package shaded into it
+			is also exported by the real Jackson and Logback modules — a split package, and a hard
+			error. The alternative — attaching the shaded jar under a classifier so the main
+			artifact stays thin — loses because `java -jar target/sliceworkz-eventstore-benchmark-*.jar`
+			is how the suite is launched, and renaming it changes every documented command.
+		-->
+		<maven.javadoc.skip>true</maven.javadoc.skip>
 		
 		<logback.version>1.6.3</logback.version>
 

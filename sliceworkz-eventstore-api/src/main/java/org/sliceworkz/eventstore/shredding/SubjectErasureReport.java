@@ -23,7 +23,7 @@ import java.util.List;
 /**
  * What erasing a subject across every category actually destroyed.
  * <p>
- * Returned by {@link org.sliceworkz.eventstore.EventStore#eraseAllCategories}. It is one
+ * Returned by {@link org.sliceworkz.eventstore.EventStore#erase}. It is one
  * {@link ErasureReport} per category the subject held live keys under, so a data protection officer can
  * see not only how many keys went but which slices of the person's data they protected — "default and
  * marketing, nothing under financial" — without a second audit query.
@@ -42,7 +42,7 @@ import java.util.List;
  * @param categories  one report per category that held live keys, each naming the keys it destroyed; empty
  *                    if the subject held none
  *
- * @see org.sliceworkz.eventstore.EventStore#eraseAllCategories(String, String, ErasureReason)
+ * @see org.sliceworkz.eventstore.EventStore#erase(String, String, ErasureReason)
  * @see ErasureReport
  */
 public record SubjectErasureReport ( String subjectType, String subjectId, ErasureReason reason, List<ErasureReport> categories ) {

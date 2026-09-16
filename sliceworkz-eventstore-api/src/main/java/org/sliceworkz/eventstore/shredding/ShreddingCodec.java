@@ -46,7 +46,7 @@ import java.util.Set;
  * {@link DataSubject#category() category} an envelope carries in the clear, deciding before any key is
  * looked up: cheap, explicit in configuration, and the data-minimisation boundary most services need.
  * It is not a security boundary — the process still holds the codec. That boundary is the key store's
- * refusal, {@link ShreddingKeyStore.KeyResolution.Denied}, which the shipped codec also reports as
+ * refusal, {@link ShreddingKeyStore.KeyResolution.Withheld}, which the shipped codec also reports as
  * withheld; the two compose. {@link #withholdingAll()} is the degenerate case: a codec with no keys at
  * all, for a reader that must see the typed events and none of the personal data in them.
  *
@@ -76,7 +76,7 @@ import java.util.Set;
  *
  * @see ShreddingKeyStore
  * @see Shreddable
- * @see org.sliceworkz.eventstore.EventStore#erase(DataSubject, ErasureReason)
+ * @see org.sliceworkz.eventstore.EventStore#eraseCategory(DataSubject, ErasureReason)
  */
 public interface ShreddingCodec extends AutoCloseable {
 
@@ -98,7 +98,7 @@ public interface ShreddingCodec extends AutoCloseable {
 	 * <p>
 	 * Called on the read path, once per sealed value. A codec with no notion of entitlement answers
 	 * {@link Unsealed.Plaintext} or {@link Unsealed.Erased} and nothing else; the shipped codec passes a
-	 * key store's {@link ShreddingKeyStore.KeyResolution.Denied} on as {@link Unsealed.Withheld}. There
+	 * key store's {@link ShreddingKeyStore.KeyResolution.Withheld} on as {@link Unsealed.Withheld}. There
 	 * is deliberately no two-answer {@code Optional<String>} method beside this one for a default to
 	 * derive it from: such a method cannot say withheld, and a codec written against it would implement
 	 * what nothing calls.

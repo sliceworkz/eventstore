@@ -26,14 +26,15 @@ package org.sliceworkz.eventstore.shredding;
  * principle of Article 5(2) is what makes the record worth keeping, so write something a data
  * protection officer could act on rather than {@code "erased"}.
  * <pre>{@code
- * eventStore.erase(DataSubject.of("customer", "alice-42"),
+ * eventStore.erase("customer", "alice-42",
  *                  ErasureReason.of("GDPR art.17 erasure request #4711, approved by DPO 2026-08-16"));
  * }</pre>
  * A {@link ShreddingKeyStore} is expected to persist this next to the shredded key, never to interpret it.
  *
  * @param value free text describing the authority for the erasure
  *
- * @see org.sliceworkz.eventstore.EventStore#erase(DataSubject, ErasureReason)
+ * @see org.sliceworkz.eventstore.EventStore#erase(String, String, ErasureReason)
+ * @see org.sliceworkz.eventstore.EventStore#eraseCategory(DataSubject, ErasureReason)
  * @see ErasureReport
  */
 public record ErasureReason ( String value ) {

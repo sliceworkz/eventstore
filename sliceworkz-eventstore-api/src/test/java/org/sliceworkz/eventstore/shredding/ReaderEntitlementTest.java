@@ -189,7 +189,7 @@ public class ReaderEntitlementTest {
 	void theResultTypesRejectWhatTheyCannotMean ( ) {
 		assertThrows(IllegalArgumentException.class, () -> new KeyResolution.Resolved(null));
 		assertThrows(IllegalArgumentException.class, () -> new Unsealed.Plaintext(null));
-		assertEquals("", new KeyResolution.Denied(null).reason());
+		assertEquals("", new KeyResolution.Withheld(null).reason());
 		assertEquals("", new Unsealed.Withheld(null).reason());
 	}
 
@@ -275,7 +275,7 @@ public class ReaderEntitlementTest {
 		@Override
 		public KeyResolution resolveKey ( KeyId key ) {
 			if ( denying ) {
-				return new KeyResolution.Denied("simulated 403");
+				return new KeyResolution.Withheld("simulated 403");
 			}
 			resolved.add(key);
 			SecretKey secret = material.get(key);

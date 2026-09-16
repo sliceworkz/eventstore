@@ -23,7 +23,8 @@ import java.util.List;
 /**
  * What an erasure actually destroyed.
  * <p>
- * Returned by {@link org.sliceworkz.eventstore.EventStore#erase}. It reports keys, not events: nothing
+ * Returned by {@link org.sliceworkz.eventstore.EventStore#eraseCategory}, and one per category makes up
+ * the {@link SubjectErasureReport} of a whole-person erasure. It reports keys, not events: nothing
  * in the events table was touched, so there is no row count to give. Every value sealed under a key
  * named here became unreadable at the moment the key went, wherever that ciphertext had already spread
  * — the events table, WAL, replicas, last night's backup.
@@ -32,7 +33,8 @@ import java.util.List;
  * The key ids are carried on each event as {@code dek:} tags, so the affected events are an ordinary
  * tag query rather than a table scan:
  * <pre>{@code
- * ErasureReport report = eventStore.erase(alice, ErasureReason.of("art.17 request #4711"));
+ * ErasureReport report = eventStore.eraseCategory(alice.withCategory("marketing"),
+ *                                                 ErasureReason.of("consent withdrawn, ticket #4711"));
  *
  * for ( KeyId key : report.shreddedKeys() ) {
  *     stream.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("dek", key.value())))
@@ -52,7 +54,7 @@ import java.util.List;
  * @param shreddedKeys the keys destroyed, in no particular order; empty if the subject held none
  * @param shreddedAt   when the key store performed the erasure
  *
- * @see org.sliceworkz.eventstore.EventStore#erase(DataSubject, ErasureReason)
+ * @see org.sliceworkz.eventstore.EventStore#eraseCategory(DataSubject, ErasureReason)
  */
 public record ErasureReport ( DataSubject subject, ErasureReason reason, List<KeyId> shreddedKeys, Instant shreddedAt ) {
 

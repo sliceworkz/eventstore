@@ -255,30 +255,38 @@ public interface EventStore extends AutoCloseable {
 	}
 
 	/**
-	 * Erases a data subject's personal data under one category by destroying the keys that protect it.
+	 * Erases a data subject's personal data by destroying every key that protects it, under every
+	 * category.
 	 * <p>
-	 * Every {@link org.sliceworkz.eventstore.shredding.Shreddable} value sealed for this subject becomes
+	 * The whole-person erasure, and the one to reach for by default. An art.17 request names a person,
+	 * not a retention category, and the caller answering it should not have to know which categories
+	 * the person's data was ever written under: a subject whose data sits under {@code "default"},
+	 * {@code "marketing"} and {@code "financial"} loses all three here. Every
+	 * {@link org.sliceworkz.eventstore.shredding.Shreddable} value sealed for the subject becomes
 	 * permanently unreadable, and reads return
 	 * {@link org.sliceworkz.eventstore.shredding.Shreddable.Shredded} in its place. Everything else on
 	 * those events is untouched: the non-personal payload, the tags, the timestamps and the pseudonymous
 	 * identifiers all keep working, so ledgers still reconcile and the audit trail still holds.
 	 * <pre>{@code
-	 * ErasureReport report = eventStore.erase(
-	 *         DataSubject.of("customer", "alice-42").withCategory("marketing"),
-	 *         ErasureReason.of("consent withdrawn, ticket #4711"));
+	 * SubjectErasureReport report = eventStore.erase(
+	 *         "customer", "alice-42",
+	 *         ErasureReason.of("GDPR art.17 request #4711"));
 	 *
-	 * report.keysShredded();   // 1
+	 * report.categoriesErased();   // [default, marketing]
+	 * report.keysShredded();       // 2
 	 * }</pre>
 	 *
 	 * <p>
-	 * <b>A {@code DataSubject} names one category, and this erases that category only.</b>
-	 * {@code DataSubject.of("customer", "alice-42")} is the subject under
-	 * {@link org.sliceworkz.eventstore.shredding.DataSubject#DEFAULT_CATEGORY}, so erasing it destroys
-	 * the default category's keys and leaves whatever the same person holds under {@code "marketing"} or
-	 * {@code "financial"} readable — and reports success, because the erasure it names was performed.
-	 * That is what "erase marketing, retain financial" needs. A request to erase a <em>person</em> is
-	 * {@link #eraseAllCategories(String, String, ErasureReason)}, which takes no category so that it
-	 * cannot be narrowed by accident.
+	 * <b>It takes the subject's type and id and no category, so it cannot be narrowed by accident.</b>
+	 * Erasing one category and leaving the rest readable is
+	 * {@link #eraseCategory(DataSubject, ErasureReason)}, which takes a
+	 * {@link org.sliceworkz.eventstore.shredding.DataSubject} because a subject always names one
+	 * category. The alternative — this method taking a {@code DataSubject} too and erasing the person
+	 * it belongs to — loses because the category the argument carries would then be either ignored or
+	 * refused: ignored, {@code erase(alice.withCategory("marketing"), reason)} destroys the financial
+	 * history a retention rule says to keep; refused, a subject read off a {@code Shredded} value cannot
+	 * be handed straight to it. Two parameter shapes keep the two erasures apart at compile time, so a
+	 * call that meant one category cannot silently become the whole person, or the other way round.
 	 *
 	 * <p>
 	 * <b>Nothing in the events table is written.</b> The stored events stay byte-identical. That is what makes this an erasure rather than an overwrite:
@@ -288,9 +296,11 @@ public interface EventStore extends AutoCloseable {
 	 * disturbs event ordering, outstanding bookmarks or the physical layout the indexes assume.
 	 *
 	 * <p>
-	 * <b>Idempotent.</b> Erasing a subject that holds no keys — never appended for, or erased already — reports
-	 * {@link ErasureReport#isNoop()} rather than failing. Data appended for the subject <em>after</em> an
-	 * erasure gets a fresh key and is readable; only what was sealed under the destroyed keys is gone.
+	 * <b>Idempotent.</b> Erasing a subject that holds no live keys under any category — never appended
+	 * for, or erased already — reports {@link SubjectErasureReport#isNoop()} rather than failing, and a
+	 * category that never held a key, or whose keys were shredded already, is absent from the report.
+	 * Data appended for the subject <em>after</em> an erasure gets fresh keys and is readable; only what
+	 * was sealed under the destroyed keys is gone.
 	 *
 	 * <p>
 	 * <b>Erasure notifies nothing.</b> Read models, caches, search indexes and downstream systems that already
@@ -298,57 +308,61 @@ public interface EventStore extends AutoCloseable {
 	 * the affected events on their own. Re-projecting anything that materialised the erased data is the
 	 * application's responsibility.
 	 *
-	 * @param subject whose data to erase; the unit of erasure is a
-	 *                {@link org.sliceworkz.eventstore.shredding.DataSubject}, not a field or an event
-	 * @param reason  why, recorded alongside the destroyed key — the events record nothing about the
-	 *                erasure, so this is the whole audit trail
-	 * @return what was destroyed
+	 * @param subjectType what kind of subject, e.g. {@code "customer"} — the
+	 *                    {@link DataSubject#type() type} of the subjects the data was sealed for
+	 * @param subjectId   the pseudonymous identifier of the subject within that type
+	 * @param reason      why, recorded alongside every destroyed key — the events record nothing about
+	 *                    the erasure, so this is the whole audit trail
+	 * @return what was destroyed, per category
 	 * @throws UnsupportedOperationException if this store has no
-	 *         {@link org.sliceworkz.eventstore.shredding.ShreddingCodec} configured, and so holds no keys
+	 *         {@link org.sliceworkz.eventstore.shredding.ShreddingCodec} configured, and so holds no keys,
+	 *         or its codec or key store cannot erase across categories
 	 * @throws org.sliceworkz.eventstore.shredding.ShreddingException if the key store cannot be reached
-	 * @throws IllegalArgumentException if either argument is null
+	 * @throws IllegalArgumentException if any argument is null or blank
+	 * @see #eraseCategory(DataSubject, ErasureReason)
 	 * @see org.sliceworkz.eventstore.shredding.Shreddable
 	 */
-	default ErasureReport erase ( DataSubject subject, ErasureReason reason ) {
+	default SubjectErasureReport erase ( String subjectType, String subjectId, ErasureReason reason ) {
 		throw new UnsupportedOperationException(
 				"this event store has no ShreddingCodec configured, so it holds no keys to destroy; configure shredding on the storage builder or via EventStoreFactory.eventStore(...)");
 	}
 
 	/**
-	 * Erases everything held for a data subject, under every category, by destroying every key that
-	 * protects it.
+	 * Erases a data subject's personal data under one category only, by destroying the keys held for
+	 * that category.
 	 * <p>
-	 * The whole-person erasure. An art.17 request names a person, not a retention category, and the
-	 * caller answering it should not have to know which categories the person's data was ever written
-	 * under — a subject whose data sits under {@code "default"}, {@code "marketing"} and
-	 * {@code "financial"} loses all three here, where {@link #erase(DataSubject, ErasureReason)} would
-	 * take the one its argument names.
+	 * The narrow, deliberate erasure. A {@link org.sliceworkz.eventstore.shredding.DataSubject} always
+	 * names one {@link DataSubject#category() category}, and this destroys the keys of that category and
+	 * no other: whatever the same person holds under another category stays readable, and the call
+	 * reports success, because the erasure it names was performed. That is what "erase marketing, retain
+	 * financial for the statutory period" needs, and it is the wrong call for a request to erase a
+	 * <em>person</em> — {@code DataSubject.of("customer", "alice-42")} is the subject under
+	 * {@link org.sliceworkz.eventstore.shredding.DataSubject#DEFAULT_CATEGORY}, so erasing it leaves
+	 * whatever Alice holds under {@code "marketing"} readable. The whole-person erasure is
+	 * {@link #erase(String, String, ErasureReason)}.
 	 * <pre>{@code
-	 * SubjectErasureReport report = eventStore.eraseAllCategories(
-	 *         "customer", "alice-42",
-	 *         ErasureReason.of("GDPR art.17 request #4711"));
+	 * ErasureReport report = eventStore.eraseCategory(
+	 *         DataSubject.of("customer", "alice-42").withCategory("marketing"),
+	 *         ErasureReason.of("consent withdrawn, ticket #4711"));
 	 *
-	 * report.categoriesErased();   // [default, marketing]
-	 * report.keysShredded();       // 2
+	 * report.keysShredded();   // 1
 	 * }</pre>
-	 * Everything said of {@link #erase(DataSubject, ErasureReason)} holds here too: nothing in the events
-	 * table is written, the erasure is idempotent ({@link SubjectErasureReport#isNoop()} for a subject
-	 * holding no live keys), data appended for the subject afterwards gets fresh keys and is readable,
-	 * and nothing is notified.
+	 * Everything said of {@link #erase(String, String, ErasureReason)} holds here too: nothing in the
+	 * events table is written, the erasure is idempotent ({@link ErasureReport#isNoop()} for a subject
+	 * holding no live key under the category), data appended for the subject afterwards gets a fresh key
+	 * and is readable, and nothing is notified.
 	 *
-	 * @param subjectType what kind of subject, e.g. {@code "customer"} — the
-	 *                    {@link DataSubject#type() type} of the subjects the data was sealed for
-	 * @param subjectId   the pseudonymous identifier of the subject within that type
-	 * @param reason      why, recorded alongside every destroyed key
-	 * @return what was destroyed, per category
+	 * @param subject whose data to erase, and under which category; the unit of erasure is a
+	 *                {@link org.sliceworkz.eventstore.shredding.DataSubject}, not a field or an event
+	 * @param reason  why, recorded alongside the destroyed key
+	 * @return what was destroyed
 	 * @throws UnsupportedOperationException if this store has no
-	 *         {@link org.sliceworkz.eventstore.shredding.ShreddingCodec} configured, or its codec or key
-	 *         store cannot erase across categories
+	 *         {@link org.sliceworkz.eventstore.shredding.ShreddingCodec} configured, and so holds no keys
 	 * @throws org.sliceworkz.eventstore.shredding.ShreddingException if the key store cannot be reached
-	 * @throws IllegalArgumentException if any argument is null or blank
-	 * @see #erase(DataSubject, ErasureReason)
+	 * @throws IllegalArgumentException if either argument is null
+	 * @see #erase(String, String, ErasureReason)
 	 */
-	default SubjectErasureReport eraseAllCategories ( String subjectType, String subjectId, ErasureReason reason ) {
+	default ErasureReport eraseCategory ( DataSubject subject, ErasureReason reason ) {
 		throw new UnsupportedOperationException(
 				"this event store has no ShreddingCodec configured, so it holds no keys to destroy; configure shredding on the storage builder or via EventStoreFactory.eventStore(...)");
 	}

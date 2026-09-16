@@ -401,7 +401,7 @@ public class EventStoreImpl implements EventStore {
 	}
 
 	@Override
-	public ErasureReport erase ( DataSubject subject, ErasureReason reason ) {
+	public ErasureReport eraseCategory ( DataSubject subject, ErasureReason reason ) {
 		if ( subject == null ) {
 			throw new IllegalArgumentException("subject cannot be null");
 		}
@@ -427,7 +427,7 @@ public class EventStoreImpl implements EventStore {
 	}
 
 	@Override
-	public SubjectErasureReport eraseAllCategories ( String subjectType, String subjectId, ErasureReason reason ) {
+	public SubjectErasureReport erase ( String subjectType, String subjectId, ErasureReason reason ) {
 		if ( subjectType == null || subjectType.isBlank() ) {
 			throw new IllegalArgumentException("subjectType cannot be null or blank");
 		}
@@ -442,7 +442,7 @@ public class EventStoreImpl implements EventStore {
 					"event store on storage '%s' has no ShreddingCodec configured, so it holds no keys to destroy; configure shredding on the storage builder or via EventStoreFactory.eventStore(storage, registry, meterOptions, codec)"
 							.formatted(eventStorage.name()));
 		}
-		// Allowed on a closed store for the same reason erase is.
+		// Allowed on a closed store for the same reason eraseCategory is.
 		SubjectErasureReport report = shreddingCodec.shredAllCategories(subjectType, subjectId, reason);
 
 		STORE_LOGGER.info("erased data subject {}/{} across categories {} on storage '{}': {} key(s) shredded ({})",

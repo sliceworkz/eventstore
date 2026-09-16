@@ -77,7 +77,7 @@ import java.util.function.Supplier;
  * Erasing Alice leaves everything else intact — the amount, the transfer id, the pseudonymous customer
  * ids, and Bob's details under his own key:
  * <pre>{@code
- * eventStore.erase(alice, ErasureReason.of("GDPR art.17 request #4711"));
+ * eventStore.erase("customer", "alice-42", ErasureReason.of("GDPR art.17 request #4711"));
  *
  * transfer.amount();   // EUR 250.00                              unchanged
  * transfer.from();     // Shredded[customer/alice-42/default, …]  gone
@@ -110,7 +110,7 @@ import java.util.function.Supplier;
  *
  * @see DataSubject
  * @see ShreddingCodec
- * @see org.sliceworkz.eventstore.EventStore#erase(DataSubject, ErasureReason)
+ * @see org.sliceworkz.eventstore.EventStore#eraseCategory(DataSubject, ErasureReason)
  */
 public sealed interface Shreddable<T> permits Shreddable.Present, Shreddable.Shredded, Shreddable.Withheld {
 

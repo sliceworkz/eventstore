@@ -114,8 +114,8 @@ public class PostgresShreddingReportingRoleTest {
 
 				// the denial: not an outage, and not an erasure -- a live key and a destroyed one read the
 				// same to a role that may not see the column that tells them apart
-				assertInstanceOf(KeyResolution.Denied.class, reportingKeys.resolveKey(alicesKey));
-				assertInstanceOf(KeyResolution.Denied.class, reportingKeys.resolveKey(bobsKey));
+				assertInstanceOf(KeyResolution.Withheld.class, reportingKeys.resolveKey(alicesKey));
+				assertInstanceOf(KeyResolution.Withheld.class, reportingKeys.resolveKey(bobsKey));
 				assertInstanceOf(Unsealed.Withheld.class, reportingCodec.open(alicesValue));
 
 				// the audit, every statement of it

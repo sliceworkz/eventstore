@@ -57,13 +57,13 @@ final class OwningEventStore implements EventStore {
 	}
 
 	@Override
-	public ErasureReport erase ( DataSubject subject, ErasureReason reason ) {
-		return eventStore.erase(subject, reason);
+	public ErasureReport eraseCategory ( DataSubject subject, ErasureReason reason ) {
+		return eventStore.eraseCategory(subject, reason);
 	}
 
 	@Override
-	public SubjectErasureReport eraseAllCategories ( String subjectType, String subjectId, ErasureReason reason ) {
-		return eventStore.eraseAllCategories(subjectType, subjectId, reason);
+	public SubjectErasureReport erase ( String subjectType, String subjectId, ErasureReason reason ) {
+		return eventStore.erase(subjectType, subjectId, reason);
 	}
 
 	@Override

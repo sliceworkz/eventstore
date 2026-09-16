@@ -39,7 +39,7 @@ import javax.crypto.SecretKey;
  *   <li><b>{@link #resolveKey} answers {@link KeyResolution.Erased} only for a destroyed key.</b> See
  *       below; this is the one contract that must not be got wrong. A key id this store has never held
  *       is not a destroyed key: that throws too, see further below.</li>
- *   <li><b>{@link KeyResolution.Denied} is its third answer</b>: the key exists and this caller may not
+ *   <li><b>{@link KeyResolution.Withheld} is its third answer</b>: the key exists and this caller may not
  *       have it. A store with no notion of entitlement never answers it; one that can tell a refusal
  *       from an outage does, see below.</li>
  *   <li><b>{@link #shred} is idempotent</b> and returns what it actually destroyed, so a second erasure
@@ -62,13 +62,13 @@ import javax.crypto.SecretKey;
  * an exception, the read fails loudly, the bookmark does not move, and the projection recovers by
  * itself once the key store is back.
  *
- * <h2>Denied is a third answer, and it is not an outage either</h2>
+ * <h2>Withheld is a third answer, and it is not an outage either</h2>
  * A key store fronting a KMS or a database with per-role privileges will meet a caller that is not
  * entitled to a key: a 403 from Vault, {@code insufficient_privilege} from PostgreSQL. That is neither an
  * erasure nor a failure. Reported as erased, the value reads as {@link Shreddable.Shredded} and a
  * projection renders "erased" for data that is not. Reported as a {@link ShreddingException}, it means
  * "retry later", and a projector that is simply not entitled fails its batch and never advances. So
- * {@link #resolveKey} has {@link KeyResolution.Denied} for it, which the read path turns into
+ * {@link #resolveKey} has {@link KeyResolution.Withheld} for it, which the read path turns into
  * {@link Shreddable.Withheld}: the reader sees whose data it is not shown and carries on.
  * <p>
  * The three answers are a sealed type rather than an exception hierarchy so that an implementation has
@@ -148,7 +148,7 @@ public interface ShreddingKeyStore extends AutoCloseable {
 	 * expected to cache; see {@link ShreddingCodec} for what that costs in erasure latency. A store
 	 * that has no notion of entitlement answers {@link KeyResolution.Resolved} or
 	 * {@link KeyResolution.Erased} and nothing else. One that has — a KMS, a database role without the
-	 * privilege — answers {@link KeyResolution.Denied} for a refusal, and keeps throwing
+	 * privilege — answers {@link KeyResolution.Withheld} for a refusal, and keeps throwing
 	 * {@link ShreddingException} for everything that a retry might fix.
 	 *
 	 * @param key the key id taken from a sealed envelope
@@ -234,12 +234,12 @@ public interface ShreddingKeyStore extends AutoCloseable {
 	 * <p>
 	 * A sealed type rather than an {@code Optional} plus an exception, so that an implementation names
 	 * which one it means and a caller has to handle all three. The difference between them is the most
-	 * important contract in this subsystem: {@link Erased} is the mechanism working, {@link Denied} is a
+	 * important contract in this subsystem: {@link Erased} is the mechanism working, {@link Withheld} is a
 	 * reader that is not entitled, and an outage is neither — that one throws.
 	 *
 	 * @see ShreddingKeyStore#resolveKey(KeyId)
 	 */
-	sealed interface KeyResolution permits KeyResolution.Resolved, KeyResolution.Erased, KeyResolution.Denied {
+	sealed interface KeyResolution permits KeyResolution.Resolved, KeyResolution.Erased, KeyResolution.Withheld {
 
 		/**
 		 * The key exists and this caller may use it.
@@ -279,12 +279,12 @@ public interface ShreddingKeyStore extends AutoCloseable {
 		 *
 		 * @param reason what refused it, for a log line; never key material, and never personal data
 		 */
-		record Denied ( String reason ) implements KeyResolution {
+		record Withheld ( String reason ) implements KeyResolution {
 
 			/**
 			 * Normalises a null reason to an empty string.
 			 */
-			public Denied {
+			public Withheld {
 				reason = reason == null ? "" : reason;
 			}
 

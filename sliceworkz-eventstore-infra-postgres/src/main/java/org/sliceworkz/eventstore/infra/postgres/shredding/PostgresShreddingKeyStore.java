@@ -22,6 +22,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -31,7 +32,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
@@ -57,11 +57,20 @@ import org.sliceworkz.eventstore.shredding.ShreddingKeyStore.KeyResolution;
  * deployment whose DBA applies DDL by hand is told when it is missing rather than discovering it at the
  * first erasure request.
  *
- * <h2>Keys and events commit together</h2>
- * Both use the storage's own {@code DataSource}, so a minted key and the append that seals under it can
- * land in the same transaction. That removes the ordering hazard an external key store has, where the
- * key must be made durable before the event or a crash between the two leaves an event nothing can
- * decrypt.
+ * <h2>A key commits before its event, never with it</h2>
+ * {@link #keyFor} runs while the payload is being sealed, before the storage is handed anything to
+ * append, and takes a connection of its own from the pool: the key row is committed by the time the
+ * append's transaction begins. Sharing the storage's {@code DataSource} therefore does not put the key
+ * and the event in one transaction, and what carries the guarantee is the order, the same order every
+ * key store relies on (see {@link ShreddingKeyStore}): <b>mint first, append second</b>. A crash or a
+ * rolled-back append between the two leaves a key row with no event sealed under it, which decrypts
+ * nothing, costs one row, and is the key the subject's next append seals under; the other order — an
+ * event whose key was never made durable — cannot happen. The alternative, minting the key inside the
+ * append's own transaction, loses twice over: the sealed payload is what the storage is given, so the
+ * key has to exist before there is anything to append; and a key row held uncommitted for the length of
+ * the append would park every concurrent writer for the same subject on the unique index until it
+ * settled. What the shared {@code DataSource} buys is the schema machinery, one set of credentials, and
+ * a physical backup that carries the keys with the events.
  *
  * <h2>Erasure keeps the row</h2>
  * Shredding sets {@code key_material} to NULL and stamps {@code shredded_at} and
@@ -91,6 +100,14 @@ import org.sliceworkz.eventstore.shredding.ShreddingKeyStore.KeyResolution;
  * That is deliberate: caching absence would make an erasure that happened elsewhere invisible for the
  * cache's lifetime, in the direction that matters least — a few queries against reporting stale data as
  * readable.
+ * <p>
+ * The cache is bounded in size as well as in time: at most {@link #DEFAULT_MAX_CACHED_KEYS} entries
+ * unless the constructor is told otherwise, the least recently used evicted first. The ttl alone does
+ * not bound the heap, because a lapsed entry is dropped only when it is asked for again: a process that
+ * resolves a key per subject over its lifetime — a projection replaying a stream of a million subjects,
+ * a service that has served every customer once — would otherwise hold every one of them for good, at
+ * a few hundred bytes each, growing like a leak for as long as it runs. Below the bound nothing changes;
+ * above it a key outside the working set costs one query when it comes round again.
  *
  * <h2>Privileges</h2>
  * Needs {@code SELECT}, {@code INSERT} and {@code UPDATE} on the table. It does not need {@code DELETE}:
@@ -138,6 +155,18 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 	 */
 	public static final Duration DEFAULT_CACHE_TTL = Duration.ofHours(1);
 
+	/**
+	 * The most resolved keys the cache holds at once — ten thousand.
+	 * <p>
+	 * The ttl bounds how stale an entry can be, not how many there are: a lapsed entry is dropped when
+	 * it is next asked for, and one that is never asked for again is dropped by nothing else. So without
+	 * this bound the cache grows by one entry per distinct key the process ever resolves, for as long as
+	 * it runs. Ten thousand entries is a working set of ten thousand subjects held at a few hundred bytes
+	 * each, a few megabytes; when the cache is full the least recently used entry goes, so a subject
+	 * whose events are read together keeps its key for the duration.
+	 */
+	public static final int DEFAULT_MAX_CACHED_KEYS = 10_000;
+
 	private static final String KEY_ALGORITHM = "AES";
 	private static final int KEY_BITS = 256;
 
@@ -145,23 +174,11 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 	private final String tableName;
 
 	/**
-	 * Resolved key material, by key id. Bounded in practice by the number of distinct subjects a process
-	 * actually reads for, not by the number of keys that exist.
+	 * What a key id resolved to, for the ttl and up to the bound. Erasure by this instance and
+	 * {@link #close()} drop entries; a lapsed entry is dropped when it is next asked for; and the bound
+	 * evicts the least recently used.
 	 */
-	private final Map<KeyId, CachedKey> cache = new ConcurrentHashMap<>();
-	private final Duration cacheTtl;
-
-	/**
-	 * A resolved key and the moment it stops being trusted.
-	 * <p>
-	 * The expiry is what bounds an erasure performed by <em>another</em> instance: this one keeps
-	 * decrypting with a key it cached until the entry lapses and the next read finds the row shredded.
-	 */
-	private record CachedKey ( KeyResolution resolution, Instant expiresAt ) {
-		private boolean isLive ( Instant now ) {
-			return now.isBefore(expiresAt);
-		}
-	}
+	private final KeyCache cache;
 
 	/**
 	 * PostgreSQL's SQLSTATE for {@code insufficient_privilege}: the one failure that is a reader's
@@ -187,18 +204,44 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 	 * @throws IllegalArgumentException if any argument is null, or the ttl is negative
 	 */
 	public PostgresShreddingKeyStore ( DataSource dataSource, String prefix, Duration cacheTtl ) {
+		this(dataSource, prefix, cacheTtl, DEFAULT_MAX_CACHED_KEYS);
+	}
+
+	/**
+	 * @param dataSource    the storage's data source; never closed by this key store
+	 * @param prefix        the table prefix the storage was built with
+	 * @param cacheTtl      how long a resolved key stays usable before it is looked up again; see
+	 *                      {@link #DEFAULT_CACHE_TTL} for what this bounds
+	 * @param maxCachedKeys the most resolved keys held at once, the least recently used evicted beyond
+	 *                      it; see {@link #DEFAULT_MAX_CACHED_KEYS} for what this bounds
+	 * @throws IllegalArgumentException if any argument is null, the ttl is negative, or the bound is not
+	 *                                  positive
+	 */
+	public PostgresShreddingKeyStore ( DataSource dataSource, String prefix, Duration cacheTtl, int maxCachedKeys ) {
 		if ( dataSource == null ) {
 			throw new IllegalArgumentException("dataSource cannot be null");
 		}
 		if ( prefix == null ) {
 			throw new IllegalArgumentException("prefix cannot be null; use an empty string for no prefix");
 		}
-		if ( cacheTtl == null || cacheTtl.isNegative() ) {
-			throw new IllegalArgumentException("cacheTtl cannot be null or negative; use Duration.ZERO to resolve every key from the database");
-		}
 		this.dataSource = dataSource;
 		this.tableName = prefix + "shredding_keys";
-		this.cacheTtl = cacheTtl;
+		this.cache = new KeyCache(cacheTtl, maxCachedKeys, Clock.systemUTC());
+	}
+
+	/**
+	 * @return how long a resolved key stays usable before it is looked up again; zero when nothing is
+	 *         cached
+	 */
+	public Duration cacheTtl ( ) {
+		return cache.ttl();
+	}
+
+	/**
+	 * @return the most resolved keys held at once
+	 */
+	public int maxCachedKeys ( ) {
+		return cache.maxEntries();
 	}
 
 	/**
@@ -293,14 +336,11 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 			throw new IllegalArgumentException("key cannot be null");
 		}
 
-		CachedKey cached = cache.get(key);
-		if ( cached != null ) {
-			if ( cached.isLive(Instant.now()) ) {
-				return cached.resolution();
-			}
-			// lapsed rather than wrong: drop it and ask the database, which is where an erasure by
-			// another instance will have been recorded
-			cache.remove(key, cached);
+		// a lapsed entry is dropped by the lookup rather than returned: lapsed is not wrong, but the
+		// database is where an erasure by another instance will have been recorded
+		Optional<KeyResolution> cached = cache.get(key);
+		if ( cached.isPresent() ) {
+			return cached.get();
 		}
 
 		String sql = "SELECT key_material FROM %s WHERE key_id = ?".formatted(tableName);
@@ -626,10 +666,7 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 	}
 
 	private void cacheResolution ( KeyId keyId, KeyResolution resolution ) {
-		if ( cacheTtl.isZero() ) {
-			return;
-		}
-		cache.put(keyId, new CachedKey(resolution, Instant.now().plus(cacheTtl)));
+		cache.put(keyId, resolution);
 	}
 
 	private Optional<ActiveKey> selectActiveKey ( Connection connection, DataSubject subject ) throws SQLException {

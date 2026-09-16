@@ -101,12 +101,15 @@ import javax.crypto.SecretKey;
  * unreadable, with an error naming the key. To move events without their keys deliberately, carry
  * the key rows across shredded — material gone, reason stamped — so the values read as erased and
  * the audit says why.
- * <h2>Ordering, when the key store is not transactional with the events</h2>
- * The default key stores that ship with a SQL backend write keys on the same {@code DataSource} as the
- * events, so a key mint and the append that needs it commit together. An external key store cannot do
- * that, and then the order is the whole guarantee: <b>mint the key first, append second</b>. A crash
- * between the two leaves an orphan key, which decrypts nothing and costs nothing. The other order
- * leaves an event whose key was never persisted — a value that can never be read, which is
+ * <h2>Ordering: the key is durable before the event is, and no key store is transactional with it</h2>
+ * No key store commits together with the append it serves, the shipped ones included: {@link #keyFor}
+ * runs while the payload is being sealed, before the storage is handed anything to append, and the
+ * Postgres key store takes a connection of its own for it even though it writes to the same
+ * {@code DataSource} as the events. So the order is the whole guarantee, for every implementation:
+ * <b>mint the key first, and make it durable before returning it; the append comes second</b>. A crash
+ * or a rolled-back append between the two leaves an orphan key, which decrypts nothing and costs one
+ * row, and is what the subject's next append seals under. The other order — a key returned before it is
+ * durable — leaves an event whose key was never persisted: a value that can never be read, which is
  * indistinguishable from an erasure nobody asked for.
  *
  * <h2>Rotation only ever applies forward</h2>

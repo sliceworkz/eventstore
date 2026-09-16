@@ -616,7 +616,9 @@ public interface PostgresEventStorage {
 		 * <p>
 		 * The recommended setup for PostgreSQL. Keys go into {@code <prefix>shredding_keys} on the same
 		 * {@code DataSource} as the events, so the schema machinery creates and validates the table along
-		 * with the others, and a minted key and the append that seals under it commit together.
+		 * with the others and a physical backup carries both. A key is committed on a connection of its
+		 * own before the append that seals under it begins, never in the append's transaction; the key
+		 * store's javadoc has the ordering and what it guarantees.
 		 * <pre>{@code
 		 * try ( EventStore store = PostgresEventStorage.newBuilder()
 		 *         .prefix("acme_")

@@ -1380,13 +1380,32 @@ audit.keys(KeyAuditQuery.forKeys(keysOnAnEvent));               // are the keys 
 
 **The Postgres key store caches resolved keys with a TTL, default one hour**
 (`PostgresShreddingKeyStore.DEFAULT_CACHE_TTL`). Without a cache, replaying a stream costs a query per
-protected value; with an unbounded one, an erasure performed by *another* instance would never be
+protected value; with one that never expires, an erasure performed by *another* instance would never be
 noticed. An erasure performed by *this* instance drops its entries immediately, so the ttl bounds only
 the cross-instance case — which makes it the outer edge of "erased" for a multi-instance deployment, and
 a number worth stating in a data protection notice rather than discovering. `Duration.ZERO` disables the
 cache and makes an erasure effective everywhere at once, at a query per protected value. A key that was
 never seen is deliberately not cached as absent, so a shredded key still costs one query per read rather
 than reporting stale data as readable.
+
+**The cache is bounded in size too, at `DEFAULT_MAX_CACHED_KEYS` (10.000) entries, least recently used
+evicted first.** The ttl bounds how stale an entry can be, not how many there are: a lapsed entry is
+dropped when it is next asked for, and one never asked for again is dropped by nothing else, so a
+process that resolves a key per subject over its lifetime — a projection replaying a stream of a
+million subjects — would otherwise hold every one of them for good, at a few hundred bytes each. Below
+the bound nothing changes; above it a key outside the working set costs one query when it comes round
+again, and the four-argument constructor sets the bound for a working set that is genuinely larger.
+`KeyCacheTest` pins the bound, the ttl and the eviction order without a database;
+`PostgresShreddingKeyStoreCacheTest` pins that the store honours them, by counting the connections it
+takes.
+
+**A key is committed before the event sealed under it, never with it.** `keyFor` runs while the
+payload is sealed, before the storage is handed anything to append, and the Postgres key store takes a
+connection of its own for it even though it writes to the same `DataSource` as the events. Sharing the
+`DataSource` buys the schema machinery, one set of credentials and a backup carrying both; it does not
+put the two in one transaction, on this or any key store, and the order is the guarantee: mint first,
+durable before it is returned, append second. A rolled-back append leaves a key row with no event under
+it, which the subject's next append seals under; an event whose key was never persisted cannot happen.
 
 **Raw mode does not decrypt**, deliberately: a wildcard stream, an export or an import sees the sealed
 envelope as stored, which is what lets `EventStoreImporter` copy events with no keys and no domain

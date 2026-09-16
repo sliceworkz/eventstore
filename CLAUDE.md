@@ -114,6 +114,19 @@ mvn clean install -DskipTests
   a stream typed wider than its roots. `EventStoreTypeParameterTest` in the api module pins it by running
   javac against probe snippets
 - Combines `EventSource` (reading) and `EventSink` (writing) interfaces
+- **Raw mode is its own method, with its own type: `getRawEventStream(id)` returns an
+  `EventSource<Object>`.** No event root classes, so no type mapping: every stored event reads as the
+  parsed JSON tree of its payload (a Jackson 3 `JsonNode` at runtime, declared `Object` because the api
+  carries no Jackson), under its stored type, nothing upcast and nothing decrypted — a `Shreddable` comes
+  back as its sealed envelope. It is an `EventSource` rather than an `EventStream` because a raw stream
+  cannot append (an append is admitted only for a type the stream maps, and a raw stream maps none), so
+  the type says so instead of every append failing at runtime. What it is for: reading the event an
+  `EventDeserializationException` names through `getEventById`, following every append in a store, and
+  the presence check before an import. The alternative — a `getEventStream(id)` overload with a free type
+  parameter — loses because `EventStream<CustomerEvent> s = store.getEventStream(id)` then compiles and
+  hands back JSON trees under the domain type, a `ClassCastException` at the first `switch`. A stream
+  typed wider than its roots that can still append is the `Set<Class<?>>` overload's job, not raw mode.
+  `EventStoreTypeParameterTest` pins both the acceptance and the rejections by running javac
 - **`query()` returns a `Stream`, but it is already in memory.** Storage has finished reading by the
   time the stream comes back — the whole result set is fetched and the stream iterates a list. So
   `findFirst()`, `.limit(10)` and `takeWhile` on the returned stream discard work already done, and a
@@ -1088,7 +1101,7 @@ still raises.
   Imported events arrive at new (high) positions carrying old timestamps, so "later position implies later
   timestamp" no longer holds in that store.
 - **Checking a target up front** must be done in **raw mode**
-  (`eventStore.getEventStream(EventStreamId.anyContext())`, no event root classes). With domain classes
+  (`eventStore.getRawEventStream(EventStreamId.anyContext())`, no event root classes). With domain classes
   registered, `getEventById` upcasts, and a legacy event whose upcast yields zero current events comes back
   as an empty list even though it exists — a false negative.
 

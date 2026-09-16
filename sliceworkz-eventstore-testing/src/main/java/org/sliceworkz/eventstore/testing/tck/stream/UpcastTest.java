@@ -38,6 +38,7 @@ import org.sliceworkz.eventstore.testing.tck.stream.UpcastTest.CustomerEvent.Nam
 import org.sliceworkz.eventstore.testing.AbstractEventStoreTest;
 import org.sliceworkz.eventstore.testing.ForEachBackend;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
+import org.sliceworkz.eventstore.stream.EventSource;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
@@ -102,7 +103,7 @@ public class UpcastTest extends AbstractEventStoreTest {
 		assertEquals(originalEvents.get(2).reference(), newEvents.get(2).reference());
 
 		// verify reading the raw stream still shows all historical details
-		EventStream<?> rawStream = eventStore().getEventStream(streamId);
+		EventSource<?> rawStream = eventStore().getRawEventStream(streamId);
 		List<? extends Event<?>> rawEvents = rawStream.query(EventQuery.matchAll()).toList();
 
 		assertEquals(6, rawEvents.size());

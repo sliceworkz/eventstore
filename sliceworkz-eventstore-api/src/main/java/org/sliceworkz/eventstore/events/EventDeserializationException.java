@@ -69,7 +69,7 @@ import java.util.Optional;
  * }</pre>
  * {@link #getReference()} carries an {@link EventReference}, whose {@link EventReference#id()} can be
  * handed to {@link org.sliceworkz.eventstore.stream.EventSource#getEventById} on a stream opened in raw
- * mode ({@code eventStore.getEventStream(EventStreamId.anyContext())}) to inspect the stored JSON
+ * mode ({@code eventStore.getRawEventStream(EventStreamId.anyContext())}) to inspect the stored JSON
  * without needing a mapping for it.
  *
  * @see EventSerializationException

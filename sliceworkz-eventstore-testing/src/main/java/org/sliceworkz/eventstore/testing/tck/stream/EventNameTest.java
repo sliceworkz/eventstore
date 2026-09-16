@@ -34,6 +34,7 @@ import org.sliceworkz.eventstore.events.Upcast;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
+import org.sliceworkz.eventstore.stream.EventSource;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.testing.AbstractEventStoreTest;
@@ -138,7 +139,7 @@ public class EventNameTest extends AbstractEventStoreTest {
 		assertEquals("CustomerRegistered", appended.getFirst().storedType().name());
 
 		// and so does the stored row, seen without any type mapping at all
-		EventStream<Object> raw = eventStore().getEventStream(customers);
+		EventSource<Object> raw = eventStore().getRawEventStream(customers);
 		List<Event<Object>> stored = raw.query(EventQuery.matchAll()).toList();
 		assertEquals(1, stored.size());
 		assertEquals("CustomerRegistered", stored.getFirst().type().name());

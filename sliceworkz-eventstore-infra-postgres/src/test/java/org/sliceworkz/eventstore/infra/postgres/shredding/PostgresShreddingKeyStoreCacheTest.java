@@ -127,12 +127,14 @@ public class PostgresShreddingKeyStoreCacheTest {
 
 		@Test
 		public void testTheBoundEvictsTheLeastRecentlyUsedKeyAndKeepsTheWorkingSet ( ) {
-			// the schema on the plain pool, the key store on a counting one: the storage's monitors hold
-			// connections of their own, and they must not be counted against the cache
-			CountingDataSource dataSource = new CountingDataSource(PostgresContainer.dataSource(image));
+			// one pool, asked for once: PostgresContainer.dataSource closes the previous pool of the image
+			// on every call. The schema takes it plain, so the storage's monitors -- which hold
+			// connections of their own -- are not counted; the key store takes it counted
+			DataSource pool = PostgresContainer.dataSource(image);
+			CountingDataSource dataSource = new CountingDataSource(pool);
 
 			try ( EventStorage schema = PostgresEventStorage.newBuilder()
-					.name("kscache-schema").prefix(PREFIX).dataSource(PostgresContainer.dataSource(image)).initializeDatabase().build();
+					.name("kscache-schema").prefix(PREFIX).dataSource(pool).initializeDatabase().build();
 				  PostgresShreddingKeyStore keys = new PostgresShreddingKeyStore(dataSource, PREFIX, Duration.ofHours(1), 2) ) {
 
 				assertEquals(2, keys.maxCachedKeys());

@@ -24,6 +24,7 @@ import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -536,6 +537,20 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 				.filter(e -> e.getValue().stream().anyMatch(currentTypes::contains))
 				.map(Map.Entry::getKey)
 				.collect(Collectors.toSet()));
+		return result;
+	}
+
+	@Override
+	public Map<EventType, Set<EventType>> legacyTypesAmong ( Set<EventType> types ) {
+		// judged on the registrations, not on the graph's keys: the graph maps every registered type,
+		// current ones to themselves, and only a @LegacyEvent registration makes a name legacy
+		Map<EventType, Set<EventType>> currentTypesOf = upcastGraph().currentTypesOf();
+		Map<EventType, Set<EventType>> result = new LinkedHashMap<>();
+		for ( EventType type : types ) {
+			if ( legacyRegistrations.containsKey(type.name()) ) {
+				result.put(type, currentTypesOf.get(type));
+			}
+		}
 		return result;
 	}
 

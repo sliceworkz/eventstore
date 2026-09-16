@@ -162,6 +162,29 @@ public class UpcastChainTest extends AbstractEventStoreTest {
 		assertEquals(decidedOnRegistrations.eventFilter(), e.getFilter());
 	}
 
+	/**
+	 * A legacy type in the middle of the chain is refused in a filter like the one at its start, and
+	 * the message names the current type the chain ends in, not the next hop.
+	 */
+	@ForEachBackend
+	void aFilterNamingALegacyTypeOnTheChainIsRefusedNamingTheCurrentTypeItEndsIn ( ) {
+		writeOneOfEachVersion();
+		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, CustomerHistoricalEvent.class);
+
+		IllegalArgumentException midChain = assertThrows(IllegalArgumentException.class,
+				() -> current.query(EventQuery.forEvents(EventTypesFilter.of(CustomerHistoricalEvent.CustomerRegisteredV2.class), customer)).toList());
+		assertTrue(midChain.getMessage().endsWith("'CustomerRegisteredV2' (a legacy type, read as 'CustomerRegisteredV3')"), midChain.getMessage());
+
+		IllegalArgumentException start = assertThrows(IllegalArgumentException.class,
+				() -> current.query(EventQuery.forEvents(EventTypesFilter.of(CustomerHistoricalEvent.CustomerRegistered.class), customer)).toList());
+		assertTrue(start.getMessage().endsWith("'CustomerRegistered' (a legacy type, read as 'CustomerRegisteredV3')"), start.getMessage());
+
+		// both at once: named in one message, in name order
+		IllegalArgumentException both = assertThrows(IllegalArgumentException.class,
+				() -> current.query(EventQuery.forEvents(EventTypesFilter.of(CustomerHistoricalEvent.class), customer)).toList());
+		assertTrue(both.getMessage().endsWith("'CustomerRegistered' (a legacy type, read as 'CustomerRegisteredV3'), 'CustomerRegisteredV2' (a legacy type, read as 'CustomerRegisteredV3')"), both.getMessage());
+	}
+
 	// --- misconfiguration: fails at getEventStream, before anything is read or written --------------
 
 	sealed interface Elsewhere {

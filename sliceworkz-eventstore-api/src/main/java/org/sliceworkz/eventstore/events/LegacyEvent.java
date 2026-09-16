@@ -124,6 +124,13 @@ import java.lang.annotation.Target;
  *     System.out.println("Customer renamed to: " + renamed.name());
  * });
  * }</pre>
+ * <p>
+ * A filter names current types only. One naming a legacy type —
+ * {@code EventTypesFilter.of(CustomerHistoricalEvent.CustomerNameChanged.class)} on the stream above — is
+ * refused with an {@link IllegalArgumentException}, as a query and as an {@code AppendCriteria} alike:
+ * the legacy events read as {@code CustomerRenamed}, and it is the filter over {@code CustomerRenamed}
+ * that returns and counts them. A raw stream, which registers no legacy types, reads the stored name as
+ * stored.
  *
  * @see Upcast
  * @see EventName

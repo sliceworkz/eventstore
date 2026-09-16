@@ -146,7 +146,7 @@ public class HelloEventstore {
 
             // 4. read one customer's history by tag
             EventQuery customer123 = EventQuery.forTypes(CustomerEvent.class).tagged("customer", "123");
-            List<Event<CustomerEvent>> history = customers.query(customer123).toList();
+            List<Event<CustomerEvent>> history = customers.query(customer123);
             EventReference lastKnown = history.getLast().reference();
 
             // 5. decide, then append only if nothing about customer 123 has landed since

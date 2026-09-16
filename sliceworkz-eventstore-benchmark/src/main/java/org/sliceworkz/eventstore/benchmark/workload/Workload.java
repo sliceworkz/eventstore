@@ -25,13 +25,11 @@ package org.sliceworkz.eventstore.benchmark.workload;
  * that, the two halves of the suite would drift -- and two numbers for the same named operation, one
  * from each half, is worse than having only one of them.
  *
- * <p><b>A read workload must fully consume what it reads, and return the result.</b> This is not
- * style; it is the difference between a real number and a fictional one. {@code query()} hands back a
- * {@code Stream} whose rows storage has already fetched, but whose <em>deserialization is lazy</em> --
- * it happens in the caller's terminal operation. A workload that returned the stream unconsumed would
- * have the caller's blackhole swallow it whole, and the benchmark would time the SQL while skipping
- * the serde entirely. Returning an already-materialised result makes that mistake impossible to make
- * in a caller.
+ * <p><b>A read workload returns what it reads.</b> {@code query()} hands back a {@code List}, read
+ * and deserialized in full before it returns, with the limit set on the {@code EventQuery} -- so the
+ * serde sits inside the timed call whatever the workload does with the result. Returning that list
+ * gives the caller's blackhole something real to swallow, which is what keeps the JIT from discarding
+ * the work being measured.
  */
 public interface Workload {
 
@@ -50,7 +48,7 @@ public interface Workload {
 	/**
 	 * Performs one unit of work.
 	 *
-	 * @return the result, already materialised. Never a lazy {@code Stream}: see the class comment.
+	 * @return the result, already materialised: see the class comment.
 	 */
 	Object invoke ( WorkloadContext context );
 

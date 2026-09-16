@@ -76,7 +76,7 @@ public final class Given<DOMAIN_EVENT_TYPE> {
 	 * @return the last event's reference, or {@code null} if the store is empty
 	 */
 	public EventReference lastReference ( ) {
-		return fixture.stream().query(EventQuery.matchAll().backwards().limit(1))
+		return fixture.stream().query(EventQuery.matchAll().backwards().limit(1)).stream()
 				.findFirst().map(Event::reference).orElse(null);
 	}
 

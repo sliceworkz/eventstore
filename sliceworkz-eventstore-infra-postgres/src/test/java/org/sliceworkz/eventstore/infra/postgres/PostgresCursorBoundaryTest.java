@@ -257,7 +257,7 @@ public class PostgresCursorBoundaryTest {
 		private List<StoredEvent> read ( PostgresEventStorageImpl storage, EventStreamId stream,
 				EventReference cursor, Limit limit, QueryDirection direction, EventReference until ) {
 			EventFilter filter = until == null ? EventFilter.matchAll() : EventFilter.matchAll().until(until);
-			return storage.query(filter, stream, cursor, limit, direction).toList();
+			return storage.query(filter, stream, cursor, limit, direction);
 		}
 
 		/** Pages the whole stream, carrying a cursor, and answers what it visited. */

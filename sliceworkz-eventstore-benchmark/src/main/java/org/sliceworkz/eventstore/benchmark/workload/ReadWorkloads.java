@@ -46,10 +46,10 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
 /**
  * The read side of the workload catalogue.
  *
- * <p>Every one of these consumes what it reads and returns the materialised result. That is the whole
- * discipline of this file: {@code query()} defers deserialization to the caller's terminal operation,
- * so a workload handing back an unconsumed {@code Stream} would time the SQL and skip the serde --
- * reporting perhaps a fifth of the real cost, with nothing to suggest anything was wrong.
+ * <p>Every one of these returns the materialised result it reads. {@code query()} answers a
+ * {@code List}, read and deserialized in full before it returns, with the limit set on the
+ * {@code EventQuery} -- so the serde sits inside the timed call, and handing the list back is what
+ * gives the blackhole something real to swallow.
  *
  * <p>Selectivity is treated as part of the workload rather than as a separate axis. A "tag query"
  * hitting ten events out of ten million and one hitting a hundred thousand are different questions
@@ -117,8 +117,7 @@ public final class ReadWorkloads {
 			@Override
 			public Object invoke ( WorkloadContext context ) {
 				List<Event<CrmEvent>> page = context.crm()
-						.query(EventQuery.matchAll().limit(PAGE_SIZE))
-						.toList();
+						.query(EventQuery.matchAll().limit(PAGE_SIZE));
 
 				// Touching the value is not ceremony. A Shreddable holds its plaintext once unsealed, and
 				// the unseal happens during deserialization -- but reading it here is what stops a future
@@ -167,8 +166,7 @@ public final class ReadWorkloads {
 			public Object invoke ( WorkloadContext context ) {
 				return context.target().store()
 						.getRawEventStream(EventStreamId.forContext(WebshopContext.CRM.streamContext()).anyPurpose())
-						.query(EventQuery.matchAll().limit(PAGE_SIZE))
-						.toList();
+						.query(EventQuery.matchAll().limit(PAGE_SIZE));
 			}
 		};
 	}
@@ -187,7 +185,7 @@ public final class ReadWorkloads {
 	private static Workload streamPage ( ) {
 		return simple("query-stream-page",
 				"one page of 500 events from the inventory stream, unfiltered -- the read baseline",
-				context -> context.inventory().query(EventQuery.matchAll().limit(PAGE_SIZE)).toList());
+				context -> context.inventory().query(EventQuery.matchAll().limit(PAGE_SIZE)));
 	}
 
 	/**
@@ -200,8 +198,7 @@ public final class ReadWorkloads {
 				"500 events of one type from inventory -- the btree path, no tags involved",
 				context -> context.inventory()
 						.query(EventQuery.forEvents(EventTypesFilter.of(InventoryEvent.StockReserved.class),
-								Tags.none()).limit(PAGE_SIZE))
-						.toList());
+								Tags.none()).limit(PAGE_SIZE)));
 	}
 
 	/**
@@ -213,8 +210,7 @@ public final class ReadWorkloads {
 				"a tag matching ~10 events store-wide -- the selective end of tag filtering",
 				context -> context.inventory()
 						.query(EventQuery.forEvents(EventTypesFilter.any(),
-								Tags.of(CorpusGenerator.MARKER_TAG_KEY, context.facts().needleTagValue())))
-						.toList());
+								Tags.of(CorpusGenerator.MARKER_TAG_KEY, context.facts().needleTagValue()))));
 	}
 
 	/**
@@ -227,8 +223,7 @@ public final class ReadWorkloads {
 				context -> context.inventory()
 						.query(EventQuery.forEvents(EventTypesFilter.any(),
 								Tags.of(CorpusGenerator.MARKER_TAG_KEY, context.facts().swatheTagValue()))
-								.limit(PAGE_SIZE))
-						.toList());
+								.limit(PAGE_SIZE)));
 	}
 
 	/**
@@ -289,8 +284,7 @@ public final class ReadWorkloads {
 										org.sliceworkz.eventstore.events.Tag.of(TagKeys.SKU, context.facts().hotEntity()),
 										org.sliceworkz.eventstore.events.Tag.of(TagKeys.CHANNEL, "web"),
 										org.sliceworkz.eventstore.events.Tag.of(TagKeys.COUNTRY, "BE")))
-								.limit(PAGE_SIZE))
-						.toList());
+								.limit(PAGE_SIZE)));
 	}
 
 	/**
@@ -318,7 +312,7 @@ public final class ReadWorkloads {
 
 			@Override
 			public Object invoke ( WorkloadContext context ) {
-				return context.inventory().query(orGroupQuery(context, 5).limit(PAGE_SIZE)).toList();
+				return context.inventory().query(orGroupQuery(context, 5).limit(PAGE_SIZE));
 			}
 		};
 	}
@@ -332,8 +326,7 @@ public final class ReadWorkloads {
 		return simple("query-last-event",
 				"the most recent event for one SKU, addressed by tag, backwards with limit 1",
 				context -> context.inventory()
-						.query(savepointProbe(Tags.of(TagKeys.SKU, context.facts().hotEntity())))
-						.toList());
+						.query(savepointProbe(Tags.of(TagKeys.SKU, context.facts().hotEntity()))));
 	}
 
 	/**
@@ -354,8 +347,7 @@ public final class ReadWorkloads {
 					return context.inventoryFor(entity)
 							.query(savepointProbe(context.streamScopesEntity()
 									? Tags.none()
-									: Tags.of(TagKeys.SKU, entity)))
-							.toList();
+									: Tags.of(TagKeys.SKU, entity)));
 				});
 	}
 
@@ -383,8 +375,7 @@ public final class ReadWorkloads {
 					int walked = 0;
 					for ( int page = 0; page < CURSOR_WALK_PAGES; page++ ) {
 						lastPage = context.inventory()
-								.query(EventQuery.matchAll().limit(PAGE_SIZE), cursor)
-								.toList();
+								.query(EventQuery.matchAll().limit(PAGE_SIZE), cursor);
 						if ( lastPage.isEmpty() ) {
 							break;
 						}
@@ -395,10 +386,10 @@ public final class ReadWorkloads {
 				});
 	}
 
-	/** Fetch by id: the one eager read on the interface, and a pure primary-key lookup. */
+	/** Fetch by id: a pure primary-key lookup. */
 	private static Workload byId ( ) {
 		return simple("query-by-id",
-				"a single event fetched by id -- a primary key lookup, eager rather than lazy",
+				"a single event fetched by id -- a primary key lookup",
 				context -> context.inventory().getEventById(EventId.of(context.facts().knownEventId())));
 	}
 
@@ -412,7 +403,7 @@ public final class ReadWorkloads {
 				context -> {
 					EventSource<Object> raw = context.target().store()
 							.getRawEventStream(EventStreamId.anyContext().anyPurpose());
-					return raw.query(EventQuery.matchAll().limit(PAGE_SIZE)).toList();
+					return raw.query(EventQuery.matchAll().limit(PAGE_SIZE));
 				});
 	}
 
@@ -474,7 +465,7 @@ public final class ReadWorkloads {
 						SalesEvent.class, LegacySalesEvent.class);
 				// note: limit counts *stored* events, and a BasketCheckedOut upcasts into two, so this
 				// returns more than PAGE_SIZE. That is the documented behaviour, not a miscount.
-				return stream.query(EventQuery.matchAll().limit(PAGE_SIZE)).toList();
+				return stream.query(EventQuery.matchAll().limit(PAGE_SIZE));
 			}
 		};
 	}
@@ -484,8 +475,7 @@ public final class ReadWorkloads {
 	/** One entity's whole history, isolated by tag: the only way to do it on a context-wide stream. */
 	private static List<Event<InventoryEvent>> byTag ( WorkloadContext context, String entity ) {
 		return context.inventory()
-				.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of(TagKeys.SKU, entity)))
-				.toList();
+				.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of(TagKeys.SKU, entity)));
 	}
 
 	/**
@@ -494,7 +484,7 @@ public final class ReadWorkloads {
 	 */
 	private static List<Event<InventoryEvent>> entityHistory ( WorkloadContext context, String entity ) {
 		if ( context.streamScopesEntity() ) {
-			return context.inventoryFor(entity).query(EventQuery.matchAll()).toList();
+			return context.inventoryFor(entity).query(EventQuery.matchAll());
 		}
 		return byTag(context, entity);
 	}

@@ -194,7 +194,7 @@ class PostgresLifecycleTest {
 
 			EventStream<Ping> stream = eventStore.getEventStream(EventStreamId.forContext("lifecycle"), Ping.class);
 			stream.append(AppendCriteria.none(), Event.of(new Ping("owned pool"), Tags.none()));
-			assertEquals(1, stream.query(EventQuery.matchAll()).count());
+			assertEquals(1, stream.query(EventQuery.matchAll()).size());
 
 			assertFalse(PostgresContainer.backendsOfSelfBuiltPools(PostgresContainer.IMAGE_PG18).isEmpty(),
 				"the builder should have opened its own pool");
@@ -206,7 +206,7 @@ class PostgresLifecycleTest {
 			assertTrue(awaitNoSelfBuiltBackends(),
 				"closing the EventStore must close the pools the builder created — there is no other handle on them, still open: "
 					+ PostgresContainer.backendsOfSelfBuiltPools(PostgresContainer.IMAGE_PG18));
-			assertThrows(EventStorageClosedException.class, () -> stream.query(EventQuery.matchAll()).count());
+			assertThrows(EventStorageClosedException.class, () -> stream.query(EventQuery.matchAll()).size());
 		}
 
 		/**
@@ -232,7 +232,7 @@ class PostgresLifecycleTest {
 				EventStream<Ping> stream = EventStoreFactory.get().eventStore(second)
 						.getEventStream(EventStreamId.forContext("lifecycle"), Ping.class);
 				stream.append(AppendCriteria.none(), Event.of(new Ping("second build"), Tags.none()));
-				assertEquals(1, stream.query(EventQuery.matchAll()).count(),
+				assertEquals(1, stream.query(EventQuery.matchAll()).size(),
 					"the second build must run on pools of its own, not on the ones the first storage closed");
 			} finally {
 				second.close();
@@ -264,7 +264,7 @@ class PostgresLifecycleTest {
 				EventStream<Ping> stream = EventStoreFactory.get().eventStore(storage)
 						.getEventStream(EventStreamId.forContext("lifecycle"), Ping.class);
 				stream.append(AppendCriteria.none(), Event.of(new Ping("after a failed build"), Tags.none()));
-				assertEquals(1, stream.query(EventQuery.matchAll()).count(),
+				assertEquals(1, stream.query(EventQuery.matchAll()).size(),
 					"the build after a failed one must run on fresh pools, not on the ones the failure closed");
 			} finally {
 				storage.close();
@@ -294,7 +294,7 @@ class PostgresLifecycleTest {
 				EventStream<Ping> stream = EventStoreFactory.get().eventStore(second)
 						.getEventStream(EventStreamId.forContext("lifecycle"), Ping.class);
 				stream.append(AppendCriteria.none(), Event.of(new Ping("still open"), Tags.none()));
-				assertEquals(1, stream.query(EventQuery.matchAll()).count(),
+				assertEquals(1, stream.query(EventQuery.matchAll()).size(),
 					"closing the first storage must not shut the pools the second one runs on");
 			} finally {
 				second.close();

@@ -34,21 +34,21 @@
  *
  * <h3>Match All Events:</h3>
  * <pre>{@code
- * Stream<Event<CustomerEvent>> events = stream.query(EventQuery.matchAll());
+ * List<Event<CustomerEvent>> events = stream.query(EventQuery.matchAll());
  * }</pre>
  *
  * <h3>Filter by Event Type:</h3>
  * <pre>{@code
  * // Two event types, or every event type under a sealed root: EventQuery.forTypes(CustomerEvent.class)
  * EventQuery query = EventQuery.forTypes(CustomerRegistered.class, CustomerNameChanged.class);
- * Stream<Event<CustomerEvent>> events = stream.query(query);
+ * List<Event<CustomerEvent>> events = stream.query(query);
  * }</pre>
  *
  * <h3>Filter by Tags (DCB Pattern):</h3>
  * <pre>{@code
  * // Find all events related to a specific customer
  * EventQuery query = EventQuery.forTags(Tags.of("customer", "cust-123"));
- * Stream<Event<CustomerEvent>> events = stream.query(query);
+ * List<Event<CustomerEvent>> events = stream.query(query);
  * }</pre>
  *
  * <h3>Types and Tags:</h3>
@@ -69,7 +69,7 @@
  * // Query events up to a specific point in time
  * EventReference checkpoint = // ... last known reference
  * EventQuery query = EventQuery.matchAll().until(checkpoint);
- * Stream<Event<CustomerEvent>> events = stream.query(query);
+ * List<Event<CustomerEvent>> events = stream.query(query);
  * }</pre>
  *
  * <h3>Union Queries:</h3>
@@ -89,7 +89,7 @@
  * //    is an empty stream, and a valid boundary, so an account with no history needs no special case
  * EventQuery query = EventQuery.forTags(Tags.of("account", "acc-123"));
  * EventReference head = stream.head().orElse(null);
- * List<Event<AccountEvent>> events = stream.query(query.until(head)).toList();
+ * List<Event<AccountEvent>> events = stream.query(query.until(head));
  *
  * // 2. Make business decision based on events
  * BigDecimal balance = calculateBalance(events);

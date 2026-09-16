@@ -182,7 +182,7 @@ public final class LoadCorrectness {
 			return target.store()
 					.getRawEventStream(EventStreamId.anyContext().anyPurpose())
 					.query(EventQuery.matchAll())
-					.count();
+					.size();
 		} catch ( RuntimeException e ) {
 			LOGGER.warn("could not count events through a wildcard stream", e);
 			return -1L;

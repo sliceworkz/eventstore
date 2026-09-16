@@ -258,23 +258,23 @@ public interface EventHandler<EVENT_TYPE> extends EventWithMetaDataHandler<EVENT
 	 * the business data from each event and delegating to the single-event {@link #when(Object)} method.
 	 * The default implementation processes events sequentially as they are consumed from the stream.
 	 * <p>
-	 * This method is particularly useful when working with query results from {@link org.sliceworkz.eventstore.stream.EventStream#query(org.sliceworkz.eventstore.query.EventQuery)},
-	 * which returns a {@link java.util.stream.Stream} of events. It allows event handlers to process query results directly
-	 * without manually iterating or collecting the stream, while focusing only on business data.
+	 * A query result from {@link org.sliceworkz.eventstore.stream.EventStream#query(org.sliceworkz.eventstore.query.EventQuery)}
+	 * is a {@link List} and goes to {@link #when(List)}; this overload is for a caller that already
+	 * holds a stream of events — one it filtered or mapped itself — and wants to hand it over
+	 * without collecting it first, while focusing only on business data.
 	 * <p>
 	 * Implementations may override this method to provide stream-optimized processing of business events,
 	 * such as:
 	 * <ul>
 	 *   <li>Streaming aggregations without materializing the full event list</li>
-	 *   <li>Lazy evaluation and processing of large event sets</li>
-	 *   <li>Memory-efficient handling of unbounded event streams</li>
 	 *   <li>Parallel stream processing for performance</li>
 	 * </ul>
 	 * <p>
-	 * Example usage with query results:
+	 * Example usage with a derived stream:
 	 * <pre>{@code
 	 * EventStream<CustomerEvent> stream = eventStore.getEventStream(streamId, CustomerEvent.class);
-	 * Stream<Event<CustomerEvent>> events = stream.query(EventQuery.matchAll());
+	 * Stream<Event<CustomerEvent>> events = stream.query(EventQuery.matchAll()).stream()
+	 *     .filter(e -> e.tags().containsAll(Tags.of("region", "EU")));
 	 *
 	 * EventHandler<CustomerEvent> handler = new EventHandler<>() {
 	 *     @Override

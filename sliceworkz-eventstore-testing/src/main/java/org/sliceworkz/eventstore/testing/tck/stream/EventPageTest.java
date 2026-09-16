@@ -24,7 +24,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Stream;
 
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventDeserializationException;
@@ -106,15 +105,15 @@ public class EventPageTest extends AbstractEventStoreTest {
 	void aPageHoldsWhatAQueryWithTheSameArgumentsReturns ( ) {
 		EventStream<MockDomainEvent> stream = seed(6);
 		stream.append(AppendCriteria.none(), Event.of(new SecondDomainEvent("other"), Tags.none()));
-		EventReference cursor = stream.query(EventQuery.matchAll().limit(1)).findFirst().orElseThrow().reference();
+		EventReference cursor = stream.query(EventQuery.matchAll().limit(1)).getFirst().reference();
 
 		for ( EventQuery q : List.of(
 				EventQuery.matchAll().limit(3),
 				EventQuery.matchAll().backwards().limit(3),
 				EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).limit(2),
 				EventQuery.matchAll() ) ) {
-			assertEquals(stream.query(q, cursor).toList(), stream.page(q, cursor).events(), q.toString());
-			assertEquals(stream.query(q, null).toList(), stream.page(q, null).events(), q.toString());
+			assertEquals(stream.query(q, cursor), stream.page(q, cursor).events(), q.toString());
+			assertEquals(stream.query(q, null), stream.page(q, null).events(), q.toString());
 		}
 	}
 
@@ -168,7 +167,7 @@ public class EventPageTest extends AbstractEventStoreTest {
 		assertFalse(vanished.isExhausted());
 		EventReference cursor = vanished.lastStoredEventReference().orElseThrow();
 		assertEquals(0, cursor.index(), "a stored event, whole");
-		EventReference thirdAuditLog = eventStore().getRawEventStream(streamId).query(EventQuery.matchAll().limit(3)).toList().getLast().reference();
+		EventReference thirdAuditLog = eventStore().getRawEventStream(streamId).query(EventQuery.matchAll().limit(3)).getLast().reference();
 		assertEquals(thirdAuditLog, cursor, "the third audit log, read raw: the last stored event of the page");
 
 		EventPage<CurrentEvent> next = stream.page(threeAtATime, cursor);
@@ -228,18 +227,18 @@ public class EventPageTest extends AbstractEventStoreTest {
 		} while ( page.storedEventCount() == 5 );
 
 		assertEquals(3, pages, "12 stored events in pages of 5: 5, 5, 2");
-		assertEquals(stream.query(EventQuery.matchAll()).map(Event::reference).toList(), seen,
+		assertEquals(stream.query(EventQuery.matchAll()).stream().map(Event::reference).toList(), seen,
 				"every event once, in order: the three events per round, less the audit log");
 		assertEquals(12, seen.size());
 	}
 
 	/**
-	 * A page is read whole, where a query converts each payload as its stream is consumed. So a
-	 * stored event this stream cannot read fails {@code page} itself, and hands out none of the page's
-	 * events — a query returns quietly and fails from the caller's terminal operation.
+	 * A page is read whole, and so is a query. A stored event this stream cannot read fails
+	 * {@code page} and {@code query} alike from the call itself, naming the same stored event, and
+	 * neither hands out any of the events read with it.
 	 */
 	@ForEachBackend
-	void aPoisonEventFailsThePageWholeWhereAQueryFailsLazily ( ) {
+	void aPoisonEventFailsThePageAndTheQueryWhole ( ) {
 		EventStream<MockDomainEvent> stream = seed(2);
 		eventStore().getEventStream(streamId, CurrentEvent.class)
 				.append(AppendCriteria.none(), Event.of(new CurrentEvent.CustomerChurned(), Tags.none()));
@@ -248,9 +247,9 @@ public class EventPageTest extends AbstractEventStoreTest {
 				() -> stream.page(EventQuery.matchAll(), null));
 		assertEquals(stream.head().orElseThrow(), fromPage.getReference().orElseThrow(), "the poison event is named");
 
-		Stream<Event<MockDomainEvent>> lazy = stream.query(EventQuery.matchAll());
-		EventDeserializationException fromTerminal = assertThrows(EventDeserializationException.class, lazy::toList);
-		assertEquals(fromPage.getReference(), fromTerminal.getReference());
+		EventDeserializationException fromQuery = assertThrows(EventDeserializationException.class,
+				() -> stream.query(EventQuery.matchAll()));
+		assertEquals(fromPage.getReference(), fromQuery.getReference());
 
 		// a page that stops short of the poison event is unaffected
 		assertEquals(List.of("1", "2"), values(stream.page(EventQuery.matchAll().limit(2), null).events()));

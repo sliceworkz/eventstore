@@ -114,7 +114,7 @@ public class UpcastChainTest extends AbstractEventStoreTest {
 		writeOneOfEachVersion();
 		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, CustomerHistoricalEvent.class);
 
-		List<Event<CustomerEvent>> events = current.query(EventQuery.matchAll()).toList();
+		List<Event<CustomerEvent>> events = current.query(EventQuery.matchAll());
 
 		assertEquals(3, events.size());
 		// every event is a current one, whichever version it was stored as: an exhaustive switch
@@ -138,12 +138,12 @@ public class UpcastChainTest extends AbstractEventStoreTest {
 		EventQuery registrations = EventQuery.forEvents(EventTypesFilter.of(CustomerRegisteredV3.class), customer);
 
 		assertEquals(List.of("John", "Jane", "Joe"),
-				current.query(registrations).map(e -> ((CustomerRegisteredV3) e.data()).name()).toList());
+				current.query(registrations).stream().map(e -> ((CustomerRegisteredV3) e.data()).name()).toList());
 		assertEquals(List.of("Joe", "Jane", "John"),
-				current.query(registrations.backwards()).map(e -> ((CustomerRegisteredV3) e.data()).name()).toList());
+				current.query(registrations.backwards()).stream().map(e -> ((CustomerRegisteredV3) e.data()).name()).toList());
 		// the one two hops behind is the one a single-hop trace-back would miss
 		assertEquals(List.of("John"),
-				current.query(registrations.limit(1)).map(e -> ((CustomerRegisteredV3) e.data()).name()).toList());
+				current.query(registrations.limit(1)).stream().map(e -> ((CustomerRegisteredV3) e.data()).name()).toList());
 	}
 
 	@ForEachBackend
@@ -172,16 +172,16 @@ public class UpcastChainTest extends AbstractEventStoreTest {
 		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, CustomerHistoricalEvent.class);
 
 		IllegalArgumentException midChain = assertThrows(IllegalArgumentException.class,
-				() -> current.query(EventQuery.forEvents(EventTypesFilter.of(CustomerHistoricalEvent.CustomerRegisteredV2.class), customer)).toList());
+				() -> current.query(EventQuery.forEvents(EventTypesFilter.of(CustomerHistoricalEvent.CustomerRegisteredV2.class), customer)));
 		assertTrue(midChain.getMessage().endsWith("'CustomerRegisteredV2' (a legacy type, read as 'CustomerRegisteredV3')"), midChain.getMessage());
 
 		IllegalArgumentException start = assertThrows(IllegalArgumentException.class,
-				() -> current.query(EventQuery.forEvents(EventTypesFilter.of(CustomerHistoricalEvent.CustomerRegistered.class), customer)).toList());
+				() -> current.query(EventQuery.forEvents(EventTypesFilter.of(CustomerHistoricalEvent.CustomerRegistered.class), customer)));
 		assertTrue(start.getMessage().endsWith("'CustomerRegistered' (a legacy type, read as 'CustomerRegisteredV3')"), start.getMessage());
 
 		// both at once: named in one message, in name order
 		IllegalArgumentException both = assertThrows(IllegalArgumentException.class,
-				() -> current.query(EventQuery.forEvents(EventTypesFilter.of(CustomerHistoricalEvent.class), customer)).toList());
+				() -> current.query(EventQuery.forEvents(EventTypesFilter.of(CustomerHistoricalEvent.class), customer)));
 		assertTrue(both.getMessage().endsWith("'CustomerRegistered' (a legacy type, read as 'CustomerRegisteredV3'), 'CustomerRegisteredV2' (a legacy type, read as 'CustomerRegisteredV3')"), both.getMessage());
 	}
 
@@ -271,7 +271,7 @@ public class UpcastChainTest extends AbstractEventStoreTest {
 		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, CustomerNoteAdded.class);
 
 		EventDeserializationException e = assertThrows(EventDeserializationException.class,
-				() -> current.query(EventQuery.matchAll()).toList());
+				() -> current.query(EventQuery.matchAll()));
 
 		assertEquals(EventType.ofType("CustomerNoteAdded"), e.getEventType());
 		assertTrue(e.getReference().isPresent(), "the stored event that failed should be named");

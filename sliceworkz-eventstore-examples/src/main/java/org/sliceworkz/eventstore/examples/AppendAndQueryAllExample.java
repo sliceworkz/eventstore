@@ -17,7 +17,7 @@
  */
 package org.sliceworkz.eventstore.examples;
 
-import java.util.stream.Stream;
+import java.util.List;
 
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.Event;
@@ -50,12 +50,12 @@ public class AppendAndQueryAllExample {
 		stream.append(AppendCriteria.none(), Event.of(new CustomerChurned(), Tags.none()));
 		
 		// query and print all events that are now in the stream
-		Stream<Event<CustomerEvent>> allEvents = stream.query(EventQuery.matchAll());
+		List<Event<CustomerEvent>> allEvents = stream.query(EventQuery.matchAll());
 		
 		new EventWithMetaDataHandler<CustomerEvent>() {
 
 			@Override
-			public void when(Stream<Event<CustomerEvent>> eventsWithMeta) {
+			public void when(List<Event<CustomerEvent>> eventsWithMeta) {
 				System.out.println("printing events with metadata...");
 				eventsWithMeta.forEach(this::when);
 				System.out.println("done printing events.");
@@ -74,7 +74,7 @@ public class AppendAndQueryAllExample {
 		new EventHandler<CustomerEvent>() {
 
 			@Override
-			public void when(Stream<Event<CustomerEvent>> events) {
+			public void when(List<Event<CustomerEvent>> events) {
 				System.out.println("printing events ...");
 				events.forEach(this::when);
 				System.out.println("done printing events.");

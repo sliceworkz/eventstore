@@ -178,7 +178,7 @@ public class EventStreamSubscriptionLifecycleTest extends AbstractEventStoreTest
 		neverSubscribed.close();
 
 		append(neverSubscribed, "appended through a closed stream");
-		assertEquals(1, neverSubscribed.query(EventQuery.matchAll()).count(),
+		assertEquals(1, neverSubscribed.query(EventQuery.matchAll()).size(),
 			"closing a stream ends its subscriptions; it must not disable the handle");
 	}
 

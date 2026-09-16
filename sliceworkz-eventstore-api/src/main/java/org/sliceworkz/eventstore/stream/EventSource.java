@@ -19,7 +19,6 @@ package org.sliceworkz.eventstore.stream;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Stream;
 
 import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.events.Event;
@@ -55,25 +54,32 @@ import org.sliceworkz.eventstore.query.EventQuery;
  *   <li><strong>Pagination</strong>: Use cursor references and limits for efficient navigation</li>
  * </ul>
  *
- * <h2>A Returned Stream Is Already In Memory:</h2>
- * Every {@code query} method here returns a {@link Stream}, but none of them is lazy in the sense the
- * type suggests. The storage below has finished reading by the time the stream is handed back: its
- * whole result set has been fetched and is being iterated from a list. Every storage backend shipped
- * with this library works that way, and no caller may assume otherwise.
+ * <h2>A Query Result Is A List, Already Read:</h2>
+ * Every {@code query} method here returns a {@link List}, and the type says exactly what a query
+ * costs: the storage below has finished reading by the time the list is handed back, and every event
+ * in it has been deserialized and upcast. Nothing about a query is lazy. The alternative — handing
+ * back a {@link java.util.stream.Stream} — loses because the type promises a laziness the storage
+ * does not deliver: {@code findFirst()} on it reads as though it bounded the read, and does not, and
+ * a stored event the stream cannot read fails from whichever terminal operation the caller happened
+ * to write rather than from the query.
  * <p>
  * What follows from that:
  * <ul>
- *   <li><b>Short-circuiting terminal operations do not save any work.</b>
- *       {@code query(q).findFirst()}, {@code .limit(10)} and {@code .takeWhile(…)} discard events that
- *       have already been read, deserialized and upcasted. Bound the read with
- *       {@link EventQuery#limit(long)} instead — that is the limit storage is given.</li>
+ *   <li><b>A limit bounds the read, and nothing applied to the result does.</b>
+ *       {@link EventQuery#limit(long)} is what storage is given — a SQL {@code LIMIT} on PostgreSQL —
+ *       so it bounds the work done and the memory used. Taking the first ten of a list that holds
+ *       ten thousand costs ten thousand reads; {@code query(q.limit(10))} costs ten.</li>
  *   <li><b>An unbounded query holds its whole result in heap.</b> A query with no limit, run against a
  *       storage with no absolute result limit configured, reads every matching event before returning.
- *       On a large stream that is an {@link OutOfMemoryError}, not a slow stream — there is no
+ *       On a large stream that is an {@link OutOfMemoryError}, not a slow query — there is no
  *       back-pressure to arrive at.</li>
- *   <li><b>Nothing needs closing.</b> No database resource is held open behind the returned stream, so
- *       it can be abandoned half-consumed without leaking anything. (Closing an {@code EventSource} is
- *       a separate matter, and concerns subscriptions only — see {@link #close()}.)</li>
+ *   <li><b>A stored event this stream cannot read fails the query.</b> The
+ *       {@link org.sliceworkz.eventstore.events.EventDeserializationException} is thrown from the
+ *       {@code query} call itself, naming the stored event, and nothing is returned — exactly as it
+ *       is from {@link #page(EventQuery, EventReference)}.</li>
+ *   <li><b>Nothing needs closing.</b> No database resource is held open behind the returned list.
+ *       (Closing an {@code EventSource} is a separate matter, and concerns subscriptions only — see
+ *       {@link #close()}.)</li>
  * </ul>
  * <p>
  * So a full replay is a loop, not a single unbounded query. {@link org.sliceworkz.eventstore.projection.Projector}
@@ -93,10 +99,10 @@ import org.sliceworkz.eventstore.query.EventQuery;
  * );
  *
  * // Query all events (forward)
- * Stream<Event<CustomerEvent>> allEvents = stream.query(EventQuery.matchAll());
+ * List<Event<CustomerEvent>> allEvents = stream.query(EventQuery.matchAll());
  *
  * // Query with filters
- * Stream<Event<CustomerEvent>> filtered = stream.query(
+ * List<Event<CustomerEvent>> filtered = stream.query(
  *     EventQuery.forEvents(
  *         EventTypesFilter.of(CustomerRegistered.class, CustomerNameChanged.class),
  *         Tags.of("region", "EU")
@@ -116,14 +122,14 @@ import org.sliceworkz.eventstore.query.EventQuery;
  * );
  *
  * // Backward query (most recent 10 events)
- * Stream<Event<CustomerEvent>> recent = stream.query(
+ * List<Event<CustomerEvent>> recent = stream.query(
  *     EventQuery.matchAll().backwards().limit(10)
  * );
  *
  * // Most recent single event
  * Optional<Event<CustomerEvent>> mostRecent = stream.query(
  *     EventQuery.matchAll().backwards().limit(1)
- * ).findFirst();
+ * ).stream().findFirst();
  *
  * // Get specific event by ID
  * Optional<Event<CustomerEvent>> event = stream.getEventById(eventId);
@@ -198,10 +204,9 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * fetched from storage and held in heap, the caller still receiving its first 500 events and paying
 	 * for all of them, with nothing to say so.
 	 * <p>
-	 * <strong>Deserialization is lazy.</strong> Storage has finished reading by the time this returns, but
-	 * each event's payload is converted as the returned Stream is consumed — so an
+	 * <strong>The result is read in full before it is returned</strong>, deserialized and upcast, so an
 	 * {@link org.sliceworkz.eventstore.events.EventDeserializationException} for a stored event this
-	 * stream's type mappings cannot read is thrown from the caller's terminal operation, not from here.
+	 * stream's type mappings cannot read is thrown from here, and nothing of the result is returned.
 	 * <p>
 	 * To page through a stream, prefer {@link #page(EventQuery, EventReference)}: it answers, beside
 	 * the events, how many stored events were read and the reference to continue from, which the events
@@ -209,10 +214,10 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 *
 	 * @param query the query criteria specifying which events to retrieve, in which direction, and how many
 	 * @param cursor optional reference for pagination (after for forward, before for backward), null to start from the beginning/end
-	 * @return a Stream of events matching the query criteria
+	 * @return the events matching the query criteria, fully read
 	 * @see #page(EventQuery, EventReference)
 	 */
-	Stream<Event<DOMAIN_EVENT_TYPE>> query ( EventQuery query, EventReference cursor );
+	List<Event<DOMAIN_EVENT_TYPE>> query ( EventQuery query, EventReference cursor );
 
 	/**
 	 * Reads one page of events from the stream, starting from a cursor: the events a
@@ -233,10 +238,10 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * stored events it reads, and a query with no limit reads everything past the cursor as one page —
 	 * into heap, so a paged read carries a limit.
 	 * <p>
-	 * <strong>A page is read whole.</strong> Unlike the query overloads, every payload is converted
-	 * before this returns, so an {@link org.sliceworkz.eventstore.events.EventDeserializationException}
-	 * for a stored event this stream's type mappings cannot read is thrown from here, and a page that
-	 * holds a poison event hands out none of its events.
+	 * <strong>A page is read whole</strong>, as a query is: every payload is converted before this
+	 * returns, so an {@link org.sliceworkz.eventstore.events.EventDeserializationException} for a
+	 * stored event this stream's type mappings cannot read is thrown from here, and a page that holds
+	 * a poison event hands out none of its events.
 	 *
 	 * @param query the query criteria specifying which events to retrieve, in which direction, and how many stored events to read
 	 * @param cursor optional reference for pagination (after for forward, before for backward), null to start from the beginning/end
@@ -263,22 +268,22 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * event and leave a cursor pointing into its middle. Read it as "read n stored events", not as
 	 * "return at most n events".
 	 * <p>
-	 * <b>A query with no limit reads everything before it returns.</b> The stream handed back is already
-	 * in memory (see the class javadoc), so {@code query(EventQuery.matchAll())} on a large stream is an
-	 * {@link OutOfMemoryError} rather than something that can be consumed a piece at a time, and
-	 * {@code query(q).findFirst()} pays for the whole result set. Give the query a limit and page with
+	 * <b>A query with no limit reads everything before it returns.</b> The list handed back is complete
+	 * (see the class javadoc), so {@code query(EventQuery.matchAll())} on a large stream is an
+	 * {@link OutOfMemoryError} rather than something that can be consumed a piece at a time. Give the
+	 * query a limit and page with
 	 * {@link #page(EventQuery, EventReference)}, or use
 	 * {@link org.sliceworkz.eventstore.projection.Projector}, which does that for you.
 	 *
 	 * @param query the query criteria specifying which events to retrieve
-	 * @return a Stream of events matching the query criteria, fully realised before it is returned
+	 * @return the events matching the query criteria, fully read
 	 * @throws IllegalArgumentException if the query names a legacy event type of this stream — one
 	 *         registered as a {@link org.sliceworkz.eventstore.events.LegacyEvent}. A filter names
 	 *         current types: it is the query for the current type that returns the legacy events
 	 *         upcast into it, and one naming the legacy type could not be answered (its events would
 	 *         read as a type it does not name), so it is refused rather than answered empty
 	 */
-	default Stream<Event<DOMAIN_EVENT_TYPE>> query ( EventQuery query ) {
+	default List<Event<DOMAIN_EVENT_TYPE>> query ( EventQuery query ) {
 		return query(query, null);
 	}
 

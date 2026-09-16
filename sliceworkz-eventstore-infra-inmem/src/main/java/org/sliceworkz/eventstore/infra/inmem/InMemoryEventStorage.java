@@ -77,7 +77,7 @@ import io.micrometer.core.instrument.Metrics;
  *     Event.of(new CustomerRegistered("John"), Tags.of("region", "EU"))
  * );
  *
- * List<Event<CustomerEvent>> events = stream.query(EventQuery.matchAll()).toList();
+ * List<Event<CustomerEvent>> events = stream.query(EventQuery.matchAll());
  * }</pre>
  *
  * <h2>Thread Safety:</h2>

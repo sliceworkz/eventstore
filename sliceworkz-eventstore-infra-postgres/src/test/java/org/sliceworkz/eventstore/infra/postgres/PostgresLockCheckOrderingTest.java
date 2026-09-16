@@ -108,8 +108,7 @@ public class PostgresLockCheckOrderingTest {
 
 				// 3. Read the boundary the way a decider would, and take the reference it would use.
 				List<StoredEvent> seen = storage
-					.query(boundary, stream, null, Limit.none(), QueryDirection.FORWARD)
-					.toList();
+					.query(boundary, stream, null, Limit.none(), QueryDirection.FORWARD);
 				assertEquals(1, seen.size(), "expected the appended event to be readable");
 				EventReference reference = seen.get(0).reference();
 				assertTrue(reference.position() > reservedPosition,
@@ -122,8 +121,7 @@ public class PostgresLockCheckOrderingTest {
 				// 5. Every reader sorts that event AFTER the reference, despite the lower position —
 				//    the read path orders by (event_tx, event_position).
 				List<StoredEvent> replay = storage
-					.query(boundary, stream, null, Limit.none(), QueryDirection.FORWARD)
-					.toList();
+					.query(boundary, stream, null, Limit.none(), QueryDirection.FORWARD);
 				assertEquals(2, replay.size(), "expected both events to be readable");
 				EventReference inverted = replay.get(1).reference();
 				assertEquals(reservedPosition, inverted.position(),

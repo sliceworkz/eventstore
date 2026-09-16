@@ -130,8 +130,8 @@ public class InMemoryEventStorageImplTest {
 		return new StoredEvent(STREAM, EventType.ofType("Something"), EventReference.create(position, tx), "{}", Tags.none(), Instant.now());
 	}
 
-	private static List<Long> positions ( java.util.stream.Stream<StoredEvent> events ) {
-		return events.map(e -> e.reference().position()).toList();
+	private static List<Long> positions ( List<StoredEvent> events ) {
+		return events.stream().map(e -> e.reference().position()).toList();
 	}
 
 	/**

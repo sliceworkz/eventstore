@@ -99,7 +99,7 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 		assertEquals(0, repeat.size());
 
 		// and the second event really is absent, rather than written and merely not returned
-		List<Event<MockDomainEvent>> stored = stream.query(EventQuery.matchAll()).toList();
+		List<Event<MockDomainEvent>> stored = stream.query(EventQuery.matchAll());
 		assertEquals(1, stored.size());
 		assertEquals(new FirstDomainEvent("1"), stored.getFirst().data());
 	}
@@ -120,8 +120,8 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 		assertEquals(1, onOtherStream.size());
 		assertNotEquals(first.getFirst().reference(), onOtherStream.getFirst().reference());
 
-		assertEquals(1, stream.query(EventQuery.matchAll()).count());
-		assertEquals(1, otherStream.query(EventQuery.matchAll()).count());
+		assertEquals(1, stream.query(EventQuery.matchAll()).size());
+		assertEquals(1, otherStream.query(EventQuery.matchAll()).size());
 	}
 
 	/**
@@ -162,7 +162,7 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 
 			// and the meter only reports, it does not change what the caller sees: one event was
 			// de-duplicated, two were stored
-			assertEquals(2, meteredStream.query(EventQuery.matchAll()).count());
+			assertEquals(2, meteredStream.query(EventQuery.matchAll()).size());
 		}
 	}
 
@@ -186,7 +186,7 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 				Event.of(new FirstDomainEvent("2"), Tags.none()).withIdempotencyKey("cmd-4711/2")));
 		assertEquals(0, retry.size());
 
-		List<Event<MockDomainEvent>> stored = stream.query(EventQuery.matchAll()).toList();
+		List<Event<MockDomainEvent>> stored = stream.query(EventQuery.matchAll());
 		assertEquals(2, stored.size());
 		assertEquals(new FirstDomainEvent("1"), stored.get(0).data());
 		assertEquals(new FirstDomainEvent("2"), stored.get(1).data());
@@ -218,7 +218,7 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 		assertEquals(Set.of("order-4711"), conflict.storedKeys());
 		assertEquals(Set.of("order-4712", "order-4713"), conflict.newKeys());
 
-		List<Event<MockDomainEvent>> stored = stream.query(EventQuery.matchAll()).toList();
+		List<Event<MockDomainEvent>> stored = stream.query(EventQuery.matchAll());
 		assertEquals(1, stored.size(), "a refused batch must store none of its events");
 		assertEquals(new FirstDomainEvent("1"), stored.getFirst().data());
 
@@ -247,7 +247,7 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 				Event.of(new FirstDomainEvent("1"), Tags.none()).withIdempotencyKey("cmd-4711"),
 				Event.of(new FirstDomainEvent("2"), Tags.none())));
 		assertEquals(0, retry.size());
-		assertEquals(2, stream.query(EventQuery.matchAll()).count());
+		assertEquals(2, stream.query(EventQuery.matchAll()).size());
 	}
 
 	/**
@@ -265,7 +265,7 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 				Event.of(new FirstDomainEvent("1"), Tags.none()).withIdempotencyKey("cmd-4711"),
 				Event.of(new FirstDomainEvent("2"), Tags.none()).withIdempotencyKey("cmd-4711"))));
 
-		assertEquals(0, stream.query(EventQuery.matchAll()).count());
+		assertEquals(0, stream.query(EventQuery.matchAll()).size());
 
 		// and the key is not spent by the rejected batch
 		List<Event<MockDomainEvent>> afterwards = stream.append(AppendCriteria.none(),
@@ -297,7 +297,7 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 
 			meteredStream.append(AppendCriteria.none(), batch);
 			assertEquals(3.0, deduplicated.count(), "every event of a swallowed batch is de-duplicated");
-			assertEquals(3, meteredStream.query(EventQuery.matchAll()).count());
+			assertEquals(3, meteredStream.query(EventQuery.matchAll()).size());
 		}
 	}
 
@@ -326,7 +326,7 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 		assertThrows(EventStorageException.class, () ->
 				stream.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("2"), Tags.none())));
 
-		assertEquals(1, stream.query(EventQuery.matchAll()).count());
+		assertEquals(1, stream.query(EventQuery.matchAll()).size());
 	}
 
 	/**

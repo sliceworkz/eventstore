@@ -119,7 +119,7 @@ public class PostgresPrefixCaseTest {
 					append(upper);
 				}
 				try ( EventStorage lower = build("samestore_", dataSource, false) ) {
-					List<StoredEvent> events = lower.query(EventFilter.matchAll(), STREAM, null, Limit.none()).toList();
+					List<StoredEvent> events = lower.query(EventFilter.matchAll(), STREAM, null, Limit.none());
 					assertEquals(1, events.size(), "the event appended through the mixed-case spelling");
 					assertEquals(EventType.ofType("PrefixCaseProbe"), events.get(0).type());
 				}

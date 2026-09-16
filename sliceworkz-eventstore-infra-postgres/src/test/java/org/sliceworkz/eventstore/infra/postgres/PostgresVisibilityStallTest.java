@@ -438,7 +438,7 @@ public class PostgresVisibilityStallTest {
 		}
 
 		private List<StoredEvent> query ( EventStorage storage, EventQuery query, EventStreamId stream ) {
-			return storage.query(query.filter(), stream, null, Limit.none(), QueryDirection.FORWARD).toList();
+			return storage.query(query.filter(), stream, null, Limit.none(), QueryDirection.FORWARD);
 		}
 
 		private int visibleCount ( EventStorage storage, EventStreamId stream ) {

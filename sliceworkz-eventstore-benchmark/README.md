@@ -433,10 +433,10 @@ is the observer. Either way the conclusion is the same and it is the useful one 
 `EventQuery.limit(n)` is worth more than it looks, because the cost being bounded is mostly per-event
 and downstream of the query.
 
-It also confirms the harness is doing the one thing it must: `query()` returns a stream whose rows
-storage has already read but whose deserialisation is lazy, so a workload consuming it without a
-terminal operation would time the SQL and skip the serde. Two independent derivations landing on the
-same order is what says `stream.forEach(bh::consume)` is really deserialising.
+It also confirms the harness is measuring what it must: `query()` returns a `List`, read and
+deserialised in full before it returns, so the serde sits inside the timed call whatever a workload
+does with the result. Two independent derivations landing on the same order is what says the timed
+call is really deserialising.
 
 ## How much a number can move between two runs of the same profile
 
@@ -623,7 +623,7 @@ load/       the load runner, latency recording, correctness checks
 report/     the run report, its Markdown rendering, the two comparators
 ```
 
-One rule matters more than the rest in `workload/`: **every read workload must run a terminal
-operation on the stream it queries**. `query()` returns rows storage has already read but whose
-deserialization is lazy, so handing back an unconsumed `Stream` would time the SQL and skip the serde
-— the single easiest way to publish a wrong number here.
+One rule matters more than the rest in `workload/`: **every read workload returns what it reads**.
+`query()` returns a `List`, read and deserialised in full before it returns, with the limit set on the
+`EventQuery`; handing that list back is what gives the blackhole something real to swallow, so the JIT
+cannot discard the work being timed — the single easiest way to publish a wrong number here.

@@ -134,11 +134,11 @@ public class EventTypesFilterHierarchyTest extends AbstractEventStoreTest {
 	void theRootOfAHierarchyMatchesEveryEventUnderIt ( ) {
 		seedShop();
 
-		List<Event<Object>> shop = stream.query(EventQuery.forEvents(EventTypesFilter.of(ShopEvent.class), Tags.none())).toList();
+		List<Event<Object>> shop = stream.query(EventQuery.forEvents(EventTypesFilter.of(ShopEvent.class), Tags.none()));
 		assertEquals(types(OrderPlaced.class, PaymentReceived.class, OrderPlaced.class, OrderShipped.class, ShopClosed.class), typesOf(shop));
 
 		// and not the other hierarchy's event, which "any type" would have included
-		List<Event<Object>> audit = stream.query(EventQuery.forEvents(EventTypesFilter.of(AuditEvent.class), Tags.none())).toList();
+		List<Event<Object>> audit = stream.query(EventQuery.forEvents(EventTypesFilter.of(AuditEvent.class), Tags.none()));
 		assertEquals(types(AuditNoted.class), typesOf(audit));
 	}
 
@@ -146,14 +146,14 @@ public class EventTypesFilterHierarchyTest extends AbstractEventStoreTest {
 	void aNestedInterfaceMatchesItsOwnBranch ( ) {
 		seedShop();
 
-		List<Event<Object>> orders = stream.query(EventQuery.forEvents(EventTypesFilter.of(OrderEvent.class), Tags.none())).toList();
+		List<Event<Object>> orders = stream.query(EventQuery.forEvents(EventTypesFilter.of(OrderEvent.class), Tags.none()));
 		assertEquals(types(OrderPlaced.class, OrderPlaced.class, OrderShipped.class), typesOf(orders));
 
-		List<Event<Object>> paymentsAndClosing = stream.query(EventQuery.forEvents(EventTypesFilter.of(PaymentEvent.class, ShopClosed.class), Tags.none())).toList();
+		List<Event<Object>> paymentsAndClosing = stream.query(EventQuery.forEvents(EventTypesFilter.of(PaymentEvent.class, ShopClosed.class), Tags.none()));
 		assertEquals(types(PaymentReceived.class, ShopClosed.class), typesOf(paymentsAndClosing));
 
 		// tags narrow it exactly as they narrow a filter of records
-		List<Event<Object>> order1 = stream.query(EventQuery.forEvents(EventTypesFilter.of(OrderEvent.class), order("1"))).toList();
+		List<Event<Object>> order1 = stream.query(EventQuery.forEvents(EventTypesFilter.of(OrderEvent.class), order("1")));
 		assertEquals(types(OrderPlaced.class, OrderShipped.class), typesOf(order1));
 	}
 
@@ -213,15 +213,15 @@ public class EventTypesFilterHierarchyTest extends AbstractEventStoreTest {
 		asRead.append(AppendCriteria.none(), Event.of(new OrderPlaced("2"), order("2")));
 		asRead.append(AppendCriteria.none(), Event.of(new PaymentReceived("2"), order("2")));
 
-		List<Event<ShopEvent>> orders = asRead.query(EventQuery.forEvents(EventTypesFilter.of(OrderEvent.class), Tags.none())).toList();
+		List<Event<ShopEvent>> orders = asRead.query(EventQuery.forEvents(EventTypesFilter.of(OrderEvent.class), Tags.none()));
 		assertEquals(types(OrderPlaced.class, OrderPlaced.class), typesOf(orders));
 		assertEquals(EventType.ofType("OrderBooked"), orders.get(0).storedType());
 		assertEquals(EventType.ofType("OrderPlaced"), orders.get(1).storedType());
 
-		List<Event<ShopEvent>> everything = asRead.query(EventQuery.forEvents(EventTypesFilter.of(ShopEvent.class), Tags.none())).toList();
+		List<Event<ShopEvent>> everything = asRead.query(EventQuery.forEvents(EventTypesFilter.of(ShopEvent.class), Tags.none()));
 		assertEquals(types(OrderPlaced.class, OrderPlaced.class, PaymentReceived.class), typesOf(everything));
 
-		List<Event<ShopEvent>> payments = asRead.query(EventQuery.forEvents(EventTypesFilter.of(PaymentEvent.class), Tags.none())).toList();
+		List<Event<ShopEvent>> payments = asRead.query(EventQuery.forEvents(EventTypesFilter.of(PaymentEvent.class), Tags.none()));
 		assertEquals(types(PaymentReceived.class), typesOf(payments));
 
 		// and a boundary over the branch counts a legacy event upcasting into it, as the query does

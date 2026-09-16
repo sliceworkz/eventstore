@@ -87,7 +87,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		TransferMade transfer = transfer();
 		payments.append(AppendCriteria.none(), Event.of(transfer, Tags.of("transfer", "t-9001")));
 
-		Event<PaymentEvent> read = payments.query(EventQuery.matchAll()).findFirst().orElseThrow();
+		Event<PaymentEvent> read = payments.query(EventQuery.matchAll()).stream().findFirst().orElseThrow();
 		assertEquals(transfer, read.data());
 	}
 
@@ -100,7 +100,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		// read back with no domain classes and no codec: raw mode hands back the sealed envelope as it
 		// is stored, which is exactly what an import or an export sees
 		String stored = eventStorage()
-				.query(EventFilter.matchAll(), STREAM, null, org.sliceworkz.eventstore.query.Limit.none())
+				.query(EventFilter.matchAll(), STREAM, null, org.sliceworkz.eventstore.query.Limit.none()).stream()
 				.findFirst().orElseThrow().immutableData();
 
 		assertFalse(stored.contains("Alice Martin"), "the payload still holds personal data in the clear: " + stored);
@@ -120,7 +120,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		assertEquals(1, report.keysShredded());
 		assertFalse(report.isNoop());
 
-		TransferMade read = (TransferMade) payments.query(EventQuery.matchAll()).findFirst().orElseThrow().data();
+		TransferMade read = (TransferMade) payments.query(EventQuery.matchAll()).stream().findFirst().orElseThrow().data();
 
 		// This is the case no per-field annotation and no per-event key can express: one event, two data
 		// subjects, one erased.
@@ -150,11 +150,11 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 				List.of(Shreddable.of("Alice Martin", ALICE), Shreddable.of("Bob Jansen", BOB)));
 		payments.append(AppendCriteria.none(), Event.of(signed, Tags.none()));
 
-		assertEquals(signed, payments.query(EventQuery.matchAll()).findFirst().orElseThrow().data());
+		assertEquals(signed, payments.query(EventQuery.matchAll()).stream().findFirst().orElseThrow().data());
 
 		store.erase(ALICE, ErasureReason.of("art.17"));
 
-		DocumentSigned read = (DocumentSigned) payments.query(EventQuery.matchAll()).findFirst().orElseThrow().data();
+		DocumentSigned read = (DocumentSigned) payments.query(EventQuery.matchAll()).stream().findFirst().orElseThrow().data();
 		assertEquals("doc-1", read.documentId());
 		assertEquals(2, read.signatories().size(), "erasure changed the size of the collection");
 		assertTrue(read.signatories().get(0).isShredded());
@@ -175,7 +175,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 
 		store.erase(ALICE, ErasureReason.of("art.17"));
 
-		StrictlyValidated read = (StrictlyValidated) payments.query(EventQuery.matchAll()).findFirst().orElseThrow().data();
+		StrictlyValidated read = (StrictlyValidated) payments.query(EventQuery.matchAll()).stream().findFirst().orElseThrow().data();
 		assertEquals("v-1", read.id());
 		assertTrue(read.email().isShredded());
 	}
@@ -186,7 +186,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		EventStream<PaymentEvent> payments = store.getEventStream(STREAM, PaymentEvent.class);
 		payments.append(AppendCriteria.none(), Event.of(transfer(), Tags.of("transfer", "t-9001")));
 
-		Event<PaymentEvent> read = payments.query(EventQuery.matchAll()).findFirst().orElseThrow();
+		Event<PaymentEvent> read = payments.query(EventQuery.matchAll()).stream().findFirst().orElseThrow();
 
 		List<Tag> keyTags = read.tags().tags().stream().filter(t -> KeyId.TAG_KEY.equals(t.key())).toList();
 		assertEquals(2, keyTags.size(), "expected one dek: tag per data subject, got " + read.tags());
@@ -196,7 +196,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		Tag anyKeyTag = keyTags.getFirst();
 		assertEquals(1, payments.query(EventQuery.forEvents(
 				org.sliceworkz.eventstore.query.EventTypesFilter.any(),
-				Tags.of(anyKeyTag.key(), anyKeyTag.value()))).count());
+				Tags.of(anyKeyTag.key(), anyKeyTag.value()))).size());
 	}
 
 	@ForEachBackend
@@ -214,12 +214,12 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		payments.append(AppendCriteria.none(), Event.of(
 				new StrictlyValidated("v-2", Shreddable.of("alice-new@example.org", ALICE)), Tags.none()));
 
-		StrictlyValidated read = (StrictlyValidated) payments.query(EventQuery.matchAll()).toList().getLast().data();
+		StrictlyValidated read = (StrictlyValidated) payments.query(EventQuery.matchAll()).getLast().data();
 		assertEquals("alice-new@example.org", read.email().orElse(null));
 
 		// ...and erasing again takes the new key too, rather than reporting nothing to do
 		assertEquals(1, store.erase(ALICE, ErasureReason.of("art.17, once more")).keysShredded());
-		StrictlyValidated afterwards = (StrictlyValidated) payments.query(EventQuery.matchAll()).toList().getLast().data();
+		StrictlyValidated afterwards = (StrictlyValidated) payments.query(EventQuery.matchAll()).getLast().data();
 		assertTrue(afterwards.email().isShredded());
 	}
 
@@ -237,7 +237,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 
 		store.erase(marketing, ErasureReason.of("erase marketing data only"));
 
-		List<Event<PaymentEvent>> read = payments.query(EventQuery.matchAll()).toList();
+		List<Event<PaymentEvent>> read = payments.query(EventQuery.matchAll());
 		assertTrue(((StrictlyValidated) read.get(0).data()).email().isShredded());
 		assertEquals("alice@financial", ((StrictlyValidated) read.get(1).data()).email().orElse(null),
 				"erasing one category took another category's data with it");
@@ -267,7 +267,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		// the per-category erasure under the default category is exactly that: one category
 		ErasureReport defaultOnly = store.erase(ALICE, ErasureReason.of("default category only"));
 		assertEquals(1, defaultOnly.keysShredded());
-		List<Event<PaymentEvent>> afterDefault = payments.query(EventQuery.matchAll()).toList();
+		List<Event<PaymentEvent>> afterDefault = payments.query(EventQuery.matchAll());
 		assertTrue(email(afterDefault, 0).isShredded());
 		assertEquals("alice@marketing", email(afterDefault, 1).orElse(null), "erasing the default category took another category with it");
 		assertEquals("alice@financial", email(afterDefault, 2).orElse(null), "erasing the default category took another category with it");
@@ -286,7 +286,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 			assertEquals(reason, category.reason());
 		}
 
-		List<Event<PaymentEvent>> read = payments.query(EventQuery.matchAll()).toList();
+		List<Event<PaymentEvent>> read = payments.query(EventQuery.matchAll());
 		assertTrue(email(read, 0).isShredded());
 		assertTrue(email(read, 1).isShredded(), "the marketing category survived a whole-person erasure");
 		assertTrue(email(read, 2).isShredded(), "the financial category survived a whole-person erasure");
@@ -307,14 +307,14 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		payments.append(AppendCriteria.none(), List.of(
 				Event.of(new StrictlyValidated("d-2", Shreddable.of("alice-new@default", ALICE)), Tags.none()),
 				Event.of(new StrictlyValidated("m-2", Shreddable.of("alice-new@marketing", marketing)), Tags.none())));
-		List<Event<PaymentEvent>> afterwards = payments.query(EventQuery.matchAll()).toList();
+		List<Event<PaymentEvent>> afterwards = payments.query(EventQuery.matchAll());
 		assertEquals("alice-new@default", email(afterwards, 4).orElse(null));
 		assertEquals("alice-new@marketing", email(afterwards, 5).orElse(null));
 
 		SubjectErasureReport again = store.eraseAllCategories(ALICE.type(), ALICE.id(), ErasureReason.of("art.17, once more"));
 		assertEquals(2, again.keysShredded());
 		assertEquals(Set.of("default", "marketing"), Set.copyOf(again.categoriesErased()));
-		assertTrue(email(payments.query(EventQuery.matchAll()).toList(), 5).isShredded());
+		assertTrue(email(payments.query(EventQuery.matchAll()), 5).isShredded());
 	}
 
 	/**
@@ -337,7 +337,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 				"a whole-person erasure through a restricted codec must not be narrowed to the reader's categories");
 
 		EventStream<PaymentEvent> payments = eventStoreWithShredding(keyStore).getEventStream(STREAM, PaymentEvent.class);
-		List<Event<PaymentEvent>> read = payments.query(EventQuery.matchAll()).toList();
+		List<Event<PaymentEvent>> read = payments.query(EventQuery.matchAll());
 		assertTrue(email(read, 0).isShredded());
 		assertTrue(email(read, 1).isShredded());
 	}
@@ -362,7 +362,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 
 		EventStream<PaymentEvent> reading = eventStoreWithShredding(failing).getEventStream(STREAM, PaymentEvent.class);
 		ShreddingException thrown = assertThrows(ShreddingException.class,
-				() -> reading.query(EventQuery.matchAll()).toList());
+				() -> reading.query(EventQuery.matchAll()));
 		assertNotNull(thrown.getMessage());
 	}
 
@@ -394,7 +394,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 
 		EventStream<PaymentEvent> reading = eventStoreWithShredding(own).getEventStream(STREAM, PaymentEvent.class);
 		ShreddingException thrown = assertThrows(ShreddingException.class,
-				() -> reading.query(EventQuery.matchAll()).toList());
+				() -> reading.query(EventQuery.matchAll()));
 		assertTrue(keysOnTheEvent.stream().anyMatch(thrown.getMessage()::contains),
 				"the failure names the key the store does not hold, not a vague erasure: " + thrown.getMessage());
 
@@ -422,7 +422,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 				new StrictlyValidated("v-1", Shreddable.of("alice@example.org", ALICE)), Tags.none()));
 
 		store.erase(ALICE, ErasureReason.of("art.17"));
-		StrictlyValidated erased = (StrictlyValidated) payments.query(EventQuery.matchAll()).findFirst().orElseThrow().data();
+		StrictlyValidated erased = (StrictlyValidated) payments.query(EventQuery.matchAll()).stream().findFirst().orElseThrow().data();
 
 		// re-appending would store a placeholder no later read could tell from real data
 		assertThrows(RuntimeException.class,
@@ -449,8 +449,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		// the record must be enough to find the events under this key, which is a dek: tag query
 		assertEquals(1, store.getEventStream(STREAM, PaymentEvent.class)
 				.query(EventQuery.forEvents(org.sliceworkz.eventstore.query.EventTypesFilter.any(),
-						Tags.of(KeyId.TAG_KEY, aliceKey.id().value())))
-				.count());
+						Tags.of(KeyId.TAG_KEY, aliceKey.id().value()))).size());
 
 		store.erase(ALICE, ErasureReason.of("GDPR art.17 request #4711"));
 
@@ -605,7 +604,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		EventStore reader = eventStoreWithShredding(ShreddingCodec.withholdingAll());
 		EventStream<PaymentEvent> payments = reader.getEventStream(STREAM, PaymentEvent.class);
 
-		Event<PaymentEvent> read = payments.query(EventQuery.matchAll()).findFirst().orElseThrow();
+		Event<PaymentEvent> read = payments.query(EventQuery.matchAll()).stream().findFirst().orElseThrow();
 		TransferMade transfer = (TransferMade) read.data();
 
 		// the non-personal payload is all there
@@ -650,7 +649,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		EventStream<PaymentEvent> namesOnly = eventStoreWithShredding(AesGcmShreddingCodec.over(keyStore).restrictedTo(Set.of("identity")))
 				.getEventStream(STREAM, PaymentEvent.class);
 
-		ContactRecorded read = (ContactRecorded) namesOnly.query(EventQuery.matchAll()).findFirst().orElseThrow().data();
+		ContactRecorded read = (ContactRecorded) namesOnly.query(EventQuery.matchAll()).stream().findFirst().orElseThrow().data();
 		assertEquals("Alice Martin", read.name().orElse(null));
 		Shreddable.Withheld<String> withheld = assertInstanceOf(Shreddable.Withheld.class, read.address());
 		assertEquals(address, withheld.subject());
@@ -679,13 +678,13 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 
 		ShreddingCodec restricted = AesGcmShreddingCodec.over(keyStore).restrictedTo(Set.of("identity"));
 		ContactRecorded read = (ContactRecorded) eventStoreWithShredding(restricted).getEventStream(STREAM, PaymentEvent.class)
-				.query(EventQuery.matchAll()).findFirst().orElseThrow().data();
+				.query(EventQuery.matchAll()).stream().findFirst().orElseThrow().data();
 
 		assertTrue(read.address().isWithheld(), "an erased value outside the reader's categories is withheld, not reported erased");
 		assertTrue(read.name().isShredded(), "an erased value inside the reader's categories is reported erased");
 
 		ContactRecorded seenByFull = (ContactRecorded) full.getEventStream(STREAM, PaymentEvent.class)
-				.query(EventQuery.matchAll()).findFirst().orElseThrow().data();
+				.query(EventQuery.matchAll()).stream().findFirst().orElseThrow().data();
 		assertTrue(seenByFull.address().isShredded());
 	}
 
@@ -707,7 +706,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 				Event.of(new ContactRecorded("c-1", Shreddable.of("Alice Martin", identity), Shreddable.of("Rue Haute 1", address)), Tags.none())));
 		assertTrue(thrown.getMessage().contains("address"), thrown.getMessage());
 
-		assertEquals(1, namesOnly.query(EventQuery.matchAll()).count(), "a refused append must store nothing");
+		assertEquals(1, namesOnly.query(EventQuery.matchAll()).size(), "a refused append must store nothing");
 	}
 
 	/**
@@ -726,7 +725,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		assertEquals(1, namesOnly.erase(address, ErasureReason.of("art.17")).keysShredded());
 
 		StrictlyValidated read = (StrictlyValidated) eventStoreWithShredding(keyStore).getEventStream(STREAM, PaymentEvent.class)
-				.query(EventQuery.matchAll()).findFirst().orElseThrow().data();
+				.query(EventQuery.matchAll()).stream().findFirst().orElseThrow().data();
 		assertTrue(read.email().isShredded());
 		assertEquals(1, namesOnly.shreddingAudit().orElseThrow().keys(KeyAuditQuery.all().onlyShredded()).size(), "the audit passes through too");
 	}
@@ -748,7 +747,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		denying.denying = true;
 
 		EventStream<PaymentEvent> reading = eventStoreWithShredding(denying).getEventStream(STREAM, PaymentEvent.class);
-		TransferMade transfer = (TransferMade) reading.query(EventQuery.matchAll()).findFirst().orElseThrow().data();
+		TransferMade transfer = (TransferMade) reading.query(EventQuery.matchAll()).stream().findFirst().orElseThrow().data();
 		Shreddable.Withheld<PartyDetails> from = assertInstanceOf(Shreddable.Withheld.class, transfer.from());
 		assertEquals(ALICE, from.subject());
 		assertFalse(transfer.from().isShredded());
@@ -767,13 +766,13 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 				Event.of(new StrictlyValidated("v-1", Shreddable.of("alice@example.org", ALICE)), Tags.none()));
 
 		StrictlyValidated withheld = (StrictlyValidated) eventStoreWithShredding(ShreddingCodec.withholdingAll())
-				.getEventStream(STREAM, PaymentEvent.class).query(EventQuery.matchAll()).findFirst().orElseThrow().data();
+				.getEventStream(STREAM, PaymentEvent.class).query(EventQuery.matchAll()).stream().findFirst().orElseThrow().data();
 		assertTrue(withheld.email().isWithheld(), "fixture");
 
 		// this reader never had the plaintext; a placeholder would read as real data to one that is entitled
 		EventStream<PaymentEvent> entitled = full.getEventStream(STREAM, PaymentEvent.class);
 		assertThrows(EventSerializationException.class, () -> entitled.append(AppendCriteria.none(), Event.of(withheld, Tags.none())));
-		assertEquals(1, entitled.query(EventQuery.matchAll()).count());
+		assertEquals(1, entitled.query(EventQuery.matchAll()).size());
 	}
 
 	private ShreddingAudit audit ( EventStore store ) {

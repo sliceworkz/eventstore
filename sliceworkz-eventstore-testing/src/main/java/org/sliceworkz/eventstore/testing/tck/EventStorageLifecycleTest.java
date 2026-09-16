@@ -152,12 +152,11 @@ public class EventStorageLifecycleTest extends AbstractEventStoreTest {
 
 		// the storage was handed to the store, not created by it, so it stays open and usable
 		List<EventStorage.StoredEvent> stored = eventStorage()
-				.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), QueryDirection.FORWARD)
-				.toList();
+				.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), QueryDirection.FORWARD);
 		assertEquals(1, stored.size(), "closing an EventStore must not close a storage it was given");
 
 		// the closed store is done, though: its notifications have stopped, so it must not read on
-		assertThrows(EventStorageClosedException.class, () -> stream.query(EventQuery.matchAll()).count());
+		assertThrows(EventStorageClosedException.class, () -> stream.query(EventQuery.matchAll()).size());
 		assertThrows(EventStorageClosedException.class, () -> stream.head());
 		assertThrows(EventStorageClosedException.class,
 			() -> eventStore().getEventStream(EventStreamId.forContext("lifecycle"), MockDomainEvent.class));
@@ -273,7 +272,7 @@ public class EventStorageLifecycleTest extends AbstractEventStoreTest {
 
 		// the append succeeded: reporting it as failed because a listener misbehaved would invite the
 		// caller to append the same event twice
-		assertEquals(1, stream.query(EventQuery.matchAll()).count());
+		assertEquals(1, stream.query(EventQuery.matchAll()).size());
 		// and the listener behind the failing one was still told
 		waitBecauseOfEventualConsistency(( ) -> reachedAfterTheThrowingOne.get() >= 1);
 
@@ -308,10 +307,10 @@ public class EventStorageLifecycleTest extends AbstractEventStoreTest {
 		closedStore.close();
 
 		append(survivingStream, "after the sibling closed");
-		assertEquals(1, survivingStream.query(EventQuery.matchAll()).count(),
+		assertEquals(1, survivingStream.query(EventQuery.matchAll()).size(),
 			"a store sharing the storage must keep working after another store on it is closed");
 		survivingStream.placeBookmark("reader",
-			survivingStream.query(EventQuery.matchAll()).toList().getLast().reference(), Tags.none());
+			survivingStream.query(EventQuery.matchAll()).getLast().reference(), Tags.none());
 
 		// wait for the surviving store's listener, which proves the notification round trip completed;
 		// the closed store's listener must have been passed over rather than notified

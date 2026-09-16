@@ -426,7 +426,7 @@ public final class AppendWorkloads {
 				String sku = context.nextEntity();
 				EventQuery boundary = EventQuery.forEvents(stockTypes(), Tags.of(TagKeys.SKU, sku));
 
-				List<Event<InventoryEvent>> history = context.inventory().query(boundary).toList();
+				List<Event<InventoryEvent>> history = context.inventory().query(boundary);
 				EventReference last = history.isEmpty() ? null : history.getLast().reference();
 
 				try {
@@ -511,8 +511,7 @@ public final class AppendWorkloads {
 				// claims -- a matching event landing between the two reads is left for the check to
 				// raise rather than folded into a decision the check then rejects
 				context.inventory()
-						.query(boundary.until(head).backwards().limit(1))
-						.findFirst();
+						.query(boundary.until(head).backwards().limit(1));
 
 				try {
 					return context.inventoryToAppendTo(sku).append(
@@ -644,6 +643,7 @@ public final class AppendWorkloads {
 			return context.inventory()
 					.query(new EventQuery(filter, EventQuery.Direction.BACKWARD,
 							org.sliceworkz.eventstore.query.Limit.to(1)))
+					.stream()
 					.map(Event::reference)
 					.findFirst()
 					.orElse(null);

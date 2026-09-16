@@ -109,7 +109,7 @@ class EventImportRoundTripTest {
 	}
 
 	private List<StoredEvent> allEventsIn ( EventStorage storage ) {
-		return storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), QueryDirection.FORWARD).toList();
+		return storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), QueryDirection.FORWARD);
 	}
 
 }

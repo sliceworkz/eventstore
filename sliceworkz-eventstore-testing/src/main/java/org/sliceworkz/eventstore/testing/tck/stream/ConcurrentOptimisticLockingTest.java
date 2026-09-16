@@ -151,8 +151,8 @@ public class ConcurrentOptimisticLockingTest extends AbstractEventStoreTest {
 				// and the store must agree with what the callers were told: the anchor plus one winner.
 				// Waited for rather than asserted at once, for the visibility reason above; the count
 				// can only grow to two, never past it, so waiting hides no extra admission
-				waitBecauseOfEventualConsistency(() -> eventStream.query(boundaryQuery).count() == 2);
-				assertEquals(2, eventStream.query(boundaryQuery).count(),
+				waitBecauseOfEventualConsistency(() -> eventStream.query(boundaryQuery).size() == 2);
+				assertEquals(2, eventStream.query(boundaryQuery).size(),
 						"round %d: the boundary should hold the anchor and exactly one appended event".formatted(round));
 			}
 		} finally {

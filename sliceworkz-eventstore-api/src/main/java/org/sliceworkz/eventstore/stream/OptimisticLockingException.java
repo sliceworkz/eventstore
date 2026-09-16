@@ -68,7 +68,7 @@ import org.sliceworkz.eventstore.query.EventFilter;
  *     // Pin the boundary at the stream head, query the relevant events up to it, and decide. An
  *     // absent head is an empty stream, and a valid boundary
  *     EventReference head = stream.head().orElse(null);
- *     List<Event<AccountEvent>> events = stream.query(query.until(head)).toList();
+ *     List<Event<AccountEvent>> events = stream.query(query.until(head));
  *     BigDecimal balance = calculateBalance(events);
  *
  *     // Attempt withdrawal based on current balance
@@ -96,7 +96,7 @@ import org.sliceworkz.eventstore.query.EventFilter;
  *     try {
  *         // Pin the boundary, query up to it, decide, and append with criteria
  *         EventReference head = stream.head().orElse(null);
- *         List<Event<AccountEvent>> events = stream.query(query.until(head)).toList();
+ *         List<Event<AccountEvent>> events = stream.query(query.until(head));
  *
  *         // Make decision and append
  *         Event<AccountEvent> newEvent = makeDecision(events);

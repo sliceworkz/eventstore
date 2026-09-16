@@ -46,7 +46,7 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  *
  * // After appending, it becomes a full Event with metadata
  * stream.append(AppendCriteria.none(), ephemeralEvent);
- * Event<CustomerEvent> persistedEvent = stream.query(EventQuery.matchAll()).findFirst().get();
+ * Event<CustomerEvent> persistedEvent = stream.query(EventQuery.matchAll()).getFirst();
  * }</pre>
  *
  * <h2>Timestamp:</h2>

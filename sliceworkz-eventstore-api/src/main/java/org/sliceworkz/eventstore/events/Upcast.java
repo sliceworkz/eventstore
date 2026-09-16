@@ -107,6 +107,28 @@ import java.util.Set;
  * }
  * }</pre>
  *
+ * <h2>Example - A Chain of Versions:</h2>
+ * <pre>{@code
+ * // Three versions of one event. The first two are legacy; each upcasts to the next, and the
+ * // upcaster written when V2 arrived is left alone when V3 arrives
+ * sealed interface CustomerHistoricalEvent {
+ *     @LegacyEvent(upcast = V1ToV2.class)
+ *     record CustomerRegistered(String name) implements CustomerHistoricalEvent {}
+ *     @LegacyEvent(upcast = V2ToV3.class)
+ *     record CustomerRegisteredV2(String name, String email) implements CustomerHistoricalEvent {}
+ * }
+ *
+ * public class V1ToV2 implements Upcast<CustomerHistoricalEvent.CustomerRegistered, CustomerHistoricalEvent.CustomerRegisteredV2> {
+ *     ...
+ *     public Set<Class<? extends CustomerHistoricalEvent.CustomerRegisteredV2>> targetTypes() {
+ *         return Set.of(CustomerHistoricalEvent.CustomerRegisteredV2.class);   // a legacy type: V2ToV3 runs next
+ *     }
+ * }
+ * }</pre>
+ * A stored {@code CustomerRegistered} then reads as a {@code CustomerRegisteredV3}, and a query or a
+ * consistency boundary over {@code CustomerRegisteredV3} fetches the stored {@code CustomerRegistered}
+ * events too. The chain has to end in a current type; a cycle is rejected at stream creation.
+ *
  * <h2>Example - Filtering Out Events (0 Events):</h2>
  * <pre>{@code
  * // Legacy event that is no longer relevant
@@ -129,7 +151,8 @@ import java.util.Set;
  * }</pre>
  *
  * @param <HISTORICAL_EVENT> the legacy event type (annotated with {@link LegacyEvent})
- * @param <DOMAIN_EVENT> the current event type to transform into
+ * @param <DOMAIN_EVENT> the event type to transform into: a current one, or the next legacy version
+ *        on a chain of upcasters that ends in one
  * @see LegacyEvent
  * @see org.sliceworkz.eventstore.stream.EventStream
  */
@@ -174,6 +197,18 @@ public interface Upcast<HISTORICAL_EVENT,DOMAIN_EVENT> {
 	 * <p>
 	 * For one-to-one upcasters, return a singleton set: {@code Set.of(MyEvent.class)}.
 	 * For filtering upcasters that produce no events, return an empty set: {@code Set.of()}.
+	 * A sealed interface among the classes stands for every event type under it, as it does in an
+	 * {@link org.sliceworkz.eventstore.query.EventTypesFilter}.
+	 * <p>
+	 * <strong>What is declared here is a commitment, and it is checked.</strong> Every class named must
+	 * be an event type registered on the stream this upcaster is read through — a current type, or a
+	 * further {@link LegacyEvent} whose own upcaster is then applied to what this one produced — and
+	 * the chains so formed must end in a current type. A target the stream does not register, or a
+	 * cycle, is an {@link IllegalArgumentException} at stream creation: a query for a type this
+	 * upcaster does not declare would never fetch the legacy events it produces that type from, so an
+	 * undeclared target is a silent gap in every read, not a slower one. On the read itself, an event
+	 * produced outside the declared set fails as an
+	 * {@link org.sliceworkz.eventstore.events.EventDeserializationException} naming this upcaster.
 	 *
 	 * @return the set of all possible target event type classes (must not be null)
 	 */

@@ -470,8 +470,9 @@ public class EventStoreImpl implements EventStore {
 	 * <p>
 	 * See {@link #serdes} for why it is shared rather than built per call, and why sharing it is safe
 	 * where sharing a stream would not be. A root class set that fails to register — a non-sealed
-	 * interface, a duplicate event name, a {@code @LegacyEvent} without an upcaster — leaves nothing
-	 * cached, so the same call fails the same way next time instead of the failure being remembered.
+	 * interface, a duplicate event name, a {@code @LegacyEvent} without an upcaster, an upcaster naming
+	 * a target this stream does not register — leaves nothing cached, so the same call fails the same
+	 * way next time instead of the failure being remembered.
 	 */
 	private EventPayloadSerializerDeserializer serdeFor ( Set<Class<?>> eventRootClasses, Set<Class<?>> historicalEventRootClasses ) {
 		if ( eventRootClasses == null || eventRootClasses.isEmpty() ) {
@@ -483,7 +484,8 @@ public class EventStoreImpl implements EventStore {
 			EventPayloadSerializerDeserializer serde = EventPayloadSerializerDeserializer.typed(shreddingCodec);
 			key.eventRootClasses().forEach(serde::registerEventTypes);
 			key.historicalEventRootClasses().forEach(serde::registerLegacyEventTypes);
-			return serde;
+			// the upcasters are checked against each other only now: a target may sit in any of the roots
+			return serde.validate();
 		});
 	}
 

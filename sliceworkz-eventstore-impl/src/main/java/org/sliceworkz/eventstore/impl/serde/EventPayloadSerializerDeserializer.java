@@ -135,6 +135,25 @@ public interface EventPayloadSerializerDeserializer {
 	EventPayloadSerializerDeserializer registerLegacyEventTypes ( Class<?> rootClass );
 
 	/**
+	 * Checks the registrations as a whole, once they are complete.
+	 * <p>
+	 * A registration can only be checked against the others: an upcaster's
+	 * {@link org.sliceworkz.eventstore.events.Upcast#targetTypes() target types} must be types registered
+	 * on this serde, current or legacy, and the chains they form must not cycle — and the root classes
+	 * arrive as sets, in no order, so a target may sit in a root registered later. This is the call that
+	 * says there is no later, and it is what makes a misdeclared upcaster fail at stream creation rather
+	 * than on the first read. Idempotent, and a read arriving before it runs the same check itself, so
+	 * a serde used without it behaves the same and only fails later. Raw mode has nothing to check.
+	 *
+	 * @return this serializer for method chaining
+	 * @throws IllegalArgumentException for an upcaster naming a target type that is not registered, or
+	 *         a different class under the target's stored name, and for upcasters that form a cycle
+	 */
+	default EventPayloadSerializerDeserializer validate ( ) {
+		return this;
+	}
+
+	/**
 	 * Determines all legacy event types that upcast to the specified current types.
 	 * <p>
 	 * This method traces back the upcasting chain to find all historical event type names

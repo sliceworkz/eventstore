@@ -27,7 +27,6 @@ import java.util.Optional;
 
 
 import org.sliceworkz.eventstore.EventStore;
-import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventDeserializationException;
 import org.sliceworkz.eventstore.events.EventReference;
@@ -313,7 +312,7 @@ public class HeadTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void headLookupsAreCountedOnTheirOwnMeter ( ) {
 		SimpleMeterRegistry registry = new SimpleMeterRegistry();
-		try ( EventStore meteredStore = EventStoreFactory.get().eventStore(eventStorage(), registry) ) {
+		try ( EventStore meteredStore = EventStore.on(eventStorage()).meterRegistry(registry).build() ) {
 			EventStream<MockDomainEvent> meteredStream = meteredStore.getEventStream(streamId, MockDomainEvent.class);
 
 			Counter head = registry.find("sliceworkz.eventstore.head").counter();

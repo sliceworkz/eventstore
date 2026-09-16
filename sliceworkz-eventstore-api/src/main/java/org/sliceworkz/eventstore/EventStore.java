@@ -25,17 +25,22 @@ import org.sliceworkz.eventstore.shredding.DataSubject;
 import org.sliceworkz.eventstore.shredding.ErasureReason;
 import org.sliceworkz.eventstore.shredding.ErasureReport;
 import org.sliceworkz.eventstore.shredding.ShreddingAudit;
+import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.shredding.SubjectErasureReport;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.stream.EventSource;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Metrics;
+
 /**
  * The main entry point for interacting with an event store.
  * <p>
  * An EventStore provides access to {@link EventStream}s which allow reading and writing domain events.
- * EventStore instances are obtained via {@link EventStoreFactory} by providing an {@link org.sliceworkz.eventstore.spi.EventStorage} implementation.
+ * An EventStore is built on an {@link EventStorage} with {@link #on(EventStorage)}, or obtained from a
+ * storage builder's {@code buildStore()}, which does the same and hands back one handle for both.
  * <p>
  * This implementation is fully compliant with the Dynamic Consistency Boundary (DCB) specification,
  * supporting dynamic event tagging, flexible querying, and optimistic locking based on relevant historical facts.
@@ -44,6 +49,9 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  * <pre>{@code
  * // Create event store with in-memory storage
  * EventStore eventStore = InMemoryEventStorage.newBuilder().buildStore();
+ *
+ * // Or build one on a storage you hold, with a registry and options of your own
+ * EventStore eventStore = EventStore.on(storage).meterRegistry(registry).build();
  *
  * // Get an event stream for a specific context and purpose
  * EventStreamId streamId = EventStreamId.forContext("customer").withPurpose("123");
@@ -114,7 +122,7 @@ public interface EventStore extends AutoCloseable {
 	 * it wants one closable handle for a storage and store it created together:
 	 * <pre>{@code
 	 * EventStorage storage = PostgresEventStorage.newBuilder().build();
-	 * try ( EventStore eventStore = EventStore.owning(EventStoreFactory.get().eventStore(storage), storage) ) {
+	 * try ( EventStore eventStore = EventStore.owning(EventStore.on(storage).build(), storage) ) {
 	 *     ...
 	 * }   // store shut down, then storage closed
 	 * }</pre>
@@ -127,6 +135,137 @@ public interface EventStore extends AutoCloseable {
 	 */
 	static EventStore owning ( EventStore eventStore, EventStorage eventStorage ) {
 		return new OwningEventStore(eventStore, eventStorage);
+	}
+
+	/**
+	 * Starts building an EventStore on the given storage.
+	 * <p>
+	 * This is the one entry point for turning an {@link EventStorage} into a store. Everything else a
+	 * store can be given — the {@link MeterRegistry} its meters go to, the {@link MeterOptions} bounding
+	 * them, a {@link ShreddingCodec} of its own — is a call on the {@link Builder}, each with the default
+	 * the storage builders use, so the shortest form is a store with the same settings
+	 * {@code buildStore()} would have given it:
+	 * <pre>{@code
+	 * EventStorage storage = PostgresEventStorage.newBuilder().build();
+	 *
+	 * EventStore eventStore = EventStore.on(storage).build();
+	 *
+	 * EventStore reporting = EventStore.on(storage)
+	 *     .meterRegistry(registry)
+	 *     .meterOptions(MeterOptions.withoutPurposeBreakdown())
+	 *     .shredding(ShreddingCodec.withholdingAll())
+	 *     .build();
+	 * }</pre>
+	 * The store is created by the {@link EventStoreFactory} the {@link java.util.ServiceLoader} finds,
+	 * and that factory stays the SPI an implementation provides; the alternative — calling it directly,
+	 * as {@code EventStoreFactory.get().eventStore(storage, registry, options, codec)} — loses because
+	 * it puts the ServiceLoader lookup and four positional arguments, one of them a {@code null} meaning
+	 * "the storage's own codec", at every call site that wants anything but the defaults.
+	 * <p>
+	 * The built store does not own the storage: closing it closes the store alone, for the reasons on
+	 * {@link #close()}. Wrap it with {@link #owning(EventStore, EventStorage)} for one handle on both.
+	 *
+	 * @param eventStorage the storage the store reads and writes through; must not be null
+	 * @return a builder for a store on that storage
+	 * @throws IllegalArgumentException if the storage is null
+	 * @see Builder
+	 */
+	static Builder on ( EventStorage eventStorage ) {
+		return new Builder(eventStorage);
+	}
+
+	/**
+	 * Builds an {@link EventStore} on an {@link EventStorage}, obtained from {@link EventStore#on(EventStorage)}.
+	 * <p>
+	 * Mirrors the storage builders: the same setter names, the same defaults — {@link Metrics#globalRegistry},
+	 * {@link MeterOptions#defaults()} and the storage's own codec — so a store built here and one from
+	 * {@code buildStore()} differ only in who owns the storage. Every setter refuses {@code null}, since each
+	 * has a default and a null could only be a mistake. {@link #build()} may be called more than once; each
+	 * call is a further store on the same storage, independent of the others.
+	 */
+	final class Builder {
+
+		private final EventStorage eventStorage;
+		private MeterRegistry meterRegistry = Metrics.globalRegistry;
+		private MeterOptions meterOptions = MeterOptions.defaults();
+		private ShreddingCodec shreddingCodec;
+
+		private Builder ( EventStorage eventStorage ) {
+			if ( eventStorage == null ) {
+				throw new IllegalArgumentException("eventStorage cannot be null");
+			}
+			this.eventStorage = eventStorage;
+		}
+
+		/**
+		 * The registry the store's meters are registered in.
+		 * <p>
+		 * Defaults to {@link Metrics#globalRegistry}: a composite with no children until the application
+		 * adds one, so meters registered there cost a map entry and record nothing, and an application
+		 * that binds its real registry to it gets the store's series without configuring anything here.
+		 *
+		 * @param meterRegistry the registry; must not be null
+		 * @return this builder
+		 * @throws IllegalArgumentException if the registry is null
+		 */
+		public Builder meterRegistry ( MeterRegistry meterRegistry ) {
+			if ( meterRegistry == null ) {
+				throw new IllegalArgumentException("meterRegistry cannot be null.  Leave it unset for Metrics.globalRegistry");
+			}
+			this.meterRegistry = meterRegistry;
+			return this;
+		}
+
+		/**
+		 * How much detail the store's meters may carry.
+		 * <p>
+		 * Defaults to {@link MeterOptions#defaults()}, which caps the {@code purpose} tag at
+		 * {@link MeterOptions#DEFAULT_MAX_PURPOSE_TAG_VALUES} distinct values; see {@link MeterOptions}
+		 * for what an uncapped tag costs and when to turn the breakdown off altogether.
+		 *
+		 * @param meterOptions the options; must not be null
+		 * @return this builder
+		 * @throws IllegalArgumentException if the options are null
+		 */
+		public Builder meterOptions ( MeterOptions meterOptions ) {
+			if ( meterOptions == null ) {
+				throw new IllegalArgumentException("meterOptions cannot be null.  Leave it unset for MeterOptions.defaults()");
+			}
+			this.meterOptions = meterOptions;
+			return this;
+		}
+
+		/**
+		 * The codec that seals and unseals {@link org.sliceworkz.eventstore.shredding.Shreddable} values
+		 * in this store, taking precedence over the one the storage was configured with.
+		 * <p>
+		 * Left unset, the store uses the storage's own ({@link EventStorage#shreddingCodec()}), which is
+		 * what a storage builder's {@code .shredding(...)} put there and is empty for a storage built
+		 * without shredding. Set it for a store that must read the same storage differently — a reporting
+		 * service on {@link ShreddingCodec#withholdingAll()}, or a codec restricted to the categories this
+		 * reader is entitled to.
+		 *
+		 * @param shreddingCodec the codec; must not be null
+		 * @return this builder
+		 * @throws IllegalArgumentException if the codec is null
+		 */
+		public Builder shredding ( ShreddingCodec shreddingCodec ) {
+			if ( shreddingCodec == null ) {
+				throw new IllegalArgumentException("shreddingCodec cannot be null.  Leave it unset for the storage's own codec");
+			}
+			this.shreddingCodec = shreddingCodec;
+			return this;
+		}
+
+		/**
+		 * Builds the store, through the {@link EventStoreFactory} found on the classpath.
+		 *
+		 * @return a new EventStore on the storage
+		 * @throws org.sliceworkz.eventstore.spi.EventStorageException if no EventStore implementation is on the classpath
+		 */
+		public EventStore build ( ) {
+			return EventStoreFactory.get().eventStore(eventStorage, meterRegistry, meterOptions, shreddingCodec);
+		}
 	}
 
 	/**

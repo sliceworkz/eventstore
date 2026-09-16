@@ -28,8 +28,6 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.sliceworkz.eventstore.EventStore;
-import org.sliceworkz.eventstore.EventStoreFactory;
-import org.sliceworkz.eventstore.MeterOptions;
 import org.sliceworkz.eventstore.shredding.AesGcmShreddingCodec;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
@@ -86,7 +84,7 @@ public abstract class AbstractEventStoreTest {
 	@BeforeEach
 	public void setUp ( ) {
 		this.eventStorage = createEventStorage();
-		this.eventStore = EventStoreFactory.get().eventStore(eventStorage);
+		this.eventStore = EventStore.on(eventStorage).build();
 	}
 
 	@AfterEach
@@ -189,7 +187,7 @@ public abstract class AbstractEventStoreTest {
 	 * @return a store with shredding configured, over {@link #eventStorage()}
 	 */
 	protected EventStore eventStoreWithShredding ( ShreddingCodec shreddingCodec ) {
-		return EventStoreFactory.get().eventStore(eventStorage(), new SimpleMeterRegistry(), MeterOptions.defaults(), shreddingCodec);
+		return EventStore.on(eventStorage()).meterRegistry(new SimpleMeterRegistry()).shredding(shreddingCodec).build();
 	}
 
 	/**

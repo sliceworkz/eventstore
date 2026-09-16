@@ -35,14 +35,11 @@ import io.micrometer.core.instrument.MeterRegistry;
  * file, allowing the API module to remain decoupled from the implementation module.
  *
  * <h2>Usage:</h2>
- * This class is not intended to be instantiated directly. Instead, obtain EventStore instances via:
+ * This class is not intended to be instantiated directly, nor called directly. Obtain EventStore
+ * instances via the builder on {@link EventStore}, which finds this factory through the ServiceLoader:
  * <pre>{@code
- * // Obtain factory via ServiceLoader
- * EventStoreFactory factory = EventStoreFactory.get();
- *
- * // Create EventStore with desired storage backend
  * EventStorage storage = InMemoryEventStorage.newBuilder().build();
- * EventStore eventStore = factory.eventStore(storage);
+ * EventStore eventStore = EventStore.on(storage).build();
  * }</pre>
  *
  * @see EventStoreFactory

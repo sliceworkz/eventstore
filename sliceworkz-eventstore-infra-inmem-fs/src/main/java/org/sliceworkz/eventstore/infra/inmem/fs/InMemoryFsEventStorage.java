@@ -20,7 +20,6 @@ package org.sliceworkz.eventstore.infra.inmem.fs;
 import java.nio.file.Path;
 
 import org.sliceworkz.eventstore.EventStore;
-import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.MeterOptions;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.shredding.AesGcmShreddingCodec;
@@ -161,9 +160,8 @@ public interface InMemoryFsEventStorage {
 		 * <p>
 		 * Defaults to {@link MeterOptions#defaults()}, which caps the {@code purpose} tag at
 		 * {@link MeterOptions#DEFAULT_MAX_PURPOSE_TAG_VALUES} distinct values. Ignored by {@link #build()},
-		 * which returns a storage rather than a store — pass the options to
-		 * {@link org.sliceworkz.eventstore.EventStoreFactory#eventStore(EventStorage, MeterRegistry, MeterOptions)}
-		 * there instead.
+		 * which returns a storage rather than a store — give them to the store's own builder,
+		 * {@code EventStore.on(storage).meterOptions(...)}, instead.
 		 *
 		 * @param meterOptions how much detail the store's meters may carry
 		 * @return this Builder instance for method chaining
@@ -190,7 +188,7 @@ public interface InMemoryFsEventStorage {
 		 *
 		 * Honoured by {@link #build()} as much as by {@link #buildStore()}: the codec travels with the
 		 * storage ({@link EventStorage#shreddingCodec()}), so a store built on {@code build()}'s result
-		 * through {@link EventStoreFactory#eventStore(EventStorage)} protects and erases personal data too.
+		 * through {@link EventStore#on(EventStorage)} protects and erases personal data too.
 		 *
 		 * @param shreddingKeyStore where keys are minted, resolved and destroyed
 		 * @return this builder for method chaining
@@ -243,7 +241,7 @@ public interface InMemoryFsEventStorage {
 			EventStorage eventStorage = build();
 			// the codec travels with the storage (EventStorage.shreddingCodec()), so the store picks it up
 			// here exactly as a store built by the caller on build()'s result would
-			return EventStore.owning(EventStoreFactory.get().eventStore(eventStorage, meterRegistry, meterOptions), eventStorage);
+			return EventStore.owning(EventStore.on(eventStorage).meterRegistry(meterRegistry).meterOptions(meterOptions).build(), eventStorage);
 		}
 	}
 

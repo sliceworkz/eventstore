@@ -62,15 +62,15 @@ package org.sliceworkz.eventstore;
  * <h2>Choosing a value</h2>
  * <pre>{@code
  * // the default: 1000 purposes per store, then _other
- * EventStore store = EventStoreFactory.get().eventStore(storage, registry);
+ * EventStore store = EventStore.on(storage).meterRegistry(registry).build();
  *
  * // a context with genuinely few purposes, and an alert if that ever stops being true
- * EventStore store = EventStoreFactory.get().eventStore(storage, registry,
- *                        MeterOptions.withMaxPurposeTagValues(50));
+ * EventStore store = EventStore.on(storage).meterRegistry(registry)
+ *                        .meterOptions(MeterOptions.withMaxPurposeTagValues(50)).build();
  *
  * // purpose is an entity id here -- do not break down by it at all
- * EventStore store = EventStoreFactory.get().eventStore(storage, registry,
- *                        MeterOptions.withoutPurposeBreakdown());
+ * EventStore store = EventStore.on(storage).meterRegistry(registry)
+ *                        .meterOptions(MeterOptions.withoutPurposeBreakdown()).build();
  * }</pre>
  *
  * @param maxPurposeTagValues how many distinct {@code purpose} tag values this store may report

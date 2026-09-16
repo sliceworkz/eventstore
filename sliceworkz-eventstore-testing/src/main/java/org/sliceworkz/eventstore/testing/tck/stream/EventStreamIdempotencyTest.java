@@ -31,7 +31,6 @@ import javax.sql.DataSource;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.sliceworkz.eventstore.EventStore;
-import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.Tags;
@@ -138,7 +137,7 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 	void aSwallowedDuplicateIsCountedOnTheDeduplicatedMeter ( ) {
 
 		SimpleMeterRegistry registry = new SimpleMeterRegistry();
-		try ( EventStore meteredStore = EventStoreFactory.get().eventStore(eventStorage(), registry) ) {
+		try ( EventStore meteredStore = EventStore.on(eventStorage()).meterRegistry(registry).build() ) {
 			EventStream<MockDomainEvent> meteredStream = meteredStore
 					.getEventStream(EventStreamId.forContext("app").withPurpose("default"), MockDomainEvent.class);
 
@@ -281,7 +280,7 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 	void aSwallowedBatchCountsEveryEventOnTheDeduplicatedMeter ( ) {
 
 		SimpleMeterRegistry registry = new SimpleMeterRegistry();
-		try ( EventStore meteredStore = EventStoreFactory.get().eventStore(eventStorage(), registry) ) {
+		try ( EventStore meteredStore = EventStore.on(eventStorage()).meterRegistry(registry).build() ) {
 			EventStream<MockDomainEvent> meteredStream = meteredStore
 					.getEventStream(EventStreamId.forContext("app").withPurpose("default"), MockDomainEvent.class);
 			Counter deduplicated = registry.find("sliceworkz.eventstore.append.deduplicated").counter();

@@ -59,7 +59,7 @@ then add the modules you need without versions:
 </dependencies>
 ```
 
-A backend pulls in `sliceworkz-eventstore-impl` at runtime, so `EventStoreFactory.get()` finds an
+A backend pulls in `sliceworkz-eventstore-impl` at runtime, so `EventStore.on(storage).build()` finds an
 implementation without you naming one. The PostgreSQL backend declares the JDBC driver as `provided`:
 add `org.postgresql:postgresql` yourself, at the version your platform ships.
 
@@ -224,7 +224,7 @@ closes both. When you build the pair yourself and want one handle, compose it th
 
 ```java
 EventStorage storage = PostgresEventStorage.newBuilder().build();
-try ( EventStore eventStore = EventStore.owning(EventStoreFactory.get().eventStore(storage), storage) ) {
+try ( EventStore eventStore = EventStore.owning(EventStore.on(storage).build(), storage) ) {
     ...
 }
 ```

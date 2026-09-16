@@ -28,24 +28,28 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Metrics;
 
 /**
- * Factory for creating {@link EventStore} instances.
+ * The SPI through which an {@link EventStore} implementation is provided.
  * <p>
- * This factory uses Java's {@link ServiceLoader} mechanism to discover the EventStore implementation at runtime.
- * The implementation module (sliceworkz-eventstore-impl) provides the concrete factory implementation.
+ * The implementation module (sliceworkz-eventstore-impl) registers its factory for Java's
+ * {@link ServiceLoader}, and {@link #get()} finds it at runtime. Application code does not call this
+ * factory: it builds a store with {@link EventStore#on(EventStorage)}, which resolves the factory and
+ * hands it the storage, the registry, the options and the codec, or takes the store from a storage
+ * builder's {@code buildStore()}. The overloads here are what those two paths call, and what an
+ * implementation of this library provides.
  *
  * <h2>Example Usage:</h2>
  * <pre>{@code
  * // Create storage backend (in-memory for development/testing)
  * EventStorage storage = InMemoryEventStorage.newBuilder().build();
  *
- * // Get EventStore instance via factory
- * EventStore eventStore = EventStoreFactory.get().eventStore(storage);
+ * // Build a store on it
+ * EventStore eventStore = EventStore.on(storage).build();
  *
  * // Or use convenience method for in-memory storage
  * EventStore eventStore = InMemoryEventStorage.newBuilder().buildStore();
  * }</pre>
  *
- * @see EventStore
+ * @see EventStore#on(EventStorage)
  * @see org.sliceworkz.eventstore.spi.EventStorage
  */
 public interface EventStoreFactory {
@@ -98,7 +102,7 @@ public interface EventStoreFactory {
 	 * stored in the clear.
 	 * <pre>{@code
 	 * ShreddingCodec codec = AesGcmShreddingCodec.over(new InMemoryShreddingKeyStore());
-	 * EventStore store = EventStoreFactory.get().eventStore(storage, registry, MeterOptions.defaults(), codec);
+	 * EventStore store = EventStore.on(storage).meterRegistry(registry).shredding(codec).build();
 	 * }</pre>
 	 * A codec given here takes precedence over the one the storage was configured with; {@code null}
 	 * means the storage's own ({@link org.sliceworkz.eventstore.spi.EventStorage#shreddingCodec()}),
@@ -141,6 +145,7 @@ public interface EventStoreFactory {
 	 * <p>
 	 * The factory implementation is discovered at runtime from the classpath. Ensure that
 	 * the implementation module (sliceworkz-eventstore-impl) is available on the classpath.
+	 * {@link EventStore#on(EventStorage)} calls this for you.
 	 *
 	 * @return the EventStoreFactory implementation
 	 * @throws org.sliceworkz.eventstore.spi.EventStorageException if no implementation is found

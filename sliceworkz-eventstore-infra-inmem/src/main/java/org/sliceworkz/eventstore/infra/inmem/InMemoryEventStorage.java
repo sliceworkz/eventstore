@@ -21,7 +21,6 @@ import java.util.List;
 import java.util.Map;
 
 import org.sliceworkz.eventstore.EventStore;
-import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.MeterOptions;
 import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.query.Limit;
@@ -58,7 +57,7 @@ import io.micrometer.core.instrument.Metrics;
  * <pre>{@code
  * // Simple creation with default settings
  * EventStorage storage = InMemoryEventStorage.newBuilder().build();
- * EventStore eventStore = EventStoreFactory.get().eventStore(storage);
+ * EventStore eventStore = EventStore.on(storage).build();
  *
  * // Convenience method to get EventStore directly
  * EventStore eventStore = InMemoryEventStorage.newBuilder().buildStore();
@@ -94,7 +93,7 @@ import io.micrometer.core.instrument.Metrics;
  *
  * @see EventStorage
  * @see EventStore
- * @see EventStoreFactory
+ * @see EventStore#on(EventStorage)
  * @see InMemoryEventStorageImpl
  */
 public interface InMemoryEventStorage {
@@ -141,7 +140,7 @@ public interface InMemoryEventStorage {
 	 * EventStorage storage = InMemoryEventStorage.newBuilder()
 	 *     .resultLimit(500)
 	 *     .build();
-	 * EventStore store = EventStoreFactory.get().eventStore(storage);
+	 * EventStore store = EventStore.on(storage).build();
 	 * }</pre>
 	 *
 	 * @see InMemoryEventStorage
@@ -228,9 +227,8 @@ public interface InMemoryEventStorage {
 		 * <p>
 		 * Defaults to {@link MeterOptions#defaults()}, which caps the {@code purpose} tag at
 		 * {@link MeterOptions#DEFAULT_MAX_PURPOSE_TAG_VALUES} distinct values. Ignored by {@link #build()},
-		 * which returns a storage rather than a store — pass the options to
-		 * {@link org.sliceworkz.eventstore.EventStoreFactory#eventStore(EventStorage, MeterRegistry, MeterOptions)}
-		 * there instead.
+		 * which returns a storage rather than a store — give them to the store's own builder,
+		 * {@code EventStore.on(storage).meterOptions(...)}, instead.
 		 *
 		 * @param meterOptions how much detail the store's meters may carry
 		 * @return this Builder instance for method chaining
@@ -252,7 +250,7 @@ public interface InMemoryEventStorage {
 		 *
 		 * Honoured by {@link #build()} as much as by {@link #buildStore()}: the codec travels with the
 		 * storage ({@link EventStorage#shreddingCodec()}), so a store built on {@code build()}'s result
-		 * through {@link EventStoreFactory#eventStore(EventStorage)} protects and erases personal data too.
+		 * through {@link EventStore#on(EventStorage)} protects and erases personal data too.
 		 *
 		 * @param shreddingKeyStore where keys are minted, resolved and destroyed
 		 * @return this builder for method chaining
@@ -327,7 +325,7 @@ public interface InMemoryEventStorage {
 		 * <p>
 		 * This method creates an {@link InMemoryEventStorageImpl} instance with all the
 		 * configured settings. The returned EventStorage can then be passed to
-		 * {@link EventStoreFactory#eventStore(EventStorage)} to obtain an EventStore.
+		 * {@link EventStore#on(EventStorage)} to obtain an EventStore.
 		 * <p>
 		 * For convenience, consider using {@link #buildStore()} instead, which performs
 		 * both steps in one call.
@@ -344,7 +342,7 @@ public interface InMemoryEventStorage {
 		/**
 		 * Builds the storage and returns a fully configured {@link EventStore} instance.
 		 * <p>
-		 * This convenience method combines {@link #build()} and {@link EventStoreFactory#eventStore(EventStorage)}
+		 * This convenience method combines {@link #build()} and {@link EventStore#on(EventStorage)}
 		 * in a single call, providing a streamlined way to create a ready-to-use EventStore.
 		 * <p>
 		 * This is the recommended method for most use cases where you want to quickly set up
@@ -364,7 +362,7 @@ public interface InMemoryEventStorage {
 		 * @return a new EventStore instance backed by in-memory storage
 		 * @see #build()
 		 * @see EventStore
-		 * @see EventStoreFactory#eventStore(EventStorage)
+		 * @see EventStore#on(EventStorage)
 		 */
 		public EventStore buildStore ( ) {
 			// the storage is created here and never handed to the caller, so the returned store owns it:
@@ -372,7 +370,7 @@ public interface InMemoryEventStorage {
 			EventStorage eventStorage = build();
 			// the codec travels with the storage (EventStorage.shreddingCodec()), so the store picks it up
 			// here exactly as a store built by the caller on build()'s result would
-			return EventStore.owning(EventStoreFactory.get().eventStore(eventStorage, meterRegistry, meterOptions), eventStorage);
+			return EventStore.owning(EventStore.on(eventStorage).meterRegistry(meterRegistry).meterOptions(meterOptions).build(), eventStorage);
 		}
 	}
 	

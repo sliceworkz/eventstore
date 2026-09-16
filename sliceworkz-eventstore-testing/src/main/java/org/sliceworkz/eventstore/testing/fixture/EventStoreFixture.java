@@ -20,8 +20,6 @@ package org.sliceworkz.eventstore.testing.fixture;
 import java.util.List;
 
 import org.sliceworkz.eventstore.EventStore;
-import org.sliceworkz.eventstore.EventStoreFactory;
-import org.sliceworkz.eventstore.MeterOptions;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.stream.EventStream;
@@ -76,7 +74,7 @@ public final class EventStoreFixture<DOMAIN_EVENT_TYPE> {
 
 	private EventStoreFixture ( EventStorage eventStorage, EventStreamId streamId, Class<DOMAIN_EVENT_TYPE> eventRootClass ) {
 		this.eventStorage = eventStorage;
-		this.eventStore = EventStoreFactory.get().eventStore(eventStorage, new SimpleMeterRegistry(), MeterOptions.defaults());
+		this.eventStore = EventStore.on(eventStorage).meterRegistry(new SimpleMeterRegistry()).build();
 		this.stream = eventStore.getEventStream(streamId, eventRootClass);
 	}
 

@@ -43,7 +43,7 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  * </ul>
  *
  * <h2>Import versus append</h2>
- * Importing bypasses {@link EventStorage#append(org.sliceworkz.eventstore.stream.AppendCriteria, java.util.Optional, java.util.List)}
+ * Importing bypasses {@link EventStorage#append(org.sliceworkz.eventstore.stream.AppendCriteria, org.sliceworkz.eventstore.stream.EventStreamId, java.util.List)}
  * entirely: no optimistic locking, no serialization, no upcasting.
  * The payload moves as opaque JSON, so an import needs no domain classes on the classpath and legacy
  * event types survive as legacy event types.

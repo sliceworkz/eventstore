@@ -29,15 +29,15 @@ import java.util.Set;
  * HSM and never enter this JVM's heap. To keep the shipped AES-256-GCM implementation and only move
  * where keys are stored, implement {@link ShreddingKeyStore} instead and let the default codec use it.
  *
- * <h2>Empty means erased; unavailable means throw</h2>
- * {@link #unseal} returns an empty {@link Optional} <em>only</em> when the key has been destroyed. A
+ * <h2>Erased means erased; unavailable means throw</h2>
+ * {@link #open} answers {@link Unsealed.Erased} <em>only</em> when the key has been destroyed. A
  * key store that cannot be reached, an expired credential, a timeout, a corrupt envelope or an
  * unsupported algorithm must throw {@link ShreddingException}. See {@link ShreddingKeyStore} for why
  * conflating the two turns a transient outage into permanent, silent loss in every read model.
  * <h2>Withheld is a third answer, for a reader that is not entitled</h2>
- * Not every reader of a log may read everything in it. {@link #open} is {@link #unseal} with one more
- * answer, {@link Unsealed.Withheld}: the value exists and this codec will not unseal it for this reader.
- * The read path calls {@code open}, and turns that answer into {@link Shreddable.Withheld} — never into
+ * Not every reader of a log may read everything in it. {@link #open} has one more answer for that,
+ * {@link Unsealed.Withheld}: the value exists and this codec will not unseal it for this reader.
+ * The read path turns that answer into {@link Shreddable.Withheld} — never into
  * {@link Shreddable.Shredded}, which would render a projection's "erased" for data that is not, and
  * never into an exception, which would stop a projector that is merely not entitled from advancing over
  * what it is entitled to.
@@ -94,33 +94,21 @@ public interface ShreddingCodec extends AutoCloseable {
 	Sealed seal ( String plaintext, DataSubject subject );
 
 	/**
-	 * Decrypts a sealed envelope, or reports that its key is gone.
-	 * <p>
-	 * Called on the read path, once per sealed value.
-	 *
-	 * @param sealed the envelope read from the event
-	 * @return the value's JSON form, or empty if the key has been destroyed
-	 * @throws ShreddingException if the key store cannot be reached, the algorithm is not supported, or
-	 *                            the envelope is malformed — never for a destroyed key
-	 */
-	Optional<String> unseal ( Sealed sealed );
-
-	/**
 	 * Decrypts a sealed envelope, reports that its key is gone, or declines to unseal it for this reader.
 	 * <p>
-	 * The read path calls this rather than {@link #unseal}. The default derives {@link Unsealed.Plaintext}
-	 * and {@link Unsealed.Erased} from {@link #unseal} and never answers {@link Unsealed.Withheld}, so a
-	 * codec written before it existed keeps working. The shipped codec overrides it to pass on a key
-	 * store's {@link ShreddingKeyStore.KeyResolution.Denied}.
+	 * Called on the read path, once per sealed value. A codec with no notion of entitlement answers
+	 * {@link Unsealed.Plaintext} or {@link Unsealed.Erased} and nothing else; the shipped codec passes a
+	 * key store's {@link ShreddingKeyStore.KeyResolution.Denied} on as {@link Unsealed.Withheld}. There
+	 * is deliberately no two-answer {@code Optional<String>} method beside this one for a default to
+	 * derive it from: such a method cannot say withheld, and a codec written against it would implement
+	 * what nothing calls.
 	 *
 	 * @param sealed the envelope read from the event
 	 * @return the value's JSON form, or why it is not available: erased, or withheld from this reader
 	 * @throws ShreddingException if the key store cannot be reached, the algorithm is not supported, or
 	 *                            the envelope is malformed — never for a destroyed or withheld value
 	 */
-	default Unsealed open ( Sealed sealed ) {
-		return unseal(sealed).<Unsealed>map(Unsealed.Plaintext::new).orElse(Unsealed.Erased.INSTANCE);
-	}
+	Unsealed open ( Sealed sealed );
 
 	/**
 	 * This codec, unsealing and sealing only the given {@link DataSubject#category() categories}.

@@ -57,6 +57,23 @@ package org.sliceworkz.eventstore.events;
  * EventReference lastRead = events.getLast().reference();
  * }</pre>
  *
+ * <h2>The absent reference</h2>
+ * An absent reference has two spellings in this API, one per direction. Wherever a reference is
+ * <em>given</em> — {@link org.sliceworkz.eventstore.stream.AppendCriteria#of(org.sliceworkz.eventstore.query.EventFilter, EventReference)},
+ * {@link org.sliceworkz.eventstore.query.EventQuery#until(EventReference)},
+ * {@link org.sliceworkz.eventstore.query.EventFilter#until(EventReference)}, a cursor — absent is
+ * {@code null}. Wherever a reference is <em>answered</em> —
+ * {@link org.sliceworkz.eventstore.stream.EventSource#head()},
+ * {@link org.sliceworkz.eventstore.stream.AppendCriteria#expectedLastEventReference()}, the argument
+ * of {@link org.sliceworkz.eventstore.projection.BatchAwareProjection#afterBatch(java.util.Optional)} —
+ * absent is {@link java.util.Optional#empty()}, so a caller cannot forget to consider it. The two meet
+ * at {@code head().orElse(null)}, the idiom every example in this library uses to bound a read and its
+ * append at the same head. The alternative — {@code Optional} on the input side too — loses because
+ * every caller would wrap a value it already holds, and {@code Optional} parameters are exactly what
+ * the type was not designed for. There is deliberately no {@code EventReference.none()} naming the
+ * absent input either: a factory that returns {@code null} is a value nothing can be called on, and a
+ * name for it invites {@code EventReference.none().position()}.
+ *
  * @param id the globally unique event identifier
  * @param position the sequential position of the event within its stream (starts at 1)
  * @param tx the transaction during which this event was appended. Primary sort criterion before position
@@ -204,30 +221,6 @@ public record EventReference ( EventId id, long position, long tx, int index )
 	 */
 	public static EventReference create ( long position, long tx ) {
 		return of ( EventId.create(), position, tx, 0 );
-	}
-
-	/**
-	 * The absent reference, spelled out: {@code null}.
-	 * <p>
-	 * An absent reference has two spellings in this API, one per direction. Wherever a reference is
-	 * <em>given</em> — {@link org.sliceworkz.eventstore.stream.AppendCriteria#of(org.sliceworkz.eventstore.query.EventFilter, EventReference)},
-	 * {@link org.sliceworkz.eventstore.query.EventQuery#until(EventReference)},
-	 * {@link org.sliceworkz.eventstore.query.EventFilter#until(EventReference)} — absent is {@code null},
-	 * and this method is its readable name: {@code AppendCriteria.of(query, EventReference.none())} says
-	 * "I decided on an empty boundary", where a bare {@code null} says nothing. Wherever a reference is
-	 * <em>answered</em> — {@link org.sliceworkz.eventstore.stream.EventSource#head()},
-	 * {@link org.sliceworkz.eventstore.stream.AppendCriteria#expectedLastEventReference()}, the argument
-	 * of {@link org.sliceworkz.eventstore.projection.BatchAwareProjection#afterBatch(java.util.Optional)} —
-	 * absent is {@link java.util.Optional#empty()}, so a caller cannot forget to consider it. The two meet
-	 * at {@code head().orElse(null)}, which is the idiom every example in this library uses to bound a
-	 * read and its append at the same head. The alternative — {@code Optional} on the input side too —
-	 * loses because every caller would wrap a value it already holds, and {@code Optional} parameters
-	 * are exactly what the type was not designed for.
-	 *
-	 * @return {@code null}, the absent reference as an input
-	 */
-	public static EventReference none ( ) {
-		return null;
 	}
 
 	/**

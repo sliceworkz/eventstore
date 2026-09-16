@@ -27,7 +27,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
-import java.util.Optional;
 
 import javax.sql.DataSource;
 
@@ -158,7 +157,7 @@ public class PostgresRestoredIntoYoungerClusterTest {
 						.dataSource(dataSource)
 						.databaseInitMode(mode)
 						.build() ) {
-					assertTrue(storage.head(Optional.of(EventStreamId.forContext("account").withPurpose("3"))).isPresent());
+					assertTrue(storage.head(EventStreamId.forContext("account").withPurpose("3")).isPresent());
 				}
 			}
 		}
@@ -194,7 +193,7 @@ public class PostgresRestoredIntoYoungerClusterTest {
 					.dataSource(dataSource)
 					.initializeDatabase()
 					.build() ) {
-				storage.append(AppendCriteria.none(), Optional.of(EventStreamId.forContext("account").withPurpose("1")),
+				storage.append(AppendCriteria.none(), EventStreamId.forContext("account").withPurpose("1"),
 					List.of(new EventToStore(EventStreamId.forContext("account").withPurpose("1"), new EventType("Opened"), "{}", Tags.none(), null)));
 			}
 			return dataSource;

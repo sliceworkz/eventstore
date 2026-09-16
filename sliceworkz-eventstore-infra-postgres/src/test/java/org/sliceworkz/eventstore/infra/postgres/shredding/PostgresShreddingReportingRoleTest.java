@@ -117,8 +117,6 @@ public class PostgresShreddingReportingRoleTest {
 				assertInstanceOf(KeyResolution.Denied.class, reportingKeys.resolveKey(alicesKey));
 				assertInstanceOf(KeyResolution.Denied.class, reportingKeys.resolveKey(bobsKey));
 				assertInstanceOf(Unsealed.Withheld.class, reportingCodec.open(alicesValue));
-				// the two-answer method cannot say "denied" and must not say "erased"
-				assertThrows(ShreddingException.class, () -> reportingKeys.resolve(alicesKey));
 
 				// the audit, every statement of it
 				ShreddingAudit audit = reportingKeys.audit().orElseThrow();

@@ -36,13 +36,12 @@ import javax.crypto.SecretKey;
  *       under concurrency: two threads appending for the same subject at the same moment must end up
  *       with one key, not two. A subject whose key was shredded gets a <em>new</em> key, so data
  *       appended after an erasure is readable again — the old ciphertext stays unreadable.</li>
- *   <li><b>{@link #resolve} answers empty only for a destroyed key.</b> See below; this is the one
- *       contract that must not be got wrong. A key id this store has never held is not a destroyed
- *       key: that throws too, see further below.</li>
- *   <li><b>{@link #resolveKey} is the same lookup with a third answer</b>, {@link KeyResolution.Denied}:
- *       the key exists and this caller may not have it. Its default derives the other two answers from
- *       {@link #resolve}, so a store written before it existed keeps working; a store that can tell a
- *       refusal from an outage overrides it, see below.</li>
+ *   <li><b>{@link #resolveKey} answers {@link KeyResolution.Erased} only for a destroyed key.</b> See
+ *       below; this is the one contract that must not be got wrong. A key id this store has never held
+ *       is not a destroyed key: that throws too, see further below.</li>
+ *   <li><b>{@link KeyResolution.Denied} is its third answer</b>: the key exists and this caller may not
+ *       have it. A store with no notion of entitlement never answers it; one that can tell a refusal
+ *       from an outage does, see below.</li>
  *   <li><b>{@link #shred} is idempotent</b> and returns what it actually destroyed, so a second erasure
  *       for the same subject reports an empty list rather than failing.</li>
  *   <li><b>Key material is never resurrected.</b> Destroying a key means the bytes are gone; keep the
@@ -51,12 +50,12 @@ import javax.crypto.SecretKey;
  *       an unknown key throws, is also what keeps the erased subject's events readable at all.</li>
  * </ul>
  *
- * <h2>Empty means erased; unavailable means throw</h2>
- * {@link #resolve} returns an empty {@link Optional} <em>only</em> when the key genuinely no longer
- * exists. Every other failure — an unreachable Vault, an expired token, a timeout, a permissions
- * problem — must throw {@link ShreddingException}.
+ * <h2>Erased means erased; unavailable means throw</h2>
+ * {@link #resolveKey} answers {@link KeyResolution.Erased} <em>only</em> when the key genuinely no
+ * longer exists. Every other failure — an unreachable Vault, an expired token, a timeout — must throw
+ * {@link ShreddingException}; a permissions problem is the third answer, below.
  * <p>
- * Collapsing the two is the most damaging mistake an implementation can make. Reported as empty, a
+ * Collapsing the two is the most damaging mistake an implementation can make. Reported as erased, a
  * transient outage renders every protected value as erased; projections are at-least-once and advance
  * a bookmark past what they have handled, so they write those gaps into read models and never revisit
  * them. A five-minute outage becomes permanent, silent data loss in every downstream copy. Reported as
@@ -66,7 +65,7 @@ import javax.crypto.SecretKey;
  * <h2>Denied is a third answer, and it is not an outage either</h2>
  * A key store fronting a KMS or a database with per-role privileges will meet a caller that is not
  * entitled to a key: a 403 from Vault, {@code insufficient_privilege} from PostgreSQL. That is neither an
- * erasure nor a failure. Reported as empty, the value reads as {@link Shreddable.Shredded} and a
+ * erasure nor a failure. Reported as erased, the value reads as {@link Shreddable.Shredded} and a
  * projection renders "erased" for data that is not. Reported as a {@link ShreddingException}, it means
  * "retry later", and a projector that is simply not entitled fails its batch and never advances. So
  * {@link #resolveKey} has {@link KeyResolution.Denied} for it, which the read path turns into
@@ -74,9 +73,10 @@ import javax.crypto.SecretKey;
  * <p>
  * The three answers are a sealed type rather than an exception hierarchy so that an implementation has
  * to name which one it means, and so that a {@code catch (ShreddingException)} retry loop cannot swallow
- * a refusal by accident. {@link #resolve} keeps its two-answer contract and is what older codecs call;
- * a store that overrides {@link #resolveKey} should make {@link #resolve} throw for a denial, since a
- * caller of the old method cannot represent one.
+ * a refusal by accident. There is deliberately no two-answer lookup beside it — an
+ * {@code Optional<SecretKey>} that a default derives the three answers from. Such a method cannot say
+ * denied, so the derived default never would, and a key store written against it would implement what
+ * nothing calls and inherit an answer it never chose. One method, three answers, is the whole seam.
  * <p>
  * This is where the <em>hard</em> boundary lives. A key store's refusal is enforced by whatever holds
  * the keys — a KMS policy per service role, column privileges on the key table — and cannot be argued
@@ -142,25 +142,13 @@ public interface ShreddingKeyStore extends AutoCloseable {
 	ActiveKey keyFor ( DataSubject subject );
 
 	/**
-	 * The key material for a key id, or empty if that key has been destroyed.
-	 * <p>
-	 * Called on the read path, once per distinct key id in the events being read. Implementations are
-	 * expected to cache; see {@link ShreddingCodec} for what that costs in erasure latency.
-	 *
-	 * @param key the key id taken from a sealed envelope
-	 * @return the key material, or empty if the key was shredded
-	 * @throws ShreddingException if the key store cannot be reached, or holds no key of that id and never
-	 *                            has — never for a destroyed key
-	 */
-	Optional<SecretKey> resolve ( KeyId key );
-
-	/**
 	 * The key material for a key id, or why this caller does not get it.
 	 * <p>
-	 * The read path calls this, not {@link #resolve}. The default answers {@link KeyResolution.Resolved}
-	 * or {@link KeyResolution.Erased} from {@link #resolve} and never {@link KeyResolution.Denied}, so a
-	 * store that has no notion of entitlement need not override it. One that has — a KMS, a database role
-	 * without the privilege — overrides this to return {@code Denied} for a refusal, and keeps throwing
+	 * Called on the read path, once per distinct key id in the events being read. Implementations are
+	 * expected to cache; see {@link ShreddingCodec} for what that costs in erasure latency. A store
+	 * that has no notion of entitlement answers {@link KeyResolution.Resolved} or
+	 * {@link KeyResolution.Erased} and nothing else. One that has — a KMS, a database role without the
+	 * privilege — answers {@link KeyResolution.Denied} for a refusal, and keeps throwing
 	 * {@link ShreddingException} for everything that a retry might fix.
 	 *
 	 * @param key the key id taken from a sealed envelope
@@ -168,9 +156,7 @@ public interface ShreddingKeyStore extends AutoCloseable {
 	 * @throws ShreddingException if the key store cannot be reached, or holds no key of that id and never
 	 *                            has — never for a destroyed or denied key
 	 */
-	default KeyResolution resolveKey ( KeyId key ) {
-		return resolve(key).<KeyResolution>map(KeyResolution.Resolved::new).orElse(KeyResolution.Erased.INSTANCE);
-	}
+	KeyResolution resolveKey ( KeyId key );
 
 	/**
 	 * Destroys every key held for a subject under the subject's {@link DataSubject#category() category},

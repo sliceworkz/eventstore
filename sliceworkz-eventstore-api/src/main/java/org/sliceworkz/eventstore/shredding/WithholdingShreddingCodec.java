@@ -17,7 +17,6 @@
  */
 package org.sliceworkz.eventstore.shredding;
 
-import java.util.Optional;
 
 /**
  * The codec behind {@link ShreddingCodec#withholdingAll()}: no keys, no key store, every protected
@@ -48,12 +47,6 @@ final class WithholdingShreddingCodec implements ShreddingCodec {
 		throw new ShreddingException(
 				"cannot seal a value for subject %s: this store's codec holds no keys (ShreddingCodec.withholdingAll()) and is for reading only"
 						.formatted(subject));
-	}
-
-	@Override
-	public Optional<String> unseal ( Sealed sealed ) {
-		// Cannot say "withheld", and must not say "erased".
-		throw new ShreddingException(REASON + "; read it through open(Sealed), which can say so");
 	}
 
 	@Override

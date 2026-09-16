@@ -29,7 +29,6 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 import javax.sql.DataSource;
@@ -42,6 +41,7 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.query.Limit;
@@ -165,11 +165,11 @@ public class PostgresCursorBoundaryTest {
 						"the inverted event must count as happening after the reference");
 
 				assertThrows(OptimisticLockingException.class,
-						() -> storage.append(AppendCriteria.of(boundary, reference), Optional.of(stream),
+						() -> storage.append(AppendCriteria.of(boundary, reference), stream,
 								List.of(event(stream, "MoneyWithdrawn", tags))),
 						"the DCB check must see an event that sorts after a stale reference");
 
-				assertEquals(1, storage.append(AppendCriteria.of(boundary, inverted), Optional.of(stream),
+				assertEquals(1, storage.append(AppendCriteria.of(boundary, inverted), stream,
 						List.of(event(stream, "MoneyWithdrawn", tags))).size(),
 						"appending against the current reference must still succeed");
 			} finally {
@@ -236,7 +236,7 @@ public class PostgresCursorBoundaryTest {
 				for ( int i = 0; i < SEED_BATCH; i++ ) {
 					events.add(event(stream, "StockReserved", tags));
 				}
-				storage.append(AppendCriteria.none(), Optional.of(stream), events);
+				storage.append(AppendCriteria.none(), stream, events);
 			}
 		}
 
@@ -248,7 +248,7 @@ public class PostgresCursorBoundaryTest {
 		private void invert ( PostgresEventStorageImpl storage, DataSource dataSource, String prefix,
 				EventStreamId stream, Tags tags ) throws SQLException {
 			long reserved = reserveNextPosition(dataSource, prefix);
-			storage.append(AppendCriteria.none(), Optional.of(stream),
+			storage.append(AppendCriteria.none(), stream,
 					List.of(event(stream, "StockReserved", tags)));
 			insertAtPosition(dataSource, prefix, reserved, stream, "StockPicked", tags);
 		}
@@ -256,8 +256,8 @@ public class PostgresCursorBoundaryTest {
 		/** Reads through the store, with the given cursor, limit, direction and {@code until}. */
 		private List<StoredEvent> read ( PostgresEventStorageImpl storage, EventStreamId stream,
 				EventReference cursor, Limit limit, QueryDirection direction, EventReference until ) {
-			EventQuery query = until == null ? EventQuery.matchAll() : EventQuery.matchAll().until(until);
-			return storage.query(query, Optional.of(stream), cursor, limit, direction).toList();
+			EventFilter filter = until == null ? EventFilter.matchAll() : EventFilter.matchAll().until(until);
+			return storage.query(filter, stream, cursor, limit, direction).toList();
 		}
 
 		/** Pages the whole stream, carrying a cursor, and answers what it visited. */

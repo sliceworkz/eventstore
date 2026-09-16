@@ -40,6 +40,7 @@ import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
@@ -313,7 +314,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 			Collections.singletonList(Event.of(new SecondDomainEvent("2"), Tags.none()))); // no key
 
 		List<EventStorage.StoredEvent> stored = eventStorage()
-			.query(EventQuery.matchAll(), Optional.of(stream), null, Limit.none())
+			.query(EventFilter.matchAll(), stream, null, Limit.none())
 			.toList();
 
 		assertEquals(2, stored.size());

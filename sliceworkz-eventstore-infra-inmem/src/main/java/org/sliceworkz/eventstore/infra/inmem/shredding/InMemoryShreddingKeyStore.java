@@ -109,7 +109,7 @@ public class InMemoryShreddingKeyStore implements ShreddingKeyStore {
 	}
 
 	@Override
-	public synchronized Optional<SecretKey> resolve ( KeyId key ) {
+	public synchronized KeyResolution resolveKey ( KeyId key ) {
 		if ( key == null ) {
 			throw new IllegalArgumentException("key cannot be null");
 		}
@@ -123,7 +123,8 @@ public class InMemoryShreddingKeyStore implements ShreddingKeyStore {
 					"key %s is not held by this key store and never was: the value was sealed against another key store. Point this store at the keys the events were sealed with, or import the keys alongside the events."
 							.formatted(key));
 		}
-		return Optional.ofNullable(stored.material());
+		// a shredded row keeps its id and loses its material: that, and only that, is "erased"
+		return stored.material() == null ? KeyResolution.Erased.INSTANCE : new KeyResolution.Resolved(stored.material());
 	}
 
 	@Override

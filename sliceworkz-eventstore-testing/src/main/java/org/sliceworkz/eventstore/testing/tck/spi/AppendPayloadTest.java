@@ -22,10 +22,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
-import java.util.Optional;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.query.EventQuery;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
@@ -56,11 +55,11 @@ public class AppendPayloadTest extends AbstractEventStoreTest {
 	}
 
 	private List<StoredEvent> append ( EventToStore... events ) {
-		return eventStorage().append(AppendCriteria.none(), Optional.of(stream), List.of(events));
+		return eventStorage().append(AppendCriteria.none(), stream, List.of(events));
 	}
 
 	private List<StoredEvent> allEvents ( ) {
-		return eventStorage().query(EventQuery.matchAll(), Optional.of(stream), null, Limit.none(), QueryDirection.FORWARD).toList();
+		return eventStorage().query(EventFilter.matchAll(), stream, null, Limit.none(), QueryDirection.FORWARD).toList();
 	}
 
 	@ForEachBackend

@@ -74,7 +74,6 @@ import org.sliceworkz.eventstore.events.Lease;
 import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventFilter;
-import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventFilterItem;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec;
@@ -1399,10 +1398,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 	}
 
 	@Override
-	public Stream<StoredEvent> query(EventQuery query, Optional<EventStreamId> stream, EventReference after, Limit limit, QueryDirection direction ) {
+	public Stream<StoredEvent> query(EventFilter filter, EventStreamId stream, EventReference after, Limit limit, QueryDirection direction ) {
 		checkNotClosed();
-		// Handle the case where query matches none - return empty stream
-		if (query.isMatchNone()) {
+		requireStream(stream);
+		// Handle the case where the filter matches none - return empty stream
+		if (filter.isMatchNone()) {
 			return Stream.empty();
 		}
 
@@ -1423,23 +1423,14 @@ public class PostgresEventStorageImpl implements EventStorage {
 		// Seek past the reference if one is provided (exclusive)
 		addCursorBoundary(sqlBuilder, parameters, after, direction);
 
-		addUntilBoundary(sqlBuilder, parameters, query.until());
+		addUntilBoundary(sqlBuilder, parameters, filter.until());
 
-		// Add stream filtering
-		if (stream.isPresent()) {
-			if (!stream.get().isAnyContext()) {
-				sqlBuilder.append(" AND stream_context = ?");
-				parameters.add(stream.get().context());
-			}
-			if (!stream.get().isAnyPurpose()) {
-				sqlBuilder.append(" AND stream_purpose = ?");
-				parameters.add(stream.get().purpose());
-			}
-		}
+		// Add stream filtering: a wildcard component binds nothing, so the wildcard stream reads the whole table
+		addStreamScope(sqlBuilder, parameters, stream);
 		
 		// Add EventFilter filtering (event types and tags)
-		if (!query.isMatchAll()) {
-			addEventFilterFiltering(sqlBuilder, parameters, query.filter());
+		if (!filter.isMatchAll()) {
+			addEventFilterFiltering(sqlBuilder, parameters, filter);
 		}
 		
 		// Order by position
@@ -1891,11 +1882,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * and PostgreSQL's advisory lock space is global to the database — but they can only make two
 	 * unrelated appends take turns, never let a real conflict through.
 	 */
-	long appendLockKey ( Optional<EventStreamId> streamId ) {
+	long appendLockKey ( EventStreamId streamId ) {
 
 		String scope = ANY_STREAM_SCOPE;
-		if ( streamId.isPresent() && !streamId.get().isAnyContext() && !streamId.get().isAnyPurpose() ) {
-			scope = streamId.get().context() + UNIT_SEPARATOR + streamId.get().purpose();
+		if ( !streamId.isAnyContext() && !streamId.isAnyPurpose() ) {
+			scope = streamId.context() + UNIT_SEPARATOR + streamId.purpose();
 		}
 
 		return advisoryLockKey(scope);
@@ -1972,8 +1963,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * server-side {@code uuidv7()}, and {@code RETURNING} cannot return a source-only ordinal to key on.
 	 */
 	@Override
-	public List<StoredEvent> append(AppendCriteria appendCriteria, Optional<EventStreamId> streamId, List<EventToStore> events) {
+	public List<StoredEvent> append(AppendCriteria appendCriteria, EventStreamId streamId, List<EventToStore> events) {
 		checkNotClosed();
+		requireStream(streamId);
 		rejectRepeatedIdempotencyKeys(events);
 		List<StoredEvent> storedEvents = new ArrayList<>();
 
@@ -2040,16 +2032,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 
 				// Add stream filtering
-				if (streamId.isPresent()) {
-					if (!streamId.get().isAnyContext()) {
-						sqlBuilder.append(" AND stream_context = ?");
-						parameters.add(streamId.get().context());
-					}
-					if (!streamId.get().isAnyPurpose()) {
-						sqlBuilder.append(" AND stream_purpose = ?");
-						parameters.add(streamId.get().purpose());
-					}
-				}
+				addStreamScope(sqlBuilder, parameters, streamId);
 
 				if ( appendCriteria.expectedLastEventReference().isPresent() ) {
 
@@ -2154,7 +2137,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 						return deduplicatedOrConflicting(writeConnection, events, e);
 					} else if ( isLockTimeout(e) ) {
 						throw new EventStorageException(lockTimedOut(
-								"conditional append to " + streamId.map(EventStreamId::toString).orElse("any stream"),
+								"conditional append to " + streamId,
 								"the stream's append lock"), e);
 					} else {
 						throw new EventStorageException("SQLException during append", e);
@@ -2572,7 +2555,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	}
 
 	/**
-	 * The statement behind {@link #head(Optional)}: the reference columns only, off
+	 * The statement behind {@link #head(EventStreamId)}: the reference columns only, off
 	 * {@code idx_events_stream_position} walked backwards — off {@code idx_events_context_tx_position}
 	 * when only the context is bound, off {@code idx_events_tx_position}, the global
 	 * {@code (event_tx, event_position)} order, for a wildcard stream — behind the same
@@ -2580,7 +2563,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * can pin its shape — that it reads no payload and sits behind the barrier are properties nothing
 	 * else would notice.
 	 */
-	static String headSql ( String prefix, Optional<EventStreamId> stream ) {
+	static String headSql ( String prefix, EventStreamId stream ) {
 		StringBuilder sql = new StringBuilder();
 		sql.append(
 			"""
@@ -2589,16 +2572,37 @@ public class PostgresEventStorageImpl implements EventStorage {
 				WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 			""".formatted(prefix)
 			);
-		if ( stream.isPresent() ) {
-			if ( !stream.get().isAnyContext() ) {
-				sql.append(" AND stream_context = ?");
-			}
-			if ( !stream.get().isAnyPurpose() ) {
-				sql.append(" AND stream_purpose = ?");
-			}
-		}
+		addStreamScope(sql, new ArrayList<>(), stream);
 		sql.append(" ORDER BY event_tx::xid8 DESC, event_position DESC LIMIT 1");
 		return sql.toString();
+	}
+
+	/**
+	 * Binds the stream columns a stream scope fixes: the context unless it is the wildcard, the purpose
+	 * unless it is the wildcard. The wildcard stream ({@link EventStreamId#anyContext()}) binds nothing
+	 * and so scopes a statement to the whole table. Every statement scoped by a stream -- a query, the
+	 * lock check of a conditional append, the head -- goes through here, so the three agree on what a
+	 * wildcard component means.
+	 */
+	private static void addStreamScope ( StringBuilder sql, List<Object> parameters, EventStreamId stream ) {
+		if ( !stream.isAnyContext() ) {
+			sql.append(" AND stream_context = ?");
+			parameters.add(stream.context());
+		}
+		if ( !stream.isAnyPurpose() ) {
+			sql.append(" AND stream_purpose = ?");
+			parameters.add(stream.purpose());
+		}
+	}
+
+	/**
+	 * The stream scope of a read or a check is never absent: the whole storage is
+	 * {@link EventStreamId#anyContext()}, which {@link #addStreamScope} binds as no column at all.
+	 */
+	private static void requireStream ( EventStreamId stream ) {
+		if ( stream == null ) {
+			throw new IllegalArgumentException("stream cannot be null; use EventStreamId.anyContext() for the whole storage");
+		}
 	}
 
 	/**
@@ -2611,21 +2615,20 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * for. {@code PostgresVisibilityStallTest} pins it.
 	 */
 	@Override
-	public Optional<EventReference> head ( Optional<EventStreamId> stream ) {
+	public Optional<EventReference> head ( EventStreamId stream ) {
 		checkNotClosed();
+		requireStream(stream);
 		String sql = headSql(prefix, stream);
 
 		try ( Connection readConnection = dataSource.getConnection() ) {
 			readConnection.setAutoCommit(true);
 			try ( PreparedStatement stmt = readConnection.prepareStatement(sql) ) {
 				int parameter = 1;
-				if ( stream.isPresent() ) {
-					if ( !stream.get().isAnyContext() ) {
-						stmt.setString(parameter++, stream.get().context());
-					}
-					if ( !stream.get().isAnyPurpose() ) {
-						stmt.setString(parameter++, stream.get().purpose());
-					}
+				if ( !stream.isAnyContext() ) {
+					stmt.setString(parameter++, stream.context());
+				}
+				if ( !stream.isAnyPurpose() ) {
+					stmt.setString(parameter++, stream.purpose());
 				}
 				try ( ResultSet rs = stmt.executeQuery() ) {
 					if ( rs.next() ) {

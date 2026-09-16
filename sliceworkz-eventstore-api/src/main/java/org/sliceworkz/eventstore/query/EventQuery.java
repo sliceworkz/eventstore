@@ -429,7 +429,7 @@ public record EventQuery ( EventFilter filter, Direction direction, Limit limit 
 	 * Creates a new EventQuery with the specified "until" reference.
 	 * The resulting query will only match events up to and including the specified reference.
 	 *
-	 * @param until the reference to query up to (events after this reference will not match)
+	 * @param until the reference to query up to (events after this reference will not match), or null for no boundary
 	 * @return a new EventQuery with the "until" reference set
 	 */
 	public EventQuery until ( EventReference until ) {

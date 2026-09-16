@@ -28,7 +28,6 @@ import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
-import java.util.Optional;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -39,6 +38,7 @@ import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec.Sealed;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec.Unsealed;
+import org.sliceworkz.eventstore.shredding.ShreddingKeyStore.KeyResolution;
 
 /**
  * What the shipped codec refuses to seal, and what it still opens: a key that is not 256-bit AES
@@ -227,11 +227,11 @@ public class AesGcmShreddingCodecTest {
 		}
 
 		@Override
-		public Optional<SecretKey> resolve ( KeyId requested ) {
+		public KeyResolution resolveKey ( KeyId requested ) {
 			if ( !id.equals(requested) ) {
 				throw new ShreddingException("this store never held " + requested);
 			}
-			return Optional.of(key);
+			return new KeyResolution.Resolved(key);
 		}
 
 		@Override

@@ -26,7 +26,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 
-import javax.crypto.SecretKey;
 
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
@@ -106,8 +105,8 @@ public class HeadTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void anEmptyStreamHasNoHead ( ) {
 		assertTrue(stream().head().isEmpty(), "an empty stream has no head");
-		assertTrue(eventStorage().head(Optional.of(streamId)).isEmpty(), "an empty stream has no head at the SPI either");
-		assertTrue(eventStorage().head(Optional.empty()).isEmpty(), "an empty storage has no head");
+		assertTrue(eventStorage().head(streamId).isEmpty(), "an empty stream has no head at the SPI either");
+		assertTrue(eventStorage().head(EventStreamId.anyContext()).isEmpty(), "an empty storage has no head");
 	}
 
 	@ForEachBackend
@@ -123,7 +122,7 @@ public class HeadTest extends AbstractEventStoreTest {
 		assertEquals(Optional.of(c.reference()), stream.head(), "the head must move with every append");
 		assertEquals(stream.query(EventQuery.matchAll()).toList().getLast().reference(), stream.head().orElseThrow(),
 				"the head is the last event a full read returns");
-		assertEquals(stream.head(), eventStorage().head(Optional.of(streamId)),
+		assertEquals(stream.head(), eventStorage().head(streamId),
 				"the stream and the SPI must agree on the head");
 	}
 
@@ -145,7 +144,7 @@ public class HeadTest extends AbstractEventStoreTest {
 		assertEquals(Optional.of(c.reference()),
 				eventStore().<MockDomainEvent>getEventStream(EventStreamId.anyContext().anyPurpose(), MockDomainEvent.class).head(),
 				"the wildcard stream answers the storage-wide head");
-		assertEquals(Optional.of(c.reference()), eventStorage().head(Optional.empty()),
+		assertEquals(Optional.of(c.reference()), eventStorage().head(EventStreamId.anyContext()),
 				"no stream at the SPI means the storage-wide head");
 	}
 
@@ -231,7 +230,7 @@ public class HeadTest extends AbstractEventStoreTest {
 		assertEquals(0, head.index(), "the head is the stored event's own reference");
 		assertEquals(all.get(1).reference(), head, "the stored reference is the first event it upcasts into");
 		assertEquals(head.withIndex(1), all.get(2).reference(), "fixture: the second event it upcasts into");
-		assertEquals(head, eventStorage().head(Optional.of(streamId)).orElseThrow());
+		assertEquals(head, eventStorage().head(streamId).orElseThrow());
 
 		// until bounds stored events: every event the head upcasts into is at or before it
 		assertEquals(references(all.stream()), references(current.query(EventQuery.matchAll().until(head))),
@@ -368,11 +367,11 @@ public class HeadTest extends AbstractEventStoreTest {
 		}
 
 		@Override
-		public Optional<SecretKey> resolve ( KeyId key ) {
+		public KeyResolution resolveKey ( KeyId key ) {
 			if ( failing ) {
 				throw new ShreddingException("simulated key store outage");
 			}
-			return delegate.resolve(key);
+			return delegate.resolveKey(key);
 		}
 
 		@Override

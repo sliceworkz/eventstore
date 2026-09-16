@@ -27,7 +27,6 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.query.EventFilter;
-import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventToImport;
@@ -43,8 +42,8 @@ public class EventStoreImporterBuilderTest {
 	private static EventStorage aStorage ( ) {
 		return new EventStorage() {
 			@Override public String name ( ) { return "stub"; }
-			@Override public Stream<StoredEvent> query ( EventQuery query, Optional<EventStreamId> stream, EventReference after, Limit limit, QueryDirection queryDirection ) { return Stream.empty(); }
-			@Override public List<StoredEvent> append ( AppendCriteria appendCriteria, Optional<EventStreamId> stream, List<EventToStore> events ) { return List.of(); }
+			@Override public Stream<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit, QueryDirection queryDirection ) { return Stream.empty(); }
+			@Override public List<StoredEvent> append ( AppendCriteria appendCriteria, EventStreamId stream, List<EventToStore> events ) { return List.of(); }
 			@Override public Optional<StoredEvent> getEventById ( org.sliceworkz.eventstore.events.EventId id ) { return Optional.empty(); }
 			@Override public void bookmark ( String reader, EventReference reference, org.sliceworkz.eventstore.events.Tags tags ) { }
 			@Override public Optional<EventReference> getBookmark ( String reader ) { return Optional.empty(); }

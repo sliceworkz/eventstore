@@ -81,11 +81,13 @@ import io.micrometer.core.instrument.Metrics;
  * <strong>Table Prefixing:</strong><br>
  * Table prefixes enable multiple isolated event stores within the same database schema. The prefix must:
  * <ul>
- *   <li>Contain only alphanumeric characters and underscores</li>
+ *   <li>Contain only alphanumeric characters and underscores, and not start with a digit</li>
  *   <li>End with an underscore (e.g., "tenant1_", "test_")</li>
  *   <li>Be 32 characters or less</li>
  * </ul>
- * Tables created with a prefix include: {@code PREFIX_events}, {@code PREFIX_bookmarks}.
+ * Tables created with a prefix include: {@code PREFIX_events}, {@code PREFIX_bookmarks}. The prefix is
+ * an unquoted SQL identifier, so PostgreSQL folds it to lowercase, and the builder does the same: a
+ * prefix of {@code "Tenant_"} names the tables {@code tenant_events} and {@code tenant_bookmarks}.
  *
  * <h2>Basic Usage Example:</h2>
  * <pre>{@code
@@ -348,16 +350,23 @@ public interface PostgresEventStorage {
 		 * <strong>Prefix requirements:</strong>
 		 * <ul>
 		 *   <li>Must contain only alphanumeric characters and underscores</li>
+		 *   <li>Must not start with a digit</li>
 		 *   <li>Must end with an underscore (e.g., "tenant1_", "test_")</li>
 		 *   <li>Must be 32 characters or less</li>
 		 *   <li>Can be empty string for no prefix</li>
 		 * </ul>
 		 * <p>
 		 * Example table names with prefix "tenant1_": {@code tenant1_events}, {@code tenant1_bookmarks}
+		 * <p>
+		 * The prefix is used as an unquoted identifier, which PostgreSQL folds to lowercase, so the
+		 * prefix is folded too: {@code "Tenant_"} and {@code "tenant_"} are the same store, on the
+		 * tables {@code tenant_events} and {@code tenant_bookmarks}, and the log lines, the lock keys and
+		 * the notification channels all carry the folded name. Nothing about the database is
+		 * case-sensitive here, and nothing in this builder is either.
 		 *
 		 * @param prefix the table name prefix, or empty string for no prefix
 		 * @return this Builder for method chaining
-		 * @throws IllegalArgumentException if prefix does not meet requirements
+		 * @throws IllegalArgumentException if prefix does not meet requirements; raised by {@link #build()}
 		 */
 		public Builder prefix ( String prefix ) {
 			this.prefix = prefix;
@@ -769,6 +778,10 @@ public interface PostgresEventStorage {
 			}
 
 			try {
+				// validated and folded once, here, so the key store and the storage name the same table:
+				// the storage folds it again in its constructor, but the key store takes it as given
+				String prefix = PostgresEventStorageImpl.validatePrefix(this.prefix);
+
 				boolean nativeUuidv7 = detectsNativeUuidv7Support(dataSource);
 
 				// a key store on "this store's own database" can only be created once the DataSource is

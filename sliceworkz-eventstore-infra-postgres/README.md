@@ -178,7 +178,8 @@ whatever its limit:
 
 - `idx_events_tx_position` on `(event_tx, event_position)`: a wildcard stream
   (`EventStreamId.anyContext()`) paged by a store-wide projection or an export, `head()` of the
-  whole store, an unscoped `EventStoreImporter` run.
+  whole store, an unscoped `EventStoreImporter` run — and the restored-history check every start
+  runs (see "Backup and restore"), which without it is a scan of the table on every boot.
 - `idx_events_context_tx_position` on `(stream_context, event_tx, event_position)`: a read that
   binds the context and leaves the purpose open — a whole-context replay or export over a
   per-entity layout, where every entity is its own purpose.
@@ -299,15 +300,21 @@ restored bookmark. The 32-bit wraparound itself is not the issue — `xid8` neve
 and freezing does not touch stored values — the counter is simply younger than the data.
 
 **The store refuses to start in that state.** `build()` checks, whatever the `DatabaseInitMode`,
-that no stream head carries a transaction id at or above the next id the cluster will assign
-(`pg_snapshot_xmax(pg_current_snapshot())` — never `pg_current_xact_id()`, which would assign an id
-to the checking connection and make startup the kind of writing transaction the visibility notes
-warn about). No append can produce such a row, so a hit is unambiguous, and it is fatal: the storage
-is closed and `build()` throws an `EventStorageException` naming the highest stored id, the cluster's
-next id, how many streams are affected and the three remedies below. The check is a recursive
-loose-index walk over `idx_events_stream_position` — a probe per stream, each O(log n), no scan of
-the events table, no sort — so it costs milliseconds on every start whatever the store holds.
-`PostgresRestoredIntoYoungerClusterTest` pins the refusal, the closed storage, and the plan shape.
+that the newest stored event in the `(event_tx, event_position)` order does not carry a transaction
+id at or above the next id the cluster will assign (`pg_snapshot_xmax(pg_current_snapshot())` —
+never `pg_current_xact_id()`, which would assign an id to the checking connection and make startup
+the kind of writing transaction the visibility notes warn about). No append can produce such a row,
+so a hit is unambiguous, and it is fatal: the storage is closed and `build()` throws an
+`EventStorageException` naming the highest stored id, the cluster's next id, how many events and
+streams are affected and the three remedies below. The check is one probe off
+`idx_events_tx_position`, the global order, walked backwards from its last leaf — no scan of the
+events table, no sort, and no walk of the streams, which on a per-entity layout would be a probe per
+entity on every start — so it costs well under a millisecond whatever the store holds; the count of
+affected events and streams is a second statement, a range walk over the same index, run only once
+the probe has found the store ahead of the cluster. A database created before that index existed
+and not yet migrated (see "Migrating a database created before the order indexes existed") answers
+the check with a scan of the table under `NONE`. `PostgresRestoredIntoYoungerClusterTest` pins the
+refusal, the closed storage, and the plan shape.
 What the check cannot catch is a store already appended to after such a restore *and* since had its
 counter moved past the history: those low-id events stay mis-ordered, and nothing distinguishes them
 from ordinary ones any more — which is why it is worth catching on the first start.

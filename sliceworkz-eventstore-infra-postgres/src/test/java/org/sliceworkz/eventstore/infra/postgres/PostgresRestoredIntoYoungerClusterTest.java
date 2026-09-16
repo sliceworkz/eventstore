@@ -65,8 +65,9 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
  * failure names the remedies, that a store already appended to after the restore is still reported
  * (the newest-position row is then an ordinary low-tx event, so a check reading only that row would
  * pass), that the failed storage is closed rather than left with its monitors running, that an
- * ordinary store is untouched by the check, and that the check walks the stream index rather than
- * scanning the table — since it runs on every start.
+ * ordinary store is untouched by the check, and that the check is one probe off the global order
+ * index rather than a walk of the streams or a scan of the table — since it runs on every start, on
+ * stores whose per-entity layout can hold millions of streams.
  */
 public class PostgresRestoredIntoYoungerClusterTest {
 
@@ -96,14 +97,14 @@ public class PostgresRestoredIntoYoungerClusterTest {
 				assertTrue(e.getMessage().contains("pg_resetwal"), "the error should name the counter remedy: " + e.getMessage());
 				assertTrue(e.getMessage().contains("EventStoreImporter"), "the error should name the import remedy: " + e.getMessage());
 				assertTrue(e.getMessage().contains("physical backup"), "the error should say what would have avoided it: " + e.getMessage());
-				assertTrue(e.getMessage().contains("1 stream"), "the error should say how much of the store is affected: " + e.getMessage());
+				assertTrue(e.getMessage().contains("1 event(s) across 1 stream"), "the error should say how much of the store is affected: " + e.getMessage());
 			}
 		}
 
 		/**
 		 * The case that decides how the check has to be written. Once something has been appended to the
 		 * restored store, the row at the newest position is an ordinary event with a low transaction id;
-		 * only the stream heads by <em>transaction id</em> still show the restored history above the
+		 * only the newest row by <em>transaction id</em> still shows the restored history above the
 		 * counter — and that is exactly the state to keep reporting, since it is now the ordering that
 		 * is broken and not only the visibility.
 		 */
@@ -125,6 +126,8 @@ public class PostgresRestoredIntoYoungerClusterTest {
 					.databaseInitMode(DatabaseInitMode.NONE)
 					.build());
 			assertTrue(e.getMessage().contains("pg_resetwal"), e.getMessage());
+			assertTrue(e.getMessage().contains("1 event(s) across 1 stream"),
+				"only the restored row is above the counter; the appended one is not: " + e.getMessage());
 		}
 
 		/** A storage that failed to start is closed: nothing keeps listening behind a handle nobody got. */
@@ -163,13 +166,16 @@ public class PostgresRestoredIntoYoungerClusterTest {
 		}
 
 		/**
-		 * The check runs on every start, so it has to be a handful of index probes whatever the store
-		 * holds: the stream enumeration and each head off {@code idx_events_stream_position}, never a
-		 * scan of the table and never a sort. With sequential scans disabled the planner shows whether
-		 * the index <em>can</em> serve every step, which is the property that keeps it bounded.
+		 * The check runs on every start, so it has to cost the same whatever the store holds: one probe
+		 * off {@code idx_events_tx_position}, the global {@code (event_tx, event_position)} order, walked
+		 * backwards from its last leaf — never a scan of the table, never a sort, and never a walk of the
+		 * streams, which on a per-entity layout is a probe per entity. With sequential scans disabled
+		 * the planner shows whether the index <em>can</em> serve it, which is the property that keeps
+		 * it bounded. The detail statement the error is built from runs only once the probe has found
+		 * the store ahead of the cluster, and is a range walk over the same index from that id.
 		 */
 		@Test
-		public void testTheCheckWalksTheStreamIndexAndNeverScansTheTable ( ) throws Exception {
+		public void testTheCheckIsOneProbeOffTheGlobalOrderIndex ( ) throws Exception {
 			String prefix = "guardplan_";
 			DataSource dataSource = prepare(prefix);
 			execute(dataSource, "INSERT INTO " + prefix + "events (event_id, stream_context, stream_purpose, event_type, event_data, event_tags)"
@@ -179,9 +185,20 @@ public class PostgresRestoredIntoYoungerClusterTest {
 			String plan = explain(dataSource, PostgresEventStorageImpl.clusterAheadOfHistorySql(prefix));
 
 			assertFalse(plan.contains("Seq Scan"), "the check must not scan the events table:\n" + plan);
-			assertFalse(plan.contains("Sort"), "every step must come off the index in order:\n" + plan);
-			assertTrue(plan.contains("using " + prefix + "idx_events_stream_position"), "the check must walk the stream position index:\n" + plan);
-			assertTrue(plan.contains("Backward"), "each head is the index walked backwards from the end of its stream:\n" + plan);
+			assertFalse(plan.contains("Sort"), "the newest row must come off the index in order:\n" + plan);
+			assertFalse(plan.contains("Recursive") || plan.contains("Nested Loop"),
+				"the check must not enumerate the streams -- that is a probe per entity on every start:\n" + plan);
+			assertTrue(plan.contains("Backward using " + prefix + "idx_events_tx_position"),
+				"the check is the global order index walked backwards from its end:\n" + plan);
+			assertEquals(1, plan.lines().filter(line -> line.contains("using ")).count(),
+				"one index probe, not one per stream:\n" + plan);
+
+			String detailPlan = explain(dataSource, PostgresEventStorageImpl.historyAheadOfClusterDetailSql(prefix)
+				.replace("?::xid8", "pg_snapshot_xmax(pg_current_snapshot())"));
+
+			assertFalse(detailPlan.contains("Seq Scan"), "the detail must not scan the events table:\n" + detailPlan);
+			assertTrue(detailPlan.contains("using " + prefix + "idx_events_tx_position"),
+				"the detail is a range walk over the global order index from the cluster's next id:\n" + detailPlan);
 		}
 
 		/** A fresh, empty store for the prefix; the storage that created it is closed again. */

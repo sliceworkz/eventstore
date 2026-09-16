@@ -333,7 +333,7 @@ public class EventStoreQueryTest extends AbstractEventStoreTest {
 	}
 
 	private long queryOther ( EventQuery eventQuery ) {
-		return eventStore().getEventStream(EventStreamId.forContext("otherApp").withPurpose("domain")).query(eventQuery).count();
+		return eventStore().getRawEventStream(EventStreamId.forContext("otherApp").withPurpose("domain")).query(eventQuery).count();
 	}
 
 	EphemeralEvent<BankDomainEvent> accountOpened ( String accountId ) {

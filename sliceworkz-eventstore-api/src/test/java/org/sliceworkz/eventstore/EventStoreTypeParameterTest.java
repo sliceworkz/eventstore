@@ -44,7 +44,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Pins that the single-class {@code getEventStream} overloads fix the stream's type parameter.
+ * Pins that the single-class {@code getEventStream} overloads fix the stream's type parameter, and that
+ * {@code getRawEventStream} fixes its own: a read-only {@code EventSource<Object>}, assignable to no
+ * domain-typed stream.
  * <p>
  * The guarantee is a compile-time one, so the only way to test it is to compile: each probe below is
  * handed to javac against this module's classes, and the test asserts which probes it rejects and which it
@@ -57,6 +59,7 @@ public class EventStoreTypeParameterTest {
 	private static final String PROBE_PRELUDE = """
 			import java.util.Set;
 			import org.sliceworkz.eventstore.EventStore;
+			import org.sliceworkz.eventstore.stream.EventSource;
 			import org.sliceworkz.eventstore.stream.EventStream;
 			import org.sliceworkz.eventstore.stream.EventStreamId;
 
@@ -110,7 +113,23 @@ public class EventStoreTypeParameterTest {
 	@Test
 	void theSetOverloadStaysTheWayToTypeAStreamWiderThanItsRoots ( ) {
 		assertAccepted("EventStream<Object> s = store.getEventStream(id, Set.of(CustomerEvent.class));");
-		assertAccepted("EventStream<Object> s = store.getEventStream(id);");
+	}
+
+	@Test
+	void aRawStreamIsAReadOnlySourceOfObjects ( ) {
+		assertAccepted("EventSource<Object> s = store.getRawEventStream(id);");
+	}
+
+	@Test
+	void aRawStreamCannotBeTypedAsADomainStream ( ) {
+		// the trap a free type parameter would leave open: a JSON tree under the domain type, found out
+		// at the first switch over data() as a ClassCastException
+		assertRejected("EventSource<CustomerEvent> s = store.getRawEventStream(id);");
+	}
+
+	@Test
+	void aRawStreamIsNotAnEventStreamBecauseItCannotAppend ( ) {
+		assertRejected("EventStream<Object> s = store.getRawEventStream(id);");
 	}
 
 	private void assertRejected ( String statement ) {

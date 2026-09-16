@@ -46,6 +46,15 @@ package org.sliceworkz.eventstore.stream;
  *   <li>All streams across all contexts: {@code EventStreamId.anyContext()}</li>
  * </ul>
  * <p>
+ * <strong>A wildcard names streams to read, never a stream to write.</strong> An event is stored in
+ * exactly one stream, so a stream opened on a wildcard id is a source: it reads across every stream
+ * the wildcard {@linkplain #canRead(EventStreamId) matches}, and an append through it is refused with
+ * {@link IllegalArgumentException} (see {@link EventSink#append(AppendCriteria, java.util.List)}). To
+ * write to one of the streams it reads, open that stream by its own id. Whether an id is a wildcard is
+ * a property of its value rather than of its type, which is why the refusal is at runtime and a
+ * wildcard stream is still an {@link EventStream}: the same handle reads a context, and reads one of
+ * its streams, depending only on the id it was opened with.
+ * <p>
  * The string representation follows the format "context#purpose", where the '#' separator is omitted
  * if purpose is null (default). Examples: "customer#123", "customer", "" (empty for anyContext).
  *
@@ -68,7 +77,8 @@ package org.sliceworkz.eventstore.stream;
  * @param context the primary identifier for the stream, or null for wildcard matching any context
  * @param purpose the optional secondary identifier, or null for wildcard matching any purpose
  * @see EventStream
- * @see org.sliceworkz.eventstore.EventStore#getEventStream(EventStreamId)
+ * @see org.sliceworkz.eventstore.EventStore#getEventStream(EventStreamId, Class)
+ * @see org.sliceworkz.eventstore.EventStore#getRawEventStream(EventStreamId)
  */
 public record EventStreamId ( String context, String purpose ) {
 
@@ -168,54 +178,6 @@ public record EventStreamId ( String context, String purpose ) {
 	}
 
 	/**
-	 * Checks if this stream ID represents a specific stream that can accept appended events.
-	 * <p>
-	 * Only specific streams (with both context and purpose defined) can accept appends.
-	 * Wildcard streams (anyContext or anyPurpose) are read-only.
-	 *
-	 * @return true if both context and purpose are specified (not wildcards), false otherwise
-	 * @see #isReadOnly()
-	 */
-	public boolean canAppend ( ) {
-		return !isAnyContext() && !isAnyPurpose();
-	}
-
-	/**
-	 * Checks if events can be appended to the specified target stream ID from this stream ID.
-	 * <p>
-	 * This method determines if this stream ID is compatible with the target stream for append operations.
-	 * Compatibility is established when:
-	 * <ul>
-	 *   <li>The two stream IDs are exactly equal, or</li>
-	 *   <li>This stream ID concretizes the target stream (fills in a wildcard purpose)</li>
-	 * </ul>
-	 * <p>
-	 * This is typically used when working with anyPurpose streams that need to append to specific
-	 * stream instances while maintaining stream identity constraints.
-	 *
-	 * @param eventStreamId the target stream ID to check compatibility with
-	 * @return true if events can be appended to the target stream, false otherwise
-	 * @see #concretizes(EventStreamId)
-	 */
-	public boolean canAppendTo ( EventStreamId eventStreamId ) {
-		// only when the same specific stream, or concretization (filled in purpose) of anyPurpose-stream
-		return this.equals(eventStreamId) || this.concretizes(eventStreamId);
-	}
-
-	/**
-	 * Checks if this stream ID is read-only (cannot accept appends).
-	 * <p>
-	 * A stream is read-only if it contains any wildcards (anyContext or anyPurpose).
-	 * Only specific streams with both context and purpose defined can accept appends.
-	 *
-	 * @return true if this stream is read-only (has wildcards), false if it can accept appends
-	 * @see #canAppend()
-	 */
-	public boolean isReadOnly ( ) {
-		return !canAppend();
-	}
-
-	/**
 	 * Determines if this stream ID can read from the specified actual stream ID.
 	 * <p>
 	 * This method implements the wildcard matching logic:
@@ -238,39 +200,6 @@ public record EventStreamId ( String context, String purpose ) {
 			result = false;
 		}
 		return result;
-	}
-
-	/**
-	 * Checks if this stream ID concretizes (fills in the wildcard purpose of) another stream ID.
-	 * <p>
-	 * A stream ID concretizes another stream ID when:
-	 * <ul>
-	 *   <li>The other stream has a wildcard purpose (anyPurpose)</li>
-	 *   <li>The other stream has a specific context (not anyContext)</li>
-	 *   <li>This stream has the same context as the other stream</li>
-	 *   <li>This stream has a specific purpose (not a wildcard)</li>
-	 * </ul>
-	 * <p>
-	 * Example: {@code EventStreamId.forContext("customer").withPurpose("123")} concretizes
-	 * {@code EventStreamId.forContext("customer").anyPurpose()}.
-	 * <p>
-	 * This is useful for scenarios where a general stream (e.g., "customer#anyPurpose") needs to
-	 * append events to specific instances (e.g., "customer#123").
-	 * <p>
-	 * A wildcard concretizes nothing: {@code forContext("customer").anyPurpose()} does <em>not</em>
-	 * concretize itself, or any other wildcard-purpose stream, because it supplies no purpose to fill
-	 * the other's wildcard in with.
-	 *
-	 * @param otherStreamId the stream ID to check if this stream concretizes it
-	 * @return true if this stream ID concretizes the other stream ID, false otherwise
-	 * @see #canAppendTo(EventStreamId)
-	 */
-	public boolean concretizes ( EventStreamId otherStreamId ) {
-		// if the other stream is of the type "<businessObject>#<anyPurpose>" and this is "<businessObject>#<id>"
-		return otherStreamId.isAnyPurpose()
-				&& !otherStreamId.isAnyContext()
-				&& !this.isAnyPurpose()                             // a wildcard fills in nothing
-				&& otherStreamId.context().equals(this.context);
 	}
 
 	/**

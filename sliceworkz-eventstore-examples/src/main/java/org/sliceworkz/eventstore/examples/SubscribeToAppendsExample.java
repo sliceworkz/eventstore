@@ -26,7 +26,7 @@ import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
 import org.sliceworkz.eventstore.query.EventQuery;
-import org.sliceworkz.eventstore.stream.EventStream;
+import org.sliceworkz.eventstore.stream.EventSource;
 import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
@@ -67,7 +67,7 @@ public class SubscribeToAppendsExample {
 		try ( EventStore eventstore = builder.buildStore() ) {
 
 			// we open a (readonly) eventstream that sees all events
-			EventStream<Object> stream = eventstore.getEventStream(EventStreamId.anyContext());
+			EventSource<Object> stream = eventstore.getRawEventStream(EventStreamId.anyContext());
 
 			// the newest stored event is our starting point: head() names it without reading it (absent for an empty stream: follow from the beginning)
 			Handle<EventReference> lastSeen = Handle.of(stream.head().orElse(null));

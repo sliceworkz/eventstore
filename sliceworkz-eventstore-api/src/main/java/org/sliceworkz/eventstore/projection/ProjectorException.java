@@ -20,20 +20,36 @@ package org.sliceworkz.eventstore.projection;
 import org.sliceworkz.eventstore.events.EventReference;
 
 /**
- * Thrown when an error occurs during projection execution.
+ * Thrown when a projection run fails.
  * <p>
- * This exception wraps any throwable that occurs during projection processing, including:
+ * Wraps whatever the run caught: an exception from
+ * {@link Projection#when(org.sliceworkz.eventstore.events.Event)}, for an event of the main query and
+ * for a savepoint found by {@link Projection#initQuery()} alike; one from
+ * {@link BatchAwareProjection#beforeBatch()} or {@link BatchAwareProjection#afterBatch(java.util.Optional)};
+ * one from reading a page of events, an {@link org.sliceworkz.eventstore.events.EventDeserializationException}
+ * included. The original exception is {@link #getCause()}, and its type is the only thing that separates
+ * a poison event from a store that was briefly unavailable.
+ * <p>
+ * When a projection fails, the {@link Projector} calls {@link BatchAwareProjection#cancelBatch()} if the
+ * projection implements that interface, takes its cursor back to where the failed batch started, and
+ * then throws this exception to the caller.
+ *
+ * <h2>Which event {@link #getEventReference()} names</h2>
+ * The last event handed to the projection's {@code when} before the failure, which is not always the
+ * event that failed:
  * <ul>
- *   <li>Exceptions thrown from {@link Projection#when(org.sliceworkz.eventstore.events.Event)}, for an event of
- *       the main query and for a savepoint found by {@link Projection#initQuery()} alike</li>
- *   <li>Exceptions thrown from {@link BatchAwareProjection#beforeBatch()}</li>
- *   <li>Exceptions thrown while querying or streaming events</li>
+ *   <li>when {@code when} itself threw, it is that event;</li>
+ *   <li>when a page could not be read, no event of that page reached the projection, so it is the last
+ *       event of an <em>earlier</em> batch, or null when there was none. The event that could not be read
+ *       is named by the cause's own
+ *       {@link org.sliceworkz.eventstore.events.EventDeserializationException#getReference() reference};</li>
+ *   <li>when {@code beforeBatch} or {@code afterBatch} threw, it is the last event handled before the
+ *       hook ran, which is the last event of the previous batch or of the batch being committed.</li>
  * </ul>
- * <p>
- * The original exception can be retrieved via {@link #getCause()}.
- * <p>
- * When a projection fails, the {@link Projector} will call {@link BatchAwareProjection#cancelBatch()}
- * if the projection implements that interface, and then throw this exception to the caller.
+ * The alternative -- reporting a reference only when it is the failing event -- loses because a
+ * projection recording its own position wants the last handled event on every failure, whatever the
+ * hook that failed. So the reference is always the last handled event, and this is the one place that
+ * says so.
  *
  * @see Projector
  * @see Projection
@@ -48,12 +64,11 @@ public class ProjectorException extends RuntimeException {
 	/**
 	 * Creates a new ProjectorException wrapping the given throwable.
 	 * <p>
-	 * The wrapped throwable will be set as the cause and can be retrieved via {@link #getCause()}.
-	 * The event reference identifies which event was being processed when the failure occurred,
-	 * enabling precise error tracking and recovery strategies.
+	 * The wrapped throwable is the cause, retrievable via {@link #getCause()}.
 	 *
 	 * @param wrapped the underlying exception that caused the projection to fail
-	 * @param eventReference the reference to the event that was being processed when the exception occurred, or null if not applicable
+	 * @param eventReference the reference of the last event handed to the projection before the failure,
+	 *        or null if none was
 	 */
 	public ProjectorException( Throwable wrapped, EventReference eventReference ) {
 		super(wrapped);
@@ -61,17 +76,18 @@ public class ProjectorException extends RuntimeException {
 	}
 
 	/**
-	 * Returns the reference to the event that was being processed when this exception occurred.
+	 * The reference of the last event handed to the projection before the failure.
 	 * <p>
-	 * This reference can be used to:
-	 * <ul>
-	 *   <li>Identify the exact event that caused the projection failure</li>
-	 *   <li>Log detailed error information for troubleshooting</li>
-	 *   <li>Implement retry strategies starting from a known position</li>
-	 *   <li>Skip problematic events in error handling logic</li>
-	 * </ul>
+	 * This is the event that failed only when {@link Projection#when} threw. For a page that could not be
+	 * read, or a batch hook that threw, it is the event handled last before that, which is the last
+	 * event of an earlier batch -- see the class documentation for the cases. It is null when no event
+	 * had been handed to the projection yet.
+	 * <p>
+	 * Because the projector takes its cursor back to where the failed batch started, this reference
+	 * is not where the next run resumes: it is what the projection had seen, for a projection that
+	 * records its own position or for a log line saying how far the run got.
 	 *
-	 * @return the event reference of the event being processed, or null if the exception occurred outside event processing
+	 * @return the reference of the last event handed to the projection, or null if none was
 	 */
 	public EventReference getEventReference ( ) {
 		return eventReference;

@@ -84,7 +84,7 @@ public final class ProjectionRun<DOMAIN_EVENT_TYPE, P extends Projection<DOMAIN_
 		if ( metrics != null ) {
 			return this;
 		}
-		Projector.Builder<DOMAIN_EVENT_TYPE> builder = Projector.<DOMAIN_EVENT_TYPE>from(fixture.stream()).towards(projection);
+		Projector.Builder<DOMAIN_EVENT_TYPE> builder = Projector.<DOMAIN_EVENT_TYPE>from(fixture.stream()).into(projection);
 		if ( batchSize != null ) {
 			builder.inBatchesOf(batchSize);
 		}

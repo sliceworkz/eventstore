@@ -51,14 +51,11 @@ public class NotifiedProjectionExample implements EventStreamEventuallyConsisten
 		this.eventStream = eventStore.getEventStream(EventStreamId.forContext("customer").withPurpose("domain"), CustomerDomainEvent.class);
 		eventStream.subscribe(this);
 		this.customerProjection = new SomeCustomerProjection();
-		this.projector = Projector.<CustomerDomainEvent>newBuilder()
-				.from(eventStream)
-				.towards(customerProjection)
+		this.projector = Projector.from(eventStream)
+				.into(customerProjection)
 				.inBatchesOf(10)
-				.bookmarkProgress()
-					.withReader("demo-reader")
-					.readOnManualTriggerOnly()
-					.done()
+				.bookmarkAs("demo-reader")
+				.readBookmarkOnRequest()
 				.build();
 	}
 	

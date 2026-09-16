@@ -159,7 +159,7 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * closes them all:
 	 * <pre>{@code
 	 * try ( EventStream<CustomerEvent> stream = eventStore.getEventStream(streamId, CustomerEvent.class) ) {
-	 *     Projector.from(stream).towards(projection).subscribe().build();
+	 *     Projector.from(stream).into(projection).subscribe().build();
 	 *     ...
 	 * }   // subscriptions ended, registration released
 	 * }</pre>

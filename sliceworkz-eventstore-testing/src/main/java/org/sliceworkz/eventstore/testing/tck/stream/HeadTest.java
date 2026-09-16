@@ -238,7 +238,7 @@ public class HeadTest extends AbstractEventStoreTest {
 
 		// and so does a projector bounded at the head
 		CountingProjection projection = new CountingProjection();
-		ProjectorMetrics metrics = Projector.from(current).towards(projection).build().runUntil(head);
+		ProjectorMetrics metrics = Projector.from(current).into(projection).build().runUntil(head);
 		assertEquals(3, projection.handled, "a projector bounded at the head must handle every event the head upcasts into");
 		assertEquals(3, metrics.eventsHandled());
 	}

@@ -137,7 +137,7 @@ public class ProjectorWithUpcastingTest extends AbstractEventStoreTest {
 		EventStream<CurrentEvent> stream = eventStore().getEventStream(streamId, CurrentEvent.class, LegacyEvents.class);
 
 		TrackingProjection projection = new TrackingProjection();
-		Projector<CurrentEvent> projector = Projector.from(stream).towards(projection).inBatchesOf(1).build();
+		Projector<CurrentEvent> projector = Projector.from(stream).into(projection).inBatchesOf(1).build();
 		ProjectorMetrics metrics = projector.run();
 
 		assertEquals(List.of("first", "last"), projection.values);
@@ -154,7 +154,7 @@ public class ProjectorWithUpcastingTest extends AbstractEventStoreTest {
 		EventStream<CurrentEvent> stream = eventStore().getEventStream(streamId, CurrentEvent.class, LegacyEvents.class);
 
 		TrackingProjection projection = new TrackingProjection();
-		Projector<CurrentEvent> projector = Projector.from(stream).towards(projection).build();
+		Projector<CurrentEvent> projector = Projector.from(stream).into(projection).build();
 		ProjectorMetrics metrics = projector.run();
 
 		assertEquals(0, projection.values.size());
@@ -173,8 +173,8 @@ public class ProjectorWithUpcastingTest extends AbstractEventStoreTest {
 
 		TrackingProjection projection = new TrackingProjection();
 		Projector<CurrentEvent> projector = Projector.from(stream)
-			.towards(projection)
-			.bookmarkProgress().withReader("test-reader").readBeforeEachExecution().done()
+			.into(projection)
+			.bookmarkAs("test-reader")
 			.inBatchesOf(1)
 			.build();
 
@@ -203,7 +203,7 @@ public class ProjectorWithUpcastingTest extends AbstractEventStoreTest {
 		EventStream<CurrentEvent> stream = eventStore().getEventStream(streamId, CurrentEvent.class, LegacyEvents.class);
 
 		TrackingProjection projection = new TrackingProjection();
-		Projector<CurrentEvent> projector = Projector.from(stream).towards(projection).inBatchesOf(1).build();
+		Projector<CurrentEvent> projector = Projector.from(stream).into(projection).inBatchesOf(1).build();
 		ProjectorMetrics metrics = projector.run();
 
 		assertEquals(List.of("important"), projection.values);
@@ -219,7 +219,7 @@ public class ProjectorWithUpcastingTest extends AbstractEventStoreTest {
 		EventStream<CurrentEvent> stream = eventStore().getEventStream(streamId, CurrentEvent.class, LegacyEvents.class);
 
 		TrackingProjection projection = new TrackingProjection();
-		Projector<CurrentEvent> projector = Projector.from(stream).towards(projection).inBatchesOf(1).build();
+		Projector<CurrentEvent> projector = Projector.from(stream).into(projection).inBatchesOf(1).build();
 
 		// First single batch: the vanished event — cursor should advance
 		ProjectorMetrics metrics1 = projector.runSingleBatch();

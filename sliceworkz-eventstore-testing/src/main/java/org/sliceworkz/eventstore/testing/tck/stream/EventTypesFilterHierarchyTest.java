@@ -174,7 +174,7 @@ public class EventTypesFilterHierarchyTest extends AbstractEventStoreTest {
 			}
 		};
 
-		ProjectorMetrics metrics = Projector.from(stream).towards(orderBook).build().run();
+		ProjectorMetrics metrics = Projector.from(stream).into(orderBook).build().run();
 
 		assertEquals(3, metrics.eventsHandled());
 		assertEquals(types(OrderPlaced.class, OrderPlaced.class, OrderShipped.class), typesOf(seen));

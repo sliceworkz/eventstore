@@ -288,7 +288,7 @@ public class SerdeFailureTest extends AbstractEventStoreTest {
 
 		CountingProjection projection = new CountingProjection();
 		Projector<OrderEvent> projector = Projector.<OrderEvent>from(eventStore().getEventStream(streamId, OrderEvent.class))
-				.towards(projection).build();
+				.into(projection).build();
 
 		ProjectorException e = assertThrows(ProjectorException.class, projector::run);
 

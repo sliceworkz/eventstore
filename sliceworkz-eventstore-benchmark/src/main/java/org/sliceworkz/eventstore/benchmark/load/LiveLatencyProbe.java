@@ -95,9 +95,8 @@ final class LiveLatencyProbe implements AutoCloseable {
 		}
 
 		projection = new CountingProjection(pending, deliveryLatency);
-		Projector.<InventoryEvent>newBuilder()
-				.from(subscribedStream)
-				.towards(projection)
+		Projector.from(subscribedStream)
+				.into(projection)
 				.subscribe()
 				.build();
 	}

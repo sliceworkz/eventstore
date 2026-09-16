@@ -99,7 +99,7 @@ public class AggregateExample {
 	 */
 	CustomerAggregate loadCustomer ( String customerId ) {
 		CustomerAggregateProjection projection = new CustomerAggregateProjection(customerId);
-		Projector.from(stream).towards(projection).build().run();
+		Projector.from(stream).into(projection).build().run();
 		return projection.customerAggregate();
 	}
 	

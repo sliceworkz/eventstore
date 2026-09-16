@@ -172,7 +172,7 @@ Two things the snippet leaves out:
 - **A boundary at the stream head.** When a decision takes several reads, take `customers.head()`
   first, bound each read with it, and hand the same reference to `AppendCriteria`. It is cheaper to
   check on PostgreSQL and the only sound way to pin more than one read to one moment.
-- **Read models.** `Projector.from(stream).towards(projection).build().run()` replays a query into a
+- **Read models.** `Projector.from(stream).into(projection).build().run()` replays a query into a
   `Projection` in batches; `.subscribe()` keeps it running as events arrive, and a bookmark lets it
   resume where it left off.
 

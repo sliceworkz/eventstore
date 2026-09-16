@@ -19,12 +19,17 @@ package org.sliceworkz.eventstore.testing.tck.projection;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
@@ -694,6 +699,95 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		assertEquals(2, metrics.eventsHandled());
 	}
 
+	/**
+	 * A savepoint handler that throws fails the run the way a failing batch does: as a
+	 * {@link ProjectorException} naming the savepoint event, with the cursor back where the run started.
+	 * The next run then runs the init query again. The savepoint that fails here is the second one the
+	 * init query hands over, so the cursor had already moved to the first: left there, the next run would
+	 * skip the init query and start the main query from a read model that was never initialised.
+	 */
+	@ForEachBackend
+	void testProjectorWrapsAFailingSavepointHandlerInAProjectorException ( ) {
+		EventStreamId stream = EventStreamId.forContext("app").withPurpose("initquery-failing");
+		EventStream<MockDomainEvent> initEs = eventStore().getEventStream(stream, MockDomainEvent.class);
+
+		append(initEs, new FirstDomainEvent("10"), Tags.none());
+		EventReference olderSavepoint = append(initEs, new ThirdDomainEvent("savepoint:10"), Tags.none()).get(0).reference();
+		append(initEs, new FirstDomainEvent("5"), Tags.none());
+		append(initEs, new ThirdDomainEvent("savepoint:15"), Tags.none());
+		append(initEs, new FirstDomainEvent("3"), Tags.none());
+
+		FailingSavepointProjection projection = new FailingSavepointProjection();
+		var projector = Projector.from(initEs).towards(projection).build();
+
+		ProjectorException e = assertThrows(ProjectorException.class, projector::run);
+		assertEquals("UNIT TEST FAKED PROBLEM WITH SAVEPOINT", e.getCause().getMessage());
+		assertEquals(olderSavepoint, e.getEventReference());
+		assertEquals(1, projection.counter()); // the newer savepoint landed, the older one threw
+
+		ProjectorMetrics accumulatedMetrics = projector.accumulatedMetrics();
+		assertEquals(1, accumulatedMetrics.queriesDone()); // the init query only
+		assertEquals(2, accumulatedMetrics.eventsHandled()); // handled, not landed -- as for a failing batch
+		assertNull(accumulatedMetrics.lastEventReference()); // back where the run started
+
+		projection.stopFailing();
+		ProjectorMetrics metrics = projector.run();
+
+		assertEquals("savepoint:10", projection.lastSavepoint()); // the init query ran again, both savepoints handled
+		assertEquals(5, projection.counter()); // the newer savepoint a second time, the older one, then the "5" and the "3"
+		assertEquals(2, metrics.queriesDone());
+		assertEquals(4, metrics.eventsHandled());
+	}
+
+	/**
+	 * A manual bookmark read while a run is in progress waits for the run to finish, and then resets the
+	 * position. A subscribed projector runs on the storage's notification thread, so a
+	 * {@code readBookmark()} from application code is exactly this race; a cursor moved mid-run is
+	 * overwritten by the run's next batch, so the read either has no effect or lands between two
+	 * batches of one run.
+	 */
+	@ForEachBackend
+	void testReadBookmarkWaitsForARunInProgress ( ) throws InterruptedException {
+		BlockingProjection projection = new BlockingProjection();
+		var projector = Projector.from(es).towards(projection)
+				.bookmarkProgress().withReader("blocking-reader").readOnManualTriggerOnly().done()
+				.inBatchesOf(1)
+				.build();
+
+		AtomicReference<Throwable> runFailure = new AtomicReference<>();
+		Thread run = new Thread(() -> {
+			try {
+				projector.run();
+			} catch ( Throwable t ) {
+				runFailure.set(t);
+			}
+		}, "projector-run");
+		run.start();
+		assertTrue(projection.entered().await(5, TimeUnit.SECONDS), "the run did not reach the projection");
+
+		Thread read = new Thread(projector::readBookmark, "projector-readBookmark");
+		read.start();
+		read.join(300);
+		assertTrue(read.isAlive(), "readBookmark returned while a run was in progress");
+
+		projection.proceed().countDown();
+		run.join(5000);
+		read.join(5000);
+		assertNull(runFailure.get());
+		assertEquals(false, run.isAlive());
+		assertEquals(false, read.isAlive());
+
+		assertEquals(4, projection.counter()); // the run finished undisturbed: SecondDomainEvent is left out by the query
+		EventReference last = projector.accumulatedMetrics().lastEventReference();
+		assertNotNull(last);
+		assertEquals(Optional.of(last), es.getBookmark("blocking-reader")); // placed by the run's last batch
+
+		// the read, applied after the run, put the position at that bookmark: nothing is left to project
+		ProjectorMetrics next = projector.runSingleBatch();
+		assertEquals(0, next.eventsHandled());
+		assertEquals(4, projection.counter());
+	}
+
 	@ForEachBackend
 	void testProjectorBackwardsWithLimitEnforcesTotalLimit ( ) {
 		BackwardsLimitProjection projection = new BackwardsLimitProjection();
@@ -947,6 +1041,97 @@ public class ProjectorTest extends AbstractEventStoreTest {
 
 		public String lastSavepoint ( ) {
 			return lastSavepoint;
+		}
+
+	}
+
+
+	/**
+	 * The savepoint pattern with two savepoints in the init query, whose handler throws on the second
+	 * savepoint it is handed until told to stop.
+	 */
+	class FailingSavepointProjection implements Projection<MockDomainEvent> {
+
+		private int counter;
+		private String lastSavepoint;
+		private boolean failing = true;
+
+		@Override
+		public EventQuery initQuery() {
+			return EventQuery.forEvents(EventTypesFilter.of(ThirdDomainEvent.class), Tags.none()).backwards().limit(2);
+		}
+
+		@Override
+		public EventQuery eventQuery() {
+			return EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none());
+		}
+
+		@Override
+		public void when(Event<MockDomainEvent> event) {
+			if ( event.data() instanceof ThirdDomainEvent t ) {
+				if ( failing && lastSavepoint != null ) {
+					throw new RuntimeException("UNIT TEST FAKED PROBLEM WITH SAVEPOINT");
+				}
+				lastSavepoint = t.value();
+			}
+			counter++;
+		}
+
+		public void stopFailing ( ) {
+			failing = false;
+		}
+
+		public int counter ( ) {
+			return counter;
+		}
+
+		public String lastSavepoint ( ) {
+			return lastSavepoint;
+		}
+
+	}
+
+	/**
+	 * Blocks inside the handler of the first event until released, so a test can act while a run is in
+	 * progress.
+	 */
+	class BlockingProjection implements ProjectionWithoutMetaData<MockDomainEvent> {
+
+		private final CountDownLatch entered = new CountDownLatch(1);
+		private final CountDownLatch proceed = new CountDownLatch(1);
+		private volatile int counter;
+
+		@Override
+		public EventQuery eventQuery() {
+			return EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class, ThirdDomainEvent.class), Tags.none());
+		}
+
+		@Override
+		public void when(MockDomainEvent event) {
+			counter++;
+			if ( counter == 1 ) {
+				entered.countDown();
+				try {
+					if ( !proceed.await(10, TimeUnit.SECONDS) ) {
+						throw new IllegalStateException("the test never released the projection");
+					}
+				} catch ( InterruptedException e ) {
+					Thread.currentThread().interrupt();
+					throw new IllegalStateException(e);
+				}
+			}
+		}
+
+		public CountDownLatch entered ( ) {
+			return entered;
+		}
+
+		public CountDownLatch proceed ( ) {
+			return proceed;
+		}
+
+		public int counter ( ) {
+			return counter;
 		}
 
 	}

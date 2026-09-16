@@ -168,8 +168,7 @@ public class EventPageTest extends AbstractEventStoreTest {
 		assertFalse(vanished.isExhausted());
 		EventReference cursor = vanished.lastStoredEventReference().orElseThrow();
 		assertEquals(0, cursor.index(), "a stored event, whole");
-		EventStream<Object> raw = eventStore().getEventStream(streamId);
-		EventReference thirdAuditLog = raw.query(EventQuery.matchAll().limit(3)).toList().getLast().reference();
+		EventReference thirdAuditLog = eventStore().getRawEventStream(streamId).query(EventQuery.matchAll().limit(3)).toList().getLast().reference();
 		assertEquals(thirdAuditLog, cursor, "the third audit log, read raw: the last stored event of the page");
 
 		EventPage<CurrentEvent> next = stream.page(threeAtATime, cursor);

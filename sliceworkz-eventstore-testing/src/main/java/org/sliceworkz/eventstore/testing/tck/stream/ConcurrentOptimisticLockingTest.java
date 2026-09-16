@@ -93,11 +93,15 @@ public class ConcurrentOptimisticLockingTest extends AbstractEventStoreTest {
 				EventQuery boundaryQuery = EventQuery.forEvents(EventTypesFilter.any(), boundaryTags);
 
 				// the fact everyone is about to decide on: one event, which everyone reads as the head
-				// of the boundary before appending against it
-				eventStream.append(AppendCriteria.none(),
-						List.of(Event.of(new FirstDomainEvent("anchor-%d".formatted(round)), boundaryTags)));
-
-				EventReference anchor = eventStream.query(boundaryQuery).toList().getLast().reference();
+				// of the boundary before appending against it. Its reference is taken from what append()
+				// returns, never queried back: a query is not guaranteed to see a commit straight away
+				// (on Postgres every read sits behind the pg_snapshot_xmin barrier, so a writing
+				// transaction elsewhere in the cluster -- another test's, an autovacuum's -- that is
+				// older than the anchor hides it until it ends), and the store's own read-your-own-writes
+				// answer is the returned event
+				EventReference anchor = eventStream.append(AppendCriteria.none(),
+						List.of(Event.of(new FirstDomainEvent("anchor-%d".formatted(round)), boundaryTags)))
+						.getLast().reference();
 				assertNotNull(anchor);
 
 				// every contender appends against the same reference, exactly as N replicas of one
@@ -144,7 +148,10 @@ public class ConcurrentOptimisticLockingTest extends AbstractEventStoreTest {
 				assertEquals(CONTENDERS - 1, rejected.get(),
 						"round %d: every append but the winner should have been rejected with an OptimisticLockingException".formatted(round));
 
-				// and the store must agree with what the callers were told: the anchor plus one winner
+				// and the store must agree with what the callers were told: the anchor plus one winner.
+				// Waited for rather than asserted at once, for the visibility reason above; the count
+				// can only grow to two, never past it, so waiting hides no extra admission
+				waitBecauseOfEventualConsistency(() -> eventStream.query(boundaryQuery).count() == 2);
 				assertEquals(2, eventStream.query(boundaryQuery).count(),
 						"round %d: the boundary should hold the anchor and exactly one appended event".formatted(round));
 			}

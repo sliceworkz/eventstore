@@ -18,8 +18,10 @@
 package org.sliceworkz.eventstore.impl;
 
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -34,6 +36,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.slf4j.Logger;
@@ -47,6 +50,7 @@ import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventDeserializationException;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
+import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.shredding.DataSubject;
@@ -946,7 +950,35 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		private EventTypesFilter includeLegacyEventTypes ( EventTypesFilter typesFilter ) {
+			rejectLegacyEventTypes(typesFilter.eventTypes());
 			return EventTypesFilter.of(serde.determineLegacyTypes(typesFilter.eventTypes()));
+		}
+
+		/**
+		 * A filter on a typed stream names current types. A legacy type in it is refused, for a query
+		 * and for a consistency boundary alike, because neither can be answered: storage would fetch
+		 * the legacy events, the read would upcast them into their current types, and the filter,
+		 * re-applied to what was read, would drop every one of them for not being the type it names --
+		 * a query returning nothing, while the same filter as a boundary, checked over stored names,
+		 * counts the very events the query cannot return. Mapping the name forward instead would
+		 * answer a question the caller did not ask: a filter over the legacy type would return every
+		 * event of the current type, the ones never stored under the legacy name included. Refused
+		 * here, in the one place both paths pass through, so they cannot come to disagree again.
+		 */
+		private void rejectLegacyEventTypes ( Set<EventType> eventTypes ) {
+			Map<EventType, Set<EventType>> legacy = serde.legacyTypesAmong(eventTypes);
+			if ( legacy.isEmpty() ) {
+				return;
+			}
+			String named = legacy.keySet().stream()
+					.sorted(Comparator.comparing(EventType::name))
+					.map(type -> legacy.get(type).isEmpty()
+							? "'%s' (a legacy type upcasting into no current type, so no query on this stream can return it and no boundary can count it)".formatted(type.name())
+							: "'%s' (a legacy type, read as %s)".formatted(type.name(), legacy.get(type).stream().map(t -> "'" + t.name() + "'").sorted().collect(Collectors.joining(", "))))
+					.collect(Collectors.joining(", "));
+			throw new IllegalArgumentException(
+					"a query or a consistency boundary on this stream names the current event types, and it returns and counts the legacy events that upcast into them; it cannot name a legacy type: %s"
+							.formatted(named));
 		}
 
 		@Override

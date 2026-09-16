@@ -18,6 +18,7 @@
 package org.sliceworkz.eventstore.testing.tck.stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -173,6 +174,19 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 	// =========================================================================
 	// Tests: index verification on references
 	// =========================================================================
+
+	/**
+	 * A legacy type upcasting into nothing is refused in a filter like any other legacy type, and the
+	 * message says there is no current type to name instead.
+	 */
+	@ForEachBackend
+	void testFilterNamingALegacyTypeUpcastingIntoNothingIsRefused() {
+		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
+
+		IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+				() -> stream.query(EventQuery.forEvents(EventTypesFilter.of(LegacyEvents.CustomerLegacyAuditLog.class), Tags.none())).toList());
+		assertTrue(e.getMessage().endsWith("'CustomerLegacyAuditLog' (a legacy type upcasting into no current type, so no query on this stream can return it and no boundary can count it)"), e.getMessage());
+	}
 
 	@ForEachBackend
 	void testSplitEventsHaveDistinctIndices() {

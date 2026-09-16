@@ -18,6 +18,7 @@
 package org.sliceworkz.eventstore.impl.serde;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.sliceworkz.eventstore.events.EventDeserializationException;
@@ -82,6 +83,14 @@ public class RawEventPayloadSerializerDeserializer extends AbstractEventPayloadS
 	@Override
 	public Set<EventType> determineLegacyTypes(Set<EventType> currentTypes) {
 		return currentTypes;
+	}
+
+	/**
+	 * Raw mode registers no legacy types: every stored name is read as stored, so none is refused.
+	 */
+	@Override
+	public Map<EventType, Set<EventType>> legacyTypesAmong ( Set<EventType> types ) {
+		return Map.of();
 	}
 
 	/**

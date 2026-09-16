@@ -173,6 +173,48 @@ public class UpcastTest extends AbstractEventStoreTest {
 		assertEquals(2, current.query(EventQuery.forEvents(EventTypesFilter.of(CustomerRenamed.class), customer)).count());
 	}
 
+	/**
+	 * A filter on a typed stream names current types, and is refused when it names a legacy one -- for
+	 * a query and for a consistency boundary alike, since neither could be answered: storage would
+	 * fetch the legacy events and the read would upcast them into a type the filter does not name, so
+	 * a query would return nothing while the same filter as a boundary counted the very same events.
+	 * The message names the legacy type and the current type it is read as. A raw stream registers no
+	 * legacy types and reads the name as stored; so does a typed stream on which the name is current.
+	 */
+	@ForEachBackend
+	void aQueryOrABoundaryNamingALegacyTypeIsRefused() {
+		Tags customer = Tags.of("customer", "123");
+		EventStream<OriginalEvent> asWritten = eventStore().getEventStream(streamId, OriginalEvent.class);
+		asWritten.append(AppendCriteria.none(), Event.of(new OriginalEvent.CustomerNameChanged("Jane"), customer));
+		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, CustomerHistoricalEvent.class);
+
+		// by class and by the stored name alike: the filter carries the name either way
+		EventQuery byClass = EventQuery.forEvents(EventTypesFilter.of(CustomerHistoricalEvent.CustomerNameChanged.class), customer);
+		EventQuery byName = EventQuery.forEvents(EventTypesFilter.of(Set.of(EventType.ofType("CustomerNameChanged"))), customer);
+		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> current.query(byClass).toList());
+		assertEquals("a query or a consistency boundary on this stream names the current event types, and it returns and counts the legacy events that upcast into them; it cannot name a legacy type: 'CustomerNameChanged' (a legacy type, read as 'CustomerRenamed')", e.getMessage());
+		assertEquals(e.getMessage(), assertThrows(IllegalArgumentException.class, () -> current.query(byName).toList()).getMessage());
+		// beside a current type it is refused just the same: the filter as a whole cannot be answered
+		assertEquals(e.getMessage(), assertThrows(IllegalArgumentException.class,
+				() -> current.query(EventQuery.forEvents(EventTypesFilter.of(CustomerHistoricalEvent.CustomerNameChanged.class, CustomerRenamed.class), customer)).toList()).getMessage());
+
+		// refused as a boundary too, with nothing stored
+		EventReference head = current.head().orElseThrow();
+		IllegalArgumentException asBoundary = assertThrows(IllegalArgumentException.class,
+				() -> current.append(AppendCriteria.of(byClass, head), Event.of(new CustomerEvent.CustomerRenamed(Name.of("Batman")), customer)));
+		assertEquals(e.getMessage(), asBoundary.getMessage());
+		assertEquals(1, current.query(EventQuery.matchAll()).count());
+
+		// the current type is what the legacy rename is read as, and a filter over it returns it
+		assertEquals(1, current.query(EventQuery.forEvents(EventTypesFilter.of(CustomerRenamed.class), customer)).count());
+
+		// a raw stream registers no legacy types: the stored name is read as stored
+		EventSource<?> raw = eventStore().getRawEventStream(streamId);
+		assertEquals(1, raw.query(EventQuery.forEvents(EventTypesFilter.of(Set.of(EventType.ofType("CustomerNameChanged"))), customer)).count());
+		// and on a typed stream where the name is a current type, the filter is an ordinary one
+		assertEquals(1, asWritten.query(EventQuery.forEvents(EventTypesFilter.of(OriginalEvent.CustomerNameChanged.class), customer)).count());
+	}
+
 	@ForEachBackend
 	void testUpcastAnnotationNotAllowedOnCurrentEventVersions() {
 		// IllegalArgumentException, like the two neighbouring registration checks (duplicate event name,

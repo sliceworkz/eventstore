@@ -1180,6 +1180,23 @@ fetches `V2` and `V1`, and a boundary over `V3` counts an event two hops behind 
 - **A failure on a later hop names the stored event and the upcaster that threw.** The exception's
   `getEventType()` is the stored type — the event a caller can dead-letter — and the message names
   the upcaster of the hop that failed, which is the code to fix
+- **A filter names current types, and one naming a legacy type is refused.**
+  `EventTypesFilter.of(V1.class)` on a stream registering `V1` as a `@LegacyEvent` is an
+  `IllegalArgumentException` naming the legacy type and the current type it is read as, in a query
+  and in an `AppendCriteria` alike, with nothing read or stored. Neither could be answered: storage
+  would fetch the `V1` rows, the read would upcast them into `V3`, and the filter re-applied to what
+  was read would drop every one for not being `V1` — a query returning nothing, while the same
+  filter as a boundary, checked over stored names, counts the very events the query cannot return.
+  The alternative — mapping the name forward to `V3` — loses because it answers a question the
+  caller did not ask: every `V3`, the ones never stored as `V1` included. The check sits in the one
+  place the query path and the lock check both pass through (`includeLegacyEventTypes`), which is
+  what keeps the two from disagreeing; it is judged on the stream's registrations
+  (`legacyTypesAmong` on the serde), so a raw stream, which registers no legacy types, reads the
+  name as stored, and so does a typed stream on which the name is a current type. A name the stream
+  registers under neither is not refused: it passes to storage unchanged, as before.
+  `UpcastTest.aQueryOrABoundaryNamingALegacyTypeIsRefused` pins it per backend; `UpcastChainTest`
+  that a type mid-chain is named with the current type its chain ends in, `UpcastMultiTest` the
+  type that upcasts into nothing
 - `UpcastChainTest` in the TCK pins it per backend: the two-hop read, the trace-back forwards,
   backwards and under a limit, the boundary, both registration rejections and the read-time one.
   `UpcastChainSerdeTest` in the impl module pins the messages below the store

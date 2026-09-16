@@ -18,6 +18,7 @@
 package org.sliceworkz.eventstore.impl.serde;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.sliceworkz.eventstore.events.EventType;
@@ -169,6 +170,22 @@ public interface EventPayloadSerializerDeserializer {
 	 * @return the set containing both current types and all legacy types that upcast to them
 	 */
 	Set<EventType> determineLegacyTypes ( Set<EventType> currentTypes );
+
+	/**
+	 * The legacy types among the given stored type names, each with the current types its chain of
+	 * upcasters ends in — an empty set for a legacy type that upcasts into nothing.
+	 * <p>
+	 * This is what lets a stream refuse a filter naming a legacy type. Such a filter cannot be
+	 * answered: storage would fetch the legacy events, they would upcast into current types on the
+	 * read, and the current types are not what the filter names — so a query returns nothing while the
+	 * same filter as a consistency boundary, checked over stored names, counts the very same events.
+	 * Raw mode registers no legacy types, so it answers an empty map: there, every stored name is
+	 * read as stored.
+	 *
+	 * @param types stored type names, as a filter carries them
+	 * @return the legacy types among them, mapped to the current types they upcast into
+	 */
+	Map<EventType, Set<EventType>> legacyTypesAmong ( Set<EventType> types );
 
 	/**
 	 * Indicates whether this serializer/deserializer operates in typed mode.

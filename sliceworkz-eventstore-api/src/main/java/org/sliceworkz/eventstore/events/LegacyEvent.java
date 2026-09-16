@@ -47,6 +47,11 @@ import java.lang.annotation.Target;
  * A rename on its own needs none of this: a class annotated {@link EventName} with the name its history
  * was stored under reads that history directly. Reach for an upcaster when the <em>shape</em> of the
  * event changed, not only its name.
+ * <p>
+ * An upcaster's target may itself be a {@code @LegacyEvent}: the chain is followed until it reaches a
+ * current type, so each version of an event needs one upcaster, to the version after it, and none of
+ * them is rewritten when a further version arrives. See {@link Upcast#targetTypes()} for what the
+ * declaration commits to and how it is checked.
  *
  * <h2>Typical Workflow:</h2>
  * <ol>

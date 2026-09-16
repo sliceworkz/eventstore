@@ -1088,6 +1088,43 @@ still raises.
 timestamp directly into a store — useful for fixtures, but it bypasses `append()` and everything that path
 guarantees.
 
+### Upcasting: a chain of versions, and what `targetTypes()` commits to
+
+**An upcaster's target may itself be a `@LegacyEvent`, and the chain is followed until it reaches a
+current type.** A history written as `V1`, then `V2`, then `V3` reads through a `V1 → V2` upcaster
+and a `V2 → V3` one, each written when its version arrived and neither rewritten when the next one
+came. The alternative — one hop, with a legacy target handed back as though it were current — loses
+twice over: the stream's type parameter then lies (the value is a legacy class, and the caller's
+exhaustive `switch` over the current hierarchy fails with a `ClassCastException`), and the query
+path has no way to know that a stored `V1` is a `V3`, so a query or a consistency boundary over `V3`
+silently skips the `V1` events. `TypedEventPayloadSerializerDeserializer` applies the hops in turn
+on the read and traces `determineLegacyTypes` back through all of them, so a query for `V3`
+fetches `V2` and `V1`, and a boundary over `V3` counts an event two hops behind it.
+
+- **What `targetTypes()` declares is checked at stream creation.** Every class it names must be a
+  type registered on the stream — a current type, or a further legacy type — and the chains must
+  end in a current type. A target the stream does not register (an event class of a hierarchy the
+  caller forgot to pass to `getEventStream`, or another class under a registered stored name) and a
+  cycle are `IllegalArgumentException`, like the other registration checks, with the upcaster and
+  the target named. The alternative — accepting whatever `targetTypes()` names — loses because such
+  a target is never a runtime failure: the trace-back finds no current type behind the legacy one,
+  so every query for the produced type skips its events with nothing to say so. A sealed interface
+  among the targets stands for every type under it, as in a filter. The check runs over the complete set of roots — `serdeFor` calls `validate()` once every
+  root is registered — because the roots arrive as sets, in no order, and a target may sit in a
+  root registered after the upcaster's own. A serde read before `validate()` runs the same check
+  itself, so the call is not load-bearing for correctness, only for failing early
+- **What an upcaster produces is checked on the read.** An event whose class is not among its
+  declared targets fails as `EventDeserializationException` naming the upcaster, the class produced
+  and the declared set, carrying the stored event's reference like any other read failure. An
+  upcaster declaring `Set.of()` and producing an event is the shape this catches: a query for the
+  produced type would never have fetched the event it came from
+- **A failure on a later hop names the stored event and the upcaster that threw.** The exception's
+  `getEventType()` is the stored type — the event a caller can dead-letter — and the message names
+  the upcaster of the hop that failed, which is the code to fix
+- `UpcastChainTest` in the TCK pins it per backend: the two-hop read, the trace-back forwards,
+  backwards and under a limit, the boundary, both registration rejections and the read-time one.
+  `UpcastChainSerdeTest` in the impl module pins the messages below the store
+
 ### When a payload cannot be converted
 
 The serde layer throws two named types, both unchecked, both in the **api** module
@@ -1126,9 +1163,10 @@ apart either retries forever on a poison event or gives up on a blip.
   failure, with the event already stored.
 
 **Misconfiguration is `IllegalArgumentException`, not a serde type.** A `@LegacyEvent` on a class registered
-as current, a current class registered as legacy, and an upcaster that cannot be instantiated are all
-properties of the `Class` handed to `getEventStream`; they fail at stream creation, before anything is read
-or written, and there is no recovery but to fix the code — the same type the duplicate-event-name and
+as current, a current class registered as legacy, an upcaster that cannot be instantiated, an upcaster
+naming a target the stream does not register and upcasters forming a cycle are all properties of the
+`Class`es handed to `getEventStream`; they fail at stream creation, before anything is read or written,
+and there is no recovery but to fix the code — the same type the duplicate-event-name and
 non-sealed-interface checks in that method throw. The messages name the upcaster *and* the event class and
 keep the reflective cause, since a bare `NoSuchMethodException` says neither.
 

@@ -220,7 +220,9 @@ public interface EventPayloadSerializerDeserializer {
 	 * {@link org.sliceworkz.eventstore.shredding.Shreddable} values.
 	 * <p>
 	 * Without a codec, registering an event type that declares a {@code Shreddable} component fails at
-	 * stream creation rather than storing personal data in the clear.
+	 * stream creation rather than storing personal data in the clear, and a {@code Shreddable} that
+	 * reaches the mapper anyway — behind a component declared as an interface or a non-record class —
+	 * fails the append instead of being written as a plain record.
 	 *
 	 * @param shreddingCodec protects personal data in the payload, or null for no shredding
 	 * @return a new typed serializer/deserializer instance

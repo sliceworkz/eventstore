@@ -63,13 +63,15 @@ public abstract class AbstractEventPayloadSerializerDeserializer implements Even
 
 	/**
 	 * Seals and unseals {@link Shreddable} values, or null on a store with no shredding configured — in
-	 * which case registering an event type that declares a {@code Shreddable} component fails.
+	 * which case registering an event type that declares a {@code Shreddable} component fails, and the
+	 * mapper refuses any {@code Shreddable} that reaches it regardless (see {@link RefusingShreddableModule}).
 	 */
 	protected final ShreddingCodec shreddingCodec;
 
 	/**
 	 * Builds a serde with no shredding support. Event types declaring a {@link Shreddable} component
-	 * cannot be registered on it.
+	 * cannot be registered on it, and a {@code Shreddable} handed to it through any other route cannot
+	 * be serialized.
 	 */
 	protected AbstractEventPayloadSerializerDeserializer ( ) {
 		this(null);
@@ -88,6 +90,11 @@ public abstract class AbstractEventPayloadSerializerDeserializer implements Even
 		if ( shreddingCodec != null ) {
 			shreddableModule = new ShreddableModule(shreddingCodec);
 			builder.addModule(shreddableModule);
+		} else {
+			// No codec, so no way to seal: a Shreddable that reaches this mapper must fail rather than be
+			// written as the plain record it is. The registration check below catches the declared
+			// ones at stream creation; this catches the ones a declaration cannot show.
+			builder.addModule(new RefusingShreddableModule());
 		}
 
 		this.objectMapper = builder.build();
@@ -133,7 +140,10 @@ public abstract class AbstractEventPayloadSerializerDeserializer implements Even
 	 * <p>
 	 * The walk covers what the serializer can actually protect — record components, the type arguments
 	 * of generic ones, and the element types of containers — and deliberately does not descend into
-	 * arbitrary non-record classes, whose fields Jackson may not serialize at all.
+	 * arbitrary non-record classes, whose fields Jackson may not serialize at all. It reads declarations,
+	 * so a {@code Shreddable} reached only through a component declared as an interface or a non-record
+	 * class is not seen here; {@link RefusingShreddableModule} refuses that one at the append, on the value
+	 * itself.
 	 *
 	 * @param clazz the event class to inspect
 	 * @return true if a {@link Shreddable} appears anywhere in its payload

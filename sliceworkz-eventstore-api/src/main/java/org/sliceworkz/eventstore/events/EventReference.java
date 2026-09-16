@@ -70,7 +70,14 @@ package org.sliceworkz.eventstore.events;
  * at {@code head().orElse(null)}, the idiom every example in this library uses to bound a read and its
  * append at the same head. The alternative — {@code Optional} on the input side too — loses because
  * every caller would wrap a value it already holds, and {@code Optional} parameters are exactly what
- * the type was not designed for. There is deliberately no {@code EventReference.none()} naming the
+ * the type was not designed for. An {@code Optional} <em>overload</em> beside each of them, so that
+ * {@code head()} flows through unchanged while a held reference is still given as it is, loses
+ * differently: {@code EventReference} and {@code Optional} are unrelated types, so
+ * {@code until(null)}, {@code AppendCriteria.of(query, null)} and {@code query(query, null)} become
+ * ambiguous and stop compiling for every caller that spells an empty boundary, or a read from the
+ * start, as a literal {@code null} — the TCK does, throughout — and the only spelling left to them is
+ * a cast, {@code (EventReference) null}, which is worse than the {@code orElse(null)} the overload
+ * was meant to remove. There is deliberately no {@code EventReference.none()} naming the
  * absent input either: a factory that returns {@code null} is a value nothing can be called on, and a
  * name for it invites {@code EventReference.none().position()}.
  *

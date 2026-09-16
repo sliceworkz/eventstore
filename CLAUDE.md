@@ -114,6 +114,19 @@ mvn clean install -DskipTests
   a stream typed wider than its roots. `EventStoreTypeParameterTest` in the api module pins it by running
   javac against probe snippets
 - Combines `EventSource` (reading) and `EventSink` (writing) interfaces
+- **Raw mode is its own method, with its own type: `getRawEventStream(id)` returns an
+  `EventSource<Object>`.** No event root classes, so no type mapping: every stored event reads as the
+  parsed JSON tree of its payload (a Jackson 3 `JsonNode` at runtime, declared `Object` because the api
+  carries no Jackson), under its stored type, nothing upcast and nothing decrypted — a `Shreddable` comes
+  back as its sealed envelope. It is an `EventSource` rather than an `EventStream` because a raw stream
+  cannot append (an append is admitted only for a type the stream maps, and a raw stream maps none), so
+  the type says so instead of every append failing at runtime. What it is for: reading the event an
+  `EventDeserializationException` names through `getEventById`, following every append in a store, and
+  the presence check before an import. The alternative — a `getEventStream(id)` overload with a free type
+  parameter — loses because `EventStream<CustomerEvent> s = store.getEventStream(id)` then compiles and
+  hands back JSON trees under the domain type, a `ClassCastException` at the first `switch`. A stream
+  typed wider than its roots that can still append is the `Set<Class<?>>` overload's job, not raw mode.
+  `EventStoreTypeParameterTest` pins both the acceptance and the rejections by running javac
 - **A wildcard stream is a source, not a sink.** An event is stored in exactly one stream, and a
   wildcard (`anyContext()`, or `anyPurpose()` within a context) names none, so a stream opened on
   one reads across every stream it matches and refuses `append` with `IllegalArgumentException`,
@@ -337,7 +350,14 @@ mvn clean install -DskipTests
 - Controls optimistic locking when appending events
 - Contains an `EventFilter` and an optional `EventReference` for the expected last event
 - If new matching events are found after the reference, append fails with `OptimisticLockingException`
-- Use `AppendCriteria.none()` for simple appends without locking
+- Use `AppendCriteria.none()` for simple appends without locking, or the overloads that take no
+  criteria — `append(events)` and `append(event)` on `EventSink` — which are the same append with
+  `none()` and nothing else: no boundary checked, no `OptimisticLockingException` possible, and on
+  Postgres no advisory lock taken. The two spellings are interchangeable. The alternative — making
+  `none()` the only spelling, so that skipping the check is written out at every call — loses
+  because a DCB append is opted into by presenting a boundary the caller holds from its read, not by
+  the absence of an argument; an argument that is always `none()` where there is nothing to present
+  marks nothing. `EventStreamTest.anAppendWithoutCriteriaIsAnAppendWithNoCriteria` pins it per backend
 - Use `AppendCriteria.of(eventQuery, reference)` or `AppendCriteria.of(eventFilter, reference)` for conditional appends
 - **`expectedLastEventReference()` is never null**, whichever factory or constructor produced the criteria — the
   compact constructor normalises a null to `Optional.empty()`, so a backend can call `.isPresent()` on it
@@ -954,8 +974,9 @@ EventStore eventstore = InMemoryEventStorage.newBuilder().buildStore();
 EventStreamId streamId = EventStreamId.forContext("customer").withPurpose("123");
 EventStream<CustomerEvent> stream = eventstore.getEventStream(streamId, CustomerEvent.class);
 
-// 3. Append events (simple append)
-stream.append(AppendCriteria.none(), Event.of(new CustomerRegistered("John"), Tags.none()));
+// 3. Append events unconditionally: no decision was read, so there is no boundary to check.
+//    The same append as stream.append(AppendCriteria.none(), ...), which stays valid
+stream.append(Event.of(new CustomerRegistered("John"), Tags.none()));
 
 // 4. Query all events
 Stream<Event<CustomerEvent>> events = stream.query(EventQuery.matchAll());
@@ -1109,7 +1130,7 @@ still raises.
   Imported events arrive at new (high) positions carrying old timestamps, so "later position implies later
   timestamp" no longer holds in that store.
 - **Checking a target up front** must be done in **raw mode**
-  (`eventStore.getEventStream(EventStreamId.anyContext())`, no event root classes). With domain classes
+  (`eventStore.getRawEventStream(EventStreamId.anyContext())`, no event root classes). With domain classes
   registered, `getEventById` upcasts, and a legacy event whose upcast yields zero current events comes back
   as an empty list even though it exists — a false negative.
 

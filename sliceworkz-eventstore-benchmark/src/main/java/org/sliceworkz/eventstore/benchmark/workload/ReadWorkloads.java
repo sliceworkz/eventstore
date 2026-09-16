@@ -39,6 +39,7 @@ import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventFilterItem;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
+import org.sliceworkz.eventstore.stream.EventSource;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
@@ -165,7 +166,7 @@ public final class ReadWorkloads {
 			@Override
 			public Object invoke ( WorkloadContext context ) {
 				return context.target().store()
-						.getEventStream(EventStreamId.forContext(WebshopContext.CRM.streamContext()).anyPurpose())
+						.getRawEventStream(EventStreamId.forContext(WebshopContext.CRM.streamContext()).anyPurpose())
 						.query(EventQuery.matchAll().limit(PAGE_SIZE))
 						.toList();
 			}
@@ -409,8 +410,8 @@ public final class ReadWorkloads {
 		return simple("query-wildcard",
 				"a page from a stream scoped to no context -- what a store-wide reader pays",
 				context -> {
-					EventStream<Object> raw = context.target().store()
-							.getEventStream(EventStreamId.anyContext().anyPurpose());
+					EventSource<Object> raw = context.target().store()
+							.getRawEventStream(EventStreamId.anyContext().anyPurpose());
 					return raw.query(EventQuery.matchAll().limit(PAGE_SIZE)).toList();
 				});
 	}

@@ -77,7 +77,8 @@ package org.sliceworkz.eventstore.stream;
  * @param context the primary identifier for the stream, or null for wildcard matching any context
  * @param purpose the optional secondary identifier, or null for wildcard matching any purpose
  * @see EventStream
- * @see org.sliceworkz.eventstore.EventStore#getEventStream(EventStreamId)
+ * @see org.sliceworkz.eventstore.EventStore#getEventStream(EventStreamId, Class)
+ * @see org.sliceworkz.eventstore.EventStore#getRawEventStream(EventStreamId)
  */
 public record EventStreamId ( String context, String purpose ) {
 

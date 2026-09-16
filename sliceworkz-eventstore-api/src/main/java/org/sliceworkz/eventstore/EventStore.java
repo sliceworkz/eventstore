@@ -27,6 +27,7 @@ import org.sliceworkz.eventstore.shredding.ErasureReport;
 import org.sliceworkz.eventstore.shredding.ShreddingAudit;
 import org.sliceworkz.eventstore.shredding.SubjectErasureReport;
 import org.sliceworkz.eventstore.spi.EventStorage;
+import org.sliceworkz.eventstore.stream.EventSource;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
@@ -134,6 +135,9 @@ public interface EventStore extends AutoCloseable {
 	 * This is the primary method for obtaining an event stream. Event root classes define the sealed interfaces
 	 * or base types for current domain events. Historical event root classes define types for legacy events
 	 * that may need upcasting to current types.
+	 * <p>
+	 * An empty set of event root classes opens the stream in raw mode; {@link #getRawEventStream(EventStreamId)}
+	 * is the way to ask for that, with a return type that says what comes back.
 	 *
 	 * @param <DOMAIN_EVENT_TYPE> the type of domain events in this stream
 	 * @param eventStreamId the identifier for the event stream (context and optional purpose)
@@ -144,22 +148,16 @@ public interface EventStore extends AutoCloseable {
 	<DOMAIN_EVENT_TYPE> EventStream<DOMAIN_EVENT_TYPE> getEventStream ( EventStreamId eventStreamId, Set<Class<?>> eventRootClasses, Set<Class<?>> historicalEventRootClasses );
 
 	/**
-	 * Retrieves an event stream without specifying event root classes.
-	 * <p>
-	 * Use this method when working with raw events or when event types are not statically known.
-	 *
-	 * @param <DOMAIN_EVENT_TYPE> the type of domain events in this stream
-	 * @param eventStreamId the identifier for the event stream
-	 * @return an EventStream for reading and writing domain events
-	 */
-	default <DOMAIN_EVENT_TYPE> EventStream<DOMAIN_EVENT_TYPE> getEventStream ( EventStreamId eventStreamId ) {
-		return getEventStream(eventStreamId, Collections.emptySet(), Collections.emptySet());
-	}
-
-	/**
 	 * Retrieves an event stream with current event root classes only.
 	 * <p>
 	 * Use this method when you only need to work with current event types and no historical upcasting is required.
+	 * <p>
+	 * The type parameter is free here, as on the three-argument overload: the roots are a set, so no
+	 * single class can fix it. This is deliberately the way to open a stream typed wider than its roots —
+	 * an {@code EventStream<Object>} over several unrelated hierarchies — where the single-class
+	 * overloads refuse to. A stream with no roots at all is not opened here but through
+	 * {@link #getRawEventStream(EventStreamId)}, whose type says what such a stream reads and that it
+	 * cannot append.
 	 *
 	 * @param <DOMAIN_EVENT_TYPE> the type of domain events in this stream
 	 * @param eventStreamId the identifier for the event stream
@@ -211,6 +209,49 @@ public interface EventStore extends AutoCloseable {
 	 */
 	default <DOMAIN_EVENT_TYPE> EventStream<DOMAIN_EVENT_TYPE> getEventStream ( EventStreamId eventStreamId, Class<DOMAIN_EVENT_TYPE> eventRootClass, Class<?> historicalEventRootClass ) {
 		return getEventStream(eventStreamId, Collections.singleton(eventRootClass), Collections.singleton(historicalEventRootClass));
+	}
+
+	/**
+	 * Opens a stream in raw mode: no event root classes, so no type mapping, and every stored event read
+	 * as the JSON document it is stored as.
+	 * <p>
+	 * <b>It is an {@link EventSource}, not an {@link EventStream}, because a raw stream cannot append.</b>
+	 * An append is admitted only for an event type the stream holds a mapping for, and a raw stream holds
+	 * none, so the type says what the stream can do instead of leaving every append to fail at runtime.
+	 * The whole read side works — {@link EventSource#query query}, {@link EventSource#head head},
+	 * {@link EventSource#getEventById getEventById}, subscriptions and bookmarks — over any stream id,
+	 * concrete or wildcard.
+	 * <p>
+	 * <b>{@code data()} is the parsed JSON tree of the stored payload</b> — with the shipped implementation
+	 * a Jackson 3 {@code tools.jackson.databind.JsonNode} — declared as {@link Object} because this
+	 * module deliberately carries no Jackson. Nothing is upcast, so a legacy event comes back under its
+	 * stored type in its stored shape, and nothing is decrypted: a
+	 * {@link org.sliceworkz.eventstore.shredding.Shreddable} value comes back as the sealed envelope it
+	 * is stored as, which is what lets an export or an import move it without keys.
+	 * <p>
+	 * What it is for: inspecting a stored event a typed stream cannot read (an
+	 * {@link org.sliceworkz.eventstore.events.EventDeserializationException} names it by reference, and
+	 * {@code getEventById} here reads it whatever its type), following every append in a store, and
+	 * checking whether an event is present before an import — a typed stream would upcast, and report a
+	 * legacy event whose upcast yields nothing as absent.
+	 * <pre>{@code
+	 * EventSource<Object> everything = eventStore.getRawEventStream(EventStreamId.anyContext());
+	 * List<Event<Object>> stored = everything.getEventById(reference.id());
+	 * }</pre>
+	 * The alternative — a {@code getEventStream(EventStreamId)} overload with a free type parameter —
+	 * loses because the caller then writes {@code EventStream<CustomerEvent> s = store.getEventStream(id)},
+	 * gets a JSON tree under that type, and finds out at the first {@code switch} over {@code data()},
+	 * as a {@code ClassCastException}; nothing at compile time objects. Here the type parameter is fixed,
+	 * so that assignment does not compile. A stream deliberately typed wider than its roots, and able
+	 * to append, is not a raw stream: that is {@link #getEventStream(EventStreamId, Set)} with the roots
+	 * it should carry.
+	 *
+	 * @param eventStreamId the identifier for the event stream, concrete or wildcard
+	 * @return a read-only stream over the stored events, with no type mapping
+	 * @see EventSource#getEventById(org.sliceworkz.eventstore.events.EventId)
+	 */
+	default EventSource<Object> getRawEventStream ( EventStreamId eventStreamId ) {
+		return this.<Object>getEventStream(eventStreamId, Collections.emptySet(), Collections.emptySet());
 	}
 
 	/**

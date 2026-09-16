@@ -356,6 +356,52 @@ public class EventStreamTest extends AbstractEventStoreTest {
 	}
 
 	@ForEachBackend
+	void anAppendWithoutCriteriaIsAnAppendWithNoCriteria ( ) {
+
+		MockEventuallyConsistentAppendListener appendListener = new MockEventuallyConsistentAppendListener();
+		es.subscribe(appendListener);
+
+		// the single-event and the list overload store, return the typed events with their references
+		// and notify, exactly as append(AppendCriteria.none(), ...) does
+		List<Event<MockDomainEvent>> single = es.append(Event.of(new FirstDomainEvent("1"), Tags.of("k", "v")));
+		assertEquals(1, single.size());
+		assertEquals(new FirstDomainEvent("1"), single.getFirst().data());
+		assertEquals(Tags.of("k", "v"), single.getFirst().tags());
+		assertEquals(stream, single.getFirst().stream());
+
+		List<Event<MockDomainEvent>> batch = es.append(List.of(
+			Event.of(new SecondDomainEvent("2"), Tags.none()),
+			Event.of(new FirstDomainEvent("3"), Tags.none())));
+		assertEquals(2, batch.size());
+		assertTrue(batch.getFirst().reference().happenedAfter(single.getFirst().reference()));
+		assertTrue(batch.getLast().reference().happenedAfter(batch.getFirst().reference()));
+
+		// one or two notifications, depending on whether the second append landed before the first
+		// was offered to the listener: what is certain is that the listener ends up at the newest event
+		waitBecauseOfEventualConsistency(()->batch.getLast().reference().equals(appendListener.lastReference()));
+
+		assertEquals(
+			List.of(single.getFirst().reference(), batch.getFirst().reference(), batch.getLast().reference()),
+			es.query(EventQuery.matchAll()).map(Event::reference).toList());
+
+		// no criteria means no boundary: an append that would be refused against a stale boundary is
+		// admitted without one, on a stream that has moved under it
+		EventReference stale = single.getFirst().reference();
+		assertThrows(org.sliceworkz.eventstore.stream.OptimisticLockingException.class,
+			()->es.append(AppendCriteria.of(EventQuery.matchAll(), stale), Event.of(new FirstDomainEvent("refused"), Tags.none())));
+		assertEquals(1, es.append(Event.of(new FirstDomainEvent("4"), Tags.none())).size());
+		assertEquals(4, es.query(EventQuery.matchAll()).count());
+
+		// and the idempotency rules are those of the criteria-taking append
+		assertEquals(1, es.append(Event.of(new FirstDomainEvent("5"), Tags.none()).withIdempotencyKey("once")).size());
+		assertEquals(0, es.append(Event.of(new FirstDomainEvent("5"), Tags.none()).withIdempotencyKey("once")).size());
+		assertThrows(IllegalArgumentException.class, ()->es.append(List.of(
+			Event.of(new FirstDomainEvent("6"), Tags.none()).withIdempotencyKey("twice"),
+			Event.of(new FirstDomainEvent("7"), Tags.none()).withIdempotencyKey("twice"))));
+		assertEquals(5, es.query(EventQuery.matchAll()).count());
+	}
+
+	@ForEachBackend
 	void testAppendEmptyEventList ( ) {
 		List<Event<MockDomainEvent>> events = assertDoesNotThrow(
 			() -> es.append(AppendCriteria.none(), Collections.emptyList())
@@ -366,7 +412,9 @@ public class EventStreamTest extends AbstractEventStoreTest {
 
 	@ForEachBackend
 	void testAppendToNonSpecificStream ( ) {
-		var otherStream = eventStore().getEventStream(EventStreamId.anyContext());
+		// typed, so the append is admissible and the wildcard is the only thing stopping it: a raw
+		// stream is an EventSource and cannot append at all
+		EventStream<MockDomainEvent> otherStream = eventStore().getEventStream(EventStreamId.anyContext(), MockDomainEvent.class);
 		IllegalArgumentException e = assertThrows(IllegalArgumentException.class,()->otherStream.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FirstDomainEvent("1"), Tags.none()))));
 		assertEquals("cannot append to non-specific eventstream ", e.getMessage());
 	}

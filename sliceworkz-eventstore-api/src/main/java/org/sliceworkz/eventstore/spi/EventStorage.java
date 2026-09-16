@@ -690,9 +690,14 @@ public interface EventStorage extends AutoCloseable {
 	 *   <li><b>Acquisition.</b> If the lease does not exist, or exists but has expired — its last
 	 *       heartbeat is older than the time-to-live it was requested with, measured on the
 	 *       <b>storage's clock</b> — the caller becomes the owner. The fencing token is one higher
-	 *       than the previous owner's (starting at 1), and the response is {@link LeaseStatus#LEADER}.</li>
-	 *   <li><b>Renewal.</b> If the caller already owns the lease, its heartbeat and priority are
-	 *       refreshed and the fencing token is unchanged. The response is {@link LeaseStatus#LEADER} —
+	 *       than the previous owner's (starting at 1), and the response is {@link LeaseStatus#LEADER}.
+	 *       This holds when the previous owner <em>is</em> the caller: an owner whose lease expired
+	 *       or was released re-acquires it under a new token, never resumes under the old one. The
+	 *       lease was acquirable in between, so the old token may still be stamped on work by the
+	 *       caller's paused earlier self — or by a dead earlier process whose owner id this one
+	 *       reuses — and a token that survived that gap could not expose it.</li>
+	 *   <li><b>Renewal.</b> If the caller owns the lease and it is still live, its heartbeat and
+	 *       priority are refreshed and the fencing token is unchanged. The response is {@link LeaseStatus#LEADER} —
 	 *       unless a <em>live</em> contender with a <b>strictly higher</b> priority exists, in which
 	 *       case it is {@link LeaseStatus#LEADER_STEP_DOWN_REQUESTED}: the caller still holds the
 	 *       lease and remains the only legitimate processor, but is asked to finish its current work

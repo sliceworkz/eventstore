@@ -3422,8 +3422,13 @@ public class PostgresEventStorageImpl implements EventStorage {
 		""".formatted(prefix);
 
 		// the WHERE keeps the update away from a live lease of another owner: the row only changes for
-		// a renewal by the current owner or a takeover of an expired lease. The fencing token bumps on
-		// takeover and only then; acquired_at survives a renewal.
+		// a renewal by the current owner or an acquisition of an expired lease. A renewal -- the same
+		// owner, and the lease still live -- keeps the fencing token and acquired_at; every other
+		// admitted update is an acquisition and bumps the token, the same owner re-acquiring its own
+		// expired or released lease included: the lease was acquirable in between, and a holder paused
+		// beyond its ttl (or a restarted process reusing its predecessor's owner id) must not carry on
+		// under the token its earlier incarnation may still be stamping work with. The liveness test
+		// is the negation of the expiry test in the WHERE, so the two cannot disagree on a row.
 		String acquireOrRenew = """
 			INSERT INTO %sleases AS l (lease_name, lease_owner, priority, fencing_token, ttl_millis, acquired_at, heartbeat_at)
 			VALUES (?, ?, ?, 1, ?, now(), now())
@@ -3431,9 +3436,11 @@ public class PostgresEventStorageImpl implements EventStorage {
 			DO UPDATE SET
 				lease_owner = EXCLUDED.lease_owner,
 				priority = EXCLUDED.priority,
-				fencing_token = CASE WHEN l.lease_owner = EXCLUDED.lease_owner THEN l.fencing_token ELSE l.fencing_token + 1 END,
+				fencing_token = CASE WHEN l.lease_owner = EXCLUDED.lease_owner AND l.heartbeat_at >= now() - (l.ttl_millis * interval '1 millisecond')
+				                     THEN l.fencing_token ELSE l.fencing_token + 1 END,
 				ttl_millis = EXCLUDED.ttl_millis,
-				acquired_at = CASE WHEN l.lease_owner = EXCLUDED.lease_owner THEN l.acquired_at ELSE now() END,
+				acquired_at = CASE WHEN l.lease_owner = EXCLUDED.lease_owner AND l.heartbeat_at >= now() - (l.ttl_millis * interval '1 millisecond')
+				                   THEN l.acquired_at ELSE now() END,
 				heartbeat_at = now()
 			WHERE l.lease_owner = EXCLUDED.lease_owner
 			   OR l.heartbeat_at < now() - (l.ttl_millis * interval '1 millisecond')

@@ -722,9 +722,14 @@ public class InMemoryEventStorageImpl implements EventStorage {
 			return new LeaseResponse(LeaseStatus.STANDBY, current.fencingToken(), current.owner());
 		}
 
-		boolean ownershipChange = current == null || !current.owner().equals(request.owner());
-		long fencingToken = current == null ? 1 : ownershipChange ? current.fencingToken() + 1 : current.fencingToken();
-		Instant acquiredAt = ownershipChange ? now : current.acquiredAt();
+		// a renewal is a request by the owner of a lease that is still live. A request that finds the
+		// lease expired or released is an acquisition whoever held it last: the lease was acquirable in
+		// between, so the token bumps even for the same owner -- a holder paused beyond its ttl, or a
+		// restarted process reusing its predecessor's owner id, must not carry on under the token its
+		// earlier incarnation may still be stamping work with
+		boolean renewal = current != null && current.owner().equals(request.owner()) && !current.isExpiredAt(now);
+		long fencingToken = current == null ? 1 : renewal ? current.fencingToken() : current.fencingToken() + 1;
+		Instant acquiredAt = renewal ? current.acquiredAt() : now;
 		leases.put(request.leaseName(), new Lease(request.leaseName(), request.owner(), request.priority(), fencingToken, acquiredAt, now, request.ttl()));
 
 		boolean higherPriorityContenderWaiting = contenders.entrySet().stream()

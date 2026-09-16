@@ -814,9 +814,17 @@ whose SPI methods default to throwing cannot be claimed by accident):
   renewal) — the single-writer guarantee is "storage-clock expiry plus self-demotion on the caller
   clock before the ttl", and it holds up to a caller paused beyond its ttl, which no lease can
   prevent and the fencing token exists to expose
-- **The fencing token strictly increases on every ownership change and never resets** — a release
+- **The fencing token strictly increases on every acquisition and never resets** — a release
   *backdates the heartbeat* rather than deleting the row, precisely so the token survives: deleting the
-  row would let the next acquisition mint token 1 again. Renewals keep the token
+  row would let the next acquisition mint token 1 again. Renewals keep the token; a renewal is a
+  request by the owner of a lease that is *still live*. The same owner re-acquiring its own expired or
+  released lease is an acquisition and gets a new token, because that is the pause the token exists
+  to expose: a holder paused beyond its ttl — or a restarted process reusing its predecessor's owner
+  id — comes back under a token its earlier self never held, so anything the earlier self still
+  stamps is recognisably stale. Deciding renewal-versus-acquisition on the owner name alone loses
+  exactly that case, on both backends identically, with nothing failing to say so.
+  `LeaseTest.testTheSameOwnerReacquiresItsExpiredLeaseUnderANewToken` and
+  `...AfterReleasingIt` pin it per backend
 - **In-memory backends contend for real within one storage instance** (the same `synchronized` that
   gives them DCB atomicity), so a single process trivially wins everything while a test can genuinely
   elect between two contenders on any backend. The fs decorator forwards explicitly and deliberately

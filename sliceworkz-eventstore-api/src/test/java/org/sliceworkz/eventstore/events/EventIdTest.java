@@ -19,6 +19,7 @@ package org.sliceworkz.eventstore.events;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -43,6 +44,26 @@ public class EventIdTest {
 		assertNotNull ( id.value() );
 		UUID parsed = UUID.fromString ( id.value() );
 		assertNotNull ( parsed );
+	}
+
+	@Test
+	void ofIsTheConstructor ( ) {
+		assertEquals ( new EventId ( "evt-1" ), EventId.of ( "evt-1" ) );
+	}
+
+	/**
+	 * A factory that answers {@code null} for a value it cannot accept hides the mistake until the id
+	 * is used, one call later and with a message naming nothing about the blank string. Both entry
+	 * points reject the same values, the same way, with a message.
+	 */
+	@Test
+	void ofRejectsWhatTheConstructorRejects ( ) {
+		for ( String bad : new String[] { null, "", " ", "\t\n" } ) {
+			IllegalArgumentException viaFactory = assertThrows ( IllegalArgumentException.class, () -> EventId.of ( bad ), String.valueOf ( bad ) );
+			IllegalArgumentException viaConstructor = assertThrows ( IllegalArgumentException.class, () -> new EventId ( bad ), String.valueOf ( bad ) );
+			assertNotNull ( viaFactory.getMessage() );
+			assertEquals ( viaConstructor.getMessage(), viaFactory.getMessage() );
+		}
 	}
 
 }

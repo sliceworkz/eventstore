@@ -152,10 +152,16 @@ public interface Projection<CONSUMED_EVENT_TYPE> extends EventWithMetaDataHandle
 	 * <strong>Note:</strong> This query is ignored when bookmarking is enabled on the {@link Projector},
 	 * because bookmarked projections require processing every event. A warning is logged at build time.
 	 *
-	 * @return the initialization EventQuery, or {@code null} / {@link EventQuery#matchNone()} to skip (default)
+	 * "No initialization query" is {@link EventQuery#matchNone()}, the same spelling an absent filter has
+	 * everywhere else in this API ({@link org.sliceworkz.eventstore.stream.AppendCriteria#none()} is built
+	 * on {@link org.sliceworkz.eventstore.query.EventFilter#matchNone()}), and it is what this default
+	 * answers. A projection written before that default may still answer {@code null}; the
+	 * {@link Projector} treats the two identically.
+	 *
+	 * @return the initialization EventQuery, or {@link EventQuery#matchNone()} (the default) to skip
 	 */
 	default EventQuery initQuery ( ) {
-		return null;
+		return EventQuery.matchNone();
 	}
 
 	/**

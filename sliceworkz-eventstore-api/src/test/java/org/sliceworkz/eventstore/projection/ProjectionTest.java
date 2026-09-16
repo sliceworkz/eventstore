@@ -18,6 +18,8 @@
 package org.sliceworkz.eventstore.projection;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Instant;
 import java.util.Arrays;
@@ -53,6 +55,18 @@ public class ProjectionTest {
 	}
 	
 	
+	/**
+	 * "No initialization query" is spelled the way every absent filter in this API is spelled --
+	 * {@link EventQuery#matchNone()} -- so a caller reading the default gets a query it can inspect
+	 * rather than a null it has to guard.
+	 */
+	@Test
+	void theDefaultInitQueryIsMatchNone ( ) {
+		Projection<MockDomainEvent> projection = new TestProjection();
+		assertNotNull(projection.initQuery());
+		assertTrue(projection.initQuery().isMatchNone());
+	}
+
 	@Test
 	void testProjectIndividualEventWithMetaData ( ) {
 		TestProjection projection = new TestProjection();

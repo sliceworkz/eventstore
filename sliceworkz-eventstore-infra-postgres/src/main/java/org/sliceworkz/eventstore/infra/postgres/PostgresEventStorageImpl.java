@@ -536,6 +536,40 @@ public class PostgresEventStorageImpl implements EventStorage {
 		return interval;
 	}
 
+	/**
+	 * Validates a table prefix and folds it to the name PostgreSQL gives the objects it prefixes.
+	 * <p>
+	 * The prefix is used as an <em>unquoted</em> identifier everywhere it names a database object —
+	 * every table, index, function and channel in the schema scripts, every statement this class
+	 * issues, the {@code LISTEN} of the monitors — and PostgreSQL folds an unquoted identifier to
+	 * lowercase. It is also used as a <em>string</em>, where nothing folds it: the {@code table_name}
+	 * bound by schema validation, the {@code relname} the trigger-shape guard compares, the constraint
+	 * name a unique violation is matched against, the channel name the trigger's {@code pg_notify}
+	 * literal carries, and the advisory-lock key. Left unfolded, a prefix with an uppercase letter
+	 * would name two different things depending on where it is used: under {@code ENSURE} the store
+	 * would create {@code tenant_events} and then fail validation looking for {@code Tenant_events},
+	 * and under {@code NONE} it would start, the monitors listening on {@code tenant_event_appended}
+	 * while the trigger notifies {@code Tenant_event_appended}, with the gauge reading 1 and no
+	 * notification ever arriving. Folding here — {@code Locale.ROOT}, over the ASCII the pattern
+	 * admits — makes the prefix the name the catalog holds, in every use at once.
+	 * <p>
+	 * The alternative — rejecting an uppercase letter, as {@code Tag} rejects the shapes it cannot
+	 * store — loses because the folded name is not a different name: it is the one PostgreSQL has
+	 * already given a store configured with {@code Tenant_}, whose tables exist as {@code tenant_*}
+	 * and whose events are in them. A rejection would refuse to start that store on upgrade, where
+	 * folding starts it on its own tables with its notifications working. A leading digit is
+	 * rejected, since {@code 1tenant_events} is not an identifier PostgreSQL parses unquoted at all:
+	 * every statement fails with "trailing junk after numeric literal", which says nothing about the
+	 * prefix. Quoting the prefix instead, so that any string would do, is not on offer: the names are
+	 * shared with the SQL scripts, with the migrations the documentation hands an operator, and with
+	 * every {@code psql} session that ever looks at the tables.
+	 *
+	 * @param prefix the configured prefix; empty for none
+	 * @return the prefix in lowercase, as the database names the objects
+	 * @throws IllegalArgumentException for a null prefix, or one that is not an identifier of ASCII
+	 *         letters, digits and underscores that starts with a letter or an underscore, ends with an
+	 *         underscore, and is at most {@code MAX_PREFIX_LENGTH} (32) characters long
+	 */
 	static String validatePrefix(String prefix) {
 		if (prefix == null) {
 			throw new IllegalArgumentException("Prefix cannot be null");
@@ -544,9 +578,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 		// Empty is OK, otherwise more complex rules apply to keep SQL sane and to avoid SQL injection
 		if ( ! prefix.isEmpty() ) {
 			
-			if (!prefix.matches("^[a-zA-Z0-9_]+_$")) {
+			if (!prefix.matches("^[a-zA-Z_][a-zA-Z0-9_]*_$")) {
 				throw new IllegalArgumentException("Invalid prefix: '" + prefix + "'. "
 						+ "Prefix must contain only alphanumeric characters and underscores, "
+						+ "must not start with a digit, "
 						+ "and must end with an underscore (e.g., 'tenant1_')");
 			}
 	
@@ -556,7 +591,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 			
 		}
 		
-		return prefix;
+		// the name PostgreSQL gives every object the prefix is used on, unquoted; see the javadoc
+		return prefix.toLowerCase(Locale.ROOT);
 	}
 	
 	/**

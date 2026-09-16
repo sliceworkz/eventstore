@@ -462,7 +462,7 @@ EventStore store = EventStoreFactory.get().eventStore(storage);
 // With custom configuration
 EventStorage storage = PostgresEventStorage.newBuilder()
     .name("mystore")
-    .prefix("PREFIX_")
+    .prefix("tenant1_")
     .initializeDatabase()
     .build();
 
@@ -470,7 +470,7 @@ EventStorage storage = PostgresEventStorage.newBuilder()
 EventStorage storage = PostgresEventStorage.newBuilder()
     .dataSource(myDataSource)
     .monitoringDataSource(myMonitoringDataSource)
-    .prefix("PREFIX_")
+    .prefix("tenant1_")
     .build();
 ```
 

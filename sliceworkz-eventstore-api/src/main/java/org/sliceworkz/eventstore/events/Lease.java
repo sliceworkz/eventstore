@@ -31,16 +31,20 @@ import java.util.Objects;
  * contender's clock. An expired lease is not removed; it merely becomes acquirable, and the next
  * successful acquisition overwrites it with a higher {@link #fencingToken()}.
  * <p>
- * The fencing token increases strictly on every change of ownership and is stable across renewals
- * by the same owner, so work stamped with an older token can be recognised as coming from a
- * superseded leader.
+ * The fencing token increases strictly on every acquisition — every request that finds the lease
+ * absent, expired or released, whoever held it last — and is stable across renewals of a live lease
+ * by its owner, so work stamped with an older token can be recognised as coming from a superseded
+ * leader. That includes a leader superseded by itself: an owner re-acquiring its own expired lease
+ * gets a new token, since the lease was acquirable in between and anything its paused earlier self
+ * still stamps carries the old one.
  *
  * @param leaseName    the globally unique name of the lease (storage-wide, like a bookmark reader)
  * @param owner        the identifier of the owner currently holding (or last holding) the lease
  * @param priority     the priority the owner requested the lease with; a live contender with a
  *                     strictly higher priority makes the storage ask the owner to step down
- * @param fencingToken monotonically increasing per ownership change, starting at 1 for the first owner
- * @param acquiredAt   the storage-clock instant at which the current owner acquired the lease
+ * @param fencingToken monotonically increasing per acquisition, starting at 1 for the first owner
+ * @param acquiredAt   the storage-clock instant of the acquisition the current owner holds the lease
+ *                     by; a renewal keeps it, a re-acquisition after expiry or release resets it
  * @param heartbeatAt  the storage-clock instant of the owner's most recent successful renewal
  * @param ttl          the time-to-live the owner requested; the lease expires when
  *                     {@link #heartbeatAt()} is older than this on the storage's clock

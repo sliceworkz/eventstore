@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -48,8 +49,9 @@ import org.sliceworkz.eventstore.testing.ForEachBackend;
  * The load-bearing scenarios are the concurrent one (exactly one of N racing contenders may win an
  * acquirable lease — the single-writer property everything above this rests on) and the fencing
  * monotonicity one (a token, once superseded, must never be handed out again). The rest pin the
- * state machine: renewal keeps the token, expiry and release make a lease acquirable, priorities
- * request — but never force — a step-down.
+ * state machine: renewal keeps the token, expiry and release make a lease acquirable — and an
+ * acquisition by the owner who let it expire or released it is an acquisition, with a new token —
+ * priorities request — but never force — a step-down.
  * <p>
  * Time-to-live scenarios use TTLs of a few hundred milliseconds and generous waits, since expiry is
  * judged on the storage's clock (the database server's, for the Postgres backends) which this test
@@ -119,6 +121,56 @@ public class LeaseTest extends AbstractEventStoreTest {
 		assertEquals(1, leases.size());
 		assertEquals("owner-b", leases.get(0).owner());
 		assertEquals(2, leases.get(0).fencingToken());
+	}
+
+	@ForEachBackend(requires = Capability.LEASE)
+	public void testTheSameOwnerReacquiresItsExpiredLeaseUnderANewToken ( ) throws InterruptedException {
+		// a holder paused beyond its ttl -- or a restarted process reusing its predecessor's owner id --
+		// comes back to a lease that was acquirable in between. That is an acquisition, not a renewal,
+		// and it must mint a new token: work its earlier self still stamps with the old one has to be
+		// recognisable as stale, which the token cannot do if it survives the gap
+		LeaseResponse first = eventStorage().requestLease(request("owner-a", 0, SHORT_TTL));
+		assertEquals(1, first.fencingToken());
+		Instant firstAcquiredAt = eventStorage().getLeases().get(0).acquiredAt();
+
+		// the pause: the owner stops renewing for well over its ttl. This cannot be polled for, since
+		// every request by the owner is a renewal that pushes the expiry out; and the storage clock is
+		// not read here, so the wait is a generous multiple of the ttl on this JVM's clock -- the two
+		// clocks need not agree on the time, only on how long a second is
+		Thread.sleep(SHORT_TTL.multipliedBy(5).toMillis());
+
+		LeaseResponse reacquired = eventStorage().requestLease(request("owner-a", 0, LONG_TTL));
+		assertEquals(LeaseStatus.LEADER, reacquired.status());
+		assertEquals("owner-a", reacquired.currentOwner());
+		assertEquals(2, reacquired.fencingToken(), "one expiry, one re-acquisition, one bump");
+
+		// and then it is a live lease again, renewed under the new token, held from the re-acquisition
+		LeaseResponse renewal = eventStorage().requestLease(request("owner-a", 0, LONG_TTL));
+		assertEquals(LeaseStatus.LEADER, renewal.status());
+		assertEquals(2, renewal.fencingToken());
+		Lease lease = eventStorage().getLeases().get(0);
+		assertEquals("owner-a", lease.owner());
+		assertEquals(2, lease.fencingToken());
+		assertTrue(lease.acquiredAt().isAfter(firstAcquiredAt),
+				"acquiredAt must be reset by the re-acquisition, not kept from the expired one");
+	}
+
+	@ForEachBackend(requires = Capability.LEASE)
+	public void testTheSameOwnerReacquiresItsLeaseUnderANewTokenAfterReleasingIt ( ) {
+		// a release makes the lease acquirable by anyone, the releasing owner included; taking it
+		// back is a fresh acquisition and the token says so, as it does for any other contender
+		assertEquals(1, eventStorage().requestLease(request("owner-a", 0, LONG_TTL)).fencingToken());
+		eventStorage().releaseLease(LEASE, "owner-a");
+
+		LeaseResponse reacquired = eventStorage().requestLease(request("owner-a", 0, LONG_TTL));
+		assertEquals(LeaseStatus.LEADER, reacquired.status());
+		assertEquals(2, reacquired.fencingToken());
+		Lease lease = eventStorage().getLeases().get(0);
+		assertEquals("owner-a", lease.owner());
+		assertEquals(2, lease.fencingToken());
+
+		// a renewal of the re-acquired lease keeps the new token
+		assertEquals(2, eventStorage().requestLease(request("owner-a", 0, LONG_TTL)).fencingToken());
 	}
 
 	@ForEachBackend(requires = Capability.LEASE)

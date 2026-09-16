@@ -42,6 +42,18 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
  * most notably in {@link org.sliceworkz.eventstore.stream.AppendCriteria} for optimistic locking,
  * where direction and limit are irrelevant.
  *
+ * <p><strong>Building a filter.</strong> The common case is one type, or one sealed hierarchy, narrowed
+ * to one entity, and it is spelled as a chain: the types first, then the tags every matching event must
+ * carry, then a union where the decision spans several boundaries.
+ * <pre>{@code
+ * EventFilter customer = EventFilter.forTypes(CustomerEvent.class).tagged("customer", id);
+ * EventFilter either   = EventFilter.forTypes(OrderPlaced.class).tagged("order", orderId)
+ *                                   .or(EventFilter.forTags(Tags.of("customer", id)));
+ * }</pre>
+ * {@link #forEvents(EventTypesFilter, Tags)} is the same filter built from its two halves at once, and
+ * every chain resolves to the same {@link EventFilterItem}s, so the two spellings are interchangeable
+ * wherever a filter is compared or matched.
+ *
  * <p><strong>Match Semantics:</strong>
  * <ul>
  *   <li><strong>Match All:</strong> When the items list is null, any event matches</li>
@@ -172,17 +184,67 @@ public record EventFilter ( List<EventFilterItem> items, EventReference until ) 
 	}
 
 	/**
-	 * Creates a new EventFilter that combines the criteria of this filter with another (UNION operation).
-	 * The resulting filter will match events that match either this filter or the other filter.
+	 * Narrows this filter to events carrying the given tags, on top of whatever each of its items
+	 * already requires: the result matches an event when this filter matches it <em>and</em> the event
+	 * carries every one of the tags. Chained calls accumulate, so
+	 * {@code forTypes(X.class).tagged("a", "1").tagged("b", "2")} requires both tags.
+	 * <p>
+	 * Narrowing distributes over a union: {@code a.or(b).tagged(t)} is {@code a.tagged(t).or(b.tagged(t))},
+	 * which is what makes the operation well-defined on a filter of several items — every item gets
+	 * the tags, and no item is singled out. A match-all filter narrowed this way is
+	 * {@link #forTags(Tags)}; a match-none filter stays match-none, since there is nothing to narrow.
+	 * The {@code until} boundary is kept as it is.
 	 *
-	 * <p>Both filters must have the same "until" reference (or both must be unset).
+	 * @param tags the tags every matching event must carry, on top of the tags its item already requires
+	 * @return a new EventFilter narrowed to events carrying the tags
+	 * @throws IllegalArgumentException if {@code tags} is {@code null}
+	 */
+	public EventFilter tagged ( Tags tags ) {
+		if ( tags == null ) {
+			throw new IllegalArgumentException("tags is required to narrow a filter (Tags.none() narrows nothing)");
+		}
+		if ( isMatchNone() ) {
+			return this;
+		}
+		if ( isMatchAll() ) {
+			return new EventFilter(Collections.singletonList(new EventFilterItem(EventTypesFilter.any(), tags)), until);
+		}
+		return new EventFilter(items.stream().map(item -> new EventFilterItem(item.eventTypes(), item.tags().merge(tags))).toList(), until);
+	}
+
+	/**
+	 * Narrows this filter to events carrying the given tag; {@link #tagged(Tags)} with
+	 * {@link Tags#of(String, String)}.
 	 *
-	 * @param other the other filter to combine with this one
+	 * @param key the tag's key
+	 * @param value the tag's value
+	 * @return a new EventFilter narrowed to events carrying the tag
+	 * @throws IllegalArgumentException for a tag that cannot be constructed, see {@link org.sliceworkz.eventstore.events.Tag#of(String, String)}
+	 */
+	public EventFilter tagged ( String key, String value ) {
+		return tagged(Tags.of(key, value));
+	}
+
+	/**
+	 * Creates a new EventFilter that is the union of this filter and another: the result matches every
+	 * event that matches either. The items of both are kept side by side, so the union of two filters
+	 * narrowed to different entities is a filter over both entities, and a match-all on either side
+	 * makes the union match-all. Match-none on either side contributes nothing.
+	 *
+	 * <p>Both filters must have the same "until" reference (or both must be unset): a union of two
+	 * filters bounded at different points has no single boundary to compare a cursor against.
+	 *
+	 * @param other the other filter to unite with this one
 	 * @return a new EventFilter representing the union of both filters
 	 * @throws IllegalArgumentException if the "until" references are incompatible
 	 */
-	public EventFilter combineWith ( EventFilter other ) {
-		List<EventFilterItem> combinedQueryItems = Stream.concat(this.items==null?Stream.empty():this.items.stream(), other.items==null?Stream.empty():other.items.stream()).toList();
+	public EventFilter or ( EventFilter other ) {
+		List<EventFilterItem> combinedQueryItems;
+		if ( this.items == null || other.items == null ) {
+			combinedQueryItems = null; // match-all on either side: the union is everything
+		} else {
+			combinedQueryItems = Stream.concat(this.items.stream(), other.items.stream()).toList();
+		}
 		EventReference combinedUntil = null;
 		if ( this.until == null && other.until == null ) {
 			combinedUntil = null;
@@ -195,6 +257,19 @@ public record EventFilter ( List<EventFilterItem> items, EventReference until ) 
 		}
 
 		return new EventFilter(combinedQueryItems, combinedUntil);
+	}
+
+	/**
+	 * The union of this filter and another.
+	 *
+	 * @param other the other filter to unite with this one
+	 * @return a new EventFilter representing the union of both filters
+	 * @throws IllegalArgumentException if the "until" references are incompatible
+	 * @deprecated a union is an <em>or</em>, and the method is called that: use {@link #or(EventFilter)}
+	 */
+	@Deprecated(since = "0.11.0", forRemoval = true)
+	public EventFilter combineWith ( EventFilter other ) {
+		return or(other);
 	}
 
 	/**
@@ -224,6 +299,26 @@ public record EventFilter ( List<EventFilterItem> items, EventReference until ) 
 	 */
 	public static EventFilter forEvents ( EventTypesFilter eventTypes, Tags tags ) {
 		return forEvents(new EventFilterItem(eventTypes, tags));
+	}
+
+	/**
+	 * Creates a filter for events of the specified types, whatever tags they carry: the start of the
+	 * fluent form, to be narrowed with {@link #tagged(String, String)} where a decision is about one
+	 * entity.
+	 * <pre>{@code
+	 * EventFilter customer = EventFilter.forTypes(CustomerEvent.class).tagged("customer", "123");
+	 * }</pre>
+	 * The classes are resolved as {@link EventTypesFilter#of(Class...)} resolves them, so a sealed
+	 * interface stands for every event type under it and the root of a hierarchy names all of it. It is
+	 * {@link #forEvents(EventTypesFilter, Tags)} with {@link Tags#none()}, and equivalent to it in every
+	 * respect.
+	 *
+	 * @param eventClasses the event classes to match; a sealed interface stands for every event type under it
+	 * @return an EventFilter matching events of the types, whatever their tags
+	 * @throws IllegalArgumentException for an interface that is not sealed
+	 */
+	public static EventFilter forTypes ( Class<?>... eventClasses ) {
+		return forEvents(EventTypesFilter.of(eventClasses), Tags.none());
 	}
 
 	/**

@@ -161,10 +161,10 @@ public class EventStoreQueryTest extends AbstractEventStoreTest {
 
 	@ForEachBackend
 	void testCountMatchCombinedQueryWithoutOverlap ( ) {
-		EventQuery q1 = EventQuery.forEvents(EventTypesFilter.of(AccountOpened.class), Tags.none());
-		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(MoneyDeposited.class), Tags.none());
+		EventQuery q1 = EventQuery.forTypes(AccountOpened.class);
+		EventQuery q2 = EventQuery.forTypes(MoneyDeposited.class);
 
-		EventQuery q = q1.combineWith(q2);
+		EventQuery q = q1.or(q2);
 
 		assertEquals(3, query(q1).count());
 		assertEquals(2, query(q2).count());
@@ -173,10 +173,10 @@ public class EventStoreQueryTest extends AbstractEventStoreTest {
 
 	@ForEachBackend
 	void testCountMatchCombinedQueryWithOverlap ( ) {
-		EventQuery q1 = EventQuery.forEvents(EventTypesFilter.of(AccountOpened.class, AccountClosed.class), Tags.none());
-		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(MoneyDeposited.class, AccountClosed.class), Tags.none());
+		EventQuery q1 = EventQuery.forTypes(AccountOpened.class, AccountClosed.class);
+		EventQuery q2 = EventQuery.forTypes(MoneyDeposited.class, AccountClosed.class);
 
-		EventQuery q = q1.combineWith(q2);
+		EventQuery q = q1.or(q2);
 
 		assertEquals(4, query(q1).count());
 		assertEquals(3, query(q2).count());

@@ -142,7 +142,7 @@ public class EventQueryTest {
 		EventQuery q1 = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none());
 		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1"));
 		
-		EventQuery q = q1.combineWith(q2);
+		EventQuery q = q1.or(q2);
 		
 		assertFalse(q.isMatchNone());
 		assertFalse(q.isMatchAll());
@@ -160,7 +160,7 @@ public class EventQueryTest {
 		EventQuery q1 = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).until(e4_event2TagsA1.reference());
 		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1")).until(e4_event2TagsA1.reference());
 		
-		EventQuery q = q1.combineWith(q2);
+		EventQuery q = q1.or(q2);
 		
 		assertFalse(q.isMatchNone());
 		assertFalse(q.isMatchAll());
@@ -179,7 +179,7 @@ public class EventQueryTest {
 		EventQuery q1 = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).until(e4_event2TagsA1.reference());
 		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1")).until(e3_event1TagsA1.reference());
 		
-		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, ()-> q1.combineWith(q2) );
+		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, ()-> q1.or(q2) );
 		assertEquals("can't combine two EventFilter that don't share the same until value (both different values)", e.getMessage());
 	}
 	
@@ -188,7 +188,7 @@ public class EventQueryTest {
 		EventQuery q1 = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none());
 		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1")).until(e3_event1TagsA1.reference());
 		
-		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, ()-> q1.combineWith(q2) );
+		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, ()-> q1.or(q2) );
 		assertEquals("can't combine two EventFilter that don't share the same until value (one was not set)", e.getMessage());
 	}
 
@@ -325,48 +325,48 @@ public class EventQueryTest {
 	}
 
 	@Test
-	void testCombineWithSameDirection ( ) {
+	void testOrSameDirection ( ) {
 		EventQuery q1 = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).backwards();
 		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1")).backwards();
 
-		EventQuery combined = q1.combineWith(q2);
+		EventQuery combined = q1.or(q2);
 		assertTrue(combined.isBackwards());
 	}
 
 	@Test
-	void testCombineWithDifferentDirectionThrows ( ) {
+	void testOrDifferentDirectionThrows ( ) {
 		EventQuery q1 = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).backwards();
 		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1"));
 
-		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> q1.combineWith(q2));
+		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> q1.or(q2));
 		assertEquals("can't combine two EventQuery with different directions", e.getMessage());
 	}
 
 	@Test
-	void testCombineWithLimitOnEitherSideThrows ( ) {
+	void testOrLimitOnEitherSideThrows ( ) {
 		EventQuery unlimited = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none());
 		EventQuery limited1 = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).limit(1);
 		EventQuery limited5 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1")).limit(5);
 
 		// limited on the left
-		IllegalArgumentException e1 = assertThrows(IllegalArgumentException.class, () -> limited1.combineWith(unlimited));
+		IllegalArgumentException e1 = assertThrows(IllegalArgumentException.class, () -> limited1.or(unlimited));
 		assertEquals("can't combine an EventQuery that has a limit set", e1.getMessage());
 
 		// limited on the right
-		IllegalArgumentException e2 = assertThrows(IllegalArgumentException.class, () -> unlimited.combineWith(limited1));
+		IllegalArgumentException e2 = assertThrows(IllegalArgumentException.class, () -> unlimited.or(limited1));
 		assertEquals("can't combine an EventQuery that has a limit set", e2.getMessage());
 
 		// limited on both
-		IllegalArgumentException e3 = assertThrows(IllegalArgumentException.class, () -> limited1.combineWith(limited5));
+		IllegalArgumentException e3 = assertThrows(IllegalArgumentException.class, () -> limited1.or(limited5));
 		assertEquals("can't combine an EventQuery that has a limit set", e3.getMessage());
 	}
 
 	@Test
-	void testCombineWithBothUnlimitedSucceeds ( ) {
+	void testOrBothUnlimitedSucceeds ( ) {
 		EventQuery q1 = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none());
 		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1"));
 
-		EventQuery combined = q1.combineWith(q2);
+		EventQuery combined = q1.or(q2);
 
 		assertTrue(combined.limit().isNotSet());
 		// union semantics, mirrors testMatchCombined
@@ -628,6 +628,54 @@ public class EventQueryTest {
 
 		MergedEventQueries merged = EventQuery.merge(List.of(q1, q2));
 		merged.mergedQueries().forEach(m -> assertTrue(m.limit().isNotSet()));
+	}
+
+	// --- the fluent form: forTypes(...).tagged(...).or(...) ---------------------------------------
+
+	@Test
+	void testForTypesTaggedIsForEvents ( ) {
+		EventQuery q = EventQuery.forTypes(FirstDomainEvent.class).tagged("A", "1");
+		assertEquals(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.of("A", "1")), q);
+		assertEquals(EventFilter.forTypes(FirstDomainEvent.class).tagged("A", "1"), q.filter());
+
+		assertFalse(q.matches(e1_event1NoTags));
+		assertTrue(q.matches(e3_event1TagsA1));
+		assertFalse(q.matches(e4_event2TagsA1));
+		assertTrue(q.matches(e5_event1TagsA1B1));
+	}
+
+	@Test
+	void testForTypesResolvesASealedRoot ( ) {
+		EventQuery q = EventQuery.forTypes(MockDomainEvent.class);
+		assertEquals(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class, SecondDomainEvent.class), Tags.none()), q);
+		assertTrue(q.matches(e1_event1NoTags));
+		assertTrue(q.matches(e2_event2NoTags));
+	}
+
+	@Test
+	void testTaggedKeepsDirectionAndLimit ( ) {
+		EventQuery q = EventQuery.forTypes(FirstDomainEvent.class).backwards().limit(3).tagged("A", "1").tagged(Tags.of("B", "1"));
+		assertTrue(q.isBackwards());
+		assertEquals(Limit.to(3), q.limit());
+		assertEquals(EventFilter.forTypes(FirstDomainEvent.class).tagged(Tags.of("A", "1", "B", "1")), q.filter());
+
+		assertFalse(q.matches(e3_event1TagsA1), "both tags are required");
+		assertTrue(q.matches(e5_event1TagsA1B1));
+	}
+
+	@Test
+	void testOrWithMatchAllIsMatchAll ( ) {
+		EventQuery q = EventQuery.forTypes(FirstDomainEvent.class).or(EventQuery.matchAll());
+		assertTrue(q.isMatchAll());
+		assertTrue(q.matches(e6_event2TagsA2B1));
+	}
+
+	@Test
+	@SuppressWarnings("removal")
+	void testCombineWithIsTheDeprecatedNameOfOr ( ) {
+		EventQuery q1 = EventQuery.forTypes(FirstDomainEvent.class);
+		EventQuery q2 = EventQuery.forTypes(SecondDomainEvent.class).tagged("A", "1");
+		assertEquals(q1.or(q2), q1.combineWith(q2));
 	}
 
 	private StoredEvent storedEvent ( Event<?> e ) {

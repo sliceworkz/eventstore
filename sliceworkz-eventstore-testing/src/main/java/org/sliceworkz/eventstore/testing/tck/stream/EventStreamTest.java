@@ -372,6 +372,20 @@ public class EventStreamTest extends AbstractEventStoreTest {
 	}
 
 	@ForEachBackend
+	void testAppendToWildcardPurposeStream ( ) {
+		// a typed stream over every purpose of a context is a source: it reads across those streams and
+		// writes to none of them, since an event is stored in exactly one stream and a wildcard names
+		// none. The stream to write to is one of the streams it reads across, opened by its own id
+		EventStream<MockDomainEvent> wholeContext = eventStore().getEventStream(stream.anyPurpose(), MockDomainEvent.class);
+		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> wholeContext.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none())));
+		assertEquals("cannot append to non-specific eventstream app", e.getMessage());
+		assertEquals(0, wholeContext.query(EventQuery.matchAll()).count());
+
+		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none()));
+		assertEquals(1, wholeContext.query(EventQuery.matchAll()).count());
+	}
+
+	@ForEachBackend
 	void testNotificationsToSlowListener ( ) {
 
 		SlowMockListener l = new SlowMockListener(100);

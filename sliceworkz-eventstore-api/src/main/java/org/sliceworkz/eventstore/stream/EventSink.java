@@ -123,13 +123,29 @@ public interface EventSink<DOMAIN_EVENT_TYPE> {
 	 * colliding fact landed too, and because it is not an answer every backend can give: Postgres
 	 * writes a batch as one multi-row insert and pairs the rows it returns with the input by
 	 * position, so it cannot insert a subset.
+	 * <p>
+	 * <b>A stream appends to itself, and only a specific stream can be appended to.</b> The events land
+	 * in the stream this sink is bound to, so the stream id is the whole of where they go. A wildcard
+	 * stream — any context, or any purpose within a context — is a source: it reads across the streams
+	 * it matches and is refused as a target with {@link IllegalArgumentException}, nothing stored, since
+	 * an event is stored in exactly one stream and a wildcard names none. To write to a stream a
+	 * wildcard reads across, open that stream: {@code getEventStream} is a cheap handle that shares its
+	 * serde with every stream of the same mappings, and a stream per operation is the intended usage.
+	 * The alternative — an append through a wildcard stream naming its target stream as a further
+	 * argument — loses three times over: a stream is then a sink for some targets and not for others,
+	 * decided per call rather than per stream; the store meters every append under the tags of the
+	 * stream it went through, so a write landing in {@code customer#123} would be counted under the
+	 * wildcard's purpose and never under its own; and it buys nothing the shared serde does not already
+	 * give, at the price of a second identity relation on {@link EventStreamId} beside
+	 * {@link EventStreamId#canRead(EventStreamId)} saying which stream may write to which.
 	 *
 	 * @param appendCriteria the criteria determining whether the append should proceed (use AppendCriteria.none() for unconditional append)
 	 * @param events the list of ephemeral events to append
 	 * @return a list of fully-formed Events with assigned references and metadata; empty when the batch
 	 *         was de-duplicated on an idempotency key
 	 * @throws OptimisticLockingException if append criteria are violated (new relevant facts detected)
-	 * @throws IllegalArgumentException if two events of the batch carry the same idempotency key
+	 * @throws IllegalArgumentException if this stream is a wildcard stream, if an event's type is not one this
+	 *         stream has a mapping for, or if two events of the batch carry the same idempotency key
 	 * @throws IdempotencyKeyConflictException if some of the batch's idempotency keys are already stored on
 	 *         the stream and others are not; nothing is stored
 	 * @throws org.sliceworkz.eventstore.events.EventSerializationException if an event's payload cannot be
@@ -138,30 +154,6 @@ public interface EventSink<DOMAIN_EVENT_TYPE> {
 	 * @see AppendCriteria
 	 */
 	List<Event<DOMAIN_EVENT_TYPE>> append ( AppendCriteria appendCriteria, List<EphemeralEvent<? extends DOMAIN_EVENT_TYPE>> events );
-
-	/**
-	 * Appends a list of events to a specific stream with conditional logic based on append criteria.
-	 * <p>
-	 * This method allows appending events to a different stream than the one this EventSink is bound to,
-	 * provided the target stream is compatible (either the same stream or a concretization of an anyPurpose stream).
-	 * This is useful when working with wildcard streams that need to append to specific stream instances.
-	 * <p>
-	 * The target stream must be compatible with this EventSink's stream ID, meaning either:
-	 * <ul>
-	 *   <li>The streams are exactly the same</li>
-	 *   <li>This EventSink is bound to an anyPurpose stream and the target stream concretizes it with a specific purpose</li>
-	 * </ul>
-	 *
-	 * @param appendCriteria the criteria determining whether the append should proceed
-	 * @param events the list of ephemeral events to append
-	 * @param streamToAppendTo the specific stream ID to append the events to
-	 * @return a list of fully-formed Events with assigned references and metadata
-	 * @throws OptimisticLockingException if append criteria are violated (new relevant facts detected)
-	 * @throws IllegalArgumentException if the target stream is not compatible with this EventSink's stream ID, or if the target stream is read-only
-	 * @throws org.sliceworkz.eventstore.events.EventSerializationException if an event's payload cannot be written; nothing is stored
-	 * @see #append(AppendCriteria, List)
-	 */
-	List<Event<DOMAIN_EVENT_TYPE>> append ( AppendCriteria appendCriteria, List<EphemeralEvent<? extends DOMAIN_EVENT_TYPE>> events, EventStreamId streamToAppendTo );
 
 	/**
 	 * Appends a single event to the stream with conditional logic based on append criteria.

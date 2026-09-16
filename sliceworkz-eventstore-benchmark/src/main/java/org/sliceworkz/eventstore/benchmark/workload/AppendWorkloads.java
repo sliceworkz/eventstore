@@ -26,7 +26,6 @@ import org.sliceworkz.eventstore.benchmark.domain.Address;
 import org.sliceworkz.eventstore.benchmark.domain.CrmEvent;
 import org.sliceworkz.eventstore.benchmark.domain.InventoryEvent;
 import org.sliceworkz.eventstore.benchmark.domain.TagKeys;
-import org.sliceworkz.eventstore.benchmark.domain.WebshopContext;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
@@ -137,9 +136,8 @@ public final class AppendWorkloads {
 				CrmEvent event = new CrmEvent.CustomerAddressChanged(customerId,
 						Shreddable.of(address, subject));
 
-				return context.crm().append(AppendCriteria.none(),
-						List.of(Event.of(event, Tags.of(TagKeys.CUSTOMER, customerId))),
-						context.streamIdFor(WebshopContext.CRM, customerId));
+				return context.crmToAppendTo(customerId).append(AppendCriteria.none(),
+						List.of(Event.of(event, Tags.of(TagKeys.CUSTOMER, customerId))));
 			}
 		};
 	}
@@ -154,8 +152,7 @@ public final class AppendWorkloads {
 
 			@Override
 			Object append ( WorkloadContext context, String sku ) {
-				return context.inventory().append(AppendCriteria.none(), reservation(context, sku),
-						context.streamIdFor(WebshopContext.INVENTORY, sku));
+				return context.inventoryToAppendTo(sku).append(AppendCriteria.none(), reservation(context, sku));
 			}
 		};
 	}
@@ -176,8 +173,7 @@ public final class AppendWorkloads {
 				for ( int i = 0; i < size; i++ ) {
 					events.add(reservationEvent(context, sku));
 				}
-				return context.inventory().append(AppendCriteria.none(), events,
-						context.streamIdFor(WebshopContext.INVENTORY, sku));
+				return context.inventoryToAppendTo(sku).append(AppendCriteria.none(), events);
 			}
 		};
 	}
@@ -283,8 +279,7 @@ public final class AppendWorkloads {
 				AppendCriteria criteria = AppendCriteria.of(
 						EventFilter.forEvents(stockTypes(), Tags.of(TagKeys.SKU, fresh)), null);
 				try {
-					return context.inventory().append(criteria, reservation(context, fresh),
-							context.streamIdFor(WebshopContext.INVENTORY, fresh)).size();
+					return context.inventoryToAppendTo(fresh).append(criteria, reservation(context, fresh)).size();
 				} catch ( OptimisticLockingException e ) {
 					// Should not happen now that freshEntity() counts rather than draws at random, and
 					// that is exactly why it is caught: a conflict here means the entity was not fresh,
@@ -328,8 +323,7 @@ public final class AppendWorkloads {
 				AppendCriteria criteria = AppendCriteria.of(
 						EventFilter.forEvents(stockTypes(), Tags.of(TagKeys.SKU, "SKU-STALE-PROBE")),
 						midCursor);
-				return context.inventory().append(criteria, reservation(context, sku),
-						context.streamIdFor(WebshopContext.INVENTORY, sku)).size();
+				return context.inventoryToAppendTo(sku).append(criteria, reservation(context, sku)).size();
 			}
 		};
 	}
@@ -346,8 +340,7 @@ public final class AppendWorkloads {
 			Object append ( WorkloadContext context, String sku ) {
 				EphemeralEvent<? extends InventoryEvent> event = reservationEvent(context, sku)
 						.withIdempotencyKey("k-%d-%d".formatted(context.threadIndex(), counter++));
-				return context.inventory().append(AppendCriteria.none(), List.of(event),
-						context.streamIdFor(WebshopContext.INVENTORY, sku));
+				return context.inventoryToAppendTo(sku).append(AppendCriteria.none(), List.of(event));
 			}
 
 			private long counter;
@@ -387,17 +380,15 @@ public final class AppendWorkloads {
 				// write the key once, so every measured invocation is a duplicate rather than the first
 				key = "dup-%d-%d".formatted(context.threadIndex(), System.identityHashCode(this));
 				String sku = context.facts().hotEntity();
-				context.inventory().append(AppendCriteria.none(),
-						List.of(reservationEvent(context, sku).withIdempotencyKey(key)),
-						context.streamIdFor(WebshopContext.INVENTORY, sku));
+				context.inventoryToAppendTo(sku).append(AppendCriteria.none(),
+						List.of(reservationEvent(context, sku).withIdempotencyKey(key)));
 			}
 
 			@Override
 			public Object invoke ( WorkloadContext context ) {
 				String sku = context.facts().hotEntity();
-				List<Event<InventoryEvent>> written = context.inventory().append(AppendCriteria.none(),
-						List.of(reservationEvent(context, sku).withIdempotencyKey(key)),
-						context.streamIdFor(WebshopContext.INVENTORY, sku));
+				List<Event<InventoryEvent>> written = context.inventoryToAppendTo(sku).append(AppendCriteria.none(),
+						List.of(reservationEvent(context, sku).withIdempotencyKey(key)));
 				// empty is the expected outcome: the duplicate was swallowed
 				return written.size();
 			}
@@ -439,10 +430,9 @@ public final class AppendWorkloads {
 				EventReference last = history.isEmpty() ? null : history.getLast().reference();
 
 				try {
-					return context.inventory().append(
+					return context.inventoryToAppendTo(sku).append(
 							AppendCriteria.of(boundary.filter(), last),
-							reservation(context, sku),
-							context.streamIdFor(WebshopContext.INVENTORY, sku)).size();
+							reservation(context, sku)).size();
 				} catch ( OptimisticLockingException e ) {
 					// under ONE_BOUNDARY this is the expected outcome for most threads; the JMH layer
 					// counts them separately rather than treating them as errors
@@ -525,10 +515,9 @@ public final class AppendWorkloads {
 						.findFirst();
 
 				try {
-					return context.inventory().append(
+					return context.inventoryToAppendTo(sku).append(
 							AppendCriteria.of(boundary.filter(), head),
-							reservation(context, sku),
-							context.streamIdFor(WebshopContext.INVENTORY, sku)).size();
+							reservation(context, sku)).size();
 				} catch ( OptimisticLockingException e ) {
 					// a matching event landed between the reads and the append -- the genuine conflict
 					// this pattern still detects; counted, like its sibling's
@@ -638,10 +627,9 @@ public final class AppendWorkloads {
 					.orElseGet(() -> readBoundary(context, filter));
 
 			try {
-				List<Event<InventoryEvent>> written = context.inventory().append(
+				List<Event<InventoryEvent>> written = context.inventoryToAppendTo(sku).append(
 						AppendCriteria.of(filter, expected),
-						reservation(context, sku),
-						context.streamIdFor(WebshopContext.INVENTORY, sku));
+						reservation(context, sku));
 				if ( !written.isEmpty() ) {
 					context.rememberBoundary(cacheKey, written.getLast().reference());
 				}

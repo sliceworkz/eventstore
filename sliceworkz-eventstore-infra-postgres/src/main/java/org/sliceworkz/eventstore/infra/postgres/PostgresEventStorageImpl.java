@@ -536,6 +536,40 @@ public class PostgresEventStorageImpl implements EventStorage {
 		return interval;
 	}
 
+	/**
+	 * Validates a table prefix and folds it to the name PostgreSQL gives the objects it prefixes.
+	 * <p>
+	 * The prefix is used as an <em>unquoted</em> identifier everywhere it names a database object —
+	 * every table, index, function and channel in the schema scripts, every statement this class
+	 * issues, the {@code LISTEN} of the monitors — and PostgreSQL folds an unquoted identifier to
+	 * lowercase. It is also used as a <em>string</em>, where nothing folds it: the {@code table_name}
+	 * bound by schema validation, the {@code relname} the trigger-shape guard compares, the constraint
+	 * name a unique violation is matched against, the channel name the trigger's {@code pg_notify}
+	 * literal carries, and the advisory-lock key. Left unfolded, a prefix with an uppercase letter
+	 * would name two different things depending on where it is used: under {@code ENSURE} the store
+	 * would create {@code tenant_events} and then fail validation looking for {@code Tenant_events},
+	 * and under {@code NONE} it would start, the monitors listening on {@code tenant_event_appended}
+	 * while the trigger notifies {@code Tenant_event_appended}, with the gauge reading 1 and no
+	 * notification ever arriving. Folding here — {@code Locale.ROOT}, over the ASCII the pattern
+	 * admits — makes the prefix the name the catalog holds, in every use at once.
+	 * <p>
+	 * The alternative — rejecting an uppercase letter, as {@code Tag} rejects the shapes it cannot
+	 * store — loses because the folded name is not a different name: it is the one PostgreSQL has
+	 * already given a store configured with {@code Tenant_}, whose tables exist as {@code tenant_*}
+	 * and whose events are in them. A rejection would refuse to start that store on upgrade, where
+	 * folding starts it on its own tables with its notifications working. A leading digit is
+	 * rejected, since {@code 1tenant_events} is not an identifier PostgreSQL parses unquoted at all:
+	 * every statement fails with "trailing junk after numeric literal", which says nothing about the
+	 * prefix. Quoting the prefix instead, so that any string would do, is not on offer: the names are
+	 * shared with the SQL scripts, with the migrations the documentation hands an operator, and with
+	 * every {@code psql} session that ever looks at the tables.
+	 *
+	 * @param prefix the configured prefix; empty for none
+	 * @return the prefix in lowercase, as the database names the objects
+	 * @throws IllegalArgumentException for a null prefix, or one that is not an identifier of ASCII
+	 *         letters, digits and underscores that starts with a letter or an underscore, ends with an
+	 *         underscore, and is at most {@code MAX_PREFIX_LENGTH} (32) characters long
+	 */
 	static String validatePrefix(String prefix) {
 		if (prefix == null) {
 			throw new IllegalArgumentException("Prefix cannot be null");
@@ -544,9 +578,10 @@ public class PostgresEventStorageImpl implements EventStorage {
 		// Empty is OK, otherwise more complex rules apply to keep SQL sane and to avoid SQL injection
 		if ( ! prefix.isEmpty() ) {
 			
-			if (!prefix.matches("^[a-zA-Z0-9_]+_$")) {
+			if (!prefix.matches("^[a-zA-Z_][a-zA-Z0-9_]*_$")) {
 				throw new IllegalArgumentException("Invalid prefix: '" + prefix + "'. "
 						+ "Prefix must contain only alphanumeric characters and underscores, "
+						+ "must not start with a digit, "
 						+ "and must end with an underscore (e.g., 'tenant1_')");
 			}
 	
@@ -556,7 +591,8 @@ public class PostgresEventStorageImpl implements EventStorage {
 			
 		}
 		
-		return prefix;
+		// the name PostgreSQL gives every object the prefix is used on, unquoted; see the javadoc
+		return prefix.toLowerCase(Locale.ROOT);
 	}
 	
 	/**
@@ -1141,8 +1177,9 @@ public class PostgresEventStorageImpl implements EventStorage {
 	}
 
 	/**
-	 * The statement behind {@link #verifyClusterIsAheadOfHistory()}: the highest {@code event_tx} at the
-	 * head of any stream, compared with the next transaction id this cluster will assign.
+	 * The statement behind {@link #verifyClusterIsAheadOfHistory()}: the newest stored event in the
+	 * {@code (event_tx, event_position)} order — the one every read orders by — with its transaction id
+	 * beside the next one this cluster will assign.
 	 * <p>
 	 * A stored transaction id at or above {@code pg_snapshot_xmax(pg_current_snapshot())} is one this
 	 * cluster has never handed out, which no append can produce: it is the signature of events restored
@@ -1151,42 +1188,56 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * latter assigns an id to the checking connection, and a startup check must not be the writing
 	 * transaction the visibility notes warn about.
 	 * <p>
-	 * The stream heads are enumerated with a recursive CTE that walks {@code idx_events_stream_position}
-	 * one stream at a time — a loose index scan: a probe per stream, each {@code O(log n)}, so the check
-	 * costs a few milliseconds whatever the store holds. The natural alternative — {@code DISTINCT ON
-	 * (stream_context, stream_purpose) … ORDER BY … event_tx DESC} — is exact too but is a full scan of
-	 * that index on every start before PostgreSQL 18's skip scan, and a store restored into a younger
-	 * cluster is a once-in-a-deployment mistake that should not tax every ordinary boot. Reading only the
-	 * newest-position row instead would be cheaper still and is wrong: the moment something is appended
-	 * to the restored store, that row is the new, low-tx event, and the restored history above the
-	 * counter is invisible to it — which is precisely the state to keep reporting.
+	 * One row answers the question for the whole store. The head of a stream is its newest event in the
+	 * {@code (event_tx, event_position)} order and every event belongs to one stream, so the highest
+	 * {@code event_tx} among the stream heads is the highest {@code event_tx} in the table, and that is
+	 * the row {@code idx_events_tx_position} — the global order — hands over from its last leaf: one
+	 * probe, whatever the store holds and however its streams are laid out. The
+	 * {@code event_tx::xid8} in the ORDER BY is load-bearing: the select list renders the column as
+	 * text, and a bare {@code event_tx} there would resolve to that output column and sort the text —
+	 * a scan with a top-N sort in place of the index walk. The natural alternative — enumerating the
+	 * streams with a recursive loose-index walk over {@code idx_events_stream_position} and probing
+	 * each head — is exact too, but it is a probe per stream, and on the per-entity layout the
+	 * benchmarks recommend that is one probe per entity on every start: 200.000 streams measure
+	 * ~2.6s against ~0.4ms for this statement, and a store with millions of entities would spend
+	 * tens of seconds of every boot on a once-in-a-deployment mistake. Reading the newest row by
+	 * <em>position</em> instead would be a probe too and is wrong: the moment something is appended to
+	 * the restored store, that row is the new, low-tx event, and the restored history above the
+	 * counter is invisible to it — which is precisely the state to keep reporting. The one cost of
+	 * the global order is that a database created before {@code idx_events_tx_position} existed and
+	 * not yet migrated answers this with a scan of the table; {@code ENSURE} creates the index on the
+	 * next start and {@code VALIDATE} reports it missing, so only a {@code NONE} deployment that has
+	 * skipped the migration pays that, on a database where every wildcard read already does.
 	 * <p>
-	 * Deliberately <em>not</em> behind the {@code pg_snapshot_xmin} barrier: the rows it looks for are
-	 * exactly the ones that barrier withholds. Package-private so the module's tests can pin its shape.
+	 * Deliberately <em>not</em> behind the {@code pg_snapshot_xmin} barrier: the row it looks for is
+	 * exactly the one that barrier withholds. Package-private so the module's tests can pin its shape.
 	 */
 	static String clusterAheadOfHistorySql ( String prefix ) {
 		return """
-			WITH RECURSIVE streams AS (
-			    (SELECT stream_context, stream_purpose FROM %1$sevents ORDER BY stream_context, stream_purpose LIMIT 1)
-			    UNION ALL
-			    SELECT next_stream.stream_context, next_stream.stream_purpose
-			    FROM streams
-			    CROSS JOIN LATERAL (
-			        SELECT stream_context, stream_purpose FROM %1$sevents
-			        WHERE (stream_context, stream_purpose) > (streams.stream_context, streams.stream_purpose)
-			        ORDER BY stream_context, stream_purpose LIMIT 1
-			    ) next_stream
-			)
-			SELECT count(*) AS streams_ahead,
-			       max(head.event_tx)::text AS highest_tx,
-			       pg_snapshot_xmax(pg_current_snapshot())::text AS next_tx
-			FROM streams
-			CROSS JOIN LATERAL (
-			    SELECT event_tx FROM %1$sevents e
-			    WHERE e.stream_context = streams.stream_context AND e.stream_purpose = streams.stream_purpose
-			    ORDER BY event_tx DESC, event_position DESC LIMIT 1
-			) head
-			WHERE head.event_tx >= pg_snapshot_xmax(pg_current_snapshot())
+			SELECT event_tx::text AS highest_tx,
+			       pg_snapshot_xmax(pg_current_snapshot())::text AS next_tx,
+			       event_tx >= pg_snapshot_xmax(pg_current_snapshot()) AS ahead
+			FROM %sevents
+			ORDER BY event_tx::xid8 DESC, event_position DESC
+			LIMIT 1
+			""".formatted(prefix);
+	}
+
+	/**
+	 * The statement behind the error {@link #verifyClusterIsAheadOfHistory()} throws: how much of the
+	 * store sits at or above the transaction id it is given — the cluster's next id, as the probe
+	 * observed it, so that the two statements agree on the boundary. A range walk over
+	 * {@code idx_events_tx_position} from that id to the end, so it costs what the restored history
+	 * costs, and it runs only on the failure path: a boot that is going to be refused can afford to
+	 * say how many events and streams are affected, and every ordinary boot pays nothing for it.
+	 * Package-private so the module's tests can pin its shape.
+	 */
+	static String historyAheadOfClusterDetailSql ( String prefix ) {
+		return """
+			SELECT count(*) AS events_ahead,
+			       count(DISTINCT (stream_context, stream_purpose)) AS streams_ahead
+			FROM %sevents
+			WHERE event_tx >= ?::xid8
 			""".formatted(prefix);
 	}
 
@@ -1207,47 +1258,62 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * error: a physical backup, {@code pg_resetwal} on the stopped cluster, or an import into a fresh
 	 * store; the module README's "Backup and restore" carries the reasoning.
 	 * <p>
+	 * One index probe on every start ({@link #clusterAheadOfHistorySql}); the count of affected events
+	 * and streams the error carries is a second statement, run only once the probe has found the store
+	 * ahead of the cluster ({@link #historyAheadOfClusterDetailSql}).
+	 * <p>
 	 * Runs before the monitors are started, so its connection is back in the pool before they take
 	 * theirs — see {@link #start(Duration)} for why the other order deadlocks on a shared pool. One
 	 * consequence: under {@code NONE} this is the first thing {@code start()} asks the database, so an
 	 * unreachable main DataSource fails here, within the pool's connection timeout and naming the
 	 * database, rather than on the notification deadline.
 	 *
-	 * @throws EventStorageException if any stream head is at or above the cluster's next transaction id,
-	 *                               or if the check cannot be run — a database that cannot be reached
-	 *                               included
+	 * @throws EventStorageException if the newest stored event is at or above the cluster's next
+	 *                               transaction id, or if the check cannot be run — a database that
+	 *                               cannot be reached included
 	 */
 	private void verifyClusterIsAheadOfHistory ( ) {
-		String sql = clusterAheadOfHistorySql(prefix);
 		try ( Connection readConnection = dataSource.getConnection() ) {
 			readConnection.setAutoCommit(true);
-			try ( PreparedStatement stmt = readConnection.prepareStatement(sql);
+			String highestTx;
+			String nextTx;
+			try ( PreparedStatement stmt = readConnection.prepareStatement(clusterAheadOfHistorySql(prefix));
 			      ResultSet rs = stmt.executeQuery() ) {
 				if ( !rs.next() ) {
+					return; // an empty store
+				}
+				if ( !rs.getBoolean("ahead") ) {
 					return;
 				}
-				long streamsAhead = rs.getLong("streams_ahead");
-				if ( streamsAhead == 0 ) {
-					return;
-				}
-				String highestTx = rs.getString("highest_tx");
-				String nextTx = rs.getString("next_tx");
-				throw new EventStorageException(
-					("event storage '%s' holds events whose transaction id (up to %s, on %d stream(s)) is at or "
-					+ "above the next id this PostgreSQL cluster will assign (%s). No append can produce that: it "
-					+ "is the signature of events restored logically (pg_dump/pg_restore, a copied table) into a "
-					+ "cluster whose transaction counter is younger than the data. Started anyway, those events "
-					+ "would sit above the visibility barrier and read as absent, and anything appended would be "
-					+ "ordered before all of them. Either restore from a physical backup (pg_basebackup, WAL "
-					+ "archive, a snapshot), which keeps the counter; or, if nothing has been appended yet, stop "
-					+ "this cluster and move its counter past %s with pg_resetwal -x/-e; or copy the events into "
-					+ "a fresh store with EventStoreImporter, which reassigns the ordering. See 'Backup and "
-					+ "restore' in the postgres module README.")
-						.formatted(name, highestTx, streamsAhead, nextTx, highestTx));
+				highestTx = rs.getString("highest_tx");
+				nextTx = rs.getString("next_tx");
 			}
+			long eventsAhead = 1;
+			long streamsAhead = 1;
+			try ( PreparedStatement stmt = readConnection.prepareStatement(historyAheadOfClusterDetailSql(prefix)) ) {
+				stmt.setString(1, nextTx);
+				try ( ResultSet rs = stmt.executeQuery() ) {
+					if ( rs.next() ) {
+						eventsAhead = Math.max(1, rs.getLong("events_ahead"));
+						streamsAhead = Math.max(1, rs.getLong("streams_ahead"));
+					}
+				}
+			}
+			throw new EventStorageException(
+				("event storage '%s' holds events whose transaction id (up to %s, on %d event(s) across %d stream(s)) "
+				+ "is at or above the next id this PostgreSQL cluster will assign (%s). No append can produce that: it "
+				+ "is the signature of events restored logically (pg_dump/pg_restore, a copied table) into a "
+				+ "cluster whose transaction counter is younger than the data. Started anyway, those events "
+				+ "would sit above the visibility barrier and read as absent, and anything appended would be "
+				+ "ordered before all of them. Either restore from a physical backup (pg_basebackup, WAL "
+				+ "archive, a snapshot), which keeps the counter; or, if nothing has been appended yet, stop "
+				+ "this cluster and move its counter past %s with pg_resetwal -x/-e; or copy the events into "
+				+ "a fresh store with EventStoreImporter, which reassigns the ordering. See 'Backup and "
+				+ "restore' in the postgres module README.")
+					.formatted(name, highestTx, eventsAhead, streamsAhead, nextTx, highestTx));
 		} catch ( SQLException e ) {
 			throw new EventStorageException(
-				("event storage '%s' could not read its stream heads to verify that the cluster's transaction "
+				("event storage '%s' could not read its newest event to verify that the cluster's transaction "
 				+ "counter is ahead of its history: %s").formatted(name, e.getMessage()), e);
 		}
 	}

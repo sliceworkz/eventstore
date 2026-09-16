@@ -150,7 +150,9 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 	
 	private Optional<EventReference> lastEventReference = null;
 
-	private ProjectorMetrics accumulatedMetrics;
+	// published by a run and read from any thread, so a subscribed projector's metrics can be read
+	// without waiting for the run in progress
+	private volatile ProjectorMetrics accumulatedMetrics;
 	
 	private Projector ( EventSource<CONSUMED_EVENT_TYPE> es, Projection<CONSUMED_EVENT_TYPE> projection, EventReference after, int maxEventsPerQuery, String bookmarkReader, Tags bookmarkTags, BookmarkReadFrequency bookmarkReadFrequency ) {
 		this.es = es;
@@ -260,6 +262,13 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 	 * Depending on the configured {@code BookmarkReadFrequency}, this method may be called
 	 * automatically at different times (at creation, before first execution, or before each execution).
 	 * When configured for manual trigger only, this is the only way to load the bookmark.
+	 * <p>
+	 * A run and a bookmark read never overlap: this method takes the same lock as {@link #run()},
+	 * so called while a run is in progress -- a subscribed projector runs on the storage's notification
+	 * thread -- it waits for that run to finish and then resets the position. The alternative -- moving
+	 * the cursor while a run holds it -- loses because the run's next batch overwrites the reset with
+	 * its own progress, so the read either has no effect or moves the cursor between two batches of
+	 * one run, and nothing says which.
 	 *
 	 * @return this projector for method chaining
 	 * @see Builder.BookmarkBuilder#readOnManualTriggerOnly()
@@ -267,7 +276,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 	 * @see Builder.BookmarkBuilder#readBeforeFirstExecution()
 	 * @see Builder.BookmarkBuilder#readBeforeEachExecution()
 	 */
-	public Projector<CONSUMED_EVENT_TYPE> readBookmark ( ) {
+	public synchronized Projector<CONSUMED_EVENT_TYPE> readBookmark ( ) {
 		Optional<EventReference> bookmarkReference = Optional.empty();
 		if ( bookmarkReader != null ) {
 			bookmarkReference = es.getBookmark(bookmarkReader);
@@ -305,15 +314,25 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 				// reporting present-day state as a point-in-time projection.
 				EventQuery initQuery = projection.initQuery().untilIfEarlier ( until );
 				queriesDone++;
-				es.query(initQuery).forEach(e -> {
-					eventsStreamed++;
-					eventsHandled++;
-					if ( mostRecentEventReference == null || e.reference().happenedAfter(mostRecentEventReference) ) {
-						mostRecentEventReference = e.reference();
-					}
-					projection.when(e);
-					lastEventReference = Optional.of(e.reference());
-				});
+				try {
+					es.query(initQuery).forEach(e -> {
+						eventsStreamed++;
+						eventsHandled++;
+						if ( mostRecentEventReference == null || e.reference().happenedAfter(mostRecentEventReference) ) {
+							mostRecentEventReference = e.reference();
+						}
+						currentEventReference = e.reference();
+						projection.when(e);
+						lastEventReference = Optional.of(e.reference());
+					});
+				} catch ( Throwable t ) {
+					// A failing savepoint is reported like a failing batch: as a ProjectorException naming
+					// the event, with the cursor back where the run started. Left where it was, a cursor
+					// advanced by an earlier savepoint of the same query would make the next run skip the
+					// init query and start the main query from a read model that was never initialised.
+					lastEventReference = null;
+					return result(new ProjectorException(t, currentEventReference));
+				}
 			}
 
 			ProjectorException exception = null;
@@ -414,6 +433,10 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 			}
 
 
+			return result(exception);
+		}
+
+		private ProjectorRunResult result ( ProjectorException exception ) {
 			return new ProjectorRunResult ( new ProjectorMetrics ( eventsStreamed, eventsHandled, queriesDone, lastEventReference==null?null:lastEventReference.orElse(null), mostRecentEventReference), exception );
 		}
 

@@ -121,8 +121,11 @@ public final class WorkloadContext {
 	/** Opened on first use; see {@link #crm()} for why this one cannot be eager. */
 	private EventStream<CrmEvent> crm;
 
-	/** Entity-scoped inventory streams, opened on demand; see {@link #inventoryFor}. */
-	private final Map<String, EventStream<InventoryEvent>> scopedInventory = new HashMap<>();
+	/** Inventory streams opened on demand, by id; see {@link #inventoryFor} and {@link #inventoryToAppendTo}. */
+	private final Map<EventStreamId, EventStream<InventoryEvent>> inventoryStreams = new HashMap<>();
+
+	/** Crm streams opened on demand, by id; see {@link #crmToAppendTo}. */
+	private final Map<EventStreamId, EventStream<CrmEvent>> crmStreams = new HashMap<>();
 
 	/**
 	 * The last reference this thread knows for a given consistency boundary.
@@ -300,9 +303,41 @@ public final class WorkloadContext {
 		if ( !streamScopesEntity() || entityId == null ) {
 			return inventory;
 		}
-		return scopedInventory.computeIfAbsent(entityId, id -> target.store().getEventStream(
-				EventStreamId.forContext(WebshopContext.INVENTORY.streamContext()).withPurpose(id),
-				InventoryEvent.class));
+		return inventoryStreams.computeIfAbsent(
+				EventStreamId.forContext(WebshopContext.INVENTORY.streamContext()).withPurpose(entityId),
+				id -> target.store().getEventStream(id, InventoryEvent.class));
+	}
+
+	/**
+	 * The inventory stream an append for one entity goes into, honouring the corpus's stream design
+	 * and the collision mode -- the id is {@link #streamIdFor}'s.
+	 *
+	 * <p>Always a specific stream, because a wildcard stream is a source and an event is stored in
+	 * exactly one stream. Under every design but {@code PER_ENTITY} the context has one stream and
+	 * {@link #inventory()} is that stream, so this is the same handle; under {@code PER_ENTITY}, where
+	 * {@link #inventory()} is the wildcard read across every entity, it is the entity's own stream --
+	 * or the hot entity's under {@link Collision#ONE_STREAM}, which is what that mode varies. Cached
+	 * per id like {@link #inventoryFor}, and sharing its cache, so a read of an entity and a write to
+	 * it go through one handle.
+	 */
+	public EventStream<InventoryEvent> inventoryToAppendTo ( String entityId ) {
+		EventStreamId id = streamIdFor(WebshopContext.INVENTORY, entityId);
+		if ( id.equals(inventory.id()) ) {
+			return inventory;
+		}
+		return inventoryStreams.computeIfAbsent(id, key -> target.store().getEventStream(key, InventoryEvent.class));
+	}
+
+	/**
+	 * The crm stream an append for one customer goes into; {@link #inventoryToAppendTo} for the crm
+	 * context, and lazy for the reason {@link #crm()} is.
+	 */
+	public EventStream<CrmEvent> crmToAppendTo ( String customerId ) {
+		EventStreamId id = streamIdFor(WebshopContext.CRM, customerId);
+		if ( id.equals(crm().id()) ) {
+			return crm();
+		}
+		return crmStreams.computeIfAbsent(id, key -> target.store().getEventStream(key, CrmEvent.class));
 	}
 
 	/**

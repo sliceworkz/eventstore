@@ -114,6 +114,36 @@ mvn clean install -DskipTests
   a stream typed wider than its roots. `EventStoreTypeParameterTest` in the api module pins it by running
   javac against probe snippets
 - Combines `EventSource` (reading) and `EventSink` (writing) interfaces
+- **Raw mode is its own method, with its own type: `getRawEventStream(id)` returns an
+  `EventSource<Object>`.** No event root classes, so no type mapping: every stored event reads as the
+  parsed JSON tree of its payload (a Jackson 3 `JsonNode` at runtime, declared `Object` because the api
+  carries no Jackson), under its stored type, nothing upcast and nothing decrypted — a `Shreddable` comes
+  back as its sealed envelope. It is an `EventSource` rather than an `EventStream` because a raw stream
+  cannot append (an append is admitted only for a type the stream maps, and a raw stream maps none), so
+  the type says so instead of every append failing at runtime. What it is for: reading the event an
+  `EventDeserializationException` names through `getEventById`, following every append in a store, and
+  the presence check before an import. The alternative — a `getEventStream(id)` overload with a free type
+  parameter — loses because `EventStream<CustomerEvent> s = store.getEventStream(id)` then compiles and
+  hands back JSON trees under the domain type, a `ClassCastException` at the first `switch`. A stream
+  typed wider than its roots that can still append is the `Set<Class<?>>` overload's job, not raw mode.
+  `EventStoreTypeParameterTest` pins both the acceptance and the rejections by running javac
+- **A wildcard stream is a source, not a sink.** An event is stored in exactly one stream, and a
+  wildcard (`anyContext()`, or `anyPurpose()` within a context) names none, so a stream opened on
+  one reads across every stream it matches and refuses `append` with `IllegalArgumentException`,
+  nothing stored. To write to a stream it reads across, open that stream by its own id: a handle is
+  cheap and shares its serde (see "Lifecycle: closing a stream" below), and a stream per operation
+  is the intended usage. There is deliberately no append that names a target stream as a further
+  argument, and `EventStreamId` carries no relation saying which stream may write to which — only
+  `canRead`. The alternative — an `append(criteria, events, target)` through a wildcard stream
+  bound to the target's context — loses because a stream is then a sink for some targets and not
+  others, decided per call; because every append is metered under the tags of the stream it went
+  through, so a write landing in `customer#123` would be counted under the wildcard's purpose and
+  never under its own, and the `purpose` cap below would never see the writes; and because it buys
+  nothing the shared serde does not already give. The refusal is at runtime, not at compile time,
+  because whether an id is a wildcard is a property of its value: the same `EventStream` type reads
+  a context or one of its streams depending only on the id it was opened with (the raw stream, whose
+  read-only nature *is* static, is a separate case). `EventStreamTest.testAppendToNonSpecificStream`
+  and `testAppendToWildcardPurposeStream` pin it per backend
 - **`query()` returns a `Stream`, but it is already in memory.** Storage has finished reading by the
   time the stream comes back — the whole result set is fetched and the stream iterates a list. So
   `findFirst()`, `.limit(10)` and `takeWhile` on the returned stream discard work already done, and a
@@ -332,7 +362,14 @@ mvn clean install -DskipTests
 - Controls optimistic locking when appending events
 - Contains an `EventFilter` and an optional `EventReference` for the expected last event
 - If new matching events are found after the reference, append fails with `OptimisticLockingException`
-- Use `AppendCriteria.none()` for simple appends without locking
+- Use `AppendCriteria.none()` for simple appends without locking, or the overloads that take no
+  criteria — `append(events)` and `append(event)` on `EventSink` — which are the same append with
+  `none()` and nothing else: no boundary checked, no `OptimisticLockingException` possible, and on
+  Postgres no advisory lock taken. The two spellings are interchangeable. The alternative — making
+  `none()` the only spelling, so that skipping the check is written out at every call — loses
+  because a DCB append is opted into by presenting a boundary the caller holds from its read, not by
+  the absence of an argument; an argument that is always `none()` where there is nothing to present
+  marks nothing. `EventStreamTest.anAppendWithoutCriteriaIsAnAppendWithNoCriteria` pins it per backend
 - Use `AppendCriteria.of(eventQuery, reference)` or `AppendCriteria.of(eventFilter, reference)` for conditional appends
 - **`expectedLastEventReference()` is never null**, whichever factory or constructor produced the criteria — the
   compact constructor normalises a null to `Optional.empty()`, so a backend can call `.isPresent()` on it
@@ -386,6 +423,10 @@ mvn clean install -DskipTests
   same store, in the same transaction, and resume from it. Two stores that cannot share a transaction
   cannot be made exactly-once any other way. `sliceworkz-eventmodeling`'s `SqlReadModelProjector` is the
   worked example
+- **`readBookmark()` and a run never overlap.** Both take the projector's lock, so a manual bookmark read
+  while a run is in progress — a subscribed projector runs on the storage's notification thread — waits
+  for the run to finish and then resets the position, rather than moving a cursor the run is about to
+  overwrite with its own progress. `ProjectorTest.testReadBookmarkWaitsForARunInProgress` pins it
 - `ProjectorBatchDurabilityTest` in the TCK pins all of it per backend: the bookmark visible from inside
   the *second* batch already names the first, a failed commit is a `ProjectorException` and its events
   come round again, and a failing rollback keeps the cause
@@ -397,6 +438,10 @@ mvn clean install -DskipTests
 - Savepoint events are pure domain events — no special framework support needed
 - When no savepoint exists, the main `eventQuery()` replays from the beginning (graceful degradation)
 - When bookmarking is enabled on the `Projector`, `initQuery()` is ignored (a warning is logged at build time)
+- A savepoint handler that throws fails the run as a `ProjectorException` naming the savepoint event, exactly
+  as a failing batch does, and the cursor goes back to where the run started, so the next run re-runs
+  `initQuery()` rather than skipping it and starting the main query from a read model that was never
+  initialised. `ProjectorTest.testProjectorWrapsAFailingSavepointHandlerInAProjectorException` pins it per backend
 - The `initQuery()` and `eventQuery()` should query different event types to avoid double-processing and to allow recovery from buggy savepoints
 
 ### Storage Implementations
@@ -446,7 +491,7 @@ EventStore store = EventStoreFactory.get().eventStore(storage);
 // With custom configuration
 EventStorage storage = PostgresEventStorage.newBuilder()
     .name("mystore")
-    .prefix("PREFIX_")
+    .prefix("tenant1_")
     .initializeDatabase()
     .build();
 
@@ -454,7 +499,7 @@ EventStorage storage = PostgresEventStorage.newBuilder()
 EventStorage storage = PostgresEventStorage.newBuilder()
     .dataSource(myDataSource)
     .monitoringDataSource(myMonitoringDataSource)
-    .prefix("PREFIX_")
+    .prefix("tenant1_")
     .build();
 ```
 
@@ -544,10 +589,11 @@ EventStorage storage = PostgresEventStorage.newBuilder()
   parked forever.
 
 - **A store restored logically into a younger cluster is refused too.** Before the monitors are
-  started, `start()` checks that no stream head carries a transaction id the cluster has not assigned yet —
-  the signature of a `pg_dump`/`pg_restore` into a fresh cluster, where the restored history sits
-  above the visibility barrier and reads as absent while every new append sorts before it. Fatal in
-  the same way, with the storage closed and the remedies named. See "Backup and restore" in the
+  started, `start()` checks that the newest stored event in the `(tx, position)` order does not carry
+  a transaction id the cluster has not assigned yet — the signature of a `pg_dump`/`pg_restore` into
+  a fresh cluster, where the restored history sits above the visibility barrier and reads as absent
+  while every new append sorts before it. One probe off the global order index, whatever the store
+  holds. Fatal in the same way, with the storage closed and the remedies named. See "Backup and restore" in the
   postgres module README, and the PostgreSQL notes below. It runs *before* the monitors, on a
   connection returned before they take theirs: the other order deadlocks several stores starting on one
   shared pool, since each monitor holds its connection for the life of the storage. While a caller is in
@@ -892,7 +938,11 @@ secondary identifier … (e.g. customer ID, order number)", and half the example
   store spends is the memory and the series above, for as long as the process runs. (One caveat on
   reading that profile: the corpus is generated inside the first fork of the first target, so whichever
   target runs first is measured against a colder server. The figures above are the ones that survive
-  running the targets in both orders; a cross-target percentage that does not is measuring the harness.)
+  running the targets in both orders; a cross-target percentage that does not is measuring the harness.
+  A second caveat on the committed run: its append workloads wrote through the context's wildcard
+  stream, which metered every append under one `purpose` tag, so its append rows exercised the meters
+  but never the cap — only the reads, addressed per entity, did. The workloads now append through the
+  entity's own stream, as an application would, and a re-run meters the writes per purpose too.)
 - **Admission is first-come-first-served and permanent.** A purpose that got its own tag value keeps it
   for the life of the store, so a dashboard built on that series does not lose it when traffic widens.
   The flip side is that *which* purposes get through is arrival order and not stable across restarts —
@@ -945,8 +995,9 @@ EventStore eventstore = InMemoryEventStorage.newBuilder().buildStore();
 EventStreamId streamId = EventStreamId.forContext("customer").withPurpose("123");
 EventStream<CustomerEvent> stream = eventstore.getEventStream(streamId, CustomerEvent.class);
 
-// 3. Append events (simple append)
-stream.append(AppendCriteria.none(), Event.of(new CustomerRegistered("John"), Tags.none()));
+// 3. Append events unconditionally: no decision was read, so there is no boundary to check.
+//    The same append as stream.append(AppendCriteria.none(), ...), which stays valid
+stream.append(Event.of(new CustomerRegistered("John"), Tags.none()));
 
 // 4. Query all events
 Stream<Event<CustomerEvent>> events = stream.query(EventQuery.matchAll());
@@ -1100,7 +1151,7 @@ still raises.
   Imported events arrive at new (high) positions carrying old timestamps, so "later position implies later
   timestamp" no longer holds in that store.
 - **Checking a target up front** must be done in **raw mode**
-  (`eventStore.getEventStream(EventStreamId.anyContext())`, no event root classes). With domain classes
+  (`eventStore.getRawEventStream(EventStreamId.anyContext())`, no event root classes). With domain classes
   registered, `getEventById` upcasts, and a legacy event whose upcast yields zero current events comes back
   as an empty list even though it exists — a false negative.
 
@@ -1297,6 +1348,14 @@ transfer.from().map(PartyDetails::name).orElse("[erased]");
   copies, and projections hold bookmarks so they never re-read. Re-projecting is the application's job.
 - **Without a codec configured, registering an event type that declares a `Shreddable` fails** at
   `getEventStream` — before anything is read or written — rather than storing personal data in the clear.
+  That check reads declarations (record components, type arguments, array elements) and cannot see a
+  `Shreddable` held behind a component declared as an interface or a non-record class, so the
+  codec-less mapper carries a `Shreddable` serializer of its own that throws: such an append fails as
+  `EventSerializationException`, nothing stored, on the typed and the raw serde alike, instead of
+  Jackson writing the `Present` record — value and subject in the clear — as it otherwise would.
+  `CodecLessShreddableSerdeTest` in the impl module pins both routes and that a codec seals the same
+  value; `ShreddableEventDataTest.registeringAProtectedEventTypeWithoutACodecFails` pins the
+  registration check per backend.
 
 **Two seams, and a shipped default.** `AesGcmShreddingCodec` (AES-256-GCM, random 96-bit IV per value,
 envelope metadata bound as AAD) over a `ShreddingKeyStore`:
@@ -1891,8 +1950,9 @@ that bind everywhere:
 - **Back the cluster up physically; a logical dump restored into a fresh cluster does not work.**
   `pg_dump` copies `event_tx` as data, so the restored history carries ids above the new cluster's
   counter: every read sits behind the visibility barrier and sees an empty store, and the first
-  append sorts before all of history. `build()` refuses to start such a store (a bounded index walk
-  over the stream heads, under every init mode). Physical backups keep the counter and need nothing;
+  append sorts before all of history. `build()` refuses to start such a store (one probe off the
+  global order index, under every init mode — never a walk of the streams, which on a per-entity
+  layout is a probe per entity on every boot). Physical backups keep the counter and need nothing;
   moving a store between clusters is `EventStoreImporter`'s job, which reassigns both ordering
   columns — bookmarks copy across by id, keys and the `btree_gin` extension travel separately. The
   runbook, with the measured breakage and the `pg_resetwal` escape hatch, is "Backup and restore" in

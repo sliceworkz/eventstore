@@ -291,8 +291,8 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * @throws org.sliceworkz.eventstore.events.EventDeserializationException if the stored event cannot be
 	 *         read through this stream's type mappings. Unlike {@link #query(EventQuery)} this method is
 	 *         eager, so the failure surfaces here — which makes a raw-mode stream
-	 *         ({@code eventStore.getEventStream(EventStreamId.anyContext())}) the way to inspect an event
-	 *         a typed stream chokes on
+	 *         ({@code eventStore.getRawEventStream(EventStreamId.anyContext())}) the way to inspect an
+	 *         event a typed stream chokes on
 	 */
 	List<Event<DOMAIN_EVENT_TYPE>> getEventById ( EventId eventId );
 

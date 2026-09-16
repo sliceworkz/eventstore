@@ -24,7 +24,8 @@ import org.sliceworkz.eventstore.events.EventReference;
  * <p>
  * This exception wraps any throwable that occurs during projection processing, including:
  * <ul>
- *   <li>Exceptions thrown from {@link Projection#when(org.sliceworkz.eventstore.events.Event)}</li>
+ *   <li>Exceptions thrown from {@link Projection#when(org.sliceworkz.eventstore.events.Event)}, for an event of
+ *       the main query and for a savepoint found by {@link Projection#initQuery()} alike</li>
  *   <li>Exceptions thrown from {@link BatchAwareProjection#beforeBatch()}</li>
  *   <li>Exceptions thrown while querying or streaming events</li>
  * </ul>

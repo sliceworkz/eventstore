@@ -137,8 +137,9 @@ public class HelloEventstore {
             EventStream<CustomerEvent> customers =
                 eventStore.getEventStream(EventStreamId.forContext("customer"), CustomerEvent.class);
 
-            // 3. the first append: the returned events carry the references storage assigned
-            customers.append(AppendCriteria.none(), List.of(
+            // 3. the first append, unconditional: nothing was read, so there is no boundary to check.
+            //    The returned events carry the references storage assigned
+            customers.append(List.of(
                 Event.of(new CustomerEvent.CustomerRegistered("123", "John"), Tags.of("customer", "123")),
                 Event.of(new CustomerEvent.CustomerRegistered("124", "Jane"), Tags.of("customer", "124"))));
 

@@ -120,19 +120,6 @@ public final class CategoryRestrictedShreddingCodec implements ShreddingCodec {
 	}
 
 	@Override
-	public Optional<String> unseal ( Sealed sealed ) {
-		// The two-answer method cannot say "withheld", and pretending it is erased is the one thing this
-		// class exists to avoid. Nothing in the library calls it; a caller that does gets the answer
-		// through the exception rather than through a lie.
-		return switch ( open(sealed) ) {
-			case Unsealed.Plaintext plaintext -> Optional.of(plaintext.json());
-			case Unsealed.Erased erased -> Optional.empty();
-			case Unsealed.Withheld withheld -> throw new ShreddingException(
-					"the value is withheld (%s); read it through open(Sealed), which can say so".formatted(withheld.reason()));
-		};
-	}
-
-	@Override
 	public Unsealed open ( Sealed sealed ) {
 		if ( sealed == null ) {
 			throw new IllegalArgumentException("sealed cannot be null");

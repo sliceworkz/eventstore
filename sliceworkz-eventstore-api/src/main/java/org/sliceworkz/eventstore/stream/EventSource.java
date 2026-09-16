@@ -183,12 +183,19 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	}
 
 	/**
-	 * Queries events from the stream with full control over pagination and raw cursor tracking.
+	 * Queries events from the stream with full control over pagination and raw cursor tracking: the
+	 * paging primitive.
 	 * <p>
-	 * This method extends the standard query with a {@code storedEventCursorTracker} callback that
-	 * is invoked once for each stored event fetched from storage, <em>before</em> upcasting and
-	 * filtering. This enables callers to track the raw storage cursor even when upcasting
-	 * produces zero enriched events (e.g., when legacy events are filtered out by an upcaster).
+	 * The other {@code query} overloads are conveniences over this one. What it adds is the
+	 * {@code storedEventCursorTracker}, invoked once for each stored event read from storage,
+	 * <em>before</em> upcasting and filtering, with that stored event's reference. It exists because a
+	 * page is a page of <em>stored</em> events, and a stored event may upcast into nothing: a page
+	 * whose every stored event does so returns an empty stream, and a caller advancing its cursor by
+	 * the last event it received would then re-read the same page forever. The tracker hands over the
+	 * cursor the returned events cannot — the reference of the last stored event read — so the caller
+	 * advances past the page whatever it upcast into. {@link org.sliceworkz.eventstore.projection.Projector}
+	 * pages with it, and so should any code paging by hand over a stream with legacy types; a caller
+	 * that never pages needs nothing here.
 	 * <p>
 	 * The cursor reference enables pagination:
 	 * <ul>

@@ -24,7 +24,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.security.GeneralSecurityException;
 import java.util.List;
-import java.util.Optional;
 
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
@@ -40,6 +39,7 @@ import org.sliceworkz.eventstore.shredding.ErasureReport;
 import org.sliceworkz.eventstore.shredding.KeyId;
 import org.sliceworkz.eventstore.shredding.Shreddable;
 import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
+import org.sliceworkz.eventstore.shredding.ShreddingKeyStore.KeyResolution;
 
 /**
  * A store with no {@code ShreddingCodec} refuses to write a {@link Shreddable} wherever one turns up in
@@ -159,8 +159,8 @@ class CodecLessShreddableSerdeTest {
 		}
 
 		@Override
-		public Optional<SecretKey> resolve ( KeyId requested ) {
-			return id.equals(requested) ? Optional.of(key) : Optional.empty();
+		public KeyResolution resolveKey ( KeyId requested ) {
+			return id.equals(requested) ? new KeyResolution.Resolved(key) : KeyResolution.Erased.INSTANCE;
 		}
 
 		@Override

@@ -22,7 +22,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 import java.util.List;
-import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
@@ -30,7 +29,7 @@ import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
 import org.sliceworkz.eventstore.migration.EventStoreImporter;
 import org.sliceworkz.eventstore.migration.ImportReport;
-import org.sliceworkz.eventstore.query.EventQuery;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
 import org.sliceworkz.eventstore.spi.EventStorage.QueryDirection;
@@ -68,7 +67,7 @@ class EventImportRoundTripTest {
 		EventStorage destination = InMemoryEventStorage.newBuilder().name("destination").build();
 
 		try {
-			origin.append(AppendCriteria.none(), Optional.of(stream), List.of(
+			origin.append(AppendCriteria.none(), stream, List.of(
 					new EventToStore(stream, EventType.ofType("Plain"), "{\"a\":1}", Tags.of("kind", "plain"), null),
 					new EventToStore(stream, EventType.ofType("Keyed"), "{\"b\":2}", Tags.none(), "the-key"),
 					new EventToStore(stream, EventType.ofType("Nested"), "{\"keep\":true,\"inner\":{\"n\":[1,2,3]}}", Tags.of("kind", "nested"), null)));
@@ -110,7 +109,7 @@ class EventImportRoundTripTest {
 	}
 
 	private List<StoredEvent> allEventsIn ( EventStorage storage ) {
-		return storage.query(EventQuery.matchAll(), Optional.empty(), null, Limit.none(), QueryDirection.FORWARD).toList();
+		return storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), QueryDirection.FORWARD).toList();
 	}
 
 }

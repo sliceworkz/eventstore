@@ -26,7 +26,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -37,6 +36,7 @@ import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
@@ -100,9 +100,9 @@ public class EventStorageLifecycleTest extends AbstractEventStoreTest {
 		storage.close();
 
 		assertThrows(EventStorageClosedException.class,
-			() -> storage.query(EventQuery.matchAll(), Optional.empty(), null, Limit.none(), QueryDirection.FORWARD));
+			() -> storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), QueryDirection.FORWARD));
 		assertThrows(EventStorageClosedException.class,
-			() -> storage.append(AppendCriteria.none(), Optional.empty(), Collections.emptyList()));
+			() -> storage.append(AppendCriteria.none(), EventStreamId.anyContext(), Collections.emptyList()));
 		assertThrows(EventStorageClosedException.class,
 			() -> storage.getEventById(EventId.of(UUID.randomUUID().toString())));
 		assertThrows(EventStorageClosedException.class,
@@ -114,7 +114,7 @@ public class EventStorageLifecycleTest extends AbstractEventStoreTest {
 		assertThrows(EventStorageClosedException.class,
 			() -> storage.bookmark("some-reader", null, Tags.none()));
 		assertThrows(EventStorageClosedException.class,
-			() -> storage.head(Optional.empty()));
+			() -> storage.head(EventStreamId.anyContext()));
 	}
 
 	@ForEachBackend(requires = Capability.IMPORT)
@@ -152,7 +152,7 @@ public class EventStorageLifecycleTest extends AbstractEventStoreTest {
 
 		// the storage was handed to the store, not created by it, so it stays open and usable
 		List<EventStorage.StoredEvent> stored = eventStorage()
-				.query(EventQuery.matchAll(), Optional.empty(), null, Limit.none(), QueryDirection.FORWARD)
+				.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), QueryDirection.FORWARD)
 				.toList();
 		assertEquals(1, stored.size(), "closing an EventStore must not close a storage it was given");
 

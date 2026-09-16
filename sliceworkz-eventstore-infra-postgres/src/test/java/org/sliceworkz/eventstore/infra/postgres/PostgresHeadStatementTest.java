@@ -20,7 +20,6 @@ package org.sliceworkz.eventstore.infra.postgres;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -38,7 +37,7 @@ public class PostgresHeadStatementTest {
 
 	@Test
 	public void testTheHeadReadsNoPayloadColumns ( ) {
-		String sql = PostgresEventStorageImpl.headSql("pfx_", Optional.of(EventStreamId.forContext("account").withPurpose("42")));
+		String sql = PostgresEventStorageImpl.headSql("pfx_", EventStreamId.forContext("account").withPurpose("42"));
 
 		assertTrue(sql.contains("event_position"), sql);
 		assertTrue(sql.contains("event_tx"), sql);
@@ -50,7 +49,7 @@ public class PostgresHeadStatementTest {
 
 	@Test
 	public void testTheHeadIsTheNewestVisibleEventOfTheStream ( ) {
-		String sql = PostgresEventStorageImpl.headSql("pfx_", Optional.of(EventStreamId.forContext("account").withPurpose("42")));
+		String sql = PostgresEventStorageImpl.headSql("pfx_", EventStreamId.forContext("account").withPurpose("42"));
 
 		assertTrue(sql.contains("FROM pfx_events"), sql);
 		assertTrue(sql.contains("event_tx < pg_snapshot_xmin(pg_current_snapshot())"),
@@ -64,15 +63,15 @@ public class PostgresHeadStatementTest {
 
 	@Test
 	public void testAWildcardStreamAsksForTheStorageWideHead ( ) {
-		String anyPurpose = PostgresEventStorageImpl.headSql("pfx_", Optional.of(EventStreamId.forContext("account").anyPurpose()));
+		String anyPurpose = PostgresEventStorageImpl.headSql("pfx_", EventStreamId.forContext("account").anyPurpose());
 		assertTrue(anyPurpose.contains("stream_context = ?"), anyPurpose);
 		assertFalse(anyPurpose.contains("stream_purpose"), anyPurpose);
 
-		String anyStream = PostgresEventStorageImpl.headSql("pfx_", Optional.of(EventStreamId.anyContext().anyPurpose()));
+		String anyStream = PostgresEventStorageImpl.headSql("pfx_", EventStreamId.anyContext().anyPurpose());
 		assertFalse(anyStream.contains("stream_context"), anyStream);
 		assertFalse(anyStream.contains("stream_purpose"), anyStream);
 
-		String noStream = PostgresEventStorageImpl.headSql("pfx_", Optional.empty());
+		String noStream = PostgresEventStorageImpl.headSql("pfx_", EventStreamId.anyContext());
 		assertFalse(noStream.contains("stream_context"), noStream);
 		assertFalse(noStream.contains("stream_purpose"), noStream);
 	}

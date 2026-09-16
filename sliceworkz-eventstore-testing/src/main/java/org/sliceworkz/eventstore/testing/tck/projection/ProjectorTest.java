@@ -96,6 +96,47 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		assertEquals(0, batchAwareProjection.cancelTriggered());
 	}
 
+	/**
+	 * A projector without a source or a projection cannot run, and is refused when it is built rather
+	 * than left to fail from inside its first batch.
+	 */
+	@ForEachBackend
+	void aProjectorWithoutASourceOrAProjectionIsRefusedWhenBuilt ( ) {
+		TestProjection projection = new TestProjection();
+
+		IllegalStateException noSource = assertThrows(IllegalStateException.class,
+				() -> new Projector.Builder<MockDomainEvent>().towards(projection).build());
+		assertEquals("no event source configured, call from(...) before build()", noSource.getMessage());
+
+		IllegalStateException noProjection = assertThrows(IllegalStateException.class,
+				() -> Projector.from(es).build());
+		assertEquals("no projection configured, call towards(...) before build()", noProjection.getMessage());
+
+		assertThrows(IllegalArgumentException.class, () -> Projector.from(es).towards(projection).inBatchesOf(0));
+		assertThrows(IllegalArgumentException.class, () -> Projector.from(es).towards(projection).inBatchesOf(-5));
+	}
+
+	/**
+	 * The projection's query is read once per run, however many events and batches the run spans:
+	 * storage is asked with it and every event is matched against it, and reading it per event would
+	 * let the two disagree for a projection that computes its query.
+	 */
+	@ForEachBackend
+	void theProjectionQueryIsReadOncePerRun ( ) {
+		CountingQueryProjection projection = new CountingQueryProjection();
+		Projector<MockDomainEvent> projector = Projector.from(es).towards(projection).inBatchesOf(1).build();
+		assertEquals(0, projection.eventQueryReads, "building a projector reads the initialisation query, not the event query");
+
+		ProjectorMetrics metrics = projector.run();
+
+		assertEquals(projection.eventsSeen, metrics.eventsHandled());
+		assertTrue(metrics.eventsHandled() > 1, "the run must span several batches for the count to mean anything");
+		assertEquals(1, projection.eventQueryReads, "one read for the run, whatever its batch count");
+
+		projector.run();
+		assertEquals(2, projection.eventQueryReads, "and one more for the next run");
+	}
+
 	@ForEachBackend
 	void testFailingProjector ( ) {
 		FailingBatchAwareTestProjection batchAwareProjection = new FailingBatchAwareTestProjection();
@@ -1045,6 +1086,26 @@ public class ProjectorTest extends AbstractEventStoreTest {
 
 	}
 
+	/**
+	 * Counts how often the projector asks for its query.
+	 */
+	private static final class CountingQueryProjection implements Projection<MockDomainEvent> {
+
+		private int eventQueryReads = 0;
+		private int eventsSeen = 0;
+
+		@Override
+		public EventQuery eventQuery ( ) {
+			eventQueryReads++;
+			return EventQuery.matchAll();
+		}
+
+		@Override
+		public void when ( Event<MockDomainEvent> event ) {
+			eventsSeen++;
+		}
+
+	}
 
 	/**
 	 * The savepoint pattern with two savepoints in the init query, whose handler throws on the second

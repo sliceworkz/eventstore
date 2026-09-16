@@ -749,7 +749,7 @@ public class EventStoreImpl implements EventStore {
 			// as the caller consumes, are counted separately by sliceworkz.eventstore.query.event, and
 			// are the caller's pace, not the store's.
 			Stream<StoredEvent> storedEvents =
-				timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query), Optional.of(eventStreamId), cursor, limit, direction));
+				timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query.filter()), eventStreamId, cursor, limit, direction));
 
 			return storedEvents
 				.peek(se -> storedEventCursorTracker.accept(se.reference()))
@@ -857,7 +857,7 @@ public class EventStoreImpl implements EventStore {
 			List<Event<EVENT_TYPE>> appendedEvents;
 			try {
 				List<EventToStore> eventsToStore = reduce(events);
-				List<StoredEvent> storedEvents = timerAppend.record(()->eventStorage.append(storageCriteria, Optional.of(eventStreamId), eventsToStore));
+				List<StoredEvent> storedEvents = timerAppend.record(()->eventStorage.append(storageCriteria, eventStreamId, eventsToStore));
 				appendedEvents = storedEvents.stream().flatMap(se->enrich(se, QueryDirection.FORWARD)).toList();
 				meterAppend.increment();
 
@@ -903,13 +903,6 @@ public class EventStoreImpl implements EventStore {
 		/**
 		 * Traces back all current event types to their legacy historical ones, so a full query is done on older and newer ones
 		 */
-		private EventQuery includeLegacyEventTypes ( EventQuery query ) {
-			if ( query.items() == null ) {
-				return query; // match-all, nothing to modify
-			} else {
-				return new EventQuery(includeLegacyEventTypes(query.filter()), query.direction(), query.limit());
-			}
-		}
 
 		/**
 		 * The same trace-back for a consistency boundary: a legacy event that upcasts into a type of the
@@ -919,13 +912,20 @@ public class EventStoreImpl implements EventStore {
 		 * append does not.
 		 */
 		private AppendCriteria includeLegacyEventTypes ( AppendCriteria criteria ) {
-			if ( criteria.eventFilter().items() == null ) {
-				return criteria; // match-all, nothing to modify
+			if ( criteria.eventFilter().isMatchAll() ) {
+				return criteria; // nothing to modify, and the caller's own criteria is what storage's exception then names
 			}
 			return new AppendCriteria(includeLegacyEventTypes(criteria.eventFilter()), criteria.expectedLastEventReference());
 		}
 
+		/**
+		 * The same trace-back for a filter, which is what storage is asked with: a query for a current
+		 * type has to fetch the legacy events that upcast into it.
+		 */
 		private EventFilter includeLegacyEventTypes ( EventFilter filter ) {
+			if ( filter.isMatchAll() ) {
+				return filter; // match-all has no items to trace back
+			}
 			return new EventFilter(filter.items().stream().map(this::includeLegacyEventTypes).toList(), filter.until());
 		}
 
@@ -1147,7 +1147,7 @@ public class EventStoreImpl implements EventStore {
 			// straight to the storage: the head is a stored event's reference and nothing about it goes
 			// through this stream's mappings -- no legacy-type widening, no upcasting, no decryption --
 			// which is what lets it be answered for a head this stream could not read
-			return timerHead.record(() -> eventStorage.head(Optional.of(eventStreamId)));
+			return timerHead.record(() -> eventStorage.head(eventStreamId));
 		}
 
 	}

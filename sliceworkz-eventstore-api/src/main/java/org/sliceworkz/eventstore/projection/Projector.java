@@ -308,15 +308,15 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 			// savepoint event, initializing the read model without replaying the entire stream.
 			// The main eventQuery then starts from that savepoint's reference.
 			// On subsequent run() calls, lastEventReference is already set, so initQuery is skipped.
-			if ( bookmarkReader == null && lastEventReference == null && projection.initQuery() != null && !projection.initQuery().isMatchNone() ) {
+			EventQuery initQuery = projection.initQuery();
+			if ( bookmarkReader == null && lastEventReference == null && initQuery != null && !initQuery.isMatchNone() ) {
 				// The boundary of a bounded run applies to the savepoint too: without it, runUntil() would
 				// initialise the read model from the newest savepoint in the store -- possibly one written
 				// after the requested point in time -- and then start the main query beyond the boundary,
 				// reporting present-day state as a point-in-time projection.
-				EventQuery initQuery = projection.initQuery().untilIfEarlier ( until );
 				queriesDone++;
 				try {
-					es.query(initQuery).forEach(e -> {
+					es.query(initQuery.untilIfEarlier(until)).forEach(e -> {
 						eventsStreamed++;
 						eventsHandled++;
 						if ( mostRecentEventReference == null || e.reference().happenedAfter(mostRecentEventReference) ) {
@@ -343,13 +343,20 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 			// what the bookmark already holds, so a batch that moved nothing places nothing
 			Optional<EventReference> bookmarked = lastReadAtStart;
 
+			// The projection's query, read once for the run. Storage is asked with it below and every
+			// event of the run is matched against it, and reading it per event would let the two disagree
+			// -- and cost a call per event for a projection that computes its query.
+			EventQuery eventQuery = projection.eventQuery();
+			if ( eventQuery == null ) {
+				throw new IllegalStateException("projection %s answered null to eventQuery(); a projection has to say which events it depends on".formatted(projection));
+			}
+
 			// in order to avoid memory issues, we'll loop in batches om MAX_EVENTS_PER_QUERY, until no more events are found in the stream
-			Limit limit =  Limit.to(maxEventsPerQuery).orIfLower(projection.eventQuery().limit());
+			Limit limit =  Limit.to(maxEventsPerQuery).orIfLower(eventQuery.limit());
 
+			EventQuery effectiveQuery = eventQuery.untilIfEarlier ( until );
 
-			EventQuery effectiveQuery = projection.eventQuery().untilIfEarlier ( until );
-
-			Limit queryTotalLimit = projection.eventQuery().limit();
+			Limit queryTotalLimit = eventQuery.limit();
 
 			EventReference lastRead = lastEventReference==null?null:lastEventReference.orElse(null);
 
@@ -373,7 +380,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 					lastRead = es.query(effectiveQuery, lastRead, limit, ref -> {
 						rawCursor.set(ref);
 						storedEventsCount.incrementAndGet();
-					}).map(e->offerEventToProjection(e, projection, until, batch)).map(e->e.reference()).reduce((first, second) -> second).orElse(null);
+					}).map(e->offerEventToProjection(e, eventQuery, until, batch)).map(e->e.reference()).reduce((first, second) -> second).orElse(null);
 
 					// if we still read enriched data, keep the reference
 					if ( lastRead != null ) {
@@ -457,7 +464,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 			return lastEventReference;
 		}
 	
-		private Event<CONSUMED_EVENT_TYPE> offerEventToProjection ( Event<CONSUMED_EVENT_TYPE> e, Projection<CONSUMED_EVENT_TYPE> projection, EventReference until, Batch batch ) {
+		private Event<CONSUMED_EVENT_TYPE> offerEventToProjection ( Event<CONSUMED_EVENT_TYPE> e, EventQuery eventQuery, EventReference until, Batch batch ) {
 			this.eventsStreamed++;
 			if ( mostRecentEventReference == null || e.reference().happenedAfter(mostRecentEventReference) ) {
 				mostRecentEventReference = e.reference();
@@ -465,7 +472,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 			// the boundary is over stored events: every event the stored event at the boundary upcasts
 			// into is at or before it, exactly as EventFilter.matches decides for the query itself
 			if ( until == null || !e.reference().storedEventHappenedAfter(until) ) {
-				if ( projection.eventQuery().matches(e) ) {
+				if ( eventQuery.matches(e) ) {
 					batch.startBatchIfNeeded(e);
 					currentEventReference = e.reference();
 					projection.when(e);
@@ -754,21 +761,38 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		 * Smaller batch sizes reduce memory usage but increase the number of queries.
 		 * The default is {@value #DEFAULT_MAX_EVENTS_PER_QUERY}.
 		 *
-		 * @param maxEventsPerQuery the maximum number of events to query in each batch
+		 * @param maxEventsPerQuery the maximum number of events to query in each batch, at least 1
 		 * @return this builder for method chaining
+		 * @throws IllegalArgumentException if the batch size is not positive
 		 */
 		public Builder<EVENT_TYPE> inBatchesOf ( int maxEventsPerQuery ) {
+			if ( maxEventsPerQuery < 1 ) {
+				throw new IllegalArgumentException("a batch holds at least one event, not %d".formatted(maxEventsPerQuery));
+			}
 			this.maxEventsPerQuery = maxEventsPerQuery;
 			return this;
 		}
 
 		/**
 		 * Builds the Projector instance.
+		 * <p>
+		 * A source and a projection are required, and are checked here rather than left to fail inside
+		 * the first {@link Projector#run()}: a null there surfaces as a {@code NullPointerException} from
+		 * the middle of a batch, after the bookmark has been read and, for a subscribed projector,
+		 * after the source has been registered with the storage.
 		 *
 		 * @return a new Projector configured with the builder's settings
+		 * @throws IllegalStateException if no event source or no projection was configured
 		 */
 		public Projector<EVENT_TYPE> build ( ) {
-			if ( bookmarkBuilder.readerName != null && projection.initQuery() != null && !projection.initQuery().isMatchNone() ) {
+			if ( eventSource == null ) {
+				throw new IllegalStateException("no event source configured, call from(...) before build()");
+			}
+			if ( projection == null ) {
+				throw new IllegalStateException("no projection configured, call towards(...) before build()");
+			}
+			EventQuery initQuery = projection.initQuery();
+			if ( bookmarkBuilder.readerName != null && initQuery != null && !initQuery.isMatchNone() ) {
 				LOGGER.warn("Projection has initQuery but bookmarking is enabled — initQuery will be ignored. Remove bookmarking for live-model use, or remove initQuery for full replay.");
 			}
 			Projector<EVENT_TYPE> projector = new Projector<>(eventSource, projection, after, maxEventsPerQuery, bookmarkBuilder.readerName, bookmarkBuilder.tags, bookmarkBuilder.bookmarkReadFrequency);

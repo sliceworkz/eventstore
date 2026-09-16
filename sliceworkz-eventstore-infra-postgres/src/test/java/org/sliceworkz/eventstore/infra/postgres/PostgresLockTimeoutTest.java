@@ -29,7 +29,6 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Duration;
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -142,11 +141,11 @@ class PostgresLockTimeoutTest {
 	void aConditionalAppendWaitsAtMostTheLockTimeoutAndWritesNothing ( ) throws Exception {
 		DataSource main = PostgresContainer.dataSource(PostgresContainer.IMAGE_PG18);
 		try ( PostgresEventStorageImpl storage = storage(main, main, "lt_append_", Duration.ofMillis(500));
-			  Holder holder = new Holder(main, storage.appendLockKey(Optional.of(STREAM))) ) {
+			  Holder holder = new Holder(main, storage.appendLockKey(STREAM)) ) {
 
 			long started = System.nanoTime();
 			EventStorageException failure = assertThrows(EventStorageException.class,
-					() -> storage.append(emptyBoundary(), Optional.of(STREAM), oneEvent()));
+					() -> storage.append(emptyBoundary(), STREAM, oneEvent()));
 			long waitedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
 
 			assertTrue(waitedMillis >= 400, "the append should have waited for the lock, but returned after " + waitedMillis + "ms");
@@ -157,14 +156,14 @@ class PostgresLockTimeoutTest {
 			assertEquals(0, eventCount(main, "lt_append_"), "a timed-out append must have written nothing");
 
 			// the unconditional path takes no lock, so the stalled holder does not touch it
-			StoredEvent unconditional = storage.append(AppendCriteria.none(), Optional.of(STREAM), oneEvent()).getFirst();
+			StoredEvent unconditional = storage.append(AppendCriteria.none(), STREAM, oneEvent()).getFirst();
 			assertEquals(1, eventCount(main, "lt_append_"));
 
 			holder.close();
 
 			// with the holder gone the same append goes through, at the same boundary it was refused on:
 			// the refusal was about the lock, never about the boundary
-			List<StoredEvent> stored = storage.append(AppendCriteria.of(EventFilter.matchAll(), unconditional.reference()), Optional.of(STREAM), oneEvent());
+			List<StoredEvent> stored = storage.append(AppendCriteria.of(EventFilter.matchAll(), unconditional.reference()), STREAM, oneEvent());
 			assertEquals(1, stored.size());
 			assertEquals(2, eventCount(main, "lt_append_"));
 		} finally {
@@ -186,7 +185,7 @@ class PostgresLockTimeoutTest {
 			StoredEvent last = null;
 			for ( int i = 0; i < 8; i++ ) {
 				last = storage.append(AppendCriteria.of(EventFilter.matchAll(), last == null ? null : last.reference()),
-						Optional.of(STREAM), oneEvent()).getFirst();
+						STREAM, oneEvent()).getFirst();
 			}
 			assertEquals(8, eventCount(single, "lt_scope_"));
 
@@ -208,7 +207,7 @@ class PostgresLockTimeoutTest {
 		try ( PostgresEventStorageImpl storage = storage(main, main, "lt_zero_", Duration.ZERO) ) {
 			assertEquals(Duration.ZERO, storage.lockTimeout());
 
-			long key = storage.appendLockKey(Optional.of(STREAM));
+			long key = storage.appendLockKey(STREAM);
 			Holder holder = new Holder(main, key);
 			CompletableFuture<Void> releasing = CompletableFuture.runAsync(() -> {
 				try {
@@ -220,7 +219,7 @@ class PostgresLockTimeoutTest {
 			});
 
 			long started = System.nanoTime();
-			List<StoredEvent> stored = storage.append(emptyBoundary(), Optional.of(STREAM), oneEvent());
+			List<StoredEvent> stored = storage.append(emptyBoundary(), STREAM, oneEvent());
 			long waitedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
 
 			assertEquals(1, stored.size());

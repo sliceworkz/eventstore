@@ -169,8 +169,12 @@ public interface Projection<CONSUMED_EVENT_TYPE> extends EventWithMetaDataHandle
 	 * <p>
 	 * The query specifies both the event types and tags that are relevant for this projection.
 	 * Only events matching this query will be passed to the {@link #when(org.sliceworkz.eventstore.events.Event)} method.
+	 * <p>
+	 * A {@link Projector} reads it once per run: the query storage is asked with is the query every
+	 * event of that run is matched against, so an answer that changes between calls takes effect on
+	 * the next run, never in the middle of one.
 	 *
-	 * @return the EventQuery defining the events this projection processes
+	 * @return the EventQuery defining the events this projection processes, never null
 	 */
 	EventQuery eventQuery ( );
 

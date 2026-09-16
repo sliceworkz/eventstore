@@ -66,8 +66,15 @@ public record AppendCriteria ( EventFilter eventFilter, Optional<EventReference>
 	 * Creates an AppendCriteria from an {@link EventFilter} and a reference to the last known matching event.
 	 * This is the primary factory method — use the filter extracted from your query via {@link EventQuery#filter()}.
 	 *
+	 * <p>
+	 * A {@code null} reference is a boundary too: "I decided on an empty boundary", and any matching
+	 * event in the stream is then a new relevant fact. It is the value {@code stream.head().orElse(null)}
+	 * hands over for an empty stream, which is why an absent reference is spelled {@code null} on the
+	 * input side and {@link java.util.Optional#empty()} on the answering side (see
+	 * {@link EventReference}).
+	 *
 	 * @param eventFilter the filter defining relevant events for the consistency check
-	 * @param reference the last known Event matching the filter that our decision was based upon (null if none)
+	 * @param reference the last known Event matching the filter that our decision was based upon, or null for an empty boundary
 	 * @return AppendCriteria for conditional appends
 	 */
 	public static final AppendCriteria of ( EventFilter eventFilter, EventReference reference ) {
@@ -79,7 +86,7 @@ public record AppendCriteria ( EventFilter eventFilter, Optional<EventReference>
 	 * Direction and limit from the query are discarded — only the pure matching criteria matter for optimistic locking.
 	 *
 	 * @param eventQuery the query whose filter will be used for the consistency check
-	 * @param reference the last known Event matching the query that our decision was based upon (null if none)
+	 * @param reference the last known Event matching the query that our decision was based upon, or null for an empty boundary
 	 * @return AppendCriteria for conditional appends
 	 */
 	public static final AppendCriteria of ( EventQuery eventQuery, EventReference reference ) {

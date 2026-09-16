@@ -26,7 +26,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.sql.DataSource;
@@ -38,7 +37,7 @@ import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
-import org.sliceworkz.eventstore.query.EventQuery;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
@@ -120,7 +119,7 @@ public class PostgresPrefixCaseTest {
 					append(upper);
 				}
 				try ( EventStorage lower = build("samestore_", dataSource, false) ) {
-					List<StoredEvent> events = lower.query(EventQuery.matchAll(), Optional.of(STREAM), null, Limit.none()).toList();
+					List<StoredEvent> events = lower.query(EventFilter.matchAll(), STREAM, null, Limit.none()).toList();
 					assertEquals(1, events.size(), "the event appended through the mixed-case spelling");
 					assertEquals(EventType.ofType("PrefixCaseProbe"), events.get(0).type());
 				}
@@ -151,7 +150,7 @@ public class PostgresPrefixCaseTest {
 		}
 
 		private void append ( EventStorage storage ) {
-			storage.append(AppendCriteria.none(), Optional.of(STREAM), List.of(
+			storage.append(AppendCriteria.none(), STREAM, List.of(
 				new EventToStore(STREAM, EventType.ofType("PrefixCaseProbe"), "{}", Tags.none(), null)));
 		}
 

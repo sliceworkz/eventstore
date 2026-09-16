@@ -28,7 +28,6 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 
 import javax.sql.DataSource;
 
@@ -40,7 +39,7 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
-import org.sliceworkz.eventstore.query.EventQuery;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageException;
@@ -116,8 +115,8 @@ public class PostgresGlobalOrderIndexTest {
 				seed(storage);
 				analyze(dataSource, prefix);
 
-				List<StoredEvent> all = storage.query(EventQuery.matchAll(), Optional.empty(), null, Limit.none(), QueryDirection.FORWARD).toList();
-				String plan = explainPage(storage, dataSource, prefix, Optional.empty(), all.get(all.size() / 2).reference());
+				List<StoredEvent> all = storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), QueryDirection.FORWARD).toList();
+				String plan = explainPage(storage, dataSource, prefix, EventStreamId.anyContext(), all.get(all.size() / 2).reference());
 
 				assertTrue(plan.contains("Index Scan using " + prefix + "idx_events_tx_position"), () ->
 						"a wildcard page has no stream column to enter a stream index by, so the global"
@@ -137,7 +136,7 @@ public class PostgresGlobalOrderIndexTest {
 				seed(storage);
 				analyze(dataSource, prefix);
 
-				String plan = explain(dataSource, "EXPLAIN (COSTS OFF) " + PostgresEventStorageImpl.headSql(prefix, Optional.empty()), List.of());
+				String plan = explain(dataSource, "EXPLAIN (COSTS OFF) " + PostgresEventStorageImpl.headSql(prefix, EventStreamId.anyContext()), List.of());
 
 				assertTrue(plan.contains("Index Scan Backward using " + prefix + "idx_events_tx_position"), () ->
 						"the head of the whole store is one backward probe on the global order index\n" + plan);
@@ -157,8 +156,8 @@ public class PostgresGlobalOrderIndexTest {
 				seed(storage);
 				analyze(dataSource, prefix);
 
-				Optional<EventStreamId> context = Optional.of(EventStreamId.forContext(CONTEXT).anyPurpose());
-				List<StoredEvent> all = storage.query(EventQuery.matchAll(), context, null, Limit.none(), QueryDirection.FORWARD).toList();
+				EventStreamId context = EventStreamId.forContext(CONTEXT).anyPurpose();
+				List<StoredEvent> all = storage.query(EventFilter.matchAll(), context, null, Limit.none(), QueryDirection.FORWARD).toList();
 				String plan = explainPage(storage, dataSource, prefix, context, all.get(all.size() / 2).reference());
 
 				assertTrue(plan.contains("Index Scan using " + prefix + "idx_events_context_tx_position"), () ->
@@ -181,7 +180,7 @@ public class PostgresGlobalOrderIndexTest {
 				seed(storage);
 				analyze(dataSource, prefix);
 
-				String sql = "EXPLAIN (COSTS OFF) " + PostgresEventStorageImpl.headSql(prefix, Optional.of(EventStreamId.forContext(CONTEXT).anyPurpose()));
+				String sql = "EXPLAIN (COSTS OFF) " + PostgresEventStorageImpl.headSql(prefix, EventStreamId.forContext(CONTEXT).anyPurpose());
 				String plan = explain(dataSource, sql, List.of(CONTEXT));
 
 				assertTrue(plan.contains("Index Scan Backward using " + prefix + "idx_events_context_tx_position"), () ->
@@ -248,7 +247,7 @@ public class PostgresGlobalOrderIndexTest {
 					for ( int i = 0; i < SEED_BATCH; i++ ) {
 						events.add(new EventToStore(stream, new EventType("SomethingHappened"), "{}", Tags.of("purpose", stream.purpose()), null));
 					}
-					storage.append(AppendCriteria.none(), Optional.of(stream), events);
+					storage.append(AppendCriteria.none(), stream, events);
 				}
 			}
 		}
@@ -275,20 +274,20 @@ public class PostgresGlobalOrderIndexTest {
 		 * the order, not whether a scan of a tiny table is cheaper.
 		 */
 		private String explainPage ( PostgresEventStorageImpl storage, DataSource dataSource, String prefix,
-				Optional<EventStreamId> stream, EventReference cursor ) throws SQLException {
+				EventStreamId stream, EventReference cursor ) throws SQLException {
 			StringBuilder sql = new StringBuilder(
 					"EXPLAIN (COSTS OFF) SELECT event_position, event_tx::text, event_id FROM %sevents"
 							.formatted(prefix)
 							+ " WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())");
 			List<Object> parameters = new ArrayList<>();
 			storage.addCursorBoundary(sql, parameters, cursor, QueryDirection.FORWARD);
-			if ( stream.isPresent() && !stream.get().isAnyContext() ) {
+			if ( !stream.isAnyContext() ) {
 				sql.append(" AND stream_context = ?");
-				parameters.add(stream.get().context());
+				parameters.add(stream.context());
 			}
-			if ( stream.isPresent() && !stream.get().isAnyPurpose() ) {
+			if ( !stream.isAnyPurpose() ) {
 				sql.append(" AND stream_purpose = ?");
-				parameters.add(stream.get().purpose());
+				parameters.add(stream.purpose());
 			}
 			// the read path's ORDER BY, verbatim: the cast keeps the name from resolving to the text output column
 			sql.append(" ORDER BY event_tx::xid8, event_position LIMIT ").append(PAGE);

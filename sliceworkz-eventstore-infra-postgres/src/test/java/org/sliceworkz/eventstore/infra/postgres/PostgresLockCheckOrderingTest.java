@@ -26,7 +26,6 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 import javax.sql.DataSource;
@@ -39,7 +38,7 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
-import org.sliceworkz.eventstore.query.EventQuery;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
@@ -97,19 +96,19 @@ public class PostgresLockCheckOrderingTest {
 			try {
 				EventStreamId stream = EventStreamId.forContext("account").withPurpose("42");
 				Tags boundaryTags = Tags.of("account", "42");
-				EventQuery boundary = EventQuery.forEvents(EventTypesFilter.any(), boundaryTags);
+				EventFilter boundary = EventFilter.forEvents(EventTypesFilter.any(), boundaryTags);
 
 				// 1. Reserve a position out of band. Nothing has consumed it yet, so every event the
 				//    library appends from here on carries a HIGHER position than this one.
 				long reservedPosition = reserveNextPosition(dataSource, prefix);
 
 				// 2. Append through the library: higher position, and a transaction that commits now.
-				storage.append(AppendCriteria.none(), Optional.of(stream),
+				storage.append(AppendCriteria.none(), stream,
 					List.of(event(stream, "MoneyDeposited", boundaryTags)));
 
 				// 3. Read the boundary the way a decider would, and take the reference it would use.
 				List<StoredEvent> seen = storage
-					.query(boundary, Optional.of(stream), null, Limit.none(), QueryDirection.FORWARD)
+					.query(boundary, stream, null, Limit.none(), QueryDirection.FORWARD)
 					.toList();
 				assertEquals(1, seen.size(), "expected the appended event to be readable");
 				EventReference reference = seen.get(0).reference();
@@ -123,7 +122,7 @@ public class PostgresLockCheckOrderingTest {
 				// 5. Every reader sorts that event AFTER the reference, despite the lower position —
 				//    the read path orders by (event_tx, event_position).
 				List<StoredEvent> replay = storage
-					.query(boundary, Optional.of(stream), null, Limit.none(), QueryDirection.FORWARD)
+					.query(boundary, stream, null, Limit.none(), QueryDirection.FORWARD)
 					.toList();
 				assertEquals(2, replay.size(), "expected both events to be readable");
 				EventReference inverted = replay.get(1).reference();
@@ -135,14 +134,14 @@ public class PostgresLockCheckOrderingTest {
 				// 6. ...so it is a new relevant fact, and the lock check has to see it. Comparing on
 				//    event_position alone would not: reservedPosition < reference.position().
 				assertThrows(OptimisticLockingException.class,
-					() -> storage.append(AppendCriteria.of(boundary, reference), Optional.of(stream),
+					() -> storage.append(AppendCriteria.of(boundary, reference), stream,
 						List.of(event(stream, "MoneyWithdrawn", boundaryTags))),
 					"appending against a stale reference must conflict on an event that sorts after it");
 
 				// 7. Control: the check is not simply rejecting everything. Against the reference a
 				//    reader would hold now, the very same append succeeds.
 				List<StoredEvent> appended = storage.append(AppendCriteria.of(boundary, inverted),
-					Optional.of(stream), List.of(event(stream, "MoneyWithdrawn", boundaryTags)));
+					stream, List.of(event(stream, "MoneyWithdrawn", boundaryTags)));
 				assertEquals(1, appended.size(), "appending against the current reference must succeed");
 			} finally {
 				storage.close();

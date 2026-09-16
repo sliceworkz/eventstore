@@ -128,7 +128,7 @@ public class PostgresVisibilityStallTest {
 				withStorage("visroh_", (storage, dataSource, prefix) -> {
 
 					EventStreamId stream = EventStreamId.forContext("account").withPurpose("1");
-					storage.append(AppendCriteria.none(), Optional.of(stream), List.of(event(stream, "Before")));
+					storage.append(AppendCriteria.none(), stream, List.of(event(stream, "Before")));
 
 					try ( Connection held = dataSource.getConnection() ) {
 						held.setAutoCommit(false);
@@ -139,7 +139,7 @@ public class PostgresVisibilityStallTest {
 							stmt.execute("SELECT count(*) FROM " + prefix + "events");
 						}
 
-						storage.append(AppendCriteria.none(), Optional.of(stream), List.of(event(stream, "During")));
+						storage.append(AppendCriteria.none(), stream, List.of(event(stream, "During")));
 
 						assertEquals(2, visibleCount(storage, stream),
 							"a read-only transaction at " + isolation + " must not stall reads: it is assigned no "
@@ -162,7 +162,7 @@ public class PostgresVisibilityStallTest {
 				EventStreamId stream = EventStreamId.forContext("account").withPurpose("1");
 				execute(dataSource, "CREATE TABLE IF NOT EXISTS " + prefix + "unrelated_workload (id int)");
 
-				storage.append(AppendCriteria.none(), Optional.of(stream), List.of(event(stream, "Before")));
+				storage.append(AppendCriteria.none(), stream, List.of(event(stream, "Before")));
 				assertEquals(1, visibleCount(storage, stream), "the first event must be visible before anything is held open");
 
 				try ( Connection held = dataSource.getConnection() ) {
@@ -173,7 +173,7 @@ public class PostgresVisibilityStallTest {
 						stmt.execute("INSERT INTO " + prefix + "unrelated_workload VALUES (1)");
 					}
 
-					storage.append(AppendCriteria.none(), Optional.of(stream), List.of(event(stream, "During")));
+					storage.append(AppendCriteria.none(), stream, List.of(event(stream, "During")));
 
 					assertEquals(2, rawCount(dataSource, prefix),
 						"the event is committed and present in the table — this is not a write that failed");
@@ -203,7 +203,7 @@ public class PostgresVisibilityStallTest {
 				EventQuery boundary = EventQuery.forEvents(EventTypesFilter.any(), boundaryTags);
 				execute(dataSource, "CREATE TABLE IF NOT EXISTS " + prefix + "unrelated_workload (id int)");
 
-				storage.append(AppendCriteria.none(), Optional.of(stream), List.of(event(stream, "MoneyDeposited", boundaryTags)));
+				storage.append(AppendCriteria.none(), stream, List.of(event(stream, "MoneyDeposited", boundaryTags)));
 				EventReference reference = lastReference(storage, boundary, stream);
 
 				try ( Connection held = dataSource.getConnection() ) {
@@ -213,7 +213,7 @@ public class PostgresVisibilityStallTest {
 					}
 
 					// somebody else appends a fact inside the consistency boundary and commits it
-					storage.append(AppendCriteria.none(), Optional.of(stream), List.of(event(stream, "MoneyWithdrawn", boundaryTags)));
+					storage.append(AppendCriteria.none(), stream, List.of(event(stream, "MoneyWithdrawn", boundaryTags)));
 
 					// read-your-own-writes does not hold: this is the appender's own connection pool, the
 					// append returned successfully, and the event is still not readable
@@ -225,7 +225,7 @@ public class PostgresVisibilityStallTest {
 					// ...but the lock check has no xmin barrier, so it sees exactly the fact the reader
 					// was denied. The append conflicts against the only reference a reader can hold.
 					assertThrows(OptimisticLockingException.class,
-						() -> storage.append(AppendCriteria.of(boundary, reference), Optional.of(stream),
+						() -> storage.append(AppendCriteria.of(boundary, reference), stream,
 							List.of(event(stream, "MoneyWithdrawn", boundaryTags))),
 						"the lock check must conflict on the committed event the reader cannot see");
 
@@ -242,7 +242,7 @@ public class PostgresVisibilityStallTest {
 				assertEquals(2, afterCommit.size(), "both events must be readable once the blocking transaction ends");
 				assertTrue(afterCommit.get(1).reference().happenedAfter(reference), "the withheld event sorts after the stale reference");
 				assertEquals(1,
-					storage.append(AppendCriteria.of(boundary, afterCommit.get(1).reference()), Optional.of(stream),
+					storage.append(AppendCriteria.of(boundary, afterCommit.get(1).reference()), stream,
 						List.of(event(stream, "MoneyWithdrawn", boundaryTags))).size(),
 					"appending against the now-current reference must succeed");
 			});
@@ -261,8 +261,8 @@ public class PostgresVisibilityStallTest {
 				EventStreamId stream = EventStreamId.forContext("account").withPurpose("42");
 				execute(dataSource, "CREATE TABLE IF NOT EXISTS " + prefix + "unrelated_workload (id int)");
 
-				StoredEvent visible = storage.append(AppendCriteria.none(), Optional.of(stream), List.of(event(stream, "MoneyDeposited"))).getFirst();
-				assertEquals(Optional.of(visible.reference()), storage.head(Optional.of(stream)));
+				StoredEvent visible = storage.append(AppendCriteria.none(), stream, List.of(event(stream, "MoneyDeposited"))).getFirst();
+				assertEquals(Optional.of(visible.reference()), storage.head(stream));
 
 				StoredEvent withheld;
 				try ( Connection held = dataSource.getConnection() ) {
@@ -272,10 +272,10 @@ public class PostgresVisibilityStallTest {
 					}
 
 					// committed, and behind the barrier for every reader
-					withheld = storage.append(AppendCriteria.none(), Optional.of(stream), List.of(event(stream, "MoneyWithdrawn"))).getFirst();
+					withheld = storage.append(AppendCriteria.none(), stream, List.of(event(stream, "MoneyWithdrawn"))).getFirst();
 					assertEquals(1, visibleCount(storage, stream), "fixture: the appended event is withheld from reads");
 
-					assertEquals(Optional.of(visible.reference()), storage.head(Optional.of(stream)),
+					assertEquals(Optional.of(visible.reference()), storage.head(stream),
 						"the head must be what a read sees, not what has been committed");
 					assertTrue(withheld.reference().happenedAfter(visible.reference()),
 						"the withheld event sorts after the head a reader can hold");
@@ -283,7 +283,7 @@ public class PostgresVisibilityStallTest {
 					held.commit();
 				}
 
-				assertEquals(Optional.of(withheld.reference()), storage.head(Optional.of(stream)),
+				assertEquals(Optional.of(withheld.reference()), storage.head(stream),
 					"with the blocker gone, the head advances to the withheld event");
 			});
 		}
@@ -312,7 +312,7 @@ public class PostgresVisibilityStallTest {
 					public void notify ( BookmarkPlacedNotification bookmarkPlaced ) { }
 				});
 
-				EventReference before = storage.append(AppendCriteria.none(), Optional.of(stream), List.of(event(stream, "Before"))).getFirst().reference();
+				EventReference before = storage.append(AppendCriteria.none(), stream, List.of(event(stream, "Before"))).getFirst().reference();
 				awaitTrue(() -> deliveries.stream().anyMatch(d -> d.atLeastUntil().equals(before)),
 					"fixture: an unstalled append must be announced");
 
@@ -323,7 +323,7 @@ public class PostgresVisibilityStallTest {
 						stmt.execute("INSERT INTO " + prefix + "unrelated_workload VALUES (1)");
 					}
 
-					withheld = storage.append(AppendCriteria.none(), Optional.of(stream), List.of(event(stream, "During"))).getFirst().reference();
+					withheld = storage.append(AppendCriteria.none(), stream, List.of(event(stream, "During"))).getFirst().reference();
 					assertEquals(1, visibleCount(storage, stream), "fixture: the appended event is withheld from reads");
 
 					// long enough for several poll slices of the monitor: the NOTIFY has long arrived
@@ -438,7 +438,7 @@ public class PostgresVisibilityStallTest {
 		}
 
 		private List<StoredEvent> query ( EventStorage storage, EventQuery query, EventStreamId stream ) {
-			return storage.query(query, Optional.of(stream), null, Limit.none(), QueryDirection.FORWARD).toList();
+			return storage.query(query.filter(), stream, null, Limit.none(), QueryDirection.FORWARD).toList();
 		}
 
 		private int visibleCount ( EventStorage storage, EventStreamId stream ) {

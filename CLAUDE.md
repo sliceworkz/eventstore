@@ -338,6 +338,17 @@ mvn clean install -DskipTests
   one. A cursor does not change this: `query(q.limit(500), cursor)` reads 500, same as `query(q)`
   would with the limit on `q`. Pass `Limit.none()` to the three-argument overload to read to the end
   of a stream deliberately
+- **The SPI is asked with an `EventFilter`, never with an `EventQuery`.** `EventStorage.query` takes
+  the filter, the stream, the cursor, the limit and the direction as five parameters, so direction and
+  limit reach a backend exactly once: the stream layer derives them from the query it was given, and
+  a caller overriding the query's limit — `Projector` paging in batches — passes its own. The
+  alternative — an `EventQuery` parameter beside a `Limit` and a `QueryDirection` — loses because a
+  backend is then handed two limits and two directions and nothing says which wins; the in-tree
+  backends read the parameters and ignore the query's own, and a third-party one reading the query's
+  own would be right by the signature and wrong by the store. The stream scope is an `EventStreamId`
+  and never absent: a wildcard component reads across it, so `EventStreamId.anyContext()` is the whole
+  storage, and a null is refused with `IllegalArgumentException` on `query`, `append` and `head` alike
+  (`StreamScopeTest` in the TCK pins it per backend, with what each wildcard reads).
 - **Without upcasting, n stored events are n events back. With it, they are not.** An `@Upcast`
   method may turn one stored event into several or into none, and the limit is spent before it runs,
   so `.limit(1)` over an event upcasting into two returns two, and over one upcasting into none
@@ -418,6 +429,15 @@ mvn clean install -DskipTests
 - `ProjectorBatchDurabilityTest` in the TCK pins all of it per backend: the bookmark visible from inside
   the *second* batch already names the first, a failed commit is a `ProjectorException` and its events
   come round again, and a failing rollback keeps the cause
+
+**Projector.Builder:**
+- `build()` refuses a missing source or projection with `IllegalStateException` naming the call to make,
+  rather than leaving it to fail as a `NullPointerException` from inside the first batch — after the
+  bookmark has been read and, for a subscribed projector, after the source has been registered with the
+  storage. `inBatchesOf(n)` refuses a batch size below 1
+- **`Projection.eventQuery()` is read once per run.** Storage is asked with that query and every event
+  of the run is matched against it, so a projection that computes its query cannot be asked twice and
+  answer differently in one run, and is not asked once per event. `ProjectorTest` pins both per backend
 
 **Projection initQuery (Savepoint Pattern):**
 - Projections can define an optional `initQuery()` (default returns `EventQuery.matchNone()`; a `null` is tolerated and means the same) that runs before the main `eventQuery()`
@@ -1384,7 +1404,7 @@ PostgresEventStorage.newBuilder().shredding(myKmsCodec).buildStore(); // take ov
 
 - **`ShreddingKeyStore`** is the narrow seam: keep the shipped encryption, hold keys in Vault/KMS/an HSM.
 - **`ShreddingCodec`** is the outer seam: take over encryption too, so key material never enters the JVM.
-- **`unseal`/`resolve` returning empty means *erased*; anything else must throw `ShreddingException`.**
+- **`open`/`resolveKey` answering erased means *erased*; anything else must throw `ShreddingException`.**
   This is the contract that matters most. Reported as empty, a key-store outage renders every protected
   value as erased — and projections, being at-least-once and bookmarked, write those gaps into read
   models permanently and never revisit them. `TypedEventPayloadSerializerDeserializer` rethrows a
@@ -1551,13 +1571,15 @@ told; `ShreddingAudit` stays the account of erasures.
   since the fallback now covers both cases.
 - **The seams carry it as sealed results, not exceptions.** `ShreddingKeyStore.resolveKey` answers
   `KeyResolution.Resolved | Erased | Denied`, and `ShreddingCodec.open` answers
-  `Unsealed.Plaintext | Erased | Withheld`; both have defaults deriving the first two answers from the
-  older two-answer methods, so a key store or codec written before them keeps working and never denies.
-  A sealed type rather than a `ShreddingException` subtype because the difference between "erased",
-  "denied" and "down" is the most important contract in this subsystem, and a `catch (ShreddingException)`
-  retry loop would swallow a refusal by accident. The two-answer methods on the shipped
-  implementations *throw* for a denial rather than report it as erased — nothing in the library calls
-  them any more.
+  `Unsealed.Plaintext | Erased | Withheld`; each is the one abstract read method of its seam. A sealed
+  type rather than a `ShreddingException` subtype because the difference between "erased", "denied"
+  and "down" is the most important contract in this subsystem, and a `catch (ShreddingException)`
+  retry loop would swallow a refusal by accident. The alternative — a two-answer
+  `Optional`-returning method beside it, abstract, with the three-answer one a default derived from
+  it — loses because such a method cannot say denied, so the derived default never would: a new key
+  store or codec would implement what nothing in the library calls and inherit an answer it never
+  chose, and a `Denied` could only be smuggled through the two-answer method as an exception, which
+  is the retry-loop conflation above.
 - **Three ways a reader is limited, from cheap to hard:**
   ```java
   // a reporting service: typed events, none of the personal data. Without a codec it could not open

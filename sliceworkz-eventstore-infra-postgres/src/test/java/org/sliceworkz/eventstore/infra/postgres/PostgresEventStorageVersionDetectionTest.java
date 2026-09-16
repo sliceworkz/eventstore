@@ -24,7 +24,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 import org.junit.jupiter.api.AfterAll;
@@ -92,7 +91,7 @@ class PostgresEventStorageVersionDetectionTest {
 				.initializeDatabase()
 				.build();
 			try {
-				List<StoredEvent> stored = storage.append(AppendCriteria.none(), Optional.empty(), List.of(sampleEvent()));
+				List<StoredEvent> stored = storage.append(AppendCriteria.none(), EventStreamId.anyContext(), List.of(sampleEvent()));
 				assertEquals(1, stored.size());
 				UUID id = UUID.fromString(stored.get(0).reference().id().value());
 				assertEquals(7, id.version(), "expected UUIDv7");
@@ -141,7 +140,7 @@ class PostgresEventStorageVersionDetectionTest {
 				.initializeDatabase()
 				.build();
 			try {
-				List<StoredEvent> stored = storage.append(AppendCriteria.none(), Optional.empty(), List.of(sampleEvent()));
+				List<StoredEvent> stored = storage.append(AppendCriteria.none(), EventStreamId.anyContext(), List.of(sampleEvent()));
 				assertEquals(1, stored.size());
 				UUID id = UUID.fromString(stored.get(0).reference().id().value());
 				assertEquals(7, id.version(), "PG18 uuidv7() must produce UUID version 7");

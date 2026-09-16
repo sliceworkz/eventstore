@@ -31,7 +31,6 @@ import java.net.Socket;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -207,7 +206,7 @@ class PostgresMonitorLivenessTest {
 	}
 
 	private static StoredEvent append ( PostgresEventStorageImpl storage ) {
-		return storage.append(AppendCriteria.none(), Optional.of(STREAM),
+		return storage.append(AppendCriteria.none(), STREAM,
 			List.of(new EventToStore(STREAM, EventType.ofType("SomethingHappened"), "{}", Tags.none(), null))).getFirst();
 	}
 

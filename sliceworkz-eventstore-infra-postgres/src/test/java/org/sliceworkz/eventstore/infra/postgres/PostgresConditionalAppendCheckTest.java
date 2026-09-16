@@ -26,7 +26,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
-import java.util.Optional;
 
 import javax.sql.DataSource;
 
@@ -146,7 +145,7 @@ public class PostgresConditionalAppendCheckTest {
 			EventReference reference = null;
 			for ( int i = 0; i < APPENDS + 1; i++ ) {
 				List<StoredEvent> written = storage.append(
-						AppendCriteria.of(boundary, reference), Optional.of(stream),
+						AppendCriteria.of(boundary, reference), stream,
 						List.of(event(stream, "StockReserved", tags)));
 				assertEquals(1, written.size(), "conditional append %d must succeed".formatted(i));
 				reference = written.get(0).reference();
@@ -154,11 +153,11 @@ public class PostgresConditionalAppendCheckTest {
 
 			EventReference current = reference;
 			assertThrows(OptimisticLockingException.class,
-					() -> storage.append(AppendCriteria.of(boundary, null), Optional.of(stream),
+					() -> storage.append(AppendCriteria.of(boundary, null), stream,
 							List.of(event(stream, "StockReserved", tags))),
 					"an empty expected reference against a non-empty boundary must still conflict");
 			List<StoredEvent> last = storage.append(AppendCriteria.of(boundary, current),
-					Optional.of(stream), List.of(event(stream, "StockReserved", tags)));
+					stream, List.of(event(stream, "StockReserved", tags)));
 			assertEquals(1, last.size(), "appending against the current reference must succeed");
 		}
 
@@ -174,7 +173,7 @@ public class PostgresConditionalAppendCheckTest {
 				Tags tags = Tags.of("basket", "B-%03d".formatted(i));
 				EventQuery boundary = EventQuery.forEvents(EventTypesFilter.any(), tags);
 				List<StoredEvent> written = storage.append(
-						AppendCriteria.of(boundary, null), Optional.of(stream),
+						AppendCriteria.of(boundary, null), stream,
 						List.of(event(stream, "OrderPlaced", tags)));
 				assertEquals(1, written.size(), "empty-boundary append %d must succeed".formatted(i));
 			}
@@ -183,7 +182,7 @@ public class PostgresConditionalAppendCheckTest {
 			assertThrows(OptimisticLockingException.class,
 					() -> storage.append(
 							AppendCriteria.of(EventQuery.forEvents(EventTypesFilter.any(), taken), null),
-							Optional.of(stream), List.of(event(stream, "OrderPlaced", taken))),
+							stream, List.of(event(stream, "OrderPlaced", taken))),
 					"the same empty-boundary criteria must conflict once its boundary holds an event");
 		}
 

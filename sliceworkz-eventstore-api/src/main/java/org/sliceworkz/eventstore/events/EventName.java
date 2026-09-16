@@ -23,7 +23,15 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Declares the name an event class is stored under, instead of its simple class name.
+ * Declares the name an event class is stored under, where that name cannot be its simple class name.
+ * <p>
+ * <b>Most event classes should not carry this annotation.</b> The intended setup is the plain one: the
+ * class is called what the event is called, that name is the stored name, and there is one place to
+ * read it. Annotating every event up front buys nothing — a string literal is exactly as permanent a
+ * commitment as a class name, so the rename problem below is not avoided by it, only moved from the
+ * class name to a literal that now has to be kept in step with the class name for as long as both
+ * exist. Reach for the annotation when the class name and the stored name genuinely have to differ,
+ * which is the two cases below, and nowhere else.
  * <p>
  * {@link EventType#of(Class)} is the one place a class is turned into a stored type name, and it is
  * {@link Class#getSimpleName()} unless the class carries this annotation. That name is wire format: it is

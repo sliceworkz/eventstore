@@ -153,6 +153,11 @@ mvn clean install -DskipTests
   annotated `@EventName("...")`, in which case it is the annotation's value. That method is the one place
   a class becomes a stored name, so the annotation is honoured on append, in a stream's type mappings, in
   `EventTypesFilter.of(Class...)` and on a `@LegacyEvent`
+- **The plain class name is the intended setup; `@EventName` is for the class whose stored name cannot
+  be its own name** (a renamed class, a simple name another context already stores). Annotating every
+  event up front is not a best practice and buys nothing: a string literal is as permanent a commitment
+  as a class name, so it does not avoid the rename problem, only adds a second name to keep in step
+  with the first
 - Deliberately the *simple* name, not the fully qualified one, so moving a class between packages —
   the refactor people actually do — costs nothing
 - **The stored name is therefore wire format**, and it is global to a storage rather than scoped to a
@@ -1483,7 +1488,8 @@ sealed interface CustomerEvent {
 
 **An event class's simple name is stored data, unless the class declares another.** `EventType.of(Class)`
 is `Class.getSimpleName()`, or the value of an `@EventName` annotation on the class — the one place a class
-is turned into a stored name, so nothing else needs to know about the annotation. That one string is
+is turned into a stored name, so nothing else needs to know about the annotation. The simple name is the
+intended case: most event classes carry no annotation, and should not. That one string is
 what goes into the `event_type` column, what `EventTypesFilter` matches on, and what keys the deserializer
 (`TypedEventPayloadSerializerDeserializer.deserializers`, a `Map<String, EventDeserializer>`). The
 annotation's value is used exactly as given (non-blank, no leading or trailing whitespace, or
@@ -1507,8 +1513,10 @@ No mapping found for event type 'CustomerRegistered'
 Every IDE offers that rename as an ordinary refactor, and nothing at compile time objects. Four ways out,
 in the order you would normally reach for them:
 
-1. **Don't rename.** Pick the stored name deliberately when the event is created, and treat it afterwards
-   the way you would a database column name.
+1. **Don't rename.** Name the class deliberately when the event is created, and treat that name
+   afterwards the way you would a database column name. This is the intended setup and needs no
+   annotation — an `@EventName` on a class that is already called what it is stored as adds a second
+   copy of the same commitment and nothing else.
 2. **Rename the class, keep the stored name.** Annotate the renamed class with the name its history was
    written under:
    ```java

@@ -182,12 +182,21 @@ mvn clean install -DskipTests
 - Created via `Event.of(data, tags)`
 
 **EventType:**
-- The stored name of an event: `EventType.of(Class)` is `Class.getSimpleName()`, with no override
+- The stored name of an event: `EventType.of(Class)` is `Class.getSimpleName()`, unless the class is
+  annotated `@EventName("...")`, in which case it is the annotation's value. That method is the one place
+  a class becomes a stored name, so the annotation is honoured on append, in a stream's type mappings, in
+  `EventTypesFilter.of(Class...)` and on a `@LegacyEvent`
+- **The plain class name is the intended setup; `@EventName` is for the class whose stored name cannot
+  be its own name** (a renamed class, a simple name another context already stores). Annotating every
+  event up front is not a best practice and buys nothing: a string literal is as permanent a commitment
+  as a class name, so it does not avoid the rename problem, only adds a second name to keep in step
+  with the first
 - Deliberately the *simple* name, not the fully qualified one, so moving a class between packages —
   the refactor people actually do — costs nothing
-- **The simple name is therefore wire format**, and it is global to a storage rather than scoped to a
+- **The stored name is therefore wire format**, and it is global to a storage rather than scoped to a
   stream. See "Event type names are wire format" under Naming Conventions before renaming an event class
-  or introducing a second class with an existing simple name
+  or introducing a second class with an existing simple name — `@EventName` is the answer to both, and
+  `EventNameTest` in the TCK pins it per backend
 
 **Tags:**
 - Key-value pairs attached to events for dynamic retrieval
@@ -1605,14 +1614,22 @@ sealed interface CustomerEvent {
 
 ### Event type names are wire format
 
-**An event class's simple name is stored data.** `EventType.of(Class)` is `Class.getSimpleName()` —
-there is no annotation, registry or builder hook to override it. That one string is
+**An event class's simple name is stored data, unless the class declares another.** `EventType.of(Class)`
+is `Class.getSimpleName()`, or the value of an `@EventName` annotation on the class — the one place a class
+is turned into a stored name, so nothing else needs to know about the annotation. The simple name is the
+intended case: most event classes carry no annotation, and should not. That one string is
 what goes into the `event_type` column, what `EventTypesFilter` matches on, and what keys the deserializer
-(`TypedEventPayloadSerializerDeserializer.deserializers`, a `Map<String, EventDeserializer>`).
+(`TypedEventPayloadSerializerDeserializer.deserializers`, a `Map<String, EventDeserializer>`). The
+annotation's value is used exactly as given (non-blank, no leading or trailing whitespace, or
+`IllegalArgumentException` at stream creation), is not inherited, and combines with `@LegacyEvent`.
+`EventNameTest` in the TCK pins per backend that the declared name goes through every path the class
+name goes through: the append, the typed read, a filter built from the class, the raw view, the lock
+check and a legacy class's registration.
 
 Using the *simple* name rather than the fully qualified one is deliberate and worth keeping in mind: moving a
 class to another package, splitting a hierarchy across packages, or reorganising modules changes nothing on
-disk. The package is not a wire commitment. **The class name is.**
+disk. The package is not a wire commitment. **The class name is** — for every class that does not carry
+`@EventName`, which is most of them.
 
 **Renaming an event class breaks reads of its history.** Stored events are immutable, so every event already
 written keeps the old name while the renamed class claims a new one. Reads then fail with:
@@ -1621,16 +1638,29 @@ written keeps the old name while the renamed class claims a new one. Reads then 
 No mapping found for event type 'CustomerRegistered'
 ```
 
-Every IDE offers that rename as an ordinary refactor, and nothing at compile time objects. Three ways out,
+Every IDE offers that rename as an ordinary refactor, and nothing at compile time objects. Four ways out,
 in the order you would normally reach for them:
 
-1. **Don't rename.** Pick the stored name deliberately when the event is created, and treat it afterwards
-   the way you would a database column name.
-2. **Keep the old name alive in code.** Move a class carrying the old name into a legacy hierarchy, annotate
-   it `@LegacyEvent(upcast = ...)`, and upcast it to the renamed class — see the upcasting sections. This
-   leaves storage untouched and is the only option that needs no access to the database, but it costs a
-   permanent extra class plus an upcaster for what was only a rename.
-3. **Rewrite the stored names.** `UPDATE <prefix>events SET event_type = 'New' WHERE event_type = 'Old';`
+1. **Don't rename.** Name the class deliberately when the event is created, and treat that name
+   afterwards the way you would a database column name. This is the intended setup and needs no
+   annotation — an `@EventName` on a class that is already called what it is stored as adds a second
+   copy of the same commitment and nothing else.
+2. **Rename the class, keep the stored name.** Annotate the renamed class with the name its history was
+   written under:
+   ```java
+   @EventName("CustomerRegistered")
+   record CustomerSignedUp ( String id, String name ) implements CustomerEvent { }
+   ```
+   Storage is untouched, nothing is upcast, and no database access is needed. The cost is that the
+   class and its stored name now differ, permanently, which is what the annotation makes visible at the
+   declaration rather than in a migration script. This is the fix for a rename; when the *shape* changed
+   too, it is not enough on its own.
+3. **Keep the old name alive in code.** Move a class carrying the old name into a legacy hierarchy, annotate
+   it `@LegacyEvent(upcast = ...)`, and upcast it to the renamed class — see the upcasting sections. The
+   legacy class can carry the stored name in an `@EventName` too, so it need not be called what the
+   history is called. This is the option when the event's shape changed as well as its name; for a bare
+   rename it costs a permanent extra class plus an upcaster that option 2 does not.
+4. **Rewrite the stored names.** `UPDATE <prefix>events SET event_type = 'New' WHERE event_type = 'Old';`
    is a valid migration: no foreign key, check constraint or unique index is keyed on `event_type`, so
    nothing else in the schema has to change. `idx_events_stream_type_position` includes the column, and
    Postgres maintains it transparently — on a large table budget for the row and index rewrite, and scope
@@ -1665,11 +1695,17 @@ is not. Reading one context's `Created` with the other context's class:
 Only the *narrower* reader is protected. The usual outcome is the wrong class silently populated with
 another context's data, which surfaces as bad numbers in a projection rather than as an error.
 
-**Practical rule: keep event class simple names unique across an entire storage, not just per stream.** Two
-bounded contexts sharing a store cannot both have a `Created`, a `StatusChanged` or an `Updated`. Prefix
-them (`OrderCreated`, `VacancyCreated`) or give each context its own storage. If two contexts must share a
-name, keep every read scoped to one stream — no wildcard streams, no store-wide projections — and know that
-nothing enforces that from here on.
+**Practical rule: keep stored event names unique across an entire storage, not just per stream.** Two
+bounded contexts sharing a store cannot both *store* a `Created`, a `StatusChanged` or an `Updated`. They
+can both have a class called that: give one of them a distinct stored name with
+`@EventName("OrderCreated")`, prefix the class names themselves (`OrderCreated`, `VacancyCreated`), or
+give each context its own storage. With the stored names distinct, both hierarchies register on one
+wildcard stream and a store-wide read resolves each context's events with its own class
+(`EventNameTest.twoContextsShareASimpleNameWhenOneDeclaresItsStoredName`). If two contexts must share a
+stored name, keep every read scoped to one stream — no wildcard streams, no store-wide projections — and
+know that nothing enforces that from here on. **Nothing can**: streams are opened independently and a
+storage never sees every type mapping at once, so uniqueness across contexts stays a convention; the
+annotation is the tool for keeping it where a class name cannot, not an enforcement of it.
 
 ## Key Design Principles
 

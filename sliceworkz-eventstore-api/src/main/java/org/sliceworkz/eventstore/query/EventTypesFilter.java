@@ -62,7 +62,8 @@ import org.sliceworkz.eventstore.events.EventType;
  * }</pre>
  *
  * <p><strong>A sealed interface stands for every event type under it.</strong> An event is stored under
- * the simple name of its record, never under the name of an interface it implements, so
+ * the stored name of its record (its simple name, or its {@link org.sliceworkz.eventstore.events.EventName}),
+ * never under the name of an interface it implements, so
  * {@link #of(List)} resolves a sealed interface into the event types it permits, recursively: the root
  * of a hierarchy names all of it, a nested interface names its own branch. The filter then holds those
  * names only. A filter built from {@link EventType}s is literal, since a name says nothing about a
@@ -115,7 +116,7 @@ public record EventTypesFilter ( Set<EventType> eventTypes ) {
 	 * <p>
 	 * A sealed interface among the classes is resolved into the event types under it, recursively, so
 	 * that the root of a hierarchy names every event type of it and a nested interface names its own
-	 * branch; a class is taken by its simple name, exactly as {@link EventType#of(Class)} does. The
+	 * branch; a class is taken by its stored name, exactly as {@link EventType#of(Class)} resolves it. The
 	 * resolution happens here, at construction, rather than wherever the filter is matched, because a
 	 * filter is matched in several places — the storage query, the store's re-check of the events it
 	 * upcasts, a {@code Projector}'s check of the events it is handed, the optimistic-locking check of an

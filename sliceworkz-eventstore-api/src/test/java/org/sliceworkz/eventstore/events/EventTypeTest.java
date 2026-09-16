@@ -18,6 +18,8 @@
 package org.sliceworkz.eventstore.events;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.events.EventTypeTest.MockDomainObject.SomeMockDomainOject;
@@ -30,8 +32,49 @@ public class EventTypeTest {
 		assertEquals("SomeMockDomainOject", EventType.of(SomeMockDomainOject.class).name());
 	}
 
+	@Test
+	void testDeclaredNameOverridesTheSimpleName ( ) {
+		assertEquals("CustomerRegistered", EventType.of(MockDomainObject.CustomerSignedUp.class).name());
+		assertEquals("CustomerRegistered", EventType.of(new MockDomainObject.CustomerSignedUp("x")).name());
+		// the annotation names one class: a sibling without it keeps its simple name
+		assertEquals("SomeMockDomainOject", EventType.of(SomeMockDomainOject.class).name());
+	}
+
+	@Test
+	void testDeclaredNameIsNotInherited ( ) {
+		// the interface carries a name; its permitted record does not, and must not pick it up
+		assertEquals("Renamed", EventType.of(NamedInterface.class).name());
+		assertEquals("Plain", EventType.of(NamedInterface.Plain.class).name());
+	}
+
+	@Test
+	void testADeclaredNameMustBeUsable ( ) {
+		IllegalArgumentException blank = assertThrows(IllegalArgumentException.class, () -> EventType.of(BadNames.Blank.class));
+		assertTrue(blank.getMessage().contains(BadNames.Blank.class.getName()), blank.getMessage());
+		assertThrows(IllegalArgumentException.class, () -> EventType.of(BadNames.Empty.class));
+		assertThrows(IllegalArgumentException.class, () -> EventType.of(BadNames.Padded.class));
+		// and it fails the same way every time: a rejected name is not remembered as anything
+		assertThrows(IllegalArgumentException.class, () -> EventType.of(BadNames.Blank.class));
+	}
+
 	public sealed interface MockDomainObject {
-		record SomeMockDomainOject ( String value ) implements MockDomainObject { } 
+		record SomeMockDomainOject ( String value ) implements MockDomainObject { }
+		@EventName("CustomerRegistered")
+		record CustomerSignedUp ( String value ) implements MockDomainObject { }
+	}
+
+	@EventName("Renamed")
+	public sealed interface NamedInterface {
+		record Plain ( String value ) implements NamedInterface { }
+	}
+
+	public sealed interface BadNames {
+		@EventName(" ")
+		record Blank ( String value ) implements BadNames { }
+		@EventName("")
+		record Empty ( String value ) implements BadNames { }
+		@EventName(" Padded")
+		record Padded ( String value ) implements BadNames { }
 	}
 	
 }

@@ -1281,6 +1281,14 @@ transfer.from().map(PartyDetails::name).orElse("[erased]");
   copies, and projections hold bookmarks so they never re-read. Re-projecting is the application's job.
 - **Without a codec configured, registering an event type that declares a `Shreddable` fails** at
   `getEventStream` — before anything is read or written — rather than storing personal data in the clear.
+  That check reads declarations (record components, type arguments, array elements) and cannot see a
+  `Shreddable` held behind a component declared as an interface or a non-record class, so the
+  codec-less mapper carries a `Shreddable` serializer of its own that throws: such an append fails as
+  `EventSerializationException`, nothing stored, on the typed and the raw serde alike, instead of
+  Jackson writing the `Present` record — value and subject in the clear — as it otherwise would.
+  `CodecLessShreddableSerdeTest` in the impl module pins both routes and that a codec seals the same
+  value; `ShreddableEventDataTest.registeringAProtectedEventTypeWithoutACodecFails` pins the
+  registration check per backend.
 
 **Two seams, and a shipped default.** `AesGcmShreddingCodec` (AES-256-GCM, random 96-bit IV per value,
 envelope metadata bound as AAD) over a `ShreddingKeyStore`:

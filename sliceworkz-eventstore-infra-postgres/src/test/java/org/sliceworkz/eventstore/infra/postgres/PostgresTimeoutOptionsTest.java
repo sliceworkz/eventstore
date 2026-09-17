@@ -37,19 +37,19 @@ class PostgresTimeoutOptionsTest {
 
 	@Test
 	void theDefaultsAreBounds ( ) {
-		assertTrue(PostgresEventStorageImpl.DEFAULT_LOCK_TIMEOUT.compareTo(Duration.ZERO) > 0,
+		assertTrue(PostgresEventStorage.Builder.DEFAULT_LOCK_TIMEOUT.compareTo(Duration.ZERO) > 0,
 			"a zero default lock timeout is 'wait forever', which is the failure being bounded");
-		assertTrue(PostgresEventStorageImpl.DEFAULT_NOTIFICATION_PROBE_INTERVAL.compareTo(Duration.ZERO) > 0);
+		assertTrue(PostgresEventStorage.Builder.DEFAULT_NOTIFICATION_PROBE_INTERVAL.compareTo(Duration.ZERO) > 0);
 		assertTrue(PostgresEventStorageImpl.NOTIFICATION_PROBE_TIMEOUT.compareTo(Duration.ZERO) > 0);
 		// a probe that may take longer than the interval between probes would queue up behind itself
-		assertTrue(PostgresEventStorageImpl.NOTIFICATION_PROBE_TIMEOUT.compareTo(PostgresEventStorageImpl.DEFAULT_NOTIFICATION_PROBE_INTERVAL) < 0);
+		assertTrue(PostgresEventStorageImpl.NOTIFICATION_PROBE_TIMEOUT.compareTo(PostgresEventStorage.Builder.DEFAULT_NOTIFICATION_PROBE_INTERVAL) < 0);
 	}
 
 	@Test
 	void aStorageNobodyConfiguredCarriesTheDefaults ( ) {
 		try ( PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl("opts", null, null, Limit.none(), "", false, new SimpleMeterRegistry()) ) {
-			assertEquals(PostgresEventStorageImpl.DEFAULT_LOCK_TIMEOUT, storage.lockTimeout());
-			assertEquals(PostgresEventStorageImpl.DEFAULT_NOTIFICATION_PROBE_INTERVAL, storage.notificationProbeInterval());
+			assertEquals(PostgresEventStorage.Builder.DEFAULT_LOCK_TIMEOUT, storage.lockTimeout());
+			assertEquals(PostgresEventStorage.Builder.DEFAULT_NOTIFICATION_PROBE_INTERVAL, storage.notificationProbeInterval());
 		}
 	}
 
@@ -58,13 +58,13 @@ class PostgresTimeoutOptionsTest {
 		try ( PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl("opts", null, null, Limit.none(), "", false, new SimpleMeterRegistry()) ) {
 			assertEquals(Duration.ofSeconds(3), storage.lockTimeout(Duration.ofSeconds(3)).lockTimeout());
 			assertEquals(Duration.ZERO, storage.lockTimeout(Duration.ZERO).lockTimeout(), "zero is PostgreSQL's 'no lock_timeout' and is allowed");
-			assertEquals(PostgresEventStorageImpl.DEFAULT_LOCK_TIMEOUT, storage.lockTimeout(null).lockTimeout());
+			assertEquals(PostgresEventStorage.Builder.DEFAULT_LOCK_TIMEOUT, storage.lockTimeout(null).lockTimeout());
 			assertThrows(IllegalArgumentException.class, () -> storage.lockTimeout(Duration.ofMillis(-1)));
 			assertThrows(IllegalArgumentException.class, () -> storage.lockTimeout(Duration.ofDays(30)),
 				"a value lock_timeout cannot hold must be refused here, not on the first conditional append");
 
 			assertEquals(Duration.ofSeconds(7), storage.notificationProbeInterval(Duration.ofSeconds(7)).notificationProbeInterval());
-			assertEquals(PostgresEventStorageImpl.DEFAULT_NOTIFICATION_PROBE_INTERVAL, storage.notificationProbeInterval(null).notificationProbeInterval());
+			assertEquals(PostgresEventStorage.Builder.DEFAULT_NOTIFICATION_PROBE_INTERVAL, storage.notificationProbeInterval(null).notificationProbeInterval());
 			assertThrows(IllegalArgumentException.class, () -> storage.notificationProbeInterval(Duration.ZERO),
 				"a zero interval would probe on every poll slice; there is no 'never probe' on purpose");
 			assertThrows(IllegalArgumentException.class, () -> storage.notificationProbeInterval(Duration.ofSeconds(-1)));

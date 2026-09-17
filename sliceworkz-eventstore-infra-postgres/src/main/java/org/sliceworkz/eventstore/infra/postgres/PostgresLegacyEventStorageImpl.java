@@ -41,21 +41,13 @@ import org.sliceworkz.eventstore.shredding.ShreddingCodec;
  * the builder, leaving the version-agnostic {@link PostgresEventStorageImpl} as the sole
  * implementation.
  */
-public class PostgresLegacyEventStorageImpl extends PostgresEventStorageImpl {
+class PostgresLegacyEventStorageImpl extends PostgresEventStorageImpl {
 
-	public PostgresLegacyEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix ) {
-		super(name, dataSource, monitoringDataSource, absoluteLimit, prefix);
-	}
-
-	public PostgresLegacyEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources ) {
-		super(name, dataSource, monitoringDataSource, absoluteLimit, prefix, ownsDataSources);
-	}
-
-	public PostgresLegacyEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources, MeterRegistry meterRegistry ) {
+	PostgresLegacyEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources, MeterRegistry meterRegistry ) {
 		super(name, dataSource, monitoringDataSource, absoluteLimit, prefix, ownsDataSources, meterRegistry);
 	}
 
-	public PostgresLegacyEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources, MeterRegistry meterRegistry, ShreddingCodec shreddingCodec ) {
+	PostgresLegacyEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources, MeterRegistry meterRegistry, ShreddingCodec shreddingCodec ) {
 		super(name, dataSource, monitoringDataSource, absoluteLimit, prefix, ownsDataSources, meterRegistry, shreddingCodec);
 	}
 

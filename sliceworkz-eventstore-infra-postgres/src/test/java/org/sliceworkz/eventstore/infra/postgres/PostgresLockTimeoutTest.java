@@ -267,7 +267,7 @@ class PostgresLockTimeoutTest {
 				.meterRegistry(new SimpleMeterRegistry())
 				.build() ) {
 			PostgresEventStorageImpl impl = assertInstanceOf(PostgresEventStorageImpl.class, storage);
-			assertEquals(PostgresEventStorageImpl.DEFAULT_LOCK_TIMEOUT, impl.lockTimeout());
+			assertEquals(PostgresEventStorage.Builder.DEFAULT_LOCK_TIMEOUT, impl.lockTimeout());
 			assertTrue(impl.lockTimeout().compareTo(Duration.ZERO) > 0, "the default must be a bound, not 'forever'");
 		} finally {
 			PostgresContainer.closeDataSource(PostgresContainer.IMAGE_PG18);

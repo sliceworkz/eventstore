@@ -94,7 +94,9 @@ import tools.jackson.databind.json.JsonMapper;
  * queries returning more than this limit will throw an {@link EventStorageException}.
  *
  * <h2>Example Usage:</h2>
- * This class is typically not instantiated directly. Instead, use {@link InMemoryEventStorage.Builder}:
+ * Package-private: {@link InMemoryEventStorage.Builder} is the only way to obtain one, and
+ * {@link EventStorage} the type it is handed out as, since nothing this class does is beyond that
+ * contract:
  * <pre>{@code
  * EventStorage storage = InMemoryEventStorage.newBuilder()
  *     .resultLimit(1000)
@@ -105,7 +107,7 @@ import tools.jackson.databind.json.JsonMapper;
  * @see InMemoryEventStorage
  * @see InMemoryEventStorage.Builder
  */
-public class InMemoryEventStorageImpl implements EventStorage {
+class InMemoryEventStorageImpl implements EventStorage {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(InMemoryEventStorageImpl.class);
 
@@ -153,29 +155,17 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	private final ShreddingCodec shreddingCodec;
 
 	/**
-	 * Constructs a new in-memory event storage instance with the specified name and absolute query limit.
-	 * <p>
-	 * This constructor is package-private and should not be called directly. Instead, use the
-	 * {@link InMemoryEventStorage.Builder} to create instances.
-	 * <p>
-	 * The constructor initializes:
-	 * <ul>
-	 *   <li>An empty event log backed by a {@link CopyOnWriteArrayList}</li>
-	 *   <li>An empty list of event listeners</li>
-	 *   <li>An empty bookmark map</li>
-	 *   <li>A Jackson {@link JsonMapper} with auto-discovered modules for event serialization validation</li>
-	 * </ul>
+	 * Constructs a new in-memory event storage instance without shredding, preloaded with the given
+	 * events and bookmarks.
 	 *
 	 * @param name the unique name for this storage instance; must not be null or blank
 	 * @param absoluteLimit the absolute limit on query results, or {@link Limit#none()} for no limit
+	 * @param initialEvents events to preload, in any order
+	 * @param initialBookmarks bookmarks to preload, by reader
 	 * @throws IllegalArgumentException if name is null or blank
 	 * @see InMemoryEventStorage.Builder#build()
 	 */
-	public InMemoryEventStorageImpl ( String name, Limit absoluteLimit ) {
-		this(name, absoluteLimit, List.of(), Map.of());
-	}
-
-	public InMemoryEventStorageImpl ( String name, Limit absoluteLimit, List<StoredEvent> initialEvents, Map<String, Bookmark> initialBookmarks ) {
+	InMemoryEventStorageImpl ( String name, Limit absoluteLimit, List<StoredEvent> initialEvents, Map<String, Bookmark> initialBookmarks ) {
 		this(name, absoluteLimit, initialEvents, initialBookmarks, null);
 	}
 
@@ -196,7 +186,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	 * @throws IllegalArgumentException if name is null or blank
 	 * @see InMemoryEventStorage.Builder#build()
 	 */
-	public InMemoryEventStorageImpl ( String name, Limit absoluteLimit, List<StoredEvent> initialEvents, Map<String, Bookmark> initialBookmarks, ShreddingCodec shreddingCodec ) {
+	InMemoryEventStorageImpl ( String name, Limit absoluteLimit, List<StoredEvent> initialEvents, Map<String, Bookmark> initialBookmarks, ShreddingCodec shreddingCodec ) {
 		if ( name == null || "".equals(name.strip())) {
 			throw new IllegalArgumentException("name must not be empty");
 		}

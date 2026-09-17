@@ -278,7 +278,7 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     because the planner's choice (seq scan → relation-level `SIRead` lock) decides the granularity.
   - No DDL change, so no migration: the lock is entirely in the write path.
   - **The wait for it is bounded** by the builder's `lockTimeout` (default
-    `PostgresEventStorageImpl.DEFAULT_LOCK_TIMEOUT`, 10s; `Duration.ZERO` waits without bound), sent as
+    `PostgresEventStorage.Builder.DEFAULT_LOCK_TIMEOUT`, 10s; `Duration.ZERO` waits without bound), sent as
     `SET LOCAL lock_timeout` in the same round trip as the lock statement — pgjdbc pipelines the two
     parts of a `;`-separated statement behind one sync, so a bounded acquisition costs the wire what an
     unbounded one did. `SET LOCAL`, never `SET`: the connection goes back to a pool, and

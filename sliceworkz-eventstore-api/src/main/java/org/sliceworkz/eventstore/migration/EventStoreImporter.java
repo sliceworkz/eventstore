@@ -96,15 +96,17 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  *
  * <h2>Checking a target up front</h2>
  * There is no dry-run mode. An application that wants to know in advance whether a target already holds
- * some of the events can look them up through the public API — but must do so in <em>raw</em> mode:
+ * some of the events can look them up through the public API, best in <em>raw</em> mode:
  * <pre>{@code
- * // raw: no event root classes registered, therefore no upcasting
+ * // raw: no event root classes registered, so nothing is upcast and nothing can fail to deserialize
  * EventSource<String> probe = eventStore.getRawEventStream(EventStreamId.anyContext());
- * boolean present = !probe.getEventById(id).isEmpty();
+ * boolean present = probe.getEventById(id).isPresent();
  * }</pre>
- * Registering domain classes would run the event through upcasting, and an event whose upcast yields no
- * current events comes back as an empty list even though it exists — a false negative. Such a check is
- * also only a snapshot: nothing stops the target changing before the import runs.
+ * The presence is the {@code Optional}, never the list inside it: a typed stream answers it just as
+ * correctly, since an event whose upcast yields no current events is present with an empty list rather
+ * than absent, but a typed stream needs the domain classes and throws on a stored event its mappings
+ * cannot read, and a raw one has neither problem. Such a check is also only a snapshot: nothing stops
+ * the target changing before the import runs.
  *
  * @see EventStorage#importEvents(List, ImportMode)
  * @see EventToImport

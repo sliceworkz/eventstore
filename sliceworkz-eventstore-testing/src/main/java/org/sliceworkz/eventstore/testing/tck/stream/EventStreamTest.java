@@ -187,7 +187,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		EventId eventId = events.getFirst().reference().id();
 
 		// check we can find it via getEvent on the same stream
-		List<Event<MockDomainEvent>> retrieved = es.getEventById(eventId);
+		List<Event<MockDomainEvent>> retrieved = es.getEventById(eventId).orElseThrow();
 		assertFalse(retrieved.isEmpty());
 		assertEquals(eventId, retrieved.getFirst().reference().id());
 		// or from a query on the same
@@ -196,16 +196,16 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		// check we can find it via getEvent on a generic stream
 		EventStreamId generic = EventStreamId.anyContext().anyPurpose();
 		EventStream<MockDomainEvent> genericStream = eventStore().getEventStream(generic, MockDomainEvent.class);
-		retrieved = genericStream.getEventById(eventId);
+		retrieved = genericStream.getEventById(eventId).orElseThrow();
 		assertFalse(retrieved.isEmpty());
 		assertEquals(eventId, retrieved.getFirst().reference().id());
 		// or from a query on the same
 		assertTrue(genericStream.query(EventQuery.matchAll()).stream().map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());
 
-		// check we can't get it via another stream
+		// check we can't get it via another stream: absent there, not present-and-empty
 		EventStreamId other = EventStreamId.forContext("test2").withPurpose("test2");
 		EventStream<MockDomainEvent> otherStream = eventStore().getEventStream(other, MockDomainEvent.class);
-		List<Event<MockDomainEvent>> notRetrieved = otherStream.getEventById(eventId);
+		Optional<List<Event<MockDomainEvent>>> notRetrieved = otherStream.getEventById(eventId);
 		assertTrue(notRetrieved.isEmpty());
 		// and neither from a query on the same
 		assertFalse(otherStream.query(EventQuery.matchAll()).stream().map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());
@@ -255,7 +255,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		EventId eventId = events.getFirst().reference().id();
 
 		// check we can find it via getEvent on the same stream
-		List<Event<MockDomainEvent>> retrieved = es.getEventById(eventId);
+		List<Event<MockDomainEvent>> retrieved = es.getEventById(eventId).orElseThrow();
 		assertFalse(retrieved.isEmpty());
 		assertEquals(eventId, retrieved.getFirst().reference().id());
 		// or from a query on the same
@@ -264,16 +264,16 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		// check we can find it via getEvent on a generic stream
 		EventStreamId generic = EventStreamId.anyContext().anyPurpose();
 		EventStream<MockDomainEvent> genericStream = eventStore().getEventStream(generic, MockDomainEvent.class);
-		retrieved = genericStream.getEventById(eventId);
+		retrieved = genericStream.getEventById(eventId).orElseThrow();
 		assertFalse(retrieved.isEmpty());
 		assertEquals(eventId, retrieved.getFirst().reference().id());
 		// or from a query on the same
 		assertTrue(genericStream.query(EventQuery.matchAll()).stream().map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());
 
-		// check we can't get it via another stream
+		// check we can't get it via another stream: absent there, not present-and-empty
 		EventStreamId other = EventStreamId.forContext("test2").withPurpose("test2");
 		EventStream<MockDomainEvent> otherStream = eventStore().getEventStream(other, MockDomainEvent.class);
-		List<Event<MockDomainEvent>> notRetrieved = otherStream.getEventById(eventId);
+		Optional<List<Event<MockDomainEvent>>> notRetrieved = otherStream.getEventById(eventId);
 		assertTrue(notRetrieved.isEmpty());
 		// and neither from a query on the same
 		assertFalse(otherStream.query(EventQuery.matchAll()).stream().map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());

@@ -227,7 +227,7 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * <p>
 	 * This is the read to page through a stream with. The events alone are not enough to page
 	 * correctly, because the query's limit counts <em>stored</em> events and an
-	 * {@link org.sliceworkz.eventstore.events.Upcast @Upcast} may turn a stored event into several or
+	 * {@link org.sliceworkz.eventstore.events.Upcaster upcaster} may turn a stored event into several or
 	 * into none: a page holding no events can sit in the middle of a stream, and the reference to
 	 * continue from can be on no event returned. {@link EventPage#storedEventCount()} says whether the
 	 * page was short of the limit it was read with, which is what ends a paged read, and
@@ -263,7 +263,7 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * <b>A limit counts stored events, which is what upcasting makes visible.</b> It is what the
 	 * storage query is given, so it bounds the work and the memory — that is its job. Ordinarily it is
 	 * also the number of events you get back, because a stored event yields exactly one. Where an
-	 * {@link org.sliceworkz.eventstore.events.Upcast @Upcast} method turns one stored event into
+	 * {@link org.sliceworkz.eventstore.events.Upcaster upcaster} turns one stored event into
 	 * several, or into none, the count returned is not the count read: {@code limit(1)} over a stored
 	 * event that upcasts into two returns both — truncating them would hand back half of one stored
 	 * event and leave a cursor pointing into its middle. Read it as "read n stored events", not as
@@ -295,7 +295,7 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * two different things: the {@code Optional} says whether this stream holds a stored event with the
 	 * id, and the list says what that stored event deserializes and upcasts into. An event appended as
 	 * a current type reads as a one-element list; a legacy event upcasts into as many events as its
-	 * {@link org.sliceworkz.eventstore.events.Upcast @Upcast} method produces, each with its own
+	 * {@link org.sliceworkz.eventstore.events.Upcaster upcaster} produces, each with its own
 	 * {@link EventReference} (differing by index), and one that upcasts into nothing reads as a
 	 * <em>present, empty</em> list. Absent means the storage holds no event with the id, or holds it in
 	 * a stream this one does not read across — an event is stored in exactly one stream, and a stream

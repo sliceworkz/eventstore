@@ -222,7 +222,7 @@ public class EventStoreImpl implements EventStore {
 	 * <p>
 	 * A serde is by far the expensive part of {@link #getEventStream}: its constructor builds two
 	 * Jackson {@code JsonMapper}s and registering the root classes walks the sealed hierarchy
-	 * reflectively, instantiating an {@code Upcast} per {@code @LegacyEvent}. Building one costs
+	 * reflectively, instantiating an {@code Upcaster} per {@code @LegacyEvent}. Building one costs
 	 * roughly 20µs and 40KB, but the mappers matter far more than that suggests — Jackson caches its
 	 * per-type serializers and deserializers <em>inside the mapper</em>, so a serde built per call
 	 * hands every stream a cold cache and makes the first serialize of each record type re-run bean
@@ -273,10 +273,10 @@ public class EventStoreImpl implements EventStore {
 	 * ids. The sets are copied on the way in, so a caller mutating the set it passed cannot corrupt the
 	 * key of an already-cached entry.
 	 */
-	private record SerdeKey ( Set<Class<?>> eventRootClasses, Set<Class<?>> historicalEventRootClasses ) {
+	private record SerdeKey ( Set<Class<?>> eventRootClasses, Set<Class<?>> legacyEventRootClasses ) {
 		SerdeKey {
 			eventRootClasses = Set.copyOf(eventRootClasses);
-			historicalEventRootClasses = Set.copyOf(historicalEventRootClasses);
+			legacyEventRootClasses = Set.copyOf(legacyEventRootClasses);
 		}
 	}
 
@@ -460,13 +460,13 @@ public class EventStoreImpl implements EventStore {
 	}
 
 	@Override
-	public <EVENT_TYPE> EventStream<EVENT_TYPE> getEventStream(EventStreamId eventStreamId, Set<Class<?>> eventRootClasses, Set<Class<?>> historicalEventRootClasses ) {
+	public <EVENT_TYPE> EventStream<EVENT_TYPE> getEventStream(EventStreamId eventStreamId, Set<Class<?>> eventRootClasses, Set<Class<?>> legacyEventRootClasses ) {
 
 		if ( closed.get() ) {
 			throw new EventStorageClosedException("event store on storage '%s' is closed".formatted(eventStorage.name()));
 		}
 
-		return new EventStreamImpl<EVENT_TYPE> ( eventStorage, eventStreamId, serdeFor(eventRootClasses, historicalEventRootClasses) );
+		return new EventStreamImpl<EVENT_TYPE> ( eventStorage, eventStreamId, serdeFor(eventRootClasses, legacyEventRootClasses) );
 	}
 
 	/**
@@ -478,16 +478,16 @@ public class EventStoreImpl implements EventStore {
 	 * a target this stream does not register — leaves nothing cached, so the same call fails the same
 	 * way next time instead of the failure being remembered.
 	 */
-	private EventPayloadSerializerDeserializer serdeFor ( Set<Class<?>> eventRootClasses, Set<Class<?>> historicalEventRootClasses ) {
+	private EventPayloadSerializerDeserializer serdeFor ( Set<Class<?>> eventRootClasses, Set<Class<?>> legacyEventRootClasses ) {
 		if ( eventRootClasses == null || eventRootClasses.isEmpty() ) {
 			// no type mappings, all event payloads will be String type
 			return serdes.computeIfAbsent(new SerdeKey(Set.of(), Set.of()), key -> EventPayloadSerializerDeserializer.raw());
 		}
 		// use typed event payloads, mapped to Java objects
-		return serdes.computeIfAbsent(new SerdeKey(eventRootClasses, historicalEventRootClasses), key -> {
+		return serdes.computeIfAbsent(new SerdeKey(eventRootClasses, legacyEventRootClasses), key -> {
 			EventPayloadSerializerDeserializer serde = EventPayloadSerializerDeserializer.typed(shreddingCodec);
 			key.eventRootClasses().forEach(serde::registerEventTypes);
-			key.historicalEventRootClasses().forEach(serde::registerLegacyEventTypes);
+			key.legacyEventRootClasses().forEach(serde::registerLegacyEventTypes);
 			// the upcasters are checked against each other only now: a target may sit in any of the roots
 			return serde.validate();
 		});
@@ -926,7 +926,7 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		/**
-		 * Traces back all current event types to their legacy historical ones, so a full query is done on older and newer ones
+		 * Traces back all current event types to their legacy ones, so a full query is done on older and newer ones
 		 */
 
 		/**

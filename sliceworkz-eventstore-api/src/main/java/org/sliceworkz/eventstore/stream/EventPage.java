@@ -30,7 +30,7 @@ import org.sliceworkz.eventstore.query.EventQuery;
  * A page is what {@link EventSource#page(EventQuery, EventReference)} answers. The events are what a
  * {@link EventSource#query(EventQuery, EventReference) query} would return for the same arguments,
  * read whole; the other two components describe the <em>stored</em> events that were read to produce
- * them, which the events alone cannot: an {@link org.sliceworkz.eventstore.events.Upcast @Upcast}
+ * them, which the events alone cannot: an {@link org.sliceworkz.eventstore.events.Upcaster upcaster}
  * may turn a stored event into several or into none, so a page holding no events is not necessarily
  * an exhausted stream, and the reference to continue from is not necessarily on any event returned.
  * <ul>

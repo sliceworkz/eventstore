@@ -269,11 +269,11 @@ public interface EventStore extends AutoCloseable {
 	}
 
 	/**
-	 * Retrieves an event stream with full configuration for event types and historical event types.
+	 * Retrieves an event stream with full configuration for current and legacy event types.
 	 * <p>
 	 * This is the primary method for obtaining an event stream. Event root classes define the sealed interfaces
-	 * or base types for current domain events. Historical event root classes define types for legacy events
-	 * that may need upcasting to current types.
+	 * or base types for current domain events. Legacy event root classes define the types annotated
+	 * {@link org.sliceworkz.eventstore.events.LegacyEvent}, which are upcast to current types on the read.
 	 * <p>
 	 * An empty set of event root classes opens the stream in raw mode; {@link #getRawEventStream(EventStreamId)}
 	 * is the way to ask for that, with a return type that says what comes back.
@@ -281,15 +281,15 @@ public interface EventStore extends AutoCloseable {
 	 * @param <DOMAIN_EVENT_TYPE> the type of domain events in this stream
 	 * @param eventStreamId the identifier for the event stream (context and optional purpose)
 	 * @param eventRootClasses the set of root classes/interfaces for current domain events
-	 * @param historicalEventRootClasses the set of root classes/interfaces for historical events requiring upcasting
+	 * @param legacyEventRootClasses the set of root classes/interfaces for legacy events requiring upcasting
 	 * @return an EventStream for reading and writing domain events
 	 */
-	<DOMAIN_EVENT_TYPE> EventStream<DOMAIN_EVENT_TYPE> getEventStream ( EventStreamId eventStreamId, Set<Class<?>> eventRootClasses, Set<Class<?>> historicalEventRootClasses );
+	<DOMAIN_EVENT_TYPE> EventStream<DOMAIN_EVENT_TYPE> getEventStream ( EventStreamId eventStreamId, Set<Class<?>> eventRootClasses, Set<Class<?>> legacyEventRootClasses );
 
 	/**
 	 * Retrieves an event stream with current event root classes only.
 	 * <p>
-	 * Use this method when you only need to work with current event types and no historical upcasting is required.
+	 * Use this method when you only need to work with current event types and no upcasting is required.
 	 * <p>
 	 * The type parameter is free here, as on the three-argument overload: the roots are a set, so no
 	 * single class can fix it. This is deliberately the way to open a stream typed wider than its roots —
@@ -331,23 +331,23 @@ public interface EventStore extends AutoCloseable {
 	}
 
 	/**
-	 * Retrieves an event stream with both current and historical event root classes.
+	 * Retrieves an event stream with both a current and a legacy event root class.
 	 * <p>
-	 * Convenience method for the common case of a single current event type and a single historical event type
+	 * Convenience method for the common case of a single current event type and a single legacy event type
 	 * that requires upcasting.
 	 *
 	 * The current root class fixes the stream's type parameter, as in
-	 * {@link #getEventStream(EventStreamId, Class)}. The historical root class does not: legacy events are
+	 * {@link #getEventStream(EventStreamId, Class)}. The legacy root class does not: legacy events are
 	 * upcast into current ones and never surface under their own type, so it may be any class.
 	 *
 	 * @param <DOMAIN_EVENT_TYPE> the type of domain events in this stream, fixed by {@code eventRootClass}
 	 * @param eventStreamId the identifier for the event stream
 	 * @param eventRootClass the root class/interface for current domain events
-	 * @param historicalEventRootClass the root class/interface for historical events requiring upcasting
+	 * @param legacyEventRootClass the root class/interface for legacy events requiring upcasting
 	 * @return an EventStream for reading and writing domain events
 	 */
-	default <DOMAIN_EVENT_TYPE> EventStream<DOMAIN_EVENT_TYPE> getEventStream ( EventStreamId eventStreamId, Class<DOMAIN_EVENT_TYPE> eventRootClass, Class<?> historicalEventRootClass ) {
-		return getEventStream(eventStreamId, Collections.singleton(eventRootClass), Collections.singleton(historicalEventRootClass));
+	default <DOMAIN_EVENT_TYPE> EventStream<DOMAIN_EVENT_TYPE> getEventStream ( EventStreamId eventStreamId, Class<DOMAIN_EVENT_TYPE> eventRootClass, Class<?> legacyEventRootClass ) {
+		return getEventStream(eventStreamId, Collections.singleton(eventRootClass), Collections.singleton(legacyEventRootClass));
 	}
 
 	/**

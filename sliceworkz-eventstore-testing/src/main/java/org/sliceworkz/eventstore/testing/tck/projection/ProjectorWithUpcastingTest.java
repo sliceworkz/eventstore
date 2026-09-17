@@ -32,7 +32,7 @@ import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.LegacyEvent;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.events.Upcast;
+import org.sliceworkz.eventstore.events.Upcaster;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.projection.Projector.ProjectorMetrics;
 import org.sliceworkz.eventstore.query.EventQuery;
@@ -75,7 +75,7 @@ public class ProjectorWithUpcastingTest extends AbstractEventStoreTest {
 	// =========================================================================
 
 	sealed interface LegacyEvents {
-		@LegacyEvent(upcast = FilterAuditLogUpcaster.class)
+		@LegacyEvent(upcaster = FilterAuditLogUpcaster.class)
 		record ObsoleteAuditLog ( String message ) implements LegacyEvents { }
 	}
 
@@ -83,9 +83,9 @@ public class ProjectorWithUpcastingTest extends AbstractEventStoreTest {
 	// Upcaster: filters out obsolete audit logs (produces zero events)
 	// =========================================================================
 
-	public static class FilterAuditLogUpcaster implements Upcast<LegacyEvents.ObsoleteAuditLog, CurrentEvent> {
+	public static class FilterAuditLogUpcaster implements Upcaster<LegacyEvents.ObsoleteAuditLog, CurrentEvent> {
 		@Override
-		public List<CurrentEvent> upcast ( LegacyEvents.ObsoleteAuditLog historicalEvent ) {
+		public List<CurrentEvent> upcast ( LegacyEvents.ObsoleteAuditLog legacyEvent ) {
 			return List.of();
 		}
 		@Override

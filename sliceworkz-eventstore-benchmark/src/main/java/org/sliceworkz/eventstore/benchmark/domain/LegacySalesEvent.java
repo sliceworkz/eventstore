@@ -23,7 +23,7 @@ import java.util.Set;
 import org.sliceworkz.eventstore.benchmark.domain.SalesEvent.CouponApplied;
 import org.sliceworkz.eventstore.benchmark.domain.SalesEvent.OrderPlaced;
 import org.sliceworkz.eventstore.events.LegacyEvent;
-import org.sliceworkz.eventstore.events.Upcast;
+import org.sliceworkz.eventstore.events.Upcaster;
 
 /**
  * Sales events as they were written by an earlier version of the shop, kept readable through
@@ -51,13 +51,13 @@ public sealed interface LegacySalesEvent {
 	/**
 	 * The original order event, before order lines carried a unit price.
 	 */
-	@LegacyEvent(upcast = OrderPlacedV1Upcaster.class)
+	@LegacyEvent(upcaster = OrderPlacedV1Upcaster.class)
 	record OrderPlacedV1 ( String orderId, String basketId, String customerId, long totalCents ) implements LegacySalesEvent { }
 
 	/**
 	 * The original checkout event, which recorded the coupon inline instead of as its own fact.
 	 */
-	@LegacyEvent(upcast = BasketCheckedOutUpcaster.class)
+	@LegacyEvent(upcaster = BasketCheckedOutUpcaster.class)
 	record BasketCheckedOut ( String orderId, String basketId, String customerId, long totalCents,
 			String couponCode, long discountCents ) implements LegacySalesEvent { }
 
@@ -68,7 +68,7 @@ public sealed interface LegacySalesEvent {
 	 * benchmark corpus that fabricated plausible lines here would be measuring the upcaster's
 	 * imagination.
 	 */
-	final class OrderPlacedV1Upcaster implements Upcast<OrderPlacedV1, OrderPlaced> {
+	final class OrderPlacedV1Upcaster implements Upcaster<OrderPlacedV1, OrderPlaced> {
 
 		@Override
 		public List<OrderPlaced> upcast ( OrderPlacedV1 legacy ) {
@@ -86,7 +86,7 @@ public sealed interface LegacySalesEvent {
 	 * One stored event in, <b>two</b> current events out -- the case that makes {@code limit(n)}
 	 * return more than n.
 	 */
-	final class BasketCheckedOutUpcaster implements Upcast<BasketCheckedOut, SalesEvent> {
+	final class BasketCheckedOutUpcaster implements Upcaster<BasketCheckedOut, SalesEvent> {
 
 		@Override
 		public List<SalesEvent> upcast ( BasketCheckedOut legacy ) {

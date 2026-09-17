@@ -52,8 +52,8 @@ final class OwningEventStore implements EventStore {
 	}
 
 	@Override
-	public <DOMAIN_EVENT_TYPE> EventStream<DOMAIN_EVENT_TYPE> getEventStream ( EventStreamId eventStreamId, Set<Class<?>> eventRootClasses, Set<Class<?>> historicalEventRootClasses ) {
-		return eventStore.getEventStream(eventStreamId, eventRootClasses, historicalEventRootClasses);
+	public <DOMAIN_EVENT_TYPE> EventStream<DOMAIN_EVENT_TYPE> getEventStream ( EventStreamId eventStreamId, Set<Class<?>> eventRootClasses, Set<Class<?>> legacyEventRootClasses ) {
+		return eventStore.getEventStream(eventStreamId, eventRootClasses, legacyEventRootClasses);
 	}
 
 	@Override

@@ -23,7 +23,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Marks a historical event type that requires upcasting to a current event definition.
+ * Marks a legacy event type that requires upcasting to a current event definition.
  * <p>
  * As event-sourced systems evolve, business requirements change and event structures need to be updated.
  * Rather than modifying existing persisted events (which violates event immutability), this annotation
@@ -37,29 +37,28 @@ import java.lang.annotation.Target;
  * <p>
  * Key benefits:
  * <ul>
- *   <li>Preserves event immutability - historical data remains unchanged</li>
+ *   <li>Preserves event immutability - stored data remains unchanged</li>
  *   <li>Enables gradual schema evolution without breaking existing event streams</li>
  *   <li>Maintains backward compatibility with old event structures</li>
  *   <li>Transparent to application code - queries return only current event types</li>
  *   <li>Type-safe through Java's sealed interfaces and generic constraints</li>
  * </ul>
- *
  * A rename on its own needs none of this: a class annotated {@link EventName} with the name its history
  * was stored under reads that history directly. Reach for an upcaster when the <em>shape</em> of the
  * event changed, not only its name.
  * <p>
  * An upcaster's target may itself be a {@code @LegacyEvent}: the chain is followed until it reaches a
  * current type, so each version of an event needs one upcaster, to the version after it, and none of
- * them is rewritten when a further version arrives. See {@link Upcast#targetTypes()} for what the
+ * them is rewritten when a further version arrives. See {@link Upcaster#targetTypes()} for what the
  * declaration commits to and how it is checked.
  *
  * <h2>Typical Workflow:</h2>
  * <ol>
  *   <li>Create current event definitions in one sealed interface</li>
- *   <li>Move deprecated event structures to a "historical" sealed interface</li>
- *   <li>Annotate each historical event with {@code @LegacyEvent} and specify the upcaster</li>
- *   <li>Implement the {@link Upcast} interface to transform legacy to current events</li>
- *   <li>Include the historical interface when creating the event stream</li>
+ *   <li>Move deprecated event structures to a legacy sealed interface</li>
+ *   <li>Annotate each legacy event with {@code @LegacyEvent} and specify the upcaster</li>
+ *   <li>Implement the {@link Upcaster} interface to transform legacy to current events</li>
+ *   <li>Include the legacy interface when creating the event stream</li>
  * </ol>
  *
  * <h2>Example Usage:</h2>
@@ -70,44 +69,40 @@ import java.lang.annotation.Target;
  *     record CustomerRenamed(Name name) implements CustomerEvent {}
  * }
  *
- * // Historical event definitions (deprecated, but needed for deserialization)
- * sealed interface CustomerHistoricalEvent {
+ * // Legacy event definitions (deprecated, but needed for deserialization)
+ * sealed interface LegacyCustomerEvent {
  *     // Legacy event that stored name as a plain String
- *     @LegacyEvent(upcast = CustomerRegisteredUpcaster.class)
- *     record CustomerRegistered(String name) implements CustomerHistoricalEvent {}
+ *     @LegacyEvent(upcaster = CustomerRegisteredUpcaster.class)
+ *     record CustomerRegistered(String name) implements LegacyCustomerEvent {}
  *
  *     // Legacy event that was renamed
- *     @LegacyEvent(upcast = CustomerNameChangedUpcaster.class)
- *     record CustomerNameChanged(String name) implements CustomerHistoricalEvent {}
+ *     @LegacyEvent(upcaster = CustomerNameChangedUpcaster.class)
+ *     record CustomerNameChanged(String name) implements LegacyCustomerEvent {}
  * }
  *
- * // Upcaster implementation
+ * // Upcaster implementation: one target, derived from the type argument
  * public class CustomerRegisteredUpcaster
- *     implements Upcast<CustomerHistoricalEvent.CustomerRegistered, CustomerEvent.CustomerRegisteredV2> {
+ *     implements Upcaster<LegacyCustomerEvent.CustomerRegistered, CustomerEvent.CustomerRegisteredV2> {
  *
- *     public List<CustomerEvent.CustomerRegisteredV2> upcast(CustomerHistoricalEvent.CustomerRegistered legacy) {
+ *     public List<CustomerEvent.CustomerRegisteredV2> upcast(LegacyCustomerEvent.CustomerRegistered legacy) {
  *         return List.of(new CustomerEvent.CustomerRegisteredV2(
  *             new Name(legacy.name()),
  *             Email.unknown() // provide default for new required field
  *         ));
  *     }
- *
- *     public Set<Class<? extends CustomerEvent.CustomerRegisteredV2>> targetTypes() {
- *         return Set.of(CustomerEvent.CustomerRegisteredV2.class);
- *     }
  * }
  *
- * // Usage: specify both current and historical event types when creating the stream
+ * // Usage: specify both current and legacy event types when creating the stream
  * EventStream<CustomerEvent> stream = eventstore.getEventStream(
  *     streamId,
- *     CustomerEvent.class,           // current event type
- *     CustomerHistoricalEvent.class  // historical event types
+ *     CustomerEvent.class,        // current event type
+ *     LegacyCustomerEvent.class   // legacy event types
  * );
  *
- * // When querying, historical events are automatically upcasted
+ * // When querying, legacy events are automatically upcasted
  * stream.query(EventQuery.matchAll())
  *     .forEach(event -> {
- *         // All events are of type CustomerEvent, never CustomerHistoricalEvent
+ *         // All events are of type CustomerEvent, never LegacyCustomerEvent
  *         CustomerEvent currentEvent = event.data();
  *     });
  * }</pre>
@@ -126,13 +121,13 @@ import java.lang.annotation.Target;
  * }</pre>
  * <p>
  * A filter names current types only. One naming a legacy type —
- * {@code EventTypesFilter.of(CustomerHistoricalEvent.CustomerNameChanged.class)} on the stream above — is
+ * {@code EventTypesFilter.of(LegacyCustomerEvent.CustomerNameChanged.class)} on the stream above — is
  * refused with an {@link IllegalArgumentException}, as a query and as an {@code AppendCriteria} alike:
  * the legacy events read as {@code CustomerRenamed}, and it is the filter over {@code CustomerRenamed}
  * that returns and counts them. A raw stream, which registers no legacy types, reads the stored name as
  * stored.
  *
- * @see Upcast
+ * @see Upcaster
  * @see EventName
  * @see org.sliceworkz.eventstore.stream.EventStream
  */
@@ -141,16 +136,16 @@ import java.lang.annotation.Target;
 public @interface LegacyEvent {
 
 	/**
-	 * The upcaster class that transforms this legacy event to its current representation.
+	 * The upcaster that transforms this legacy event to its current representation.
 	 * <p>
-	 * The specified class must implement {@link Upcast} with generic parameters matching
-	 * the legacy event type (annotated with this annotation) and the target current event type.
+	 * The specified class must implement {@link Upcaster} with generic parameters matching
+	 * the legacy event type (annotated with this annotation) and the target event type.
 	 * <p>
-	 * The upcaster must have a no-argument constructor, as it will be instantiated by the
-	 * event store framework during event deserialization.
+	 * The upcaster must have a public no-argument constructor, as it will be instantiated by the
+	 * event store framework at stream creation.
 	 *
 	 * @return the upcaster class that converts this legacy event to its current form
 	 */
-	Class<? extends Upcast<?,?>> upcast();
+	Class<? extends Upcaster<?,?>> upcaster();
 
 }

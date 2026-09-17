@@ -433,11 +433,11 @@ public final class CorpusProvisioner {
 		}
 	}
 
-	private <T> void readSample ( BenchmarkTarget target, String context, Class<T> root, Class<?> historicalRoot ) {
+	private <T> void readSample ( BenchmarkTarget target, String context, Class<T> root, Class<?> legacyRoot ) {
 		EventStreamId id = EventStreamId.forContext(context).anyPurpose();
-		EventStream<T> stream = historicalRoot == null
+		EventStream<T> stream = legacyRoot == null
 				? target.store().getEventStream(id, root)
-				: target.store().getEventStream(id, root, historicalRoot);
+				: target.store().getEventStream(id, root, legacyRoot);
 
 		List<Event<T>> sample;
 		try {

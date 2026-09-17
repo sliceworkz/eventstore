@@ -29,7 +29,7 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.LegacyEvent;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.events.Upcast;
+import org.sliceworkz.eventstore.events.Upcaster;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.testing.tck.stream.UpcastTest.CustomerEvent.CustomerRegisteredV2;
@@ -58,7 +58,7 @@ public class UpcastTest extends AbstractEventStoreTest {
 
 		assertEquals(3, originalEvents.size());
 
-		EventStream<CustomerEvent> streamWithUpcasts = eventStore().getEventStream(streamId, CustomerEvent.class, CustomerHistoricalEvent.class);
+		EventStream<CustomerEvent> streamWithUpcasts = eventStore().getEventStream(streamId, CustomerEvent.class, LegacyCustomerEvent.class);
 		streamWithUpcasts.append(AppendCriteria.none(), Event.of(new CustomerEvent.CustomerRegisteredV2(Name.of("Superman")), Tags.of("customer", "234")));
 		streamWithUpcasts.append(AppendCriteria.none(), Event.of(new CustomerEvent.CustomerRenamed(Name.of("Batman")), Tags.of("customer", "234")));
 		streamWithUpcasts.append(AppendCriteria.none(), Event.of(new CustomerEvent.CustomerChurned(), Tags.of("customer", "234")));
@@ -102,7 +102,7 @@ public class UpcastTest extends AbstractEventStoreTest {
 		assertEquals(originalEvents.get(1).reference(), newEvents.get(1).reference());
 		assertEquals(originalEvents.get(2).reference(), newEvents.get(2).reference());
 
-		// verify reading the raw stream still shows all historical details
+		// verify reading the raw stream still shows the details as stored
 		EventSource<String> rawStream = eventStore().getRawEventStream(streamId);
 		List<Event<String>> rawEvents = rawStream.query(EventQuery.matchAll());
 
@@ -146,7 +146,7 @@ public class UpcastTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void aBoundaryOverACurrentTypeCountsTheLegacyEventsUpcastIntoIt() {
 		Tags customer = Tags.of("customer", "123");
-		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, CustomerHistoricalEvent.class);
+		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, LegacyCustomerEvent.class);
 		// history lands the way it was written, under its legacy names
 		EventStream<OriginalEvent> asWritten = eventStore().getEventStream(streamId, OriginalEvent.class);
 
@@ -186,17 +186,17 @@ public class UpcastTest extends AbstractEventStoreTest {
 		Tags customer = Tags.of("customer", "123");
 		EventStream<OriginalEvent> asWritten = eventStore().getEventStream(streamId, OriginalEvent.class);
 		asWritten.append(AppendCriteria.none(), Event.of(new OriginalEvent.CustomerNameChanged("Jane"), customer));
-		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, CustomerHistoricalEvent.class);
+		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, LegacyCustomerEvent.class);
 
 		// by class and by the stored name alike: the filter carries the name either way
-		EventQuery byClass = EventQuery.forEvents(EventTypesFilter.of(CustomerHistoricalEvent.CustomerNameChanged.class), customer);
+		EventQuery byClass = EventQuery.forEvents(EventTypesFilter.of(LegacyCustomerEvent.CustomerNameChanged.class), customer);
 		EventQuery byName = EventQuery.forEvents(EventTypesFilter.of(Set.of(EventType.named("CustomerNameChanged"))), customer);
 		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> current.query(byClass));
 		assertEquals("a query or a consistency boundary on this stream names the current event types, and it returns and counts the legacy events that upcast into them; it cannot name a legacy type: 'CustomerNameChanged' (a legacy type, read as 'CustomerRenamed')", e.getMessage());
 		assertEquals(e.getMessage(), assertThrows(IllegalArgumentException.class, () -> current.query(byName)).getMessage());
 		// beside a current type it is refused just the same: the filter as a whole cannot be answered
 		assertEquals(e.getMessage(), assertThrows(IllegalArgumentException.class,
-				() -> current.query(EventQuery.forEvents(EventTypesFilter.of(CustomerHistoricalEvent.CustomerNameChanged.class, CustomerRenamed.class), customer))).getMessage());
+				() -> current.query(EventQuery.forEvents(EventTypesFilter.of(LegacyCustomerEvent.CustomerNameChanged.class, CustomerRenamed.class), customer))).getMessage());
 
 		// refused as a boundary too, with nothing stored
 		EventReference head = current.head().orElseThrow();
@@ -219,12 +219,12 @@ public class UpcastTest extends AbstractEventStoreTest {
 	void testUpcastAnnotationNotAllowedOnCurrentEventVersions() {
 		// IllegalArgumentException, like the two neighbouring registration checks (duplicate event name,
 		// non-sealed interface): the argument passed to getEventStream is what is wrong.
-		IllegalArgumentException e = assertThrows(IllegalArgumentException.class,()->eventStore().getEventStream(streamId, CustomerHistoricalEvent.CustomerNameChanged.class));
-		assertEquals("Event type class org.sliceworkz.eventstore.testing.tck.stream.UpcastTest$CustomerHistoricalEvent$CustomerNameChanged should not be annotated as a @LegacyEvent, or moved to the legacy Event types", e.getMessage());
+		IllegalArgumentException e = assertThrows(IllegalArgumentException.class,()->eventStore().getEventStream(streamId, LegacyCustomerEvent.CustomerNameChanged.class));
+		assertEquals("Event type class org.sliceworkz.eventstore.testing.tck.stream.UpcastTest$LegacyCustomerEvent$CustomerNameChanged should not be annotated as a @LegacyEvent, or moved to the legacy Event types", e.getMessage());
 	}
 
 	@ForEachBackend
-	void testUpcastRequiredOnHistoricalEventVersions() {
+	void testUpcastRequiredOnLegacyEventVersions() {
 		IllegalArgumentException e = assertThrows(IllegalArgumentException.class,()->eventStore().getEventStream(streamId, OriginalEvent.CustomerRegistered.class, CustomerEvent.CustomerRenamed.class));
 		assertEquals("legacy Event type class org.sliceworkz.eventstore.testing.tck.stream.UpcastTest$CustomerEvent$CustomerRenamed should be annotated as a @LegacyEvent and configured with an Upcaster", e.getMessage());
 	}
@@ -277,48 +277,39 @@ public class UpcastTest extends AbstractEventStoreTest {
 	}
 
 	/*
-	 * Deprecated historical event definitions, needed to deserialization, but will be upcasted
+	 * Deprecated legacy event definitions, needed to deserialization, but will be upcasted
 	 */
-	sealed interface CustomerHistoricalEvent {
+	sealed interface LegacyCustomerEvent {
 
-		@LegacyEvent(upcast=CustomerRegisteredUpcaster.class)
-		public record CustomerRegistered ( String name ) implements CustomerHistoricalEvent { }
+		@LegacyEvent(upcaster = CustomerRegisteredUpcaster.class)
+		public record CustomerRegistered ( String name ) implements LegacyCustomerEvent { }
 
-		@LegacyEvent(upcast=CustomerNameChangedUpcaster.class)
-		public record CustomerNameChanged (String name ) implements CustomerHistoricalEvent { }
+		@LegacyEvent(upcaster = CustomerNameChangedUpcaster.class)
+		public record CustomerNameChanged (String name ) implements LegacyCustomerEvent { }
 
 	}
 
 	/*
-	 * Our upcasters that transform the legacy events to current event definitions
+	 * Our upcasters that transform the legacy events to current event definitions. Each produces one
+	 * type, the one its declaration names, so neither overrides targetTypes()
 	 */
 
-	public static class CustomerRegisteredUpcaster implements Upcast<CustomerHistoricalEvent.CustomerRegistered, CustomerEvent.CustomerRegisteredV2> {
+	public static class CustomerRegisteredUpcaster implements Upcaster<LegacyCustomerEvent.CustomerRegistered, CustomerEvent.CustomerRegisteredV2> {
 
 		@Override
-		public List<CustomerEvent.CustomerRegisteredV2> upcast(CustomerHistoricalEvent.CustomerRegistered historicalEvent) {
-			// using the constructor, not the "of" utility method to allow historical values that don't adhere to the new length business rules
-			return List.of(new CustomerEvent.CustomerRegisteredV2(new CustomerEvent.Name(historicalEvent.name())));
-		}
-
-		@Override
-		public Set<Class<? extends CustomerRegisteredV2>> targetTypes() {
-			return Set.of(CustomerRegisteredV2.class);
+		public List<CustomerEvent.CustomerRegisteredV2> upcast(LegacyCustomerEvent.CustomerRegistered legacyEvent) {
+			// using the constructor, not the "of" utility method to allow legacy values that don't adhere to the new length business rules
+			return List.of(new CustomerEvent.CustomerRegisteredV2(new CustomerEvent.Name(legacyEvent.name())));
 		}
 
 	}
 
-	public static class CustomerNameChangedUpcaster implements Upcast<CustomerHistoricalEvent.CustomerNameChanged, CustomerEvent.CustomerRenamed> {
+	public static class CustomerNameChangedUpcaster implements Upcaster<LegacyCustomerEvent.CustomerNameChanged, CustomerEvent.CustomerRenamed> {
 
 		@Override
-		public List<CustomerEvent.CustomerRenamed> upcast(CustomerHistoricalEvent.CustomerNameChanged historicalEvent) {
-			// using the constructor, not the "of" utility method to allow historical values that don't adhere to the new length business rules
-			return List.of(new CustomerEvent.CustomerRenamed(new CustomerEvent.Name(historicalEvent.name())));
-		}
-
-		@Override
-		public Set<Class<? extends CustomerRenamed>> targetTypes() {
-			return Set.of(CustomerRenamed.class);
+		public List<CustomerEvent.CustomerRenamed> upcast(LegacyCustomerEvent.CustomerNameChanged legacyEvent) {
+			// using the constructor, not the "of" utility method to allow legacy values that don't adhere to the new length business rules
+			return List.of(new CustomerEvent.CustomerRenamed(new CustomerEvent.Name(legacyEvent.name())));
 		}
 
 	}

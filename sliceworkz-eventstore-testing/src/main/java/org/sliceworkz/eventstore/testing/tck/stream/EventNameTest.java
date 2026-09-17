@@ -30,7 +30,7 @@ import org.sliceworkz.eventstore.events.EventName;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.LegacyEvent;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.events.Upcast;
+import org.sliceworkz.eventstore.events.Upcaster;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -85,11 +85,11 @@ public class EventNameTest extends AbstractEventStoreTest {
 
 	public sealed interface CustomerLegacyEvent {
 		@EventName("CustomerRegistered")
-		@LegacyEvent(upcast = OldRegistrationUpcaster.class)
+		@LegacyEvent(upcaster = OldRegistrationUpcaster.class)
 		record OldRegistration ( String id, String name ) implements CustomerLegacyEvent { }
 	}
 
-	public static class OldRegistrationUpcaster implements Upcast<CustomerLegacyEvent.OldRegistration, CustomerEventV3> {
+	public static class OldRegistrationUpcaster implements Upcaster<CustomerLegacyEvent.OldRegistration, CustomerEventV3> {
 		@Override
 		public List<CustomerEventV3> upcast ( CustomerLegacyEvent.OldRegistration legacy ) {
 			return List.of(new CustomerEventV3.CustomerRegisteredV3(legacy.id(), legacy.name(), "unknown"));

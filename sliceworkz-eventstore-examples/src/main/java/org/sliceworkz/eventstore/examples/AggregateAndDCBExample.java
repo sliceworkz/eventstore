@@ -42,18 +42,23 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  */
 public class AggregateAndDCBExample {
 	
-	private EventStream<LearningDomainEvent> stream;
+	// One stream, opened once per aggregate root: a handle is cheap and shares its serde, and a query
+	// through the handle typed at the root answers events of that root, so no cast is needed anywhere
+	private final EventStream<LearningDomainEvent> stream;
+	private final EventStream<StudentDomainEvent> students;
+	private final EventStream<CourseDomainEvent> courses;
 	
-	public AggregateAndDCBExample ( EventStream<LearningDomainEvent> stream ) {
-		this.stream = stream;
+	public AggregateAndDCBExample ( EventStore es ) {
+		EventStreamId streamId = EventStreamId.forContext("learning");
+		this.stream = es.getEventStream(streamId, LearningDomainEvent.class);
+		this.students = es.getEventStream(streamId, StudentDomainEvent.class);
+		this.courses = es.getEventStream(streamId, CourseDomainEvent.class);
 	}
 	
 	public static void main ( String[] args ) {
 		EventStore es = InMemoryEventStorage.newBuilder().buildStore();
 		
-		EventStream<LearningDomainEvent> stream = es.getEventStream(EventStreamId.forContext("learning"), LearningDomainEvent.class);
-		
-		new AggregateAndDCBExample(stream).scenario();
+		new AggregateAndDCBExample(es).scenario();
 	}
 	
 	void scenario ( ) {
@@ -72,21 +77,21 @@ public class AggregateAndDCBExample {
 		s = loadStudent("123");
 	}
 	
-	// Load aggregate from events. The sealed interface stands for every event type under it
+	// Load aggregate from events. The sealed interface stands for every event type under it, and the
+	// stream typed at that root maps exactly those types, so its events are the aggregate's own
 	Student loadStudent(String studentId) {
 	    Student student = new Student(studentId);
 	    EventQuery query = EventQuery.forEvents(
 	        EventTypesFilter.of(StudentDomainEvent.class),
 	        Tags.of("student", studentId)
 	    );
-	    stream.query(query)
-	    	.forEach(event -> student.when(event.cast()));
+	    students.query(query).forEach(student::when);
 	    return student;
 	}
 
 	// Save events with optimistic locking
 	void saveStudent(Student student, List<StudentDomainEvent> events) {
-	    stream.append(
+	    students.append(
 	        AppendCriteria.of(
 	            EventQuery.forEvents(
         	        EventTypesFilter.of(StudentDomainEvent.class),
@@ -95,7 +100,7 @@ public class AggregateAndDCBExample {
 	            student.lastEventReference()
 	        ),
 	        events.stream()
-	            .<EphemeralEvent<? extends LearningDomainEvent>>map(e -> Event.of(e, Tags.of("student", student.studentId)))
+	            .<EphemeralEvent<? extends StudentDomainEvent>>map(e -> Event.of(e, Tags.of("student", student.studentId)))
 	            .toList()
 	    );
 	}
@@ -107,14 +112,13 @@ public class AggregateAndDCBExample {
 	        EventTypesFilter.of(CourseDomainEvent.class),
 	        Tags.of("course", courseId)
 	    );
-	    stream.query(query)
-	    	.forEach(event -> course.when(event.cast()));
+	    courses.query(query).forEach(course::when);
 	    return course;
 	}
 
 	// Save events with optimistic locking
 	void saveCourse(Course course, List<CourseDomainEvent> events) {
-	    stream.append(
+	    courses.append(
 	        AppendCriteria.of(
 	            EventQuery.forEvents(
 	                EventTypesFilter.of(CourseDomainEvent.class),
@@ -123,7 +127,7 @@ public class AggregateAndDCBExample {
 	            course.lastEventReference()
 	        ),
 	        events.stream()
-	            .<EphemeralEvent<? extends LearningDomainEvent>>map(e -> Event.of(e, Tags.of("course", course.courseId)))
+	            .<EphemeralEvent<? extends CourseDomainEvent>>map(e -> Event.of(e, Tags.of("course", course.courseId)))
 	            .toList()
 	    );
 	}

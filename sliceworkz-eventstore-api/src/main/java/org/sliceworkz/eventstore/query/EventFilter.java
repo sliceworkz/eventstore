@@ -260,19 +260,6 @@ public record EventFilter ( List<EventFilterItem> items, EventReference until ) 
 	}
 
 	/**
-	 * The union of this filter and another.
-	 *
-	 * @param other the other filter to unite with this one
-	 * @return a new EventFilter representing the union of both filters
-	 * @throws IllegalArgumentException if the "until" references are incompatible
-	 * @deprecated a union is an <em>or</em>, and the method is called that: use {@link #or(EventFilter)}
-	 */
-	@Deprecated(since = "0.11.0", forRemoval = true)
-	public EventFilter combineWith ( EventFilter other ) {
-		return or(other);
-	}
-
-	/**
 	 * Creates a match-none filter that will match no events.
 	 *
 	 * @return an EventFilter that matches no events

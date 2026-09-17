@@ -229,20 +229,6 @@ public record EventQuery ( EventFilter filter, Direction direction, Limit limit 
 	}
 
 	/**
-	 * The union of this query and another.
-	 *
-	 * @param other the other query to unite with this one
-	 * @return a new EventQuery representing the union of both queries
-	 * @throws IllegalArgumentException if the directions differ, the "until" references are
-	 *         incompatible, or either query has a limit set
-	 * @deprecated a union is an <em>or</em>, and the method is called that: use {@link #or(EventQuery)}
-	 */
-	@Deprecated(since = "0.11.0", forRemoval = true)
-	public EventQuery combineWith ( EventQuery other ) {
-		return or(other);
-	}
-
-	/**
 	 * Creates a match-none query that will match no events.
 	 * Useful when no criteria should be applied (e.g., unconditional appends with {@link org.sliceworkz.eventstore.stream.AppendCriteria}).
 	 *

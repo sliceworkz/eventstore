@@ -438,14 +438,6 @@ public class EventQueryTest {
 		assertTrue(q.filter().matches(e6_event2TagsA2B1));
 	}
 
-	@Test
-	@SuppressWarnings("removal")
-	void testCombineWithIsTheDeprecatedNameOfOr ( ) {
-		EventQuery q1 = EventQuery.forTypes(FirstDomainEvent.class);
-		EventQuery q2 = EventQuery.forTypes(SecondDomainEvent.class).tagged("A", "1");
-		assertEquals(q1.or(q2), q1.combineWith(q2));
-	}
-
 	// --- the surface: the query builds its filter and reads nothing off it -------------------------
 
 	/**

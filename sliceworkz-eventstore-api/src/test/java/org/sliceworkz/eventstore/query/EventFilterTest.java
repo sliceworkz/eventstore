@@ -247,12 +247,4 @@ public class EventFilterTest {
 		assertThrows(IllegalArgumentException.class, () -> a.or(EventFilter.forTypes(Customer.Churned.class)), "a boundary on one side only");
 	}
 
-	@Test
-	@SuppressWarnings("removal")
-	void combineWithIsTheDeprecatedNameOfOr ( ) {
-		EventFilter a = EventFilter.forTypes(Customer.Registered.class);
-		EventFilter b = EventFilter.forTags(Tags.of("customer", "123"));
-		assertEquals(a.or(b), a.combineWith(b));
-	}
-
 }

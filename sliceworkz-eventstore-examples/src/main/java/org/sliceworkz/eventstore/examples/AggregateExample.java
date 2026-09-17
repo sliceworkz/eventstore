@@ -21,7 +21,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.sliceworkz.eventstore.EventStore;
-import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventHandler;
@@ -118,7 +117,7 @@ public class AggregateExample {
 						lastEventReference),
 				
 				// and of course don't forget to tag the new Events with this customerId ...
-				events.stream().<EphemeralEvent<? extends CustomerEvent>>map(
+				events.stream().map(
 						e->Event.of(e, Tags.of("customer", customerId))).toList()
 				);
 	}

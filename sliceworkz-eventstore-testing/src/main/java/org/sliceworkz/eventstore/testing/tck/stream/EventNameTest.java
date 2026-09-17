@@ -161,7 +161,7 @@ public class EventNameTest extends AbstractEventStoreTest {
 		assertEquals("CustomerRegistered", events.getFirst().storedType().name());
 
 		// and getEventById agrees
-		List<Event<CustomerEvent>> byId = stream.getEventById(events.getFirst().reference().id());
+		List<Event<CustomerEvent>> byId = stream.getEventById(events.getFirst().reference().id()).orElseThrow();
 		assertEquals(1, byId.size());
 		assertInstanceOf(CustomerEvent.CustomerSignedUp.class, byId.getFirst().data());
 	}

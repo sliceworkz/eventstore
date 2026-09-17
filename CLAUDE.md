@@ -172,6 +172,15 @@ mvn clean install -DskipTests
   a context or one of its streams depending only on the id it was opened with (the raw stream, whose
   read-only nature *is* static, is a separate case). `EventStreamTest.testAppendToNonSpecificStream`
   and `testAppendToWildcardPurposeStream` pin it per backend
+- **`getEventById` answers in two levels: `Optional<List<Event<E>>>`.** The `Optional` says whether
+  this stream holds a stored event with the id, the list what it reads as through the stream's
+  mappings — one event, or through an `@Upcast` several or none. A stored event that upcasts into
+  nothing is therefore *present with an empty list*, and an id the storage does not hold, or holds
+  in a stream this one does not read across, is *absent*. The alternative — a bare list, empty in
+  both cases — loses because a presence check through a stream with upcasters then reports every
+  legacy event that upcasts into nothing as missing, with nothing to say so; the two levels are what
+  let `isPresent()` be the presence check on a typed stream and a raw one alike. `UpcastMultiTest`
+  pins both answers per backend
 - **`query()` returns a `List`, read in full.** Storage has finished reading by the time the list
   comes back, and every event in it is deserialized and upcast, so the type says what a query costs:
   a query with no limit against a storage with no `resultLimit` reads everything matching into heap,
@@ -1302,10 +1311,11 @@ still raises.
 - **Listeners are notified** exactly as for appends, so a merge into a live store wakes its projections.
   Imported events arrive at new (high) positions carrying old timestamps, so "later position implies later
   timestamp" no longer holds in that store.
-- **Checking a target up front** must be done in **raw mode**
-  (`eventStore.getRawEventStream(EventStreamId.anyContext())`, no event root classes). With domain classes
-  registered, `getEventById` upcasts, and a legacy event whose upcast yields zero current events comes back
-  as an empty list even though it exists — a false negative.
+- **Checking a target up front** is `getEventById(id).isPresent()`, best on a **raw** stream
+  (`eventStore.getRawEventStream(EventStreamId.anyContext())`, no event root classes): nothing is
+  upcast there and nothing can fail to deserialize. A typed stream answers presence correctly too —
+  a legacy event whose upcast yields zero current events is present with an empty list, not absent —
+  but needs the domain classes and throws on an event its mappings cannot read.
 
 `EventToImport`'s canonical constructor is public, so it also writes synthetic events with a chosen id and
 timestamp directly into a store — useful for fixtures, but it bypasses `append()` and everything that path

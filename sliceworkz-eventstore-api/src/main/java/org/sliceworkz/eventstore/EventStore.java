@@ -380,11 +380,11 @@ public interface EventStore extends AutoCloseable {
 	 * What it is for: inspecting a stored event a typed stream cannot read (an
 	 * {@link org.sliceworkz.eventstore.events.EventDeserializationException} names it by reference, and
 	 * {@code getEventById} here reads it whatever its type), following every append in a store, and
-	 * checking whether an event is present before an import — a typed stream would upcast, and report a
-	 * legacy event whose upcast yields nothing as absent.
+	 * checking whether an event is present before an import — without the domain classes, and with no
+	 * mapping that could fail on the way.
 	 * <pre>{@code
 	 * EventSource<String> everything = eventStore.getRawEventStream(EventStreamId.anyContext());
-	 * List<Event<String>> stored = everything.getEventById(reference.id());
+	 * List<Event<String>> stored = everything.getEventById(reference.id()).orElseThrow();
 	 * String json = stored.getFirst().data();
 	 * }</pre>
 	 * The alternative — a {@code getEventStream(EventStreamId)} overload with a free type parameter —

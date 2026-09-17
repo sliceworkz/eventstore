@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventId;
@@ -438,7 +439,7 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 		EventId splitEventId = allEvents.get(0).reference().id();
 
 		// getEventById should return both sub-events
-		List<Event<CurrentEvent>> retrieved = stream.getEventById(splitEventId);
+		List<Event<CurrentEvent>> retrieved = stream.getEventById(splitEventId).orElseThrow();
 		assertEquals(2, retrieved.size());
 		assertEquals(CurrentEvent.CustomerRegistered.class, retrieved.get(0).data().getClass());
 		assertEquals(CurrentEvent.AddressRecorded.class, retrieved.get(1).data().getClass());
@@ -461,9 +462,16 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 		// Now read via the upcasted stream
 		EventStream<CurrentEvent> upcastedStream = eventStore().getEventStream(streamId, CurrentEvent.class, LegacyEvents.class);
 
-		// getEventById should return empty list for a filtered event
-		List<Event<CurrentEvent>> retrieved = upcastedStream.getEventById(auditEventId);
-		assertEquals(0, retrieved.size());
+		// the stored event is there, so it is present -- and it upcasts into nothing, so the list is empty.
+		// A present, empty answer is what tells this apart from an id the stream does not hold
+		Optional<List<Event<CurrentEvent>>> retrieved = upcastedStream.getEventById(auditEventId);
+		assertTrue(retrieved.isPresent(), "a stored event that upcasts into nothing is present, not absent");
+		assertEquals(0, retrieved.get().size());
+
+		// and read raw, the stored event is what it always was
+		List<Event<String>> raw = eventStore().getRawEventStream(streamId).getEventById(auditEventId).orElseThrow();
+		assertEquals(1, raw.size());
+		assertEquals(EventType.of(OriginalEvent.CustomerLegacyAuditLog.class), raw.getFirst().type());
 	}
 
 	@ForEachBackend
@@ -475,7 +483,7 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 			.filter(e -> e.data() instanceof CurrentEvent.CustomerRenamed)
 			.findFirst().orElseThrow();
 
-		List<Event<CurrentEvent>> retrieved = stream.getEventById(renamedEvent.reference().id());
+		List<Event<CurrentEvent>> retrieved = stream.getEventById(renamedEvent.reference().id()).orElseThrow();
 		assertEquals(1, retrieved.size());
 		assertEquals(CurrentEvent.CustomerRenamed.class, retrieved.get(0).data().getClass());
 		assertEquals(0, retrieved.get(0).reference().index());
@@ -490,7 +498,7 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 			.filter(e -> e.data() instanceof CurrentEvent.CustomerChurned)
 			.findFirst().orElseThrow();
 
-		List<Event<CurrentEvent>> retrieved = stream.getEventById(churnedEvent.reference().id());
+		List<Event<CurrentEvent>> retrieved = stream.getEventById(churnedEvent.reference().id()).orElseThrow();
 		assertEquals(1, retrieved.size());
 		assertEquals(CurrentEvent.CustomerChurned.class, retrieved.get(0).data().getClass());
 		assertEquals(0, retrieved.get(0).reference().index());
@@ -500,8 +508,9 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 	void testGetEventByIdNonExistent() {
 		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
 
-		List<Event<CurrentEvent>> retrieved = stream.getEventById(EventId.create());
-		assertEquals(0, retrieved.size());
+		// no stored event with this id: absent, which is not the same answer as present-and-empty
+		Optional<List<Event<CurrentEvent>>> retrieved = stream.getEventById(EventId.create());
+		assertTrue(retrieved.isEmpty());
 	}
 
 	// =========================================================================

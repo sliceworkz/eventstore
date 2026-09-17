@@ -131,8 +131,9 @@ import org.sliceworkz.eventstore.query.EventQuery;
  *     EventQuery.matchAll().backwards().limit(1)
  * ).stream().findFirst();
  *
- * // Get specific event by ID
- * Optional<Event<CustomerEvent>> event = stream.getEventById(eventId);
+ * // Get specific event by ID: absent when this stream holds no such stored event, otherwise the
+ * // events the stored event reads as (one, or several or none through an upcaster)
+ * Optional<List<Event<CustomerEvent>>> event = stream.getEventById(eventId);
  *
  * // Bookmarking for resume capability
  * stream.placeBookmark("myReader", lastProcessedRef, Tags.of("status", "processed"));
@@ -288,23 +289,41 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	}
 
 	/**
-	 * Retrieves events by their stored event ID.
+	 * Reads one stored event by its id, as the events this stream reads it as.
 	 * <p>
-	 * This method performs a direct lookup of an event by its ID and returns all events
-	 * that result from deserializing and upcasting the stored event. For non-upcasted events,
-	 * this returns a single-element list. For events that are upcasted into multiple sub-events,
-	 * all sub-events are returned with distinct references (differing by index).
-	 * Returns an empty list if no event with the given ID exists in this stream.
+	 * A direct lookup, answered in two levels because a stored event and the events it reads as are
+	 * two different things: the {@code Optional} says whether this stream holds a stored event with the
+	 * id, and the list says what that stored event deserializes and upcasts into. An event appended as
+	 * a current type reads as a one-element list; a legacy event upcasts into as many events as its
+	 * {@link org.sliceworkz.eventstore.events.Upcast @Upcast} method produces, each with its own
+	 * {@link EventReference} (differing by index), and one that upcasts into nothing reads as a
+	 * <em>present, empty</em> list. Absent means the storage holds no event with the id, or holds it in
+	 * a stream this one does not read across — an event is stored in exactly one stream, and a stream
+	 * answers for the streams its id matches, as {@link #query(EventQuery)} does.
+	 * <p>
+	 * The two levels are what let a typed stream answer "is this event here" correctly:
+	 * {@code getEventById(id).isPresent()} is the presence check, and it is not fooled by an upcaster
+	 * that maps the event to nothing. The alternative — a bare list, empty for both — loses because the
+	 * one empty list then means either of two things, and a caller checking presence through a stream
+	 * with upcasters gets a false negative for every legacy event whose upcast yields nothing, with
+	 * nothing to say so. A dedicated result type carrying the stored type and reference beside the
+	 * events loses to the {@code Optional} because the caller already holds the id it asked with, and
+	 * the events carry their reference and {@link Event#storedType() stored type}; the one case that
+	 * would leave a caller with nothing — a present, empty list — is the case where the stream has, by
+	 * its own mappings, nothing to say about the event. Raw mode
+	 * ({@code eventStore.getRawEventStream(EventStreamId.anyContext())}) reads the stored document, under
+	 * its stored type, whatever the mappings elsewhere.
 	 *
 	 * @param eventId the unique identifier of the stored event to retrieve
-	 * @return a list of events produced from the stored event, or an empty list if not found
+	 * @return the events the stored event reads as through this stream's type mappings — one, or several
+	 *         or none through an upcaster — or empty when this stream holds no stored event with the id
 	 * @throws org.sliceworkz.eventstore.events.EventDeserializationException if the stored event cannot be
 	 *         read through this stream's type mappings. Unlike {@link #query(EventQuery)} this method is
 	 *         eager, so the failure surfaces here — which makes a raw-mode stream
 	 *         ({@code eventStore.getRawEventStream(EventStreamId.anyContext())}) the way to inspect an
 	 *         event a typed stream chokes on
 	 */
-	List<Event<DOMAIN_EVENT_TYPE>> getEventById ( EventId eventId );
+	Optional<List<Event<DOMAIN_EVENT_TYPE>>> getEventById ( EventId eventId );
 
 	/**
 	 * The reference of the newest stored event of this stream, or empty for an empty stream.

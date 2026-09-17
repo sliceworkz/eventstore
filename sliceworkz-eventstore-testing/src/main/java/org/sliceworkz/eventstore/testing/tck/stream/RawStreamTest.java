@@ -79,7 +79,7 @@ public class RawStreamTest extends AbstractEventStoreTest {
 
 		// through a wildcard stream, as the presence check before an import and the read of a poison
 		// event by the reference an EventDeserializationException names both do
-		List<Event<String>> read = eventStore().getRawEventStream(EventStreamId.anyContext()).getEventById(appended.reference().id());
+		List<Event<String>> read = eventStore().getRawEventStream(EventStreamId.anyContext()).getEventById(appended.reference().id()).orElseThrow();
 
 		assertEquals(1, read.size());
 		assertEquals(eventStorage().getEventById(appended.reference().id()).orElseThrow().payload(), read.getFirst().data());

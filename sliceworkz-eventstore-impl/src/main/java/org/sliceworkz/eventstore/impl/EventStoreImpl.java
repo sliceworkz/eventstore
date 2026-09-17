@@ -1154,14 +1154,15 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		@Override
-		public List<Event<EVENT_TYPE>> getEventById(EventId eventId) {
+		public Optional<List<Event<EVENT_TYPE>>> getEventById(EventId eventId) {
 			checkStoreNotClosed();
 			meterGetEvent.increment();
-			// filters out events that can not be read by this stream, then upcasts via enrich
+			// an event stored in a stream this one does not read across is absent here, as it is from a
+			// query; a stored event this stream holds is present whatever it upcasts into, an empty list
+			// included -- the two levels are the contract, so nothing collapses them
 			return eventStorage.getEventById(eventId)
 				.filter(e->eventStreamId.canRead(e.stream()))
-				.map(e->enrich(e, Direction.FORWARD))
-				.orElse(List.of());
+				.map(e->enrich(e, Direction.FORWARD));
 		}
 
 		@Override

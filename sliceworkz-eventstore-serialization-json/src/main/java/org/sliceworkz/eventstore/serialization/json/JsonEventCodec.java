@@ -52,14 +52,17 @@ import tools.jackson.databind.node.ObjectNode;
  *   "stream":        { "context": ..., "purpose": ... },
  *   "type":          "...",
  *   "reference":     { "id": ..., "position": ..., "tx": ..., "index": ... },
- *   "immutableData": { ... } | null,
+ *   "payload":       { ... } | null,
  *   "tags":          [ { "key": ..., "value": ... }, ... ],
  *   "timestamp":     "ISO-8601 instant, e.g. 2026-04-19T12:34:56.789Z",
  *   "idempotencyKey": "..." | null
  * }
  * </pre>
  * The timestamp is written at UTC with its offset. On read, a timestamp carrying no offset is taken as
- * UTC, so a file holding a bare {@code 2026-04-19T12:34:56.789} names the same instant.
+ * UTC, so a file holding a bare {@code 2026-04-19T12:34:56.789} names the same instant. The payload is
+ * written as the JSON document it is, not as an escaped string, and a file carrying it under the key
+ * {@code immutableData} instead of {@code payload} reads the same, so an events directory holds one
+ * meaning of the field whichever key a file carries.
  */
 public final class JsonEventCodec {
 
@@ -110,10 +113,10 @@ public final class JsonEventCodec {
 			refNode.put("index", event.reference().index());
 			node.set("reference", refNode);
 
-			if ( event.immutableData() != null ) {
-				node.set("immutableData", objectMapper.readTree(event.immutableData()));
+			if ( event.payload() != null ) {
+				node.set("payload", objectMapper.readTree(event.payload()));
 			} else {
-				node.putNull("immutableData");
+				node.putNull("payload");
 			}
 
 			ArrayNode tagsArray = objectMapper.createArrayNode();
@@ -156,9 +159,7 @@ public final class JsonEventCodec {
 					refNode.get("tx").asLong(),
 					refNode.get("index").asInt());
 
-			String immutableData = node.has("immutableData") && !node.get("immutableData").isNull()
-					? node.get("immutableData").toString()
-					: null;
+			String payload = readPayload(node);
 
 			Set<Tag> tagSet = new HashSet<>();
 			JsonNode tagsNode = node.get("tags");
@@ -184,10 +185,23 @@ public final class JsonEventCodec {
 					? node.get("idempotencyKey").asText()
 					: null;
 
-			return new StoredEvent(stream, type, reference, immutableData, tags, timestamp, idempotencyKey);
+			return new StoredEvent(stream, type, reference, payload, tags, timestamp, idempotencyKey);
 		} catch ( JacksonException e ) {
 			throw new JsonCodecException("failed to deserialize event", e);
 		}
+	}
+
+	/**
+	 * The payload of an event node: the document under {@code payload}, or under {@code immutableData}
+	 * for a file written with that key, rendered back to text; {@code null} for a null or absent one.
+	 */
+	private static String readPayload ( JsonNode node ) {
+		for ( String key : new String[] { "payload", "immutableData" } ) {
+			if ( node.has(key) && !node.get(key).isNull() ) {
+				return node.get(key).toString();
+			}
+		}
+		return null;
 	}
 
 	/**

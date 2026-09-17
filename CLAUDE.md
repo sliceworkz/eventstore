@@ -136,7 +136,7 @@ mvn clean install -DskipTests
 - Combines `EventSource` (reading) and `EventSink` (writing) interfaces
 - **Raw mode is its own method, with its own type: `getRawEventStream(id)` returns an
   `EventSource<String>`.** No event root classes, so no type mapping: every stored event reads as the
-  JSON document it is stored as — the same text `StoredEvent.immutableData()` carries, parsed by
+  JSON document it is stored as — the same text `StoredEvent.payload()` carries, parsed by
   nothing on the way out, so on Postgres the `jsonb` rendering rather than the bytes appended — under
   its stored type, nothing upcast and nothing decrypted: a `Shreddable` comes back as its sealed
   envelope. A caller that wants to look inside parses it with whatever JSON library it uses; most
@@ -244,6 +244,12 @@ mvn clean install -DskipTests
   dropped. The file codec writes it as an ISO-8601 instant at UTC and reads a value carrying no offset as
   UTC, so an events directory holds one meaning of the field whichever shape a file carries.
   `EventTimestampTest` pins per backend that the stamp is the instant of the append
+- **On the SPI records the payload is `payload`: one JSON document, as text.** `EventToStore`,
+  `StoredEvent` and `EventToImport` name it the same, it is the text a raw stream's `data()` answers and
+  what `EventToImport.withPayload` rewrites, and the in-memory backends refuse one that is not a JSON
+  document. The file codec writes it under that key as the document it is, not as an escaped string, and
+  reads a file carrying it under `immutableData` the same, so an events directory reloads whichever key
+  its files carry. `immutableData()` and `withImmutableData` are the deprecated names, delegating
 
 **EphemeralEvent:**
 - Lightweight event representation before persistence (no stream, reference, or timestamp)

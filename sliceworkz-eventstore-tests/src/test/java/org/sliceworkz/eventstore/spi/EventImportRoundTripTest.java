@@ -95,7 +95,7 @@ class EventImportRoundTripTest {
 				assertEquals(original.idempotencyKey(), copy.idempotencyKey());
 
 				// PostgreSQL normalises JSONB (key order, whitespace), so compare semantically
-				assertEquals(JSONMAPPER.readTree(original.immutableData()), JSONMAPPER.readTree(copy.immutableData()));
+				assertEquals(JSONMAPPER.readTree(original.payload()), JSONMAPPER.readTree(copy.payload()));
 
 				// timestamptz keeps microseconds and rounds anything finer, so a nanosecond-precision
 				// source timestamp can come back up to half a microsecond away from where it started

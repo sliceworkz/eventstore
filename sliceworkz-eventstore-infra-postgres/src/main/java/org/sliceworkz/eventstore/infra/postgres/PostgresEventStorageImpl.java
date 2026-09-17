@@ -2066,7 +2066,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 				parameters.add(event.stream().purpose());
 				parameters.add(event.type().name());
 
-				parameters.add(event.immutableData());
+				parameters.add(event.payload());
 
 				// Convert tags to array
 				// sized from the string set, not from tags(): a set sized larger than its contents leaves a
@@ -2415,7 +2415,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 			// is. Note timestamptz keeps microseconds and rounds anything finer, so a nanosecond-precision
 			// source timestamp lands up to half a microsecond off.
 			parameters.add(OffsetDateTime.ofInstant(event.timestamp(), ZoneOffset.UTC));
-			parameters.add(event.immutableData());
+			parameters.add(event.payload());
 			parameters.add(event.tags().toStrings().toArray(new String[0]));
 		}
 

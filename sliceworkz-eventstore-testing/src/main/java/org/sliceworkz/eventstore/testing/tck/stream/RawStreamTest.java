@@ -68,7 +68,7 @@ public class RawStreamTest extends AbstractEventStoreTest {
 
 		// the document is the storage's own text for this event, not a rendering of the store's making
 		StoredEvent stored = eventStorage().getEventById(appended.reference().id()).orElseThrow();
-		assertEquals(stored.immutableData(), event.data());
+		assertEquals(stored.payload(), event.data());
 		assertTrue(event.data().contains("John"), "the document should hold the appended payload: " + event.data());
 	}
 
@@ -82,7 +82,7 @@ public class RawStreamTest extends AbstractEventStoreTest {
 		List<Event<String>> read = eventStore().getRawEventStream(EventStreamId.anyContext()).getEventById(appended.reference().id());
 
 		assertEquals(1, read.size());
-		assertEquals(eventStorage().getEventById(appended.reference().id()).orElseThrow().immutableData(), read.getFirst().data());
+		assertEquals(eventStorage().getEventById(appended.reference().id()).orElseThrow().payload(), read.getFirst().data());
 		assertEquals(streamId, read.getFirst().stream());
 	}
 

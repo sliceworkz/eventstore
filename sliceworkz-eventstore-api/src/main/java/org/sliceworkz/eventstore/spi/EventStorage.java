@@ -1003,13 +1003,24 @@ public interface EventStorage extends AutoCloseable {
 	 *
 	 * @param stream the event stream this event belongs to
 	 * @param type the event type identifying the kind of event
-	 * @param immutableData the serialized event payload
+	 * @param payload the serialized event payload: one JSON document, as text
 	 * @param tags key-value pairs for dynamic event retrieval and consistency boundaries
 	 * @param idempotencyKey the idempotency key the event is appended with, or {@code null} if none
 	 * @see StoredEvent
 	 * @see #append(AppendCriteria, EventStreamId, List)
 	 */
-	public record EventToStore ( EventStreamId stream, EventType type, String immutableData, Tags tags, String idempotencyKey ) {
+	public record EventToStore ( EventStreamId stream, EventType type, String payload, Tags tags, String idempotencyKey ) {
+
+		/**
+		 * The serialized event payload.
+		 *
+		 * @return the payload
+		 * @deprecated the component is the payload, and is called that: use {@link #payload()}
+		 */
+		@Deprecated(since = "0.11.0", forRemoval = true)
+		public String immutableData ( ) {
+			return payload;
+		}
 
 		/**
 		 * Converts this event to a stored event by assigning a reference and timestamp.
@@ -1023,7 +1034,7 @@ public interface EventStorage extends AutoCloseable {
 		 * @see StoredEvent
 		 */
 		public StoredEvent positionAt ( EventReference reference, Instant timestamp ) {
-			return new StoredEvent(stream, type, reference, immutableData, tags, timestamp, idempotencyKey);
+			return new StoredEvent(stream, type, reference, payload, tags, timestamp, idempotencyKey);
 		}
 	}
 
@@ -1043,7 +1054,7 @@ public interface EventStorage extends AutoCloseable {
 	 * @param stream the event stream this event belongs to
 	 * @param type the event type identifying the kind of event
 	 * @param reference the unique reference (ID and position) of this event
-	 * @param immutableData the serialized event payload, as stored
+	 * @param payload the serialized event payload, as stored: one JSON document, as text
 	 * @param tags key-value pairs for dynamic event retrieval and consistency boundaries
 	 * @param timestamp the instant at which this event was stored, on the storage's clock
 	 * @param idempotencyKey the idempotency key the event was appended with, or {@code null} if none;
@@ -1052,7 +1063,18 @@ public interface EventStorage extends AutoCloseable {
 	 * @see EventReference
 	 * @see #query(EventFilter, EventStreamId, EventReference, Limit, QueryDirection)
 	 */
-	public record StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String immutableData, Tags tags, Instant timestamp, String idempotencyKey ) {
+	public record StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String payload, Tags tags, Instant timestamp, String idempotencyKey ) {
+
+		/**
+		 * The serialized event payload, as stored.
+		 *
+		 * @return the payload
+		 * @deprecated the component is the payload, and is called that: use {@link #payload()}
+		 */
+		@Deprecated(since = "0.11.0", forRemoval = true)
+		public String immutableData ( ) {
+			return payload;
+		}
 
 		/**
 		 * Convenience constructor for stored events without an idempotency key.
@@ -1063,12 +1085,12 @@ public interface EventStorage extends AutoCloseable {
 		 * @param stream the event stream this event belongs to
 		 * @param type the event type identifying the kind of event
 		 * @param reference the unique reference (ID and position) of this event
-		 * @param immutableData the serialized event payload, as stored
+		 * @param payload the serialized event payload, as stored
 		 * @param tags key-value pairs for dynamic event retrieval and consistency boundaries
 		 * @param timestamp the instant at which this event was stored, on the storage's clock
 		 */
-		public StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String immutableData, Tags tags, Instant timestamp ) {
-			this(stream, type, reference, immutableData, tags, timestamp, null);
+		public StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String payload, Tags tags, Instant timestamp ) {
+			this(stream, type, reference, payload, tags, timestamp, null);
 		}
 
 	}

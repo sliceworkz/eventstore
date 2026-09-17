@@ -17,14 +17,14 @@
  */
 package org.sliceworkz.eventstore.projection;
 
-import org.sliceworkz.eventstore.events.EventWithMetaDataHandler;
+import org.sliceworkz.eventstore.events.EventHandler;
 import org.sliceworkz.eventstore.query.EventQuery;
 
 /**
- * A projection combines an {@link EventQuery} with an {@link EventWithMetaDataHandler} to build read models from event streams.
+ * A projection combines an {@link EventQuery} with an {@link EventHandler} to build read models from event streams.
  * <p>
  * Projections are the primary mechanism for creating materialized views of domain events. They define which events
- * are relevant (via the {@link EventQuery}) and how those events should be processed (via the {@link EventWithMetaDataHandler}).
+ * are relevant (via the {@link EventQuery}) and how those events should be processed (via the {@link EventHandler}).
  * The projection has access to the full {@link org.sliceworkz.eventstore.events.Event} metadata including stream, reference,
  * type, tags, and timestamp.
  * <p>
@@ -133,11 +133,10 @@ import org.sliceworkz.eventstore.query.EventQuery;
  *
  * @param <CONSUMED_EVENT_TYPE> the type of domain events this projection processes (typically a sealed interface)
  * @see Projector
- * @see ProjectionWithoutMetaData
  * @see EventQuery
- * @see EventWithMetaDataHandler
+ * @see EventHandler
  */
-public interface Projection<CONSUMED_EVENT_TYPE> extends EventWithMetaDataHandler<CONSUMED_EVENT_TYPE> {
+public interface Projection<CONSUMED_EVENT_TYPE> extends EventHandler<CONSUMED_EVENT_TYPE> {
 
 	/**
 	 * Returns an optional initialization query that is executed before the main {@link #eventQuery()}.

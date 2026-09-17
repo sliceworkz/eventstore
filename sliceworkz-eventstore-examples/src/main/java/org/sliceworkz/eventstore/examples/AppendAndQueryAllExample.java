@@ -22,7 +22,6 @@ import java.util.List;
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventHandler;
-import org.sliceworkz.eventstore.events.EventWithMetaDataHandler;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.examples.AppendAndQueryAllExample.CustomerEvent.CustomerChurned;
 import org.sliceworkz.eventstore.examples.AppendAndQueryAllExample.CustomerEvent.CustomerNameChanged;
@@ -49,43 +48,18 @@ public class AppendAndQueryAllExample {
 		stream.append(AppendCriteria.none(), Event.of(new CustomerNameChanged("Jane"), Tags.none()));
 		stream.append(AppendCriteria.none(), Event.of(new CustomerChurned(), Tags.none()));
 		
-		// query and print all events that are now in the stream
+		// query and print all events that are now in the stream, with their metadata
 		List<Event<CustomerEvent>> allEvents = stream.query(EventQuery.matchAll());
-		
-		new EventWithMetaDataHandler<CustomerEvent>() {
+		EventHandler<CustomerEvent> withMetaData = System.out::println;
+		System.out.println("printing events with metadata...");
+		allEvents.forEach(withMetaData::when);
+		System.out.println("done printing events.");
 
-			@Override
-			public void when(List<Event<CustomerEvent>> eventsWithMeta) {
-				System.out.println("printing events with metadata...");
-				eventsWithMeta.forEach(this::when);
-				System.out.println("done printing events.");
-			}
-			
-			@Override
-			public void when(Event<CustomerEvent> eventWithMeta) {
-				System.out.println(eventWithMeta);
-			}
-
-		}.when(allEvents);
-
-		// query and print all events that are now in the stream
-		allEvents = stream.query(EventQuery.matchAll());
-
-		new EventHandler<CustomerEvent>() {
-
-			@Override
-			public void when(List<Event<CustomerEvent>> events) {
-				System.out.println("printing events ...");
-				events.forEach(this::when);
-				System.out.println("done printing events.");
-			}
-			
-			@Override
-			public void when(CustomerEvent event) {
-				System.out.println(event);
-			}
-
-		}.when(allEvents);
+		// the same events, the domain event alone: it is event.data()
+		EventHandler<CustomerEvent> dataOnly = event -> System.out.println(event.data());
+		System.out.println("printing events ...");
+		allEvents.forEach(dataOnly::when);
+		System.out.println("done printing events.");
 
 	}
 	

@@ -29,7 +29,7 @@ import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.projection.ProjectionWithoutMetaData;
+import org.sliceworkz.eventstore.projection.Projection;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -177,7 +177,7 @@ class EventStoreFixtureTest {
 
 	}
 
-	static class SubscriptionCount implements ProjectionWithoutMetaData<LearningEvent> {
+	static class SubscriptionCount implements Projection<LearningEvent> {
 
 		private final String courseId;
 		private int count;
@@ -192,8 +192,8 @@ class EventStoreFixtureTest {
 		}
 
 		@Override
-		public void when ( LearningEvent event ) {
-			if ( event instanceof StudentSubscribed ) {
+		public void when ( Event<LearningEvent> event ) {
+			if ( event.data() instanceof StudentSubscribed ) {
 				count++;
 			}
 		}

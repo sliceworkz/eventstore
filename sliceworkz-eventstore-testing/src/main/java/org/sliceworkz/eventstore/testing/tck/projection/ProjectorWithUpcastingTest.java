@@ -42,7 +42,7 @@ import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.projection.Projection;
-import org.sliceworkz.eventstore.projection.ProjectionWithoutMetaData;
+import org.sliceworkz.eventstore.projection.Projection;
 import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.testing.AbstractEventStoreTest;
 import org.sliceworkz.eventstore.testing.ForEachBackend;
@@ -98,15 +98,15 @@ public class ProjectorWithUpcastingTest extends AbstractEventStoreTest {
 	// Projection: tracks important actions
 	// =========================================================================
 
-	static class TrackingProjection implements ProjectionWithoutMetaData<CurrentEvent> {
+	static class TrackingProjection implements Projection<CurrentEvent> {
 		List<String> values = new ArrayList<>();
 		@Override
 		public EventQuery eventQuery ( ) {
 			return EventQuery.matchAll();
 		}
 		@Override
-		public void when ( CurrentEvent event ) {
-			if ( event instanceof CurrentEvent.ImportantAction a ) {
+		public void when ( Event<CurrentEvent> event ) {
+			if ( event.data() instanceof CurrentEvent.ImportantAction a ) {
 				values.add(a.value());
 			}
 		}

@@ -27,7 +27,7 @@ import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.projection.ProjectionWithoutMetaData;
+import org.sliceworkz.eventstore.projection.Projection;
 import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
@@ -388,7 +388,7 @@ public class EventStoreQueryTest extends AbstractEventStoreTest {
 
 }
 
-class MockReadModel implements ProjectionWithoutMetaData<MockDomainEvent> {
+class MockReadModel implements Projection<MockDomainEvent> {
 
 	private static int TOTAL_EVENT_COUNT_OVER_ALL_INSTANCES = 0;
 
@@ -413,7 +413,7 @@ class MockReadModel implements ProjectionWithoutMetaData<MockDomainEvent> {
 	}
 
 	@Override
-	public synchronized void when(MockDomainEvent event) {
+	public synchronized void when(Event<MockDomainEvent> event) {
 		eventCount++;
 
 		Integer current = eventCountPerThread.get();

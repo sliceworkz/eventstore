@@ -24,89 +24,94 @@
  *
  * <h2>Core Components:</h2>
  * <ul>
- *   <li>{@link org.sliceworkz.eventstore.projection.Projection} - Combines query with metadata-aware handler</li>
- *   <li>{@link org.sliceworkz.eventstore.projection.ProjectionWithoutMetaData} - Simpler projection processing only event data</li>
+ *   <li>{@link org.sliceworkz.eventstore.projection.Projection} - An {@link org.sliceworkz.eventstore.events.EventHandler}
+ *       with the {@link org.sliceworkz.eventstore.query.EventQuery} naming the events it handles</li>
+ *   <li>{@link org.sliceworkz.eventstore.projection.BatchAwareProjection} - A projection told where each batch
+ *       starts and ends, for one that commits its work elsewhere</li>
  *   <li>{@link org.sliceworkz.eventstore.projection.Projector} - Execution engine for running projections with metrics and resumability</li>
  * </ul>
  *
  * <h2>Basic Projection Example:</h2>
  * <pre>{@code
- * // Simple projection counting customers by region
- * Map<String, Integer> customersByRegion = new HashMap<>();
+ * // Count customers by region. The domain event is event.data(); the region is a tag, so it is
+ * // read off the metadata of the same argument
+ * class CustomersByRegion implements Projection<CustomerEvent> {
  *
- * ProjectionWithoutMetaData<CustomerEvent> projection = new ProjectionWithoutMetaData<>(
- *     EventQuery.forEvents(
- *         EventTypesFilter.of(CustomerRegistered.class),
- *         Tags.none()
- *     ),
- *     event -> {
- *         if (event instanceof CustomerRegistered registered) {
- *             String region = // ... extract region from event
- *             customersByRegion.merge(region, 1, Integer::sum);
- *         }
+ *     private final Map<String, Integer> customersByRegion = new HashMap<>();
+ *
+ *     @Override
+ *     public EventQuery eventQuery() {
+ *         return EventQuery.forEvents(EventTypesFilter.of(CustomerRegistered.class), Tags.none());
  *     }
- * );
+ *
+ *     @Override
+ *     public void when(Event<CustomerEvent> event) {
+ *         event.tags().tag("region").ifPresent(region ->
+ *             customersByRegion.merge(region.value(), 1, Integer::sum));
+ *     }
+ * }
  *
  * EventStream<CustomerEvent> stream = eventStore.getEventStream(
  *     EventStreamId.forContext("customer").anyPurpose(),
  *     CustomerEvent.class
  * );
  *
- * Projector<CustomerEvent> projector = Projector.from(stream, projection);
- * Projector.ProjectorMetrics metrics = projector.run();
+ * CustomersByRegion projection = new CustomersByRegion();
+ * ProjectorMetrics metrics = Projector.from(stream).into(projection).build().run();
  *
- * System.out.println("Processed " + metrics.eventsProcessed() + " events");
- * System.out.println("Customers by region: " + customersByRegion);
+ * System.out.println("Handled " + metrics.eventsHandled() + " events");
  * }</pre>
  *
  * <h2>Projection with Metadata:</h2>
  * <pre>{@code
  * // Count events per day. The timestamp is an Instant, so the day it falls on depends on the zone
  * // the report is for: name it, rather than the JVM's
- * Map<LocalDate, Long> eventsByDate = new HashMap<>();
+ * class EventsByDay implements Projection<CustomerEvent> {
  *
- * Projection<CustomerEvent> projection = new Projection<>(
- *     EventQuery.matchAll(),
- *     event -> {
+ *     private final Map<LocalDate, Long> eventsByDate = new HashMap<>();
+ *
+ *     @Override
+ *     public EventQuery eventQuery() {
+ *         return EventQuery.matchAll();
+ *     }
+ *
+ *     @Override
+ *     public void when(Event<CustomerEvent> event) {
  *         LocalDate date = LocalDate.ofInstant(event.timestamp(), ZoneId.of("Europe/Brussels"));
  *         eventsByDate.merge(date, 1L, Long::sum);
  *     }
- * );
+ * }
  * }</pre>
  *
  * <h2>Incremental Updates:</h2>
  * <pre>{@code
- * // Build initial projection
- * Projector<CustomerEvent> projector = Projector.from(stream, projection);
- * Projector.ProjectorMetrics metrics = projector.run();
- * EventReference lastProcessed = metrics.lastProcessedEventReference();
+ * // A projector keeps its position, so a second run handles only what arrived since the first
+ * Projector<CustomerEvent> projector = Projector.from(stream).into(projection).build();
+ * projector.run();
+ * // ... later ...
+ * ProjectorMetrics newMetrics = projector.run();
  *
- * // Later, process only new events
- * Projector<CustomerEvent> incrementalProjector = Projector.from(stream, projection)
- *     .skipUntil(lastProcessed);
- * Projector.ProjectorMetrics newMetrics = incrementalProjector.run();
+ * // A fresh projector resumes from a reference kept elsewhere
+ * Projector<CustomerEvent> resumed = Projector.from(stream).into(projection)
+ *     .startingAfter(lastHandled)
+ *     .build();
  * }</pre>
  *
  * <h2>Bounded Processing:</h2>
  * <pre>{@code
  * // Process events only up to a specific checkpoint
- * EventReference checkpoint = // ... some reference point
- * Projector.ProjectorMetrics metrics = projector.runUntil(checkpoint);
+ * EventReference checkpoint = stream.head().orElse(null);
+ * ProjectorMetrics metrics = projector.runUntil(checkpoint);
  * }</pre>
  *
  * <h2>Batch Processing:</h2>
  * <pre>{@code
- * // Process in smaller batches for better memory usage
- * Projector<CustomerEvent> batchProjector = Projector.from(stream, projection)
- *     .batchSize(1000);
+ * // Page through the stream in smaller batches, or one batch at a time
+ * Projector<CustomerEvent> projector = Projector.from(stream).into(projection)
+ *     .inBatchesOf(100)
+ *     .build();
  *
- * while (true) {
- *     Projector.ProjectorMetrics metrics = batchProjector.run();
- *     if (metrics.eventsProcessed() == 0) break;
- *
- *     // Save checkpoint
- *     bookmark.set(metrics.lastProcessedEventReference());
- * }
+ * ProjectorMetrics batch = projector.runSingleBatch();
  * }</pre>
  *
  * @see org.sliceworkz.eventstore.projection.Projector

@@ -81,23 +81,6 @@ public enum DatabaseInitMode {
 	 * one misconfiguration that cannot be undone: a store with history started with the mode that
 	 * drops its tables. {@link #ENSURE} is the mode that initializes a database.
 	 */
-	RECREATE,
-
-	/**
-	 * The former name of {@link #RECREATE}, treated identically wherever a mode is read.
-	 *
-	 * @deprecated the mode drops and recreates the schema, and is named for it: use {@link #RECREATE}
-	 */
-	@Deprecated(since = "0.11.0", forRemoval = true)
-	INITIALIZE;
-
-	/**
-	 * This mode under its current name: {@link #INITIALIZE} answers {@link #RECREATE}, every other
-	 * mode itself. The builder folds a mode through this on the way in, so nothing past its setter
-	 * has to know the deprecated spelling exists.
-	 */
-	DatabaseInitMode canonical ( ) {
-		return this == INITIALIZE ? RECREATE : this;
-	}
+	RECREATE
 
 }

@@ -107,18 +107,6 @@ public record EventType ( String name ) implements java.io.Serializable {
 	}
 
 	/**
-	 * Creates an EventType from a stored name.
-	 *
-	 * @param type the event type name
-	 * @return an EventType with the specified name
-	 * @deprecated the type is named by the string, and the method is called that: use {@link #named(String)}
-	 */
-	@Deprecated(since = "0.11.0", forRemoval = true)
-	public static final EventType ofType ( String type ) {
-		return named(type);
-	}
-
-	/**
 	 * Creates an EventType from a class.
 	 * <p>
 	 * The type name is the class's simple name (not the fully qualified name), unless the class is

@@ -282,8 +282,8 @@ mvn clean install -DskipTests
   compiles and is the type named `String`, which matches no stored event and fails nothing. With `Class`
   the only parameter type that call is a compile error, and the code holding an instance
   (`EphemeralEvent.of`, the serde, a filter matched in memory) writes `EventType.of(data.getClass())`
-  itself. `named` is called that so the string factory reads as what it is; `ofType` is its deprecated
-  name. `EventStoreTypeParameterTest` pins the rejection by running javac against a probe
+  itself. `named` is called that so the string factory reads as what it is.
+  `EventStoreTypeParameterTest` pins the rejection by running javac against a probe
 - **The plain class name is the intended setup; `@EventName` is for the class whose stored name cannot
   be its own name** (a renamed class, a simple name another context already stores). Annotating every
   event up front is not a best practice and buys nothing: a string literal is as permanent a commitment
@@ -868,9 +868,6 @@ stream owns is its subscriptions.
   listener is told after the commit, on a notification thread, so "eventually consistent" in a name
   would distinguish it from nothing. To react to your own append on the appending thread, nothing is
   subscribed: the typed events, with their assigned references, are the return value of `append()`.
-  `EventStreamEventuallyConsistentAppendListener` and `EventStreamEventuallyConsistentBookmarkListener`
-  are the deprecated former names, kept as sub-interfaces for removal so a listener declared under
-  them still subscribes.
 - **What makes it cheap is that the expensive part is shared, not rebuilt.** `getEventStream` allocates a
   stream object and resolves ~10 Micrometer meters (a map lookup each, since Micrometer dedups by name +
   tags) — about **2µs and 1KB**. The payload serde is *not* rebuilt: `EventStoreImpl` caches one per

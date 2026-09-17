@@ -118,20 +118,6 @@ public class PostgresSchemaDriftTest {
 			assertRecreatesFromScratch("driftrecreate_", PostgresEventStorage.newBuilder().recreateDatabase());
 		}
 
-		/**
-		 * The deprecated spelling is the same mode, through the constant and through the builder
-		 * method alike: it drops the tables and the functions, exactly as {@code RECREATE} does. An
-		 * alias that quietly became {@code ENSURE} would leave a test suite relying on it running
-		 * every scenario against the previous one's data.
-		 */
-		@Test
-		@SuppressWarnings("removal")
-		public void testTheDeprecatedInitializeSpellingIsTheRecreateMode ( ) throws Exception {
-			assertRecreatesFromScratch("driftinitmode_",
-				PostgresEventStorage.newBuilder().databaseInitMode(DatabaseInitMode.INITIALIZE));
-			assertRecreatesFromScratch("driftinitcall_", PostgresEventStorage.newBuilder().initializeDatabase());
-		}
-
 		private void assertRecreatesFromScratch ( String prefix, PostgresEventStorage.Builder builder ) throws Exception {
 			DataSource dataSource = PostgresContainer.dataSource(image);
 

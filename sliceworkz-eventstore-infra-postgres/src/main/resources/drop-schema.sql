@@ -29,7 +29,7 @@ DROP TABLE IF EXISTS PREFIX_bookmarks CASCADE;
 DROP TABLE IF EXISTS PREFIX_events CASCADE;
 
 -- The triggers go with the tables above (CASCADE), but the functions are schema-level objects and do
--- not. Dropping them is what makes INITIALIZE mean what it says: without this, a function body from an
+-- not. Dropping them is what makes RECREATE mean what it says: without this, a function body from an
 -- older release survived the "drop and recreate from scratch" mode and the freshly created trigger was
 -- wired straight back to it.
 DROP FUNCTION IF EXISTS PREFIX_notify_event_appended() CASCADE;

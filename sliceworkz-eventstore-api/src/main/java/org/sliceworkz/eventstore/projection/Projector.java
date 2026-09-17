@@ -72,7 +72,7 @@ import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendLis
  * CustomerList projection = new CustomerList();
  *
  * ProjectorMetrics metrics = Projector.from(stream)
- *     .towards(projection)
+ *     .into(projection)
  *     .build()
  *     .run();
  *
@@ -87,7 +87,7 @@ import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendLis
  * CustomerList projection = new CustomerList();
  *
  * Projector<CustomerEvent> projector = Projector.from(stream)
- *     .towards(projection)
+ *     .into(projection)
  *     .build();
  *
  * // Initial run - process all historical events
@@ -111,7 +111,7 @@ import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendLis
  * EventReference checkpoint = // ... get reference from somewhere ...
  *
  * ProjectorMetrics metrics = Projector.from(stream)
- *     .towards(projection)
+ *     .into(projection)
  *     .build()
  *     .runUntil(checkpoint);
  *
@@ -122,7 +122,7 @@ import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendLis
  * <pre>{@code
  * // Process in smaller batches for fine-grained control
  * Projector<CustomerEvent> projector = Projector.from(stream)
- *     .towards(projection)
+ *     .into(projection)
  *     .inBatchesOf(100)  // Default is 500
  *     .build();
  *
@@ -146,7 +146,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 	
 	private String bookmarkReader;
 	private Tags bookmarkTags;
-	private BookmarkReadFrequency bookmarkReadFrequency;
+	private BookmarkRead bookmarkRead;
 	
 	private Optional<EventReference> lastEventReference = null;
 
@@ -154,18 +154,15 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 	// without waiting for the run in progress
 	private volatile ProjectorMetrics accumulatedMetrics;
 	
-	private Projector ( EventSource<CONSUMED_EVENT_TYPE> es, Projection<CONSUMED_EVENT_TYPE> projection, EventReference after, int maxEventsPerQuery, String bookmarkReader, Tags bookmarkTags, BookmarkReadFrequency bookmarkReadFrequency ) {
+	private Projector ( EventSource<CONSUMED_EVENT_TYPE> es, Projection<CONSUMED_EVENT_TYPE> projection, EventReference after, int maxEventsPerQuery, String bookmarkReader, Tags bookmarkTags, BookmarkRead bookmarkRead ) {
 		this.es = es;
 		this.projection = projection;
 		this.accumulatedMetrics = ProjectorMetrics.skipUntil(after);
 		this.maxEventsPerQuery = maxEventsPerQuery;
 		this.bookmarkReader = bookmarkReader;
 		this.bookmarkTags = bookmarkTags;
-		this.bookmarkReadFrequency = bookmarkReadFrequency;
+		this.bookmarkRead = bookmarkRead;
 		this.lastEventReference =  ( after == null ) ? null : Optional.ofNullable(after); // keep it to null to detect first run if needed
-		if ( bookmarkReadFrequency == BookmarkReadFrequency.AT_CREATION ) {
-			readBookmark();
-		}
 	}
 
 	/**
@@ -249,7 +246,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 	 * This method retrieves the bookmark associated with the configured reader name and uses it
 	 * to set the last processed event reference. This is useful when:
 	 * <ul>
-	 *   <li>The projector is configured with {@code readOnManualTriggerOnly()}</li>
+	 *   <li>The projector is configured with {@link Builder#readBookmarkOnRequest()}</li>
 	 *   <li>You want to synchronize the projector's position with an externally managed bookmark</li>
 	 *   <li>You need to reset the projector to a previously saved position</li>
 	 * </ul>
@@ -259,9 +256,9 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 	 * a bookmark means. A bookmark is placed by the projector itself after every batch, or by hand using
 	 * {@link EventSource#placeBookmark(String, EventReference, Tags)}.
 	 * <p>
-	 * Depending on the configured {@code BookmarkReadFrequency}, this method may be called
-	 * automatically at different times (at creation, before first execution, or before each execution).
-	 * When configured for manual trigger only, this is the only way to load the bookmark.
+	 * A bookmarked projector calls this itself before every run, or before the first run only under
+	 * {@link Builder#readBookmarkOnce()}; under {@link Builder#readBookmarkOnRequest()} this call is the
+	 * only way the bookmark is read.
 	 * <p>
 	 * A run and a bookmark read never overlap: this method takes the same lock as {@link #run()},
 	 * so called while a run is in progress -- a subscribed projector runs on the storage's notification
@@ -271,10 +268,9 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 	 * one run, and nothing says which.
 	 *
 	 * @return this projector for method chaining
-	 * @see Builder.BookmarkBuilder#readOnManualTriggerOnly()
-	 * @see Builder.BookmarkBuilder#readAtCreationOnly()
-	 * @see Builder.BookmarkBuilder#readBeforeFirstExecution()
-	 * @see Builder.BookmarkBuilder#readBeforeEachExecution()
+	 * @see Builder#bookmarkAs(String)
+	 * @see Builder#readBookmarkOnce()
+	 * @see Builder#readBookmarkOnRequest()
 	 */
 	public synchronized Projector<CONSUMED_EVENT_TYPE> readBookmark ( ) {
 		Optional<EventReference> bookmarkReference = Optional.empty();
@@ -285,7 +281,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		return this;
 	}
 	
-	protected class ProjectorRun {
+	private class ProjectorRun {
 
 		private long eventsStreamed = 0;
 		private long eventsHandled = 0;
@@ -293,12 +289,10 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		private EventReference currentEventReference; // required for identifying a poison event
 		private EventReference mostRecentEventReference; // chronologically newest event seen (for optimistic locking)
 
-		protected ProjectorRunResult execute ( EventReference until, boolean singleBatch ) {
+		private ProjectorRunResult execute ( EventReference until, boolean singleBatch ) {
 			boolean done = false;
 
-			if ( ( bookmarkReadFrequency == BookmarkReadFrequency.BEFORE_EACH_EXECUTION) ||
-				 ((bookmarkReadFrequency == BookmarkReadFrequency.BEFORE_FIRST_EXECUTION) && (lastEventReference==null) )
-				) {
+			if ( bookmarkRead == BookmarkRead.BEFORE_EACH_RUN || ( bookmarkRead == BookmarkRead.ONCE && lastEventReference == null ) ) {
 				readBookmark();
 			}
 
@@ -488,20 +482,13 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 	}
 
 	/**
-	 * Internal result holder for projection run execution.
-	 * <p>
-	 * This record encapsulates the outcome of a projection run, including both success metrics
-	 * and any exception that may have occurred during processing. It is used internally by the
-	 * projector to separate exception handling from metrics accumulation.
-	 * <p>
-	 * When a projection run completes successfully, the throwable will be null. When an exception
-	 * occurs during processing, both the metrics (representing partial progress) and the exception
-	 * are captured.
+	 * What a run came to: its metrics, and the failure if it did not complete. Both travel together
+	 * because the metrics of a failed run are accumulated before the failure is thrown.
 	 *
-	 * @param metrics the metrics collected during the projection run, including events streamed and handled
-	 * @param throwable the exception that occurred during processing, or null if the run completed successfully
+	 * @param metrics the metrics of the run, partial when it failed
+	 * @param throwable the failure, or null when the run completed
 	 */
-	public record ProjectorRunResult ( ProjectorMetrics metrics, ProjectorException throwable ) {
+	private record ProjectorRunResult ( ProjectorMetrics metrics, ProjectorException throwable ) {
 
 	}
 
@@ -601,48 +588,46 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 	
 	
 	/**
-	 * Creates a new builder for constructing a Projector.
-	 *
-	 * @param <EVENT_TYPE> the type of events to be processed
-	 * @return a new Builder instance
-	 */
-	public static <EVENT_TYPE> Builder<EVENT_TYPE> newBuilder ( ) {
-		return new Builder<EVENT_TYPE>( );
-	}
-
-	/**
-	 * Creates a new builder with the event source pre-configured.
+	 * Starts building a projector over an event source.
 	 * <p>
-	 * Convenience method equivalent to {@code newBuilder().from(eventSource)}.
+	 * The builder is flat: {@link Builder#into(Projection) into} names the projection, and everything else
+	 * is optional -- {@link Builder#bookmarkAs(String) bookmarkAs}, {@link Builder#startingAfter(EventReference)
+	 * startingAfter}, {@link Builder#inBatchesOf(int) inBatchesOf}, {@link Builder#subscribe() subscribe}.
 	 *
 	 * @param <EVENT_TYPE> the type of events to be processed
-	 * @param eventSource the event source to read events from
-	 * @return a new Builder instance with the event source configured
+	 * @param eventSource the event source to read events from, typically an {@code EventStream}
+	 * @return a builder over that source
+	 * @throws IllegalArgumentException if the source is null
 	 */
 	public static <EVENT_TYPE> Builder<EVENT_TYPE> from ( EventSource<EVENT_TYPE> eventSource ) {
-		return new Builder<EVENT_TYPE> ( ).from(eventSource);
+		if ( eventSource == null ) {
+			throw new IllegalArgumentException("no event source: a projector reads from one, so from(...) needs it");
+		}
+		return new Builder<EVENT_TYPE>(eventSource);
 	}
 
 	/**
-	 * Builder for constructing Projector instances with fluent API.
+	 * Builds a {@link Projector}: a source, a projection, and optionally a bookmark, a starting position,
+	 * a batch size and a subscription.
 	 * <p>
-	 * Allows configuration of:
-	 * <ul>
-	 *   <li>Event source - where to read events from</li>
-	 *   <li>Projection - what to do with the events</li>
-	 *   <li>Starting position - where in the event stream to begin</li>
-	 *   <li>Batch size - how many events to query at once</li>
-	 * </ul>
-	 *
-	 * Example:
+	 * Every setting is a method on this one builder, so a projector reads as one chain:
 	 * <pre>{@code
-	 * Projector<CustomerEvent> projector = Projector.<CustomerEvent>newBuilder()
-	 *     .from(eventStream)
-	 *     .towards(myProjection)
-	 *     .startingAfter(lastProcessedRef)
+	 * Projector<CustomerEvent> projector = Projector.from(eventStream)
+	 *     .into(myProjection)
+	 *     .bookmarkAs("customer-list", Tags.of("tenant", "acme"))
 	 *     .inBatchesOf(100)
+	 *     .subscribe()
 	 *     .build();
 	 * }</pre>
+	 *
+	 * <h2>Bookmarking</h2>
+	 * {@link #bookmarkAs(String)} names the reader whose bookmark records this projector's progress. The
+	 * bookmark is written after every batch that moved the cursor, and read before every run, so a
+	 * projector built with nothing but a reader name resumes where it left off after a restart and
+	 * follows a bookmark rewound elsewhere. Two settings narrow when it is read:
+	 * {@link #readBookmarkOnce()} reads it before the first run only, and {@link #readBookmarkOnRequest()}
+	 * never reads it unless {@link Projector#readBookmark()} is called. Either without a reader is refused
+	 * by {@link #build()}, since there is nothing to read.
 	 *
 	 * @param <EVENT_TYPE> the type of events to be processed
 	 */
@@ -653,92 +638,28 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		 */
 		public static final int DEFAULT_MAX_EVENTS_PER_QUERY = 500;
 
-		private EventSource<EVENT_TYPE> eventSource;
+		private final EventSource<EVENT_TYPE> eventSource;
 		private Projection<EVENT_TYPE> projection;
 		private EventReference after;
 		private boolean subscribe;
 		private int maxEventsPerQuery = DEFAULT_MAX_EVENTS_PER_QUERY;
 
-		private BookmarkBuilder bookmarkBuilder = new BookmarkBuilder(this);
+		private String bookmarkReader = null; // by default, no bookmarking is done
+		private Tags bookmarkTags = Tags.none();
+		private BookmarkRead bookmarkRead = BookmarkRead.BEFORE_EACH_RUN;
+		private boolean bookmarkReadChosen = false;
 
-		/**
-		 * Configures the event source from which to read events.
-		 *
-		 * @param eventSource the event source (typically an EventStream)
-		 * @return this builder for method chaining
-		 */
-		public Builder<EVENT_TYPE> from ( EventSource<EVENT_TYPE> eventSource ) {
+		private Builder ( EventSource<EVENT_TYPE> eventSource ) {
 			this.eventSource = eventSource;
-			return this;
 		}
 
 		/**
-		 * Configures the projector to automatically subscribe to the event source for eventually consistent updates.
-		 * <p>
-		 * When enabled, the projector will automatically re-run whenever new events are appended to the event source,
-		 * enabling near-real-time projection updates without manual polling. This is useful for:
-		 * <ul>
-		 *   <li>Live dashboards and read models that need to reflect recent changes quickly</li>
-		 *   <li>Reactive projections that respond to events as they arrive</li>
-		 *   <li>Systems where projection staleness needs to be minimized</li>
-		 * </ul>
-		 * <p>
-		 * Note that the updates are <em>eventually consistent</em> - there may be a small delay between
-		 * event append and projection update. The subscription mechanism is optimized for efficiency
-		 * and may batch multiple events before triggering a projection run.
-		 * <p>
-		 * Without this setting, projections only update when explicitly triggered via {@link Projector#run()}.
-		 * <p>
-		 * <b>Lifetime.</b> Subscribing registers the event source with the storage, which then holds it —
-		 * and this projector through it — until the source is closed. That is deliberate: it is what lets
-		 * a live projection go on updating without the caller having to keep a variable alive for it. It
-		 * also means the pair is released only by
-		 * {@link org.sliceworkz.eventstore.stream.EventSource#close()}, or by closing the
-		 * {@link org.sliceworkz.eventstore.EventStore} the source came from. Long-lived projections need
-		 * nothing; one per request, per tenant or per test should close its source when done.
+		 * Names the projection the events are projected into.
 		 *
-		 * @return this builder for method chaining
-		 * @see EventStreamEventuallyConsistentAppendListener
-		 * @see org.sliceworkz.eventstore.stream.EventSource#close()
-		 */
-		public Builder<EVENT_TYPE> subscribe ( ) {
-			this.subscribe = true;
-			return this;
-		}
-
-		/**
-		 * Provides access to the bookmark configuration builder.
-		 * <p>
-		 * Bookmarking allows the projector to automatically save and restore its position
-		 * in the event stream, enabling projectors to resume from where they left off across
-		 * application restarts or different instances.
-		 * <p>
-		 * Example usage:
-		 * <pre>{@code
-		 * Projector<CustomerEvent> projector = Projector.from(stream)
-		 *     .towards(projection)
-		 *     .bookmarkProgress()
-		 *         .withReader("customer-list-projection")
-		 *         .withTags(Tags.of("tenant", "acme"))
-		 *         .readBeforeEachExecution()
-		 *         .done()
-		 *     .build();
-		 * }</pre>
-		 *
-		 * @return the BookmarkBuilder for configuring bookmark behavior
-		 * @see BookmarkBuilder
-		 */
-		public BookmarkBuilder bookmarkProgress ( ) {
-			return bookmarkBuilder;
-		}
-
-		/**
-		 * Configures the projection to process events.
-		 *
-		 * @param projection the projection that defines the query and event handler
+		 * @param projection the projection that defines the query and the event handler
 		 * @return this builder for method chaining
 		 */
-		public Builder<EVENT_TYPE> towards ( Projection<EVENT_TYPE> projection ) {
+		public Builder<EVENT_TYPE> into ( Projection<EVENT_TYPE> projection ) {
 			this.projection = projection;
 			return this;
 		}
@@ -777,28 +698,150 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		}
 
 		/**
+		 * Configures the projector to automatically subscribe to the event source for eventually consistent updates.
+		 * <p>
+		 * When enabled, the projector will automatically re-run whenever new events are appended to the event source,
+		 * enabling near-real-time projection updates without manual polling. This is useful for:
+		 * <ul>
+		 *   <li>Live dashboards and read models that need to reflect recent changes quickly</li>
+		 *   <li>Reactive projections that respond to events as they arrive</li>
+		 *   <li>Systems where projection staleness needs to be minimized</li>
+		 * </ul>
+		 * <p>
+		 * Note that the updates are <em>eventually consistent</em> - there may be a small delay between
+		 * event append and projection update. The subscription mechanism is optimized for efficiency
+		 * and may batch multiple events before triggering a projection run.
+		 * <p>
+		 * Without this setting, projections only update when explicitly triggered via {@link Projector#run()}.
+		 * <p>
+		 * <b>Lifetime.</b> Subscribing registers the event source with the storage, which then holds it —
+		 * and this projector through it — until the source is closed. That is deliberate: it is what lets
+		 * a live projection go on updating without the caller having to keep a variable alive for it. It
+		 * also means the pair is released only by
+		 * {@link org.sliceworkz.eventstore.stream.EventSource#close()}, or by closing the
+		 * {@link org.sliceworkz.eventstore.EventStore} the source came from. Long-lived projections need
+		 * nothing; one per request, per tenant or per test should close its source when done.
+		 *
+		 * @return this builder for method chaining
+		 * @see EventStreamEventuallyConsistentAppendListener
+		 * @see org.sliceworkz.eventstore.stream.EventSource#close()
+		 */
+		public Builder<EVENT_TYPE> subscribe ( ) {
+			this.subscribe = true;
+			return this;
+		}
+
+		/**
+		 * Records this projector's progress as the bookmark of the named reader.
+		 * <p>
+		 * The reader name identifies the bookmark: projectors with different names keep independent
+		 * positions, and two built with the same name share one -- which is what lets a restarted process
+		 * resume where its predecessor left off. The bookmark is placed after every batch that moved the
+		 * cursor, so a crash costs a re-projection of at most one batch, and it is read before every run
+		 * unless {@link #readBookmarkOnce()} or {@link #readBookmarkOnRequest()} says otherwise.
+		 * <p>
+		 * A bookmarked projector ignores its projection's {@link Projection#initQuery() initQuery}: the
+		 * bookmark already says where to resume, and a savepoint would be a second, competing answer.
+		 *
+		 * @param reader the name of the reader whose bookmark records the progress, not null and not blank
+		 * @return this builder for method chaining
+		 * @throws IllegalArgumentException if the reader name is null or blank
+		 * @see EventSource#placeBookmark(String, EventReference, Tags)
+		 * @see EventSource#getBookmark(String)
+		 */
+		public Builder<EVENT_TYPE> bookmarkAs ( String reader ) {
+			if ( reader == null || reader.isBlank() ) {
+				throw new IllegalArgumentException("bookmarking requires a reader name");
+			}
+			this.bookmarkReader = reader;
+			return this;
+		}
+
+		/**
+		 * Records this projector's progress as the bookmark of the named reader, stored with tags.
+		 * <p>
+		 * The tags are metadata on the bookmark -- a tenant, an environment, a version of the projection's
+		 * schema, the instance that placed it -- and take no part in reading it back, which is by reader
+		 * name alone. See {@link #bookmarkAs(String)} for what the reader name does.
+		 *
+		 * @param reader the name of the reader whose bookmark records the progress, not null and not blank
+		 * @param tags the tags to store with the bookmark, {@link Tags#none()} for none
+		 * @return this builder for method chaining
+		 * @throws IllegalArgumentException if the reader name is null or blank, or the tags are null
+		 */
+		public Builder<EVENT_TYPE> bookmarkAs ( String reader, Tags tags ) {
+			if ( tags == null ) {
+				throw new IllegalArgumentException("bookmark tags must not be null; Tags.none() says there are none");
+			}
+			bookmarkAs(reader);
+			this.bookmarkTags = tags;
+			return this;
+		}
+
+		/**
+		 * Reads the bookmark once, before the first run, and keeps the projector's own cursor from then on.
+		 * <p>
+		 * Where the default re-reads the bookmark before every run, this reads it at the first
+		 * {@link Projector#run()}, {@link Projector#runSingleBatch()} or {@link Projector#runUntil(EventReference)}
+		 * only, so a bookmark moved elsewhere afterwards is not followed. For a long-lived projector that is
+		 * the only writer of its bookmark, that saves a lookup per run; the bookmark is still placed after
+		 * every batch. {@link Projector#readBookmark()} re-reads it on demand.
+		 *
+		 * @return this builder for method chaining
+		 * @see #bookmarkAs(String)
+		 */
+		public Builder<EVENT_TYPE> readBookmarkOnce ( ) {
+			return readBookmark(BookmarkRead.ONCE);
+		}
+
+		/**
+		 * Never reads the bookmark unless asked to, through {@link Projector#readBookmark()}.
+		 * <p>
+		 * The projector starts from {@link #startingAfter(EventReference)} -- or from the beginning -- and
+		 * keeps its own cursor; the bookmark is still placed after every batch. This is the setting for a
+		 * caller that holds the position itself, such as a projection recording its own position in its
+		 * own store (see {@link BatchAwareProjection#afterBatch}), and for a test that wants to decide when
+		 * the bookmark is consulted.
+		 *
+		 * @return this builder for method chaining
+		 * @see Projector#readBookmark()
+		 */
+		public Builder<EVENT_TYPE> readBookmarkOnRequest ( ) {
+			return readBookmark(BookmarkRead.ON_REQUEST);
+		}
+
+		private Builder<EVENT_TYPE> readBookmark ( BookmarkRead bookmarkRead ) {
+			this.bookmarkRead = bookmarkRead;
+			this.bookmarkReadChosen = true;
+			return this;
+		}
+
+		/**
 		 * Builds the Projector instance.
 		 * <p>
-		 * A source and a projection are required, and are checked here rather than left to fail inside
-		 * the first {@link Projector#run()}: a null there surfaces as a {@code NullPointerException} from
-		 * the middle of a batch, after the bookmark has been read and, for a subscribed projector,
-		 * after the source has been registered with the storage.
+		 * A projection is required, and is checked here rather than left to fail inside the first
+		 * {@link Projector#run()}: a null there surfaces as a {@code NullPointerException} from the
+		 * middle of a batch, after the bookmark has been read and, for a subscribed projector, after
+		 * the source has been registered with the storage. A bookmark read setting without a reader is
+		 * refused for the same reason: there is no bookmark to read, and a projector silently keeping
+		 * its own cursor is not what the caller asked for.
 		 *
 		 * @return a new Projector configured with the builder's settings
-		 * @throws IllegalStateException if no event source or no projection was configured
+		 * @throws IllegalStateException if no projection was configured, or a bookmark read setting was
+		 *         chosen without a reader
 		 */
 		public Projector<EVENT_TYPE> build ( ) {
-			if ( eventSource == null ) {
-				throw new IllegalStateException("no event source configured, call from(...) before build()");
-			}
 			if ( projection == null ) {
-				throw new IllegalStateException("no projection configured, call towards(...) before build()");
+				throw new IllegalStateException("no projection configured, call into(...) before build()");
+			}
+			if ( bookmarkReadChosen && bookmarkReader == null ) {
+				throw new IllegalStateException("no bookmark to read: call bookmarkAs(...) before choosing when the bookmark is read");
 			}
 			EventQuery initQuery = projection.initQuery();
-			if ( bookmarkBuilder.readerName != null && initQuery != null && !initQuery.isMatchNone() ) {
+			if ( bookmarkReader != null && initQuery != null && !initQuery.isMatchNone() ) {
 				LOGGER.warn("Projection has initQuery but bookmarking is enabled — initQuery will be ignored. Remove bookmarking for live-model use, or remove initQuery for full replay.");
 			}
-			Projector<EVENT_TYPE> projector = new Projector<>(eventSource, projection, after, maxEventsPerQuery, bookmarkBuilder.readerName, bookmarkBuilder.tags, bookmarkBuilder.bookmarkReadFrequency);
+			Projector<EVENT_TYPE> projector = new Projector<>(eventSource, projection, after, maxEventsPerQuery, bookmarkReader, bookmarkTags, bookmarkRead);
 			if ( subscribe ) {
 				// subscribe for eventually consistent updates about event appends, so the projector will automatically trigger projection updates
 				eventSource.subscribe(projector);
@@ -806,296 +849,19 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 			return projector;
 		}
 
-		/**
-		 * Builder for configuring bookmark-based progress tracking in projectors.
-		 * <p>
-		 * Bookmarking enables projectors to automatically save and restore their position in the event stream,
-		 * allowing them to resume processing from where they left off. This is essential for:
-		 * <ul>
-		 *   <li>Projectors that run across application restarts</li>
-		 *   <li>Distributed projectors running on multiple instances</li>
-		 *   <li>Long-running projections that process events incrementally</li>
-		 *   <li>Projections that need to synchronize position across systems</li>
-		 * </ul>
-		 * <p>
-		 * A bookmark consists of:
-		 * <ul>
-		 *   <li>A reader name - unique identifier for this projector's bookmark</li>
-		 *   <li>An event reference - the position in the event stream</li>
-		 *   <li>Optional tags - additional metadata for filtering or organizing bookmarks</li>
-		 * </ul>
-		 * <p>
-		 * The bookmark can be read at different frequencies:
-		 * <ul>
-		 *   <li>{@link #readOnManualTriggerOnly()} - Only via explicit {@link Projector#readBookmark()} calls</li>
-		 *   <li>{@link #readAtCreationOnly()} - Once when the projector is created</li>
-		 *   <li>{@link #readBeforeFirstExecution()} - Before the first run, but not subsequent runs</li>
-		 *   <li>{@link #readBeforeEachExecution()} - Before every run (default)</li>
-		 * </ul>
-		 * <p>
-		 * Bookmarks are automatically saved after each projection run if new events were processed.
-		 *
-		 * Example - Basic Bookmarking:
-		 * <pre>{@code
-		 * Projector<CustomerEvent> projector = Projector.from(stream)
-		 *     .towards(projection)
-		 *     .bookmarkProgress()
-		 *         .withReader("customer-list")
-		 *         .done()
-		 *     .build();
-		 *
-		 * // First run processes all historical events and saves bookmark
-		 * projector.run();
-		 *
-		 * // Later runs only process new events since the bookmark
-		 * projector.run();
-		 * }</pre>
-		 *
-		 * Example - Multi-tenant Bookmarking:
-		 * <pre>{@code
-		 * Projector<OrderEvent> projector = Projector.from(stream)
-		 *     .towards(projection)
-		 *     .bookmarkProgress()
-		 *         .withReader("order-summary")
-		 *         .withTags(Tags.of("tenant", "acme-corp"))
-		 *         .done()
-		 *     .build();
-		 * }</pre>
-		 *
-		 * Example - Manual Bookmark Control:
-		 * <pre>{@code
-		 * Projector<PaymentEvent> projector = Projector.from(stream)
-		 *     .towards(projection)
-		 *     .bookmarkProgress()
-		 *         .withReader("payment-processor")
-		 *         .readOnManualTriggerOnly()
-		 *         .done()
-		 *     .build();
-		 *
-		 * // Manually control when to read the bookmark
-		 * projector.readBookmark();
-		 * projector.run();
-		 * }</pre>
-		 */
-		public class BookmarkBuilder {
-
-			private Builder<EVENT_TYPE> parent;
-			private BookmarkReadFrequency bookmarkReadFrequency = BookmarkReadFrequency.BEFORE_EACH_EXECUTION;
-			private String readerName = null; // by default, no bookmarking is done
-			private Tags tags = Tags.none();
-
-			public BookmarkBuilder ( Builder<EVENT_TYPE> builder ) {
-				this.parent = builder;
-			}
-
-			/**
-			 * Configures the unique name for this projector's bookmark.
-			 * <p>
-			 * The reader name uniquely identifies this projector's position in the event stream.
-			 * Multiple projectors can have different reader names to maintain independent positions,
-			 * while projectors with the same reader name will share their position.
-			 * <p>
-			 * This is required when using bookmarking - the {@link #done()} method will throw
-			 * an exception if no reader name is configured.
-			 *
-			 * @param readerName the unique identifier for this projector's bookmark (must not be null)
-			 * @return this builder for method chaining
-			 */
-			public BookmarkBuilder withReader ( String readerName ) {
-				this.readerName = readerName;
-				return this;
-			}
-
-			/**
-			 * Configures additional tags to store with the bookmark.
-			 * <p>
-			 * Tags provide additional metadata for organizing and filtering bookmarks.
-			 * Common use cases include:
-			 * <ul>
-			 *   <li>Tenant identification in multi-tenant systems</li>
-			 *   <li>Environment labels (dev, staging, production)</li>
-			 *   <li>Version tracking for projection schema changes</li>
-			 *   <li>Instance identification in distributed systems</li>
-			 * </ul>
-			 *
-			 * @param tags the tags to associate with the bookmark (defaults to Tags.none())
-			 * @return this builder for method chaining
-			 */
-			public BookmarkBuilder withTags ( Tags tags ) {
-				this.tags = tags;
-				return this;
-			}
-
-			/**
-			 * Configures the projector to only read bookmarks when explicitly triggered.
-			 * <p>
-			 * With this setting, bookmarks are never read automatically. The application must
-			 * explicitly call {@link Projector#readBookmark()} to load the bookmark position.
-			 * This provides maximum control over when the projector's position is synchronized.
-			 * <p>
-			 * Bookmarks are still automatically saved after each run if new events were processed.
-			 * <p>
-			 * Use this when:
-			 * <ul>
-			 *   <li>You need explicit control over position synchronization</li>
-			 *   <li>The bookmark may be managed by external systems</li>
-			 *   <li>You want to prevent automatic position updates</li>
-			 * </ul>
-			 *
-			 * @return this builder for method chaining
-			 * @see Projector#readBookmark()
-			 */
-			public BookmarkBuilder readOnManualTriggerOnly ( ) {
-				this.bookmarkReadFrequency = BookmarkReadFrequency.MANUAL_TRIGGER;
-				return this;
-			}
-
-			/**
-			 * Configures the projector to read the bookmark only when created.
-			 * <p>
-			 * The bookmark is read once during projector construction. Subsequent runs will not
-			 * re-read the bookmark, even if it's updated externally. This is useful when:
-			 * <ul>
-			 *   <li>The projector's position is set once at startup</li>
-			 *   <li>You want to prevent mid-run position changes</li>
-			 *   <li>The bookmark is only used for initial positioning</li>
-			 * </ul>
-			 * <p>
-			 * Bookmarks are still automatically saved after each run if new events were processed.
-			 *
-			 * @return this builder for method chaining
-			 */
-			public BookmarkBuilder readAtCreationOnly ( ) {
-				this.bookmarkReadFrequency = BookmarkReadFrequency.AT_CREATION;
-				return this;
-			}
-
-			/**
-			 * Configures the projector to read the bookmark before the first execution only.
-			 * <p>
-			 * The bookmark is read before the first call to {@link Projector#run()}, {@link Projector#runSingleBatch()},
-			 * or {@link Projector#runUntil(EventReference)}. Subsequent executions will not re-read the bookmark.
-			 * <p>
-			 * This differs from {@link #readAtCreationOnly()} because it delays reading until the first actual
-			 * execution, allowing the bookmark to be updated between construction and first run.
-			 * <p>
-			 * Bookmarks are still automatically saved after each run if new events were processed.
-			 *
-			 * @return this builder for method chaining
-			 */
-			public BookmarkBuilder readBeforeFirstExecution ( ) {
-				this.bookmarkReadFrequency = BookmarkReadFrequency.BEFORE_FIRST_EXECUTION;
-				return this;
-			}
-
-			/**
-			 * Configures the projector to read the bookmark before each execution (default).
-			 * <p>
-			 * The bookmark is re-read before every call to {@link Projector#run()}, {@link Projector#runSingleBatch()},
-			 * or {@link Projector#runUntil(EventReference)}. This ensures the projector always starts from the
-			 * most recent bookmark position, which is useful for:
-			 * <ul>
-			 *   <li>Distributed projectors where position may be updated by other instances</li>
-			 *   <li>Projections that may be rewound by external systems</li>
-			 *   <li>Coordinated projector restarts across a cluster</li>
-			 * </ul>
-			 * <p>
-			 * This is the default behavior when bookmarking is enabled: it is the only mode under which a
-			 * projector built with nothing but a reader name resumes where it left off after a restart and
-			 * follows a bookmark rewound elsewhere, which is what bookmarking is for. The alternative — reading
-			 * only on an explicit {@link Projector#readBookmark()} by default — loses because a projector
-			 * configured with a reader then places bookmarks it never reads, and replays the whole stream on
-			 * every restart with nothing to say so. The cost is one bookmark lookup per execution.
-			 * <p>
-			 * Bookmarks are still automatically saved after each run if new events were processed.
-			 *
-			 * @return this builder for method chaining
-			 */
-			public BookmarkBuilder readBeforeEachExecution ( ) {
-				this.bookmarkReadFrequency = BookmarkReadFrequency.BEFORE_EACH_EXECUTION;
-				return this;
-			}
-
-			/**
-			 * Completes bookmark configuration and returns to the main builder.
-			 * <p>
-			 * This method validates that a reader name has been configured and returns control
-			 * to the parent {@link Builder} to continue configuring the projector.
-			 *
-			 * @return the parent Builder for method chaining
-			 * @throws IllegalArgumentException if no reader name was configured via {@link #withReader(String)}
-			 */
-			public Builder<EVENT_TYPE> done ( ) {
-				if ( readerName == null ) {
-					throw new IllegalArgumentException("bookmarking requires a reader name");
-				}
-				return parent;
-			}
-
-		}
-		
 	}
 
 	/**
-	 * Defines when a projector should read its bookmark to determine the starting position.
-	 * <p>
-	 * This enum controls the timing of bookmark reads, allowing fine-grained control over
-	 * when the projector synchronizes its position with the persisted bookmark. Different
-	 * frequencies suit different use cases:
-	 * <ul>
-	 *   <li>{@link #MANUAL_TRIGGER} - For explicit control via {@link Projector#readBookmark()}</li>
-	 *   <li>{@link #AT_CREATION} - For single startup synchronization</li>
-	 *   <li>{@link #BEFORE_FIRST_EXECUTION} - For delayed initial synchronization</li>
-	 *   <li>{@link #BEFORE_EACH_EXECUTION} - For continuous synchronization (default)</li>
-	 * </ul>
-	 * <p>
-	 * Regardless of the read frequency, bookmarks are always written after each successful
-	 * projection run that processes new events.
-	 *
-	 * @see Projector.Builder.BookmarkBuilder
+	 * When a bookmarked projector reads its bookmark. Whichever is chosen, the bookmark is placed after
+	 * every batch that moved the cursor.
 	 */
-	private enum BookmarkReadFrequency {
-		/**
-		 * Bookmarks are only read when explicitly triggered via {@link Projector#readBookmark()}.
-		 * <p>
-		 * No automatic bookmark reading occurs. The application has full control over when
-		 * the projector's position is synchronized with the persisted bookmark.
-		 *
-		 * @see Projector.Builder.BookmarkBuilder#readOnManualTriggerOnly()
-		 */
-		MANUAL_TRIGGER,
-
-		/**
-		 * The bookmark is read once when the projector is constructed.
-		 * <p>
-		 * Subsequent runs will not re-read the bookmark, even if it's updated externally.
-		 * The projector's position is fixed at construction time.
-		 *
-		 * @see Projector.Builder.BookmarkBuilder#readAtCreationOnly()
-		 */
-		AT_CREATION,
-
-		/**
-		 * The bookmark is read before the first execution only.
-		 * <p>
-		 * The first call to {@link Projector#run()}, {@link Projector#runSingleBatch()},
-		 * or {@link Projector#runUntil(EventReference)} will read the bookmark.
-		 * Subsequent executions will not re-read it.
-		 *
-		 * @see Projector.Builder.BookmarkBuilder#readBeforeFirstExecution()
-		 */
-		BEFORE_FIRST_EXECUTION,
-
-		/**
-		 * The bookmark is re-read before every execution (default).
-		 * <p>
-		 * Every call to {@link Projector#run()}, {@link Projector#runSingleBatch()},
-		 * or {@link Projector#runUntil(EventReference)} will read the current bookmark,
-		 * ensuring the projector always starts from the most recent persisted position.
-		 *
-		 * @see Projector.Builder.BookmarkBuilder#readBeforeEachExecution()
-		 */
-		BEFORE_EACH_EXECUTION
+	private enum BookmarkRead {
+		/** Only on {@link Projector#readBookmark()}. */
+		ON_REQUEST,
+		/** Before the first run only. */
+		ONCE,
+		/** Before every run, the default. */
+		BEFORE_EACH_RUN
 	}
 	
 	/**

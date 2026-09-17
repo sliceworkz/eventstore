@@ -86,9 +86,9 @@ public class ProjectorBatchDurabilityTest extends AbstractEventStoreTest {
 		RecordingProjection projection = new RecordingProjection();
 		projection.readBookmarkOnEachAfterBatch(es);
 
-		Projector<MockDomainEvent> projector = Projector.from(es).towards(projection)
+		Projector<MockDomainEvent> projector = Projector.from(es).into(projection)
 				.inBatchesOf(2)
-				.bookmarkProgress().withReader(READER).done()
+				.bookmarkAs(READER)
 				.build();
 
 		projector.run();
@@ -117,9 +117,9 @@ public class ProjectorBatchDurabilityTest extends AbstractEventStoreTest {
 		RecordingProjection projection = new RecordingProjection();
 		projection.failCommitOfBatch(1);
 
-		Projector<MockDomainEvent> projector = Projector.from(es).towards(projection)
+		Projector<MockDomainEvent> projector = Projector.from(es).into(projection)
 				.inBatchesOf(2)
-				.bookmarkProgress().withReader(READER).readOnManualTriggerOnly().done()
+				.bookmarkAs(READER).readBookmarkOnRequest()
 				.build();
 
 		ProjectorException failure = assertThrows(ProjectorException.class, projector::run,
@@ -144,9 +144,9 @@ public class ProjectorBatchDurabilityTest extends AbstractEventStoreTest {
 		RecordingProjection projection = new RecordingProjection();
 		projection.failCommitOfBatch(1);
 
-		Projector<MockDomainEvent> projector = Projector.from(es).towards(projection)
+		Projector<MockDomainEvent> projector = Projector.from(es).into(projection)
 				.inBatchesOf(2)
-				.bookmarkProgress().withReader(READER).readOnManualTriggerOnly().done()
+				.bookmarkAs(READER).readBookmarkOnRequest()
 				.build();
 
 		assertThrows(ProjectorException.class, projector::run);
@@ -167,9 +167,9 @@ public class ProjectorBatchDurabilityTest extends AbstractEventStoreTest {
 		projection.failOnEvent("2");
 		projection.failRollback();
 
-		Projector<MockDomainEvent> projector = Projector.from(es).towards(projection)
+		Projector<MockDomainEvent> projector = Projector.from(es).into(projection)
 				.inBatchesOf(2)
-				.bookmarkProgress().withReader(READER).readOnManualTriggerOnly().done()
+				.bookmarkAs(READER).readBookmarkOnRequest()
 				.build();
 
 		ProjectorException failure = assertThrows(ProjectorException.class, projector::run);
@@ -189,9 +189,9 @@ public class ProjectorBatchDurabilityTest extends AbstractEventStoreTest {
 		RecordingProjection projection = new RecordingProjection();
 		projection.failOnEvent("4");
 
-		Projector<MockDomainEvent> projector = Projector.from(es).towards(projection)
+		Projector<MockDomainEvent> projector = Projector.from(es).into(projection)
 				.inBatchesOf(2)
-				.bookmarkProgress().withReader(READER).readOnManualTriggerOnly().done()
+				.bookmarkAs(READER).readBookmarkOnRequest()
 				.build();
 
 		ProjectorException failure = assertThrows(ProjectorException.class, projector::run);

@@ -489,10 +489,29 @@ mvn clean install -DskipTests
   come round again, and a failing rollback keeps the cause
 
 **Projector.Builder:**
-- `build()` refuses a missing source or projection with `IllegalStateException` naming the call to make,
-  rather than leaving it to fail as a `NullPointerException` from inside the first batch — after the
-  bookmark has been read and, for a subscribed projector, after the source has been registered with the
-  storage. `inBatchesOf(n)` refuses a batch size below 1
+- **One flat builder, starting from the source.** `Projector.from(stream).into(projection)` is the
+  whole of a projector; `bookmarkAs("reader")` (or `bookmarkAs("reader", tags)`), `startingAfter`,
+  `inBatchesOf`, `subscribe` are the optional settings, each one method on the same builder. A
+  bookmarked projector reads its bookmark before every run; `readBookmarkOnce()` reads it before the
+  first run only and `readBookmarkOnRequest()` only on `readBookmark()`. Those are the two readings
+  that differ from the default, so they are the two that exist. The alternative — a sub-builder for
+  the bookmark, entered and left around its own settings — loses because the sub-builder holds three
+  settings and costs two calls to get to them, and because it puts the validation on the way out
+  (`done()`) rather than on the setting itself. There is no other spelling: the source is given to
+  `from`, so the builder has no public constructor and no `from` of its own
+- `Projector.from(null)` is refused with `IllegalArgumentException` at the call; `build()` refuses a
+  missing projection, and a bookmark read setting without a reader, with `IllegalStateException`
+  naming the call to make, rather than leaving it to fail as a `NullPointerException` from inside the
+  first batch — after the bookmark has been read and, for a subscribed projector, after the source has
+  been registered with the storage. `inBatchesOf(n)` refuses a batch size below 1
+- **`ProjectorException.getEventReference()` is the last event handed to `when`, which is the failing
+  event only when `when` threw.** For a page that could not be read or a batch hook that threw, it is
+  the last event of an earlier batch, or null when there was none; an
+  `EventDeserializationException`'s own reference names the poison event. Its javadoc lists the cases
+- `accumulatedMetrics()` is the read of a subscribed projector's position from another thread: the
+  field it answers is `volatile` and published by every run, where `run()`'s return value is only
+  seen by the thread that called it, which for a subscribed projector is the storage's notification
+  thread
 - **`Projection.eventQuery()` is read once per run.** Storage is asked with that query and every event
   of the run is matched against it, so a projection that computes its query cannot be asked twice and
   answer differently in one run, and is not asked once per event. `ProjectorTest` pins both per backend
@@ -730,7 +749,7 @@ stream owns is its subscriptions.
 - **Close what you subscribe to**, or close the store, which closes them all:
   ```java
   try ( EventStream<CustomerEvent> stream = eventStore.getEventStream(streamId, CustomerEvent.class) ) {
-      Projector.from(stream).towards(projection).subscribe().build();
+      Projector.from(stream).into(projection).subscribe().build();
       ...
   }   // subscriptions ended, registration released
   ```
@@ -1132,7 +1151,7 @@ class StockLevelProjection implements Projection<StockEvent> {
 
 // Usage
 StockLevelProjection projection = new StockLevelProjection("WIDGET-42");
-Projector.from(stream).towards(projection).build().run();
+Projector.from(stream).into(projection).build().run();
 // initQuery finds the last StockCounted, then eventQuery processes only subsequent movements
 ```
 

@@ -303,7 +303,7 @@ public class EventStoreQueryTest extends AbstractEventStoreTest {
 
 		MockReadModel mrm = new MockReadModel("test");
 
-		Projector<MockDomainEvent> prj = Projector.from(str).towards(mrm).inBatchesOf(500).build();
+		Projector<MockDomainEvent> prj = Projector.from(str).into(mrm).inBatchesOf(500).build();
 		prj.run();
 
 		assertEquals(10000, mrm.eventCount(), "model should have seen all events");

@@ -65,7 +65,7 @@ import org.sliceworkz.eventstore.query.EventQuery;
  * TotalOrderValue projection = new TotalOrderValue();
  *
  * Projector.from(stream)
- *     .towards(projection)
+ *     .into(projection)
  *     .build()
  *     .run();
  *

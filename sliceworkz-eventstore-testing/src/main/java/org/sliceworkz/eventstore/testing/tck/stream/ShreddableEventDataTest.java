@@ -407,7 +407,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		// and a projector fails its batch rather than advancing over the gap
 		CountingProjection projection = new CountingProjection();
 		ProjectorException failed = assertThrows(ProjectorException.class,
-				() -> Projector.from(reading).towards(projection).build().run());
+				() -> Projector.from(reading).into(projection).build().run());
 		assertInstanceOf(ShreddingException.class, failed.getCause());
 		assertEquals(0, projection.handled, "nothing was projected, so nothing could have been bookmarked past");
 	}
@@ -760,7 +760,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		assertFalse(transfer.from().isShredded());
 
 		CountingProjection projection = new CountingProjection();
-		ProjectorMetrics metrics = Projector.from(reading).towards(projection).build().run();
+		ProjectorMetrics metrics = Projector.from(reading).into(projection).build().run();
 		assertEquals(2, projection.handled, "a reader that is not entitled must still project what it is entitled to");
 		assertEquals(2, metrics.eventsHandled());
 		assertEquals(3, projection.withheld, "every protected value came through as withheld");

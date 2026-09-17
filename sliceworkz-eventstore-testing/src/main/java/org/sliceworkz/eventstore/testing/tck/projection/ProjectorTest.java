@@ -38,6 +38,7 @@ import org.sliceworkz.eventstore.projection.Projector.ProjectorMetrics;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
+import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.testing.AbstractEventStoreTest;
@@ -73,7 +74,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	void testProjector ( ) {
 		TestProjection projection = new TestProjection();
 
-		var projector = Projector.from(es).towards(projection).build();
+		var projector = Projector.from(es).into(projection).build();
 
 		ProjectorMetrics projectorMetrics = projector.run();
 		assertEquals(4, projection.counter()); // SecondDomainEvent type is left out by the query
@@ -87,7 +88,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		assertEquals(4,  accumulatedMetrics.eventsHandled());
 
 		BatchAwareTestProjection batchAwareProjection = new BatchAwareTestProjection();
-		var batchAwareProjector = Projector.from(es).towards(batchAwareProjection).build();
+		var batchAwareProjector = Projector.from(es).into(batchAwareProjection).build();
 
 		projectorMetrics = batchAwareProjector.run();
 		assertEquals(4, batchAwareProjection.counter()); // SecondDomainEvent type is left out by the query
@@ -104,16 +105,22 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	void aProjectorWithoutASourceOrAProjectionIsRefusedWhenBuilt ( ) {
 		TestProjection projection = new TestProjection();
 
-		IllegalStateException noSource = assertThrows(IllegalStateException.class,
-				() -> new Projector.Builder<MockDomainEvent>().towards(projection).build());
-		assertEquals("no event source configured, call from(...) before build()", noSource.getMessage());
+		IllegalArgumentException noSource = assertThrows(IllegalArgumentException.class,
+				() -> Projector.<MockDomainEvent>from(null));
+		assertEquals("no event source: a projector reads from one, so from(...) needs it", noSource.getMessage());
 
 		IllegalStateException noProjection = assertThrows(IllegalStateException.class,
 				() -> Projector.from(es).build());
-		assertEquals("no projection configured, call towards(...) before build()", noProjection.getMessage());
+		assertEquals("no projection configured, call into(...) before build()", noProjection.getMessage());
 
-		assertThrows(IllegalArgumentException.class, () -> Projector.from(es).towards(projection).inBatchesOf(0));
-		assertThrows(IllegalArgumentException.class, () -> Projector.from(es).towards(projection).inBatchesOf(-5));
+		// a bookmark read setting says when to read a bookmark, so without a reader there is nothing it can mean
+		IllegalStateException noBookmark = assertThrows(IllegalStateException.class,
+				() -> Projector.from(es).into(projection).readBookmarkOnce().build());
+		assertEquals("no bookmark to read: call bookmarkAs(...) before choosing when the bookmark is read", noBookmark.getMessage());
+		assertThrows(IllegalStateException.class, () -> Projector.from(es).into(projection).readBookmarkOnRequest().build());
+
+		assertThrows(IllegalArgumentException.class, () -> Projector.from(es).into(projection).inBatchesOf(0));
+		assertThrows(IllegalArgumentException.class, () -> Projector.from(es).into(projection).inBatchesOf(-5));
 	}
 
 	/**
@@ -124,7 +131,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void theProjectionQueryIsReadOncePerRun ( ) {
 		CountingQueryProjection projection = new CountingQueryProjection();
-		Projector<MockDomainEvent> projector = Projector.from(es).towards(projection).inBatchesOf(1).build();
+		Projector<MockDomainEvent> projector = Projector.from(es).into(projection).inBatchesOf(1).build();
 		assertEquals(0, projection.eventQueryReads, "building a projector reads the initialisation query, not the event query");
 
 		ProjectorMetrics metrics = projector.run();
@@ -140,7 +147,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void testFailingProjector ( ) {
 		FailingBatchAwareTestProjection batchAwareProjection = new FailingBatchAwareTestProjection();
-		var batchAwareProjector = Projector.from(es).towards(batchAwareProjection).build();
+		var batchAwareProjector = Projector.from(es).into(batchAwareProjection).build();
 
 		ProjectorException e = assertThrows (ProjectorException.class, ()->{
 			batchAwareProjector.run();
@@ -181,7 +188,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void testFailingProjectorInBatchesOf2 ( ) {
 		FailingBatchAwareTestProjection batchAwareProjection = new FailingBatchAwareTestProjection();
-		var batchAwareProjector = Projector.from(es).towards(batchAwareProjection).inBatchesOf(2).build();
+		var batchAwareProjector = Projector.from(es).into(batchAwareProjection).inBatchesOf(2).build();
 
 		ProjectorException e = assertThrows (ProjectorException.class, ()->{
 			batchAwareProjector.run();
@@ -225,49 +232,26 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	void testProjectorWithBookmarkingWithoutReaderName ( ) {
 		TestProjection projection = new TestProjection();
 
-		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, ()->Projector.from(es).towards(projection).bookmarkProgress().done().build());
+		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, ()->Projector.from(es).into(projection).bookmarkAs(null));
 		assertEquals("bookmarking requires a reader name", e.getMessage());
+		assertThrows(IllegalArgumentException.class, ()->Projector.from(es).into(projection).bookmarkAs("  "));
+		assertThrows(IllegalArgumentException.class, ()->Projector.from(es).into(projection).bookmarkAs("someReader", null));
 	}
 
+	/**
+	 * The tags given with the reader name are stored on the bookmark the projector places, and take no
+	 * part in reading it back.
+	 */
 	@ForEachBackend
-	void testProjectorWithBookmarkAtCreation( ) {
+	void testProjectorStoresTheBookmarkTagsItWasGiven ( ) {
 		TestProjection projection = new TestProjection();
+		Tags tags = Tags.of("tenant", "acme");
 
-		EventReference refTwo = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "two"))).stream().findFirst().get().reference();
-		EventReference refThree = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "three"))).stream().findFirst().get().reference();
-		EventReference refFour = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).stream().findFirst().get().reference();
+		Projector.from(es).into(projection).bookmarkAs("taggedReader", tags).inBatchesOf(1).build().runSingleBatch();
 
-		es.placeBookmark("someReader", refTwo, Tags.none());
-
-		var projector = Projector.from(es).towards(projection).bookmarkProgress().withReader("someReader").readAtCreationOnly().done().inBatchesOf(1).build();
-
-		es.placeBookmark("someReader", refFour, Tags.none());
-
-		ProjectorMetrics projectorMetrics = projector.runSingleBatch();
-		assertEquals(1, projection.counter());
-		assertEquals(1, projectorMetrics.queriesDone());
-		assertEquals(1,  projectorMetrics.eventsStreamed());
-		assertEquals(1,  projectorMetrics.eventsHandled());
-		assertEquals(refThree, projectorMetrics.lastEventReference());
-
-		ProjectorMetrics accumulatedMetrics = projector.accumulatedMetrics();
-		assertEquals(1, accumulatedMetrics.queriesDone());
-		assertEquals(1,  accumulatedMetrics.eventsStreamed());
-		assertEquals(1,  accumulatedMetrics.eventsHandled());
-		assertEquals(refThree, accumulatedMetrics.lastEventReference());
-
-		projectorMetrics = projector.runSingleBatch();
-		assertEquals(2, projection.counter());
-		assertEquals(1, projectorMetrics.queriesDone());
-		assertEquals(1,  projectorMetrics.eventsStreamed());
-		assertEquals(1,  projectorMetrics.eventsHandled());
-		assertEquals(refFour, projectorMetrics.lastEventReference());
-
-		accumulatedMetrics = projector.accumulatedMetrics();
-		assertEquals(2, accumulatedMetrics.queriesDone());
-		assertEquals(2,  accumulatedMetrics.eventsStreamed());
-		assertEquals(2,  accumulatedMetrics.eventsHandled());
-		assertEquals(refFour, accumulatedMetrics.lastEventReference());
+		Bookmark bookmark = es.getBookmarks().stream().filter(b -> b.reader().equals("taggedReader")).findFirst().orElseThrow();
+		assertEquals(tags, bookmark.tags());
+		assertEquals(bookmark.reference(), es.getBookmark("taggedReader").orElseThrow());
 	}
 
 	@ForEachBackend
@@ -280,7 +264,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 
 		es.placeBookmark("someReader", refFour, Tags.none());
 
-		var projector = Projector.from(es).towards(projection).bookmarkProgress().withReader("someReader").readBeforeFirstExecution().done().inBatchesOf(1).build();
+		var projector = Projector.from(es).into(projection).bookmarkAs("someReader").readBookmarkOnce().inBatchesOf(1).build();
 
 		es.placeBookmark("someReader", refTwo, Tags.none());
 
@@ -323,7 +307,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 
 		es.placeBookmark("someReader", refFour, Tags.none());
 
-		var projector = Projector.from(es).towards(projection).bookmarkProgress().withReader("someReader").readBeforeEachExecution().done().inBatchesOf(1).build();
+		var projector = Projector.from(es).into(projection).bookmarkAs("someReader").inBatchesOf(1).build();
 
 		es.placeBookmark("someReader", refTwo, Tags.none());
 
@@ -371,7 +355,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 
 		// the "first process": no mode chosen, runs one batch and bookmarks it
 		TestProjection first = new TestProjection();
-		var firstProjector = Projector.from(es).towards(first).bookmarkProgress().withReader("someReader").done().inBatchesOf(1).build();
+		var firstProjector = Projector.from(es).into(first).bookmarkAs("someReader").inBatchesOf(1).build();
 
 		ProjectorMetrics projectorMetrics = firstProjector.runSingleBatch();
 		assertEquals(1, first.counter());
@@ -381,7 +365,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		// the "restarted process": a projector built with only the reader name resumes at the bookmark,
 		// rather than replaying from the start as one that never reads its bookmark would
 		TestProjection second = new TestProjection();
-		var secondProjector = Projector.from(es).towards(second).bookmarkProgress().withReader("someReader").done().inBatchesOf(1).build();
+		var secondProjector = Projector.from(es).into(second).bookmarkAs("someReader").inBatchesOf(1).build();
 
 		projectorMetrics = secondProjector.runSingleBatch();
 		assertEquals(1, second.counter());
@@ -409,7 +393,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 
 		es.placeBookmark("someReader", refFour, Tags.none());
 
-		var projector = Projector.from(es).towards(projection).bookmarkProgress().withReader("someReader").readOnManualTriggerOnly().done().inBatchesOf(1).build();
+		var projector = Projector.from(es).into(projection).bookmarkAs("someReader").readBookmarkOnRequest().inBatchesOf(1).build();
 
 		es.placeBookmark("someReader", refTwo, Tags.none());
 
@@ -478,7 +462,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	void testProjectorWithStepOfOne ( ) {
 		TestProjection projection = new TestProjection();
 
-		var projector = Projector.from(es).towards(projection).inBatchesOf(1).build();
+		var projector = Projector.from(es).into(projection).inBatchesOf(1).build();
 
 		ProjectorMetrics projectorMetrics = projector.run();
 		assertEquals(4, projection.counter());
@@ -492,7 +476,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		assertEquals(4,  accumulatedMetrics.eventsHandled());
 
 		BatchAwareTestProjection batchAwareProjection = new BatchAwareTestProjection();
-		var batchAwareProjector = Projector.from(es).towards(batchAwareProjection).inBatchesOf(1).build();
+		var batchAwareProjector = Projector.from(es).into(batchAwareProjection).inBatchesOf(1).build();
 
 		projectorMetrics = batchAwareProjector.run();
 		assertEquals(4, batchAwareProjection.counter());
@@ -513,7 +497,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	void testProjectorWithStepOfTwo ( ) {
 		TestProjection projection = new TestProjection();
 
-		var projector = Projector.from(es).towards(projection).inBatchesOf(2).build();
+		var projector = Projector.from(es).into(projection).inBatchesOf(2).build();
 
 		ProjectorMetrics projectorMetrics = projector.run();
 		assertEquals(4, projection.counter());
@@ -527,7 +511,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		assertEquals(4,  accumulatedMetrics.eventsHandled());
 
 		BatchAwareTestProjection batchAwareProjection = new BatchAwareTestProjection();
-		var batchAwareProjector = Projector.from(es).towards(batchAwareProjection).inBatchesOf(2).build();
+		var batchAwareProjector = Projector.from(es).into(batchAwareProjection).inBatchesOf(2).build();
 
 		projectorMetrics = batchAwareProjector.run();
 		assertEquals(4, batchAwareProjection.counter());
@@ -551,7 +535,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 
 		EventReference ref = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).stream().findFirst().get().reference();
 
-		var projector = Projector.from(es).towards(projection).build();
+		var projector = Projector.from(es).into(projection).build();
 
 		ProjectorMetrics projectorMetrics = projector.runUntil(ref);
 		assertEquals(3, projection.counter());
@@ -574,7 +558,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 
 		append(alternativeStream, new FirstDomainEvent("1"), Tags.of("nr", "one"));
 
-		var projector = Projector.from(alternativeStream).towards(projection).build();
+		var projector = Projector.from(alternativeStream).into(projection).build();
 
 		ProjectorMetrics projectorMetrics = projector.run();
 		assertEquals(1, projection.counter());
@@ -608,7 +592,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		EventReference refAfter = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "one"))).stream().findFirst().get().reference();
 		EventReference refUntil = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).stream().findFirst().get().reference();
 
-		var projector = Projector.from(es).towards(projection).startingAfter(refAfter).build();
+		var projector = Projector.from(es).into(projection).startingAfter(refAfter).build();
 
 		ProjectorMetrics projectorMetrics = projector.runUntil(refUntil);
 		assertEquals(2, projection.counter());
@@ -634,7 +618,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		append(initEs, new FirstDomainEvent("7"), Tags.none());
 
 		InitQueryProjection projection = new InitQueryProjection();
-		var projector = Projector.from(initEs).towards(projection).build();
+		var projector = Projector.from(initEs).into(projection).build();
 
 		ProjectorMetrics metrics = projector.run();
 
@@ -654,7 +638,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		append(initEs, new FirstDomainEvent("3"), Tags.none());
 
 		InitQueryProjection projection = new InitQueryProjection();
-		var projector = Projector.from(initEs).towards(projection).build();
+		var projector = Projector.from(initEs).into(projection).build();
 
 		ProjectorMetrics metrics = projector.run();
 
@@ -676,8 +660,8 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		append(initEs, new FirstDomainEvent("7"), Tags.none());
 
 		InitQueryProjection projection = new InitQueryProjection();
-		var projector = Projector.from(initEs).towards(projection)
-				.bookmarkProgress().withReader("initquery-test-reader").readBeforeEachExecution().done()
+		var projector = Projector.from(initEs).into(projection)
+				.bookmarkAs("initquery-test-reader")
 				.build();
 
 		ProjectorMetrics metrics = projector.run();
@@ -698,7 +682,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		append(initEs, new FirstDomainEvent("5"), Tags.none());
 
 		InitQueryProjection projection = new InitQueryProjection();
-		var projector = Projector.from(initEs).towards(projection).build();
+		var projector = Projector.from(initEs).into(projection).build();
 
 		ProjectorMetrics metrics1 = projector.run();
 		assertEquals(2, projection.counter());
@@ -730,7 +714,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		EventReference until = initEs.query(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())).get(1).reference(); // the "5", written before the second savepoint
 
 		InitQueryProjection projection = new InitQueryProjection();
-		var projector = Projector.from(initEs).towards(projection).build();
+		var projector = Projector.from(initEs).into(projection).build();
 
 		ProjectorMetrics metrics = projector.runUntil(until);
 
@@ -758,7 +742,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		append(initEs, new FirstDomainEvent("3"), Tags.none());
 
 		FailingSavepointProjection projection = new FailingSavepointProjection();
-		var projector = Projector.from(initEs).towards(projection).build();
+		var projector = Projector.from(initEs).into(projection).build();
 
 		ProjectorException e = assertThrows(ProjectorException.class, projector::run);
 		assertEquals("UNIT TEST FAKED PROBLEM WITH SAVEPOINT", e.getCause().getMessage());
@@ -789,8 +773,8 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void testReadBookmarkWaitsForARunInProgress ( ) throws InterruptedException {
 		BlockingProjection projection = new BlockingProjection();
-		var projector = Projector.from(es).towards(projection)
-				.bookmarkProgress().withReader("blocking-reader").readOnManualTriggerOnly().done()
+		var projector = Projector.from(es).into(projection)
+				.bookmarkAs("blocking-reader").readBookmarkOnRequest()
 				.inBatchesOf(1)
 				.build();
 
@@ -831,7 +815,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void testProjectorBackwardsWithLimitEnforcesTotalLimit ( ) {
 		BackwardsLimitProjection projection = new BackwardsLimitProjection();
-		var projector = Projector.from(es).towards(projection).build();
+		var projector = Projector.from(es).into(projection).build();
 
 		ProjectorMetrics metrics = projector.run();
 		assertEquals(1, projection.counter());
@@ -843,7 +827,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void testProjectorBackwardsWithLimitReturnsMostRecentEventReference ( ) {
 		BackwardsLimitProjection projection = new BackwardsLimitProjection();
-		var projector = Projector.from(es).towards(projection).build();
+		var projector = Projector.from(es).into(projection).build();
 
 		EventReference refFour = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "four"))).stream().findFirst().get().reference();
 
@@ -855,7 +839,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void testProjectorBackwardsWithLimitGreaterThanOne ( ) {
 		BackwardsLimit3Projection projection = new BackwardsLimit3Projection();
-		var projector = Projector.from(es).towards(projection).build();
+		var projector = Projector.from(es).into(projection).build();
 
 		EventReference refThree = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "three"))).stream().findFirst().get().reference();
 		EventReference refSix = es.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("nr", "six"))).stream().findFirst().get().reference();
@@ -871,7 +855,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void testProjectorForwardMostRecentEqualsLast ( ) {
 		TestProjection projection = new TestProjection();
-		var projector = Projector.from(es).towards(projection).build();
+		var projector = Projector.from(es).into(projection).build();
 
 		ProjectorMetrics metrics = projector.run();
 		assertEquals(metrics.lastEventReference(), metrics.mostRecentEventReference());

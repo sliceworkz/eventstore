@@ -419,9 +419,8 @@ public final class ReadWorkloads {
 				"a projector run over ten batches of 500 -- the per-batch cost of a read-model rebuild",
 				context -> {
 					CountingProjection projection = new CountingProjection();
-					Projector<InventoryEvent> projector = Projector.<InventoryEvent>newBuilder()
-							.from(context.inventory())
-							.towards(projection)
+					Projector<InventoryEvent> projector = Projector.from(context.inventory())
+							.into(projection)
 							.inBatchesOf(PAGE_SIZE)
 							.build();
 					// runUntil, not run(): a full replay at the large tier is minutes, which is not an

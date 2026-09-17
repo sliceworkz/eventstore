@@ -63,7 +63,7 @@ import java.util.Optional;
  *         EventReference ref = poison.getReference().orElseThrow();
  *         deadLetter(ref, poison.getEventType());
  *         // resume past it: a projector's position is set at build time
- *         projector = Projector.from(stream).towards(projection).startingAfter(ref).build();
+ *         projector = Projector.from(stream).into(projection).startingAfter(ref).build();
  *     }
  * }
  * }</pre>

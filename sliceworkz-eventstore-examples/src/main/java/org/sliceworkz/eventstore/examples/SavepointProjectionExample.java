@@ -81,7 +81,7 @@ public class SavepointProjectionExample {
 
 		// First projection run — no savepoint exists, replays everything
 		StockLevelProjection projection = new StockLevelProjection(product);
-		ProjectorMetrics metrics = Projector.from(stream).towards(projection).build().run();
+		ProjectorMetrics metrics = Projector.from(stream).into(projection).build().run();
 
 		System.out.println("Stock level: " + projection.level());               // 115
 		System.out.println("Events handled: " + metrics.eventsHandled());       // 5
@@ -95,7 +95,7 @@ public class SavepointProjectionExample {
 
 		// Second projection run — initQuery finds the savepoint, only processes 2 movements after it
 		StockLevelProjection projection2 = new StockLevelProjection(product);
-		ProjectorMetrics metrics2 = Projector.from(stream).towards(projection2).build().run();
+		ProjectorMetrics metrics2 = Projector.from(stream).into(projection2).build().run();
 
 		System.out.println("Stock level: " + projection2.level());              // 133
 		System.out.println("Events handled: " + metrics2.eventsHandled());      // 3 (1 savepoint + 2 movements)
@@ -106,7 +106,7 @@ public class SavepointProjectionExample {
 		stream.append(AppendCriteria.none(), Event.of(new StockPicked(product, 3), tags));
 
 		StockLevelProjection projection3 = new StockLevelProjection(product);
-		ProjectorMetrics metrics3 = Projector.from(stream).towards(projection3).build().run();
+		ProjectorMetrics metrics3 = Projector.from(stream).into(projection3).build().run();
 
 		System.out.println("Stock level: " + projection3.level());              // 130
 		System.out.println("Events handled: " + metrics3.eventsHandled());      // 2 (1 savepoint + 1 movement)

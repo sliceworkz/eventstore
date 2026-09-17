@@ -79,7 +79,7 @@ import org.sliceworkz.eventstore.query.EventQuery;
  * CustomerCountByRegion projection = new CustomerCountByRegion();
  *
  * ProjectorMetrics metrics = Projector.from(stream)
- *     .towards(projection)
+ *     .into(projection)
  *     .build()
  *     .run();
  *

@@ -121,7 +121,7 @@ class EventStoreFixtureTest {
 
 	@Test
 	void drivesAProjectionToAKnownPoint ( ) {
-		EventReference upToTheSecondSubscription = fixture.given(
+		EventReference theSecondSubscription = fixture.given(
 					event(new CourseDefined("abc001", "Java basics", 12)).tagged("course", "abc001"),
 					event(new StudentSubscribed("1", "abc001")).tagged("course", "abc001"),
 					event(new StudentSubscribed("2", "abc001")).tagged("course", "abc001"))
@@ -129,8 +129,8 @@ class EventStoreFixtureTest {
 
 		fixture.given(event(new StudentSubscribed("3", "abc001")).tagged("course", "abc001"))
 				.project(new SubscriptionCount("abc001"))
-				.upTo(upToTheSecondSubscription)
-				.expectEventsProcessed(2)
+				.until(theSecondSubscription)
+				.expectEventsHandled(2)
 				.expectState(count -> assertEquals(2, count.count()));
 	}
 

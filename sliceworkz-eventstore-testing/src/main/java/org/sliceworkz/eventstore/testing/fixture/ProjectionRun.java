@@ -28,10 +28,10 @@ import org.sliceworkz.eventstore.projection.Projector.ProjectorMetrics;
  * Drives a projection over seeded history and asserts on the result.
  * <p>
  * The point is determinism. A {@link Projector} normally runs to whatever is currently the head of
- * the store, which is fine in production and unhelpful in a test. {@link #upTo(EventReference)}
+ * the store, which is fine in production and unhelpful in a test. {@link #until(EventReference)}
  * pins the end, so the assertion is about a known set of events rather than about timing.
  * <p>
- * {@link #expectEventsProcessed(long)} is what makes savepoint projections testable: the whole
+ * {@link #expectEventsHandled(long)} is what makes savepoint projections testable: the whole
  * point of a savepoint is that the projection <em>does not</em> replay everything before it, and
  * asserting only on the final state cannot tell a working savepoint from an ignored one.
  *
@@ -43,7 +43,7 @@ public final class ProjectionRun<DOMAIN_EVENT_TYPE, P extends Projection<DOMAIN_
 	private final EventStoreFixture<DOMAIN_EVENT_TYPE> fixture;
 	private final P projection;
 
-	private EventReference upTo;
+	private EventReference until;
 	private Integer batchSize;
 	private ProjectorMetrics metrics;
 
@@ -53,14 +53,28 @@ public final class ProjectionRun<DOMAIN_EVENT_TYPE, P extends Projection<DOMAIN_
 	}
 
 	/**
-	 * Stops the projection at this event instead of at the head of the store.
+	 * Stops the projection at this event instead of at the head of the store: the run is
+	 * {@link Projector#runUntil(EventReference)} with this reference.
 	 *
-	 * @param upTo the last event to process, typically from {@code given(...).lastReference()}
+	 * @param until the last event to process, typically from {@code given(...).lastReference()}
 	 * @return this
 	 */
-	public ProjectionRun<DOMAIN_EVENT_TYPE, P> upTo ( EventReference upTo ) {
-		this.upTo = upTo;
+	public ProjectionRun<DOMAIN_EVENT_TYPE, P> until ( EventReference until ) {
+		this.until = until;
 		return this;
+	}
+
+	/**
+	 * Stops the projection at this event instead of at the head of the store.
+	 *
+	 * @param until the last event to process, typically from {@code given(...).lastReference()}
+	 * @return this
+	 * @deprecated the projector runs <em>until</em> a reference, and the method is called that: use
+	 *             {@link #until(EventReference)}
+	 */
+	@Deprecated(since = "0.11.0", forRemoval = true)
+	public ProjectionRun<DOMAIN_EVENT_TYPE, P> upTo ( EventReference until ) {
+		return until(until);
 	}
 
 	/**
@@ -89,26 +103,40 @@ public final class ProjectionRun<DOMAIN_EVENT_TYPE, P extends Projection<DOMAIN_
 			builder.inBatchesOf(batchSize);
 		}
 		Projector<DOMAIN_EVENT_TYPE> projector = builder.build();
-		metrics = upTo == null ? projector.run() : projector.runUntil(upTo);
+		metrics = until == null ? projector.run() : projector.runUntil(until);
 		return this;
 	}
 
 	/**
 	 * Asserts how many events the projection handled.
 	 * <p>
-	 * This counts events passed to {@code when(...)}, which is what distinguishes a savepoint that
-	 * short-circuited the replay from one that was ignored.
+	 * This counts events passed to {@code when(...)} — {@link ProjectorMetrics#eventsHandled()} —
+	 * which is what distinguishes a savepoint that short-circuited the replay from one that was
+	 * ignored.
 	 *
 	 * @param expected the expected number of handled events
 	 * @return this
 	 */
-	public ProjectionRun<DOMAIN_EVENT_TYPE, P> expectEventsProcessed ( long expected ) {
+	public ProjectionRun<DOMAIN_EVENT_TYPE, P> expectEventsHandled ( long expected ) {
 		run();
 		if ( metrics.eventsHandled() != expected ) {
 			throw new AssertionError("expected the projection to handle %d event(s), but it handled %d"
 					.formatted(expected, metrics.eventsHandled()));
 		}
 		return this;
+	}
+
+	/**
+	 * Asserts how many events the projection handled.
+	 *
+	 * @param expected the expected number of handled events
+	 * @return this
+	 * @deprecated the metrics count the events <em>handled</em>, and the method is called that: use
+	 *             {@link #expectEventsHandled(long)}
+	 */
+	@Deprecated(since = "0.11.0", forRemoval = true)
+	public ProjectionRun<DOMAIN_EVENT_TYPE, P> expectEventsProcessed ( long expected ) {
+		return expectEventsHandled(expected);
 	}
 
 	/**

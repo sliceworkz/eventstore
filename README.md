@@ -171,8 +171,11 @@ public class HelloEventstore {
 Two things the snippet leaves out:
 
 - **A boundary at the stream head.** When a decision takes several reads, take `customers.head()`
-  first, bound each read with it, and hand the same reference to `AppendCriteria`. It is cheaper to
-  check on PostgreSQL and the only sound way to pin more than one read to one moment.
+  first, bound each read with `query(relevant.until(head))`, and hand `AppendCriteria` the same
+  reference beside the query *unbounded*. It is cheaper to check on PostgreSQL and the only sound way
+  to pin more than one read to one moment. Keep the two forms apart: an `until` bounds a consistency
+  boundary as well as a query, so `AppendCriteria.of(relevant.until(head), head)` deems nothing after
+  the head relevant and admits every append without ever raising `OptimisticLockingException`.
 - **Read models.** `Projector.from(stream).into(projection).build().run()` replays a query into a
   `Projection` in batches; `.subscribe()` keeps it running as events arrive, and a bookmark lets it
   resume where it left off.

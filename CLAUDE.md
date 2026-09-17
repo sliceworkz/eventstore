@@ -388,6 +388,16 @@ mvn clean install -DskipTests
   raises no `OptimisticLockingException`. Backends must compare it as the tuple, exactly as they compare
   the cursor; comparing positions alone drops events whose transaction and position were assigned in
   different orders. `EventQueryUntilBoundaryTest` pins all of this down per backend
+- **So an `AppendCriteria`'s filter must carry no `until`.** One that does deems nothing after it
+  relevant, so the check finds no new fact whatever lands: every append is admitted and nothing is
+  raised — the check off, not merely narrowed. The head idiom puts both forms of one query in a
+  caller's hands — `relevant.until(head)` for the read, `relevant` plus `head` for the criteria — and
+  `AppendCriteria.of(relevant.until(head), head)`, which is what reusing "the query I read with"
+  produces and reads as the more careful of the two, is the one that turns optimistic locking off. The
+  head is a boundary as the criteria's *reference*, where the matching events after it are what
+  conflict; in the filter it bounds the check away. Nothing catches it — the append reports success —
+  so it is documented at all three places a caller meets it: `AppendCriteria` (both `of` factories),
+  `EventFilter.until` and `EventSource.head()`
 - **A boundary names a stored event, whole — never a fragment of one.** The `index` on a reference
   distinguishes the events one stored event upcasts into, and a storage never sees it: it compares
   stored events, whose index is always 0. So the read side compares the same way
@@ -1206,6 +1216,9 @@ EventQuery customerQuery = EventQuery.forTags(Tags.of("customer", "123"));
 EventReference head = stream.head().orElse(null);
 List<Event<CustomerEvent>> existingEvents = stream.query(customerQuery.until(head));
 
+// the criteria gets the query UNBOUNDED, with the head as the expected last event. Handing it
+// customerQuery.until(head) instead -- reusing the query the read used -- deems nothing after the
+// head relevant, so every append is admitted and no OptimisticLockingException is ever raised
 stream.append(
     AppendCriteria.of(customerQuery, head),
     Event.of(new CustomerNameChanged("Jane"), Tags.of("customer", "123"))

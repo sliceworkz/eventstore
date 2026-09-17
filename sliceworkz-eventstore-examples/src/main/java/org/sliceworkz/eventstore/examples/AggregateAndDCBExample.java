@@ -77,55 +77,56 @@ public class AggregateAndDCBExample {
 		s = loadStudent("123");
 	}
 	
+	// The one description of a student's relevant facts, used by the read below and by the boundary of
+	// the append. Written out in both places instead, the two drift the moment someone widens only the
+	// read: the consistency boundary then silently narrows and the store reports success on an append
+	// that should have conflicted. Nothing -- no type, no test, no runtime check -- catches that
+	EventQuery studentQuery ( String studentId ) {
+	    return EventQuery.forEvents(
+	        EventTypesFilter.of(StudentDomainEvent.class),
+	        Tags.of("student", studentId)
+	    );
+	}
+
 	// Load aggregate from events. The sealed interface stands for every event type under it, and the
 	// stream typed at that root maps exactly those types, so its events are the aggregate's own
 	Student loadStudent(String studentId) {
 	    Student student = new Student(studentId);
-	    EventQuery query = EventQuery.forEvents(
-	        EventTypesFilter.of(StudentDomainEvent.class),
-	        Tags.of("student", studentId)
-	    );
-	    students.query(query).forEach(student::when);
+	    students.query(studentQuery(studentId)).forEach(student::when);
 	    return student;
 	}
 
-	// Save events with optimistic locking
+	// Save events with optimistic locking. The criteria gets the query as built, with no until boundary:
+	// an until on a criteria's filter matches nothing past it, so no event would ever be a new relevant
+	// fact and every append would be admitted. The boundary is the reference, never an until
 	void saveStudent(Student student, List<StudentDomainEvent> events) {
 	    students.append(
-	        AppendCriteria.of(
-	            EventQuery.forEvents(
-        	        EventTypesFilter.of(StudentDomainEvent.class),
-	                Tags.of("student", student.studentId)
-	            ),
-	            student.lastEventReference()
-	        ),
+	        AppendCriteria.of(studentQuery(student.studentId), student.lastEventReference()),
 	        events.stream()
 	            .<EphemeralEvent<? extends StudentDomainEvent>>map(e -> Event.of(e, Tags.of("student", student.studentId)))
 	            .toList()
 	    );
 	}
 
-	// Load aggregate from events
-	Course loadCourse(String courseId) {
-	    Course course = new Course(courseId);
-	    EventQuery query = EventQuery.forEvents(
+	// Likewise for a course: one query, read by loadCourse and checked by saveCourse
+	EventQuery courseQuery ( String courseId ) {
+	    return EventQuery.forEvents(
 	        EventTypesFilter.of(CourseDomainEvent.class),
 	        Tags.of("course", courseId)
 	    );
-	    courses.query(query).forEach(course::when);
+	}
+
+	// Load aggregate from events
+	Course loadCourse(String courseId) {
+	    Course course = new Course(courseId);
+	    courses.query(courseQuery(courseId)).forEach(course::when);
 	    return course;
 	}
 
 	// Save events with optimistic locking
 	void saveCourse(Course course, List<CourseDomainEvent> events) {
 	    courses.append(
-	        AppendCriteria.of(
-	            EventQuery.forEvents(
-	                EventTypesFilter.of(CourseDomainEvent.class),
-	                Tags.of("course", course.courseId)
-	            ),
-	            course.lastEventReference()
-	        ),
+	        AppendCriteria.of(courseQuery(course.courseId), course.lastEventReference()),
 	        events.stream()
 	            .<EphemeralEvent<? extends CourseDomainEvent>>map(e -> Event.of(e, Tags.of("course", course.courseId)))
 	            .toList()
@@ -140,6 +141,9 @@ public class AggregateAndDCBExample {
     	// pin the consistency boundary before reading: absent for an empty stream, which is a valid boundary,
     	// so a student or course without any history yet needs no special case
     	EventReference head = stream.head().orElse(null);
+    	// the read is bounded at the head; the append below hands the criteria the same query UNBOUNDED,
+    	// with the head as its expected last event. Passing the until form to AppendCriteria instead reads
+    	// as the more careful of the two and is the one that turns optimistic locking off outright
     	stream.query(dm.getEventQuery().until(head)).forEach(dm::when);
 
         if ( dm.canSubscribe() ) {

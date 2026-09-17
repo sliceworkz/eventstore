@@ -153,6 +153,16 @@ public record EventFilter ( List<EventFilterItem> items, EventReference until ) 
 	/**
 	 * Creates a new EventFilter with the specified "until" reference.
 	 * The resulting filter will only match events up to and including the specified reference.
+	 * <p>
+	 * <b>This bounds a consistency boundary as well as a query</b>, because an
+	 * {@link org.sliceworkz.eventstore.stream.AppendCriteria} carries a filter and the optimistic-locking
+	 * check asks the same {@link #matches(org.sliceworkz.eventstore.events.Event)}. A filter given an
+	 * {@code until} therefore deems no event after it a new relevant fact: as a query it reads history up
+	 * to that point, which is the intent, and as a criteria it admits every append without ever raising
+	 * {@link org.sliceworkz.eventstore.stream.OptimisticLockingException}, which is almost never the
+	 * intent. When pinning a boundary at {@link org.sliceworkz.eventstore.stream.EventSource#head() head},
+	 * put the {@code until} on the read and hand the criteria the unbounded filter plus the head as its
+	 * expected last event.
 	 *
 	 * @param until the reference to match up to (events after this reference will not match), or null for no boundary
 	 * @return a new EventFilter with the "until" reference set

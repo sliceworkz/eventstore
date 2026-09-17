@@ -21,19 +21,23 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import org.sliceworkz.eventstore.events.EventDeserializationException;
 import org.sliceworkz.eventstore.events.EventType;
 
-import tools.jackson.core.JacksonException;
-import tools.jackson.databind.JsonNode;
-
 /**
- * Raw mode implementation of {@link EventPayloadSerializerDeserializer} that works with JSON strings directly.
+ * Raw mode implementation of {@link EventPayloadSerializerDeserializer}: no type mapping, and every
+ * stored event read as the JSON document it is stored as.
  * <p>
- * This implementation does not map events to Java classes. Events are deserialized as Jackson {@link JsonNode}
- * objects, allowing for schema-less event processing without requiring static type definitions.
- * <p>
- * Use this mode when event types are not statically known or when you need flexible JSON handling.
+ * The payload comes back as a {@link String} holding the stored JSON document, exactly as the storage
+ * answered it — nothing is parsed, so a raw read costs no more than the storage read behind it. That is
+ * what a raw stream is for: following every append in a store, inspecting a stored event a typed
+ * stream cannot read, checking whether an event is present before an import — paths that look inside
+ * few of the events they read, and that want the payload in a form any JSON library can take. A caller
+ * that wants a tree parses the string with the mapper of its choice. The alternative — parsing every
+ * payload into a Jackson {@code JsonNode} — loses because the api module cannot name that type, so
+ * the stream had to be an {@code EventSource<Object>} whose value only a caller importing Jackson 3
+ * could use; and because it paid a parse per event on the one read path that never needed one. The
+ * storage guarantees that what it holds is a JSON document (a payload that is not one is refused on
+ * append and on import), so nothing is lost by not parsing it here.
  *
  * <h2>Protected values are not decrypted here</h2>
  * A raw stream has no {@link org.sliceworkz.eventstore.shredding.ShreddingCodec} and no keys, so a
@@ -46,21 +50,17 @@ import tools.jackson.databind.JsonNode;
  * @see EventPayloadSerializerDeserializer#raw()
  */
 public class RawEventPayloadSerializerDeserializer extends AbstractEventPayloadSerializerDeserializer {
-	
+
+	/**
+	 * Hands the stored JSON document back as it is, under its stored type.
+	 * <p>
+	 * Never throws an {@link org.sliceworkz.eventstore.events.EventDeserializationException}: there is
+	 * no mapping to fail on and no parse to fail in, which is what makes a raw stream the way to read
+	 * an event a typed stream chokes on.
+	 */
 	@Override
 	public List<TypeAndPayload> deserialize ( TypeAndSerializedPayload serialized ) {
-		JsonNode object;
-		try {
-			object = objectMapper.readTree(serialized.immutablePayload());
-		} catch (JacksonException e) {
-			// One catch, not two: DatabindException is a JacksonException, and naming which of the two
-			// it was added nothing the cause does not already say.
-			throw new EventDeserializationException(serialized.type(),
-					"Failed to parse stored JSON for event type '%s' in raw mode: %s".formatted(
-							serialized.type().name(), e.getOriginalMessage()),
-					e);
-		}
-		return List.of(new TypeAndPayload(serialized.type(), object));
+		return List.of(new TypeAndPayload(serialized.type(), serialized.immutablePayload()));
 	}
 
 	@Override

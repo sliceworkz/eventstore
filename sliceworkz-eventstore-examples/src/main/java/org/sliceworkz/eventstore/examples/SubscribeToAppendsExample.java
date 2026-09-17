@@ -67,7 +67,7 @@ public class SubscribeToAppendsExample {
 		try ( EventStore eventstore = builder.buildStore() ) {
 
 			// we open a (readonly) eventstream that sees all events
-			EventSource<Object> stream = eventstore.getRawEventStream(EventStreamId.anyContext());
+			EventSource<String> stream = eventstore.getRawEventStream(EventStreamId.anyContext());
 
 			// the newest stored event is our starting point: head() names it without reading it (absent for an empty stream: follow from the beginning)
 			Handle<EventReference> lastSeen = Handle.of(stream.head().orElse(null));
@@ -80,7 +80,7 @@ public class SubscribeToAppendsExample {
 				public synchronized EventReference eventsAppended(EventReference atLeastUntil) {
 
 					// each time we are notified, we query any events after the last we've seen ...
-					List<Event<Object>> events = stream.query(EventQuery.matchAll(), lastSeen.get());
+					List<Event<String>> events = stream.query(EventQuery.matchAll(), lastSeen.get());
 					events.forEach(System.out::println);
 
 					// and change our reference point

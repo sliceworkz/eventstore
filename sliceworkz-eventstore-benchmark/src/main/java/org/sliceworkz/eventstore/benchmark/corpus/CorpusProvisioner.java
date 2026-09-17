@@ -457,12 +457,17 @@ public final class CorpusProvisioner {
 	/**
 	 * The mean serialized size of a sample of events, so the report can state what a payload profile
 	 * actually costs rather than what its name suggests.
+	 *
+	 * <p>Measured on a compact re-rendering of each document rather than on the text the backend hands
+	 * back, which is the backend's own rendering -- Postgres pads its {@code jsonb} output with spaces
+	 * -- so the figure describes the payload profile and not the storage, and is the same for every
+	 * target holding the same corpus.
 	 */
 	public static OptionalDouble meanPayloadBytes ( BenchmarkTarget target, String context, int sampleSize ) {
-		EventSource<Object> raw = target.store()
+		EventSource<String> raw = target.store()
 				.getRawEventStream(EventStreamId.forContext(context).anyPurpose());
 		return raw.query(EventQuery.matchAll().limit(sampleSize)).stream()
-				.mapToInt(event -> JSON.writeValueAsString(event.data()).length())
+				.mapToInt(event -> JSON.writeValueAsString(JSON.readTree(event.data())).length())
 				.average();
 	}
 

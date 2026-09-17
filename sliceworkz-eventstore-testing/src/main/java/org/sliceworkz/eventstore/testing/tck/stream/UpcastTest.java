@@ -103,19 +103,19 @@ public class UpcastTest extends AbstractEventStoreTest {
 		assertEquals(originalEvents.get(2).reference(), newEvents.get(2).reference());
 
 		// verify reading the raw stream still shows all historical details
-		EventSource<?> rawStream = eventStore().getRawEventStream(streamId);
-		List<? extends Event<?>> rawEvents = rawStream.query(EventQuery.matchAll());
+		EventSource<String> rawStream = eventStore().getRawEventStream(streamId);
+		List<Event<String>> rawEvents = rawStream.query(EventQuery.matchAll());
 
 		assertEquals(6, rawEvents.size());
 
 		assertEquals(EventType.ofType("CustomerRegistered"), rawEvents.get(0).type());
 		assertEquals(EventType.ofType("CustomerRegistered"), rawEvents.get(0).storedType());
-		assertTrue(rawEvents.get(0).data().toString().contains("John"));
+		assertTrue(rawEvents.get(0).data().contains("John"));
 		assertEquals(1, rawEvents.get(0).reference().position());
 
 		assertEquals(EventType.ofType("CustomerNameChanged"), rawEvents.get(1).type());
 		assertEquals(EventType.ofType("CustomerNameChanged"), rawEvents.get(1).storedType());
-		assertTrue(rawEvents.get(1).data().toString().contains("Jane"));
+		assertTrue(rawEvents.get(1).data().contains("Jane"));
 		assertEquals(2, rawEvents.get(1).reference().position());
 
 		assertEquals(EventType.ofType("CustomerChurned"), rawEvents.get(2).type());

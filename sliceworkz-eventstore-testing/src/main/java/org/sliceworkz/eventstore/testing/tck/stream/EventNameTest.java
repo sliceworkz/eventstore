@@ -139,8 +139,8 @@ public class EventNameTest extends AbstractEventStoreTest {
 		assertEquals("CustomerRegistered", appended.getFirst().storedType().name());
 
 		// and so does the stored row, seen without any type mapping at all
-		EventSource<Object> raw = eventStore().getRawEventStream(customers);
-		List<Event<Object>> stored = raw.query(EventQuery.matchAll());
+		EventSource<String> raw = eventStore().getRawEventStream(customers);
+		List<Event<String>> stored = raw.query(EventQuery.matchAll());
 		assertEquals(1, stored.size());
 		assertEquals("CustomerRegistered", stored.getFirst().type().name());
 		assertEquals("CustomerRegistered", stored.getFirst().storedType().name());

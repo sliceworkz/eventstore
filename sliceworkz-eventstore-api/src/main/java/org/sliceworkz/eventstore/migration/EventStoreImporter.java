@@ -99,7 +99,7 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  * some of the events can look them up through the public API — but must do so in <em>raw</em> mode:
  * <pre>{@code
  * // raw: no event root classes registered, therefore no upcasting
- * EventSource<Object> probe = eventStore.getRawEventStream(EventStreamId.anyContext());
+ * EventSource<String> probe = eventStore.getRawEventStream(EventStreamId.anyContext());
  * boolean present = !probe.getEventById(id).isEmpty();
  * }</pre>
  * Registering domain classes would run the event through upcasting, and an event whose upcast yields no

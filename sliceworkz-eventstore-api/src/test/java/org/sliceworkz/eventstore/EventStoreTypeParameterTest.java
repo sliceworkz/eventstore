@@ -45,8 +45,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Pins that the single-class {@code getEventStream} overloads fix the stream's type parameter, and that
- * {@code getRawEventStream} fixes its own: a read-only {@code EventSource<Object>}, assignable to no
- * domain-typed stream.
+ * {@code getRawEventStream} fixes its own: a read-only {@code EventSource<String>} over the stored JSON
+ * documents, assignable to no domain-typed stream.
  * <p>
  * The guarantee is a compile-time one, so the only way to test it is to compile: each probe below is
  * handed to javac against this module's classes, and the test asserts which probes it rejects and which it
@@ -116,14 +116,14 @@ public class EventStoreTypeParameterTest {
 	}
 
 	@Test
-	void aRawStreamIsAReadOnlySourceOfObjects ( ) {
-		assertAccepted("EventSource<Object> s = store.getRawEventStream(id);");
+	void aRawStreamIsAReadOnlySourceOfJsonDocuments ( ) {
+		assertAccepted("EventSource<String> s = store.getRawEventStream(id);");
 	}
 
 	@Test
 	void aRawStreamCannotBeTypedAsADomainStream ( ) {
-		// the trap a free type parameter would leave open: a JSON tree under the domain type, found out
-		// at the first switch over data() as a ClassCastException
+		// the trap a free type parameter would leave open: a JSON document under the domain type, found
+		// out at the first switch over data() as a ClassCastException
 		assertRejected("EventSource<CustomerEvent> s = store.getRawEventStream(id);");
 	}
 

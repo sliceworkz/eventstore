@@ -431,11 +431,11 @@ class InMemoryEventStorageImpl implements EventStorage {
 	 */
 	private void verifyPersistableJson ( List<EventToStore> newEvents ) {
 		for ( EventToStore e : newEvents ) {
-			if ( e.immutableData() == null ) {
+			if ( e.payload() == null ) {
 				throw new EventStorageException("event of type %s to append on stream %s carries no payload".formatted(e.type().name(), e.stream()));
 			}
 			try {
-				if ( jsonMapper.readTree(e.immutableData()).isMissingNode() ) {
+				if ( jsonMapper.readTree(e.payload()).isMissingNode() ) {
 					throw new EventStorageException("event of type %s to append on stream %s carries an empty payload".formatted(e.type().name(), e.stream()));
 				}
 			} catch (JacksonException ex) {
@@ -598,8 +598,8 @@ class InMemoryEventStorageImpl implements EventStorage {
 	 */
 	private void verifyImportableJson ( EventToImport event ) {
 		try {
-			if ( jsonMapper.readTree(event.immutableData()).isMissingNode() ) {
-				throw new EventStorageException("event %s to import carries an empty immutable payload".formatted(event.id().value()));
+			if ( jsonMapper.readTree(event.payload()).isMissingNode() ) {
+				throw new EventStorageException("event %s to import carries an empty payload".formatted(event.id().value()));
 			}
 		} catch (JacksonException e) {
 			throw new EventStorageException("event %s to import does not carry valid JSON".formatted(event.id().value()), e);

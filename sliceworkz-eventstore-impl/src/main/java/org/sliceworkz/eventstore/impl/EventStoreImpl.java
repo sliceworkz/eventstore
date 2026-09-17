@@ -791,7 +791,7 @@ public class EventStoreImpl implements EventStore {
 		private List<Event<EVENT_TYPE>> enrich ( StoredEvent storedEvent, Direction direction ) {
 			List<TypeAndPayload> results;
 			try {
-				results = serde.deserialize(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.immutableData()));
+				results = serde.deserialize(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.payload()));
 			} catch (EventDeserializationException e) {
 				// The serde is handed a type and a JSON string, so it cannot say *which* stored event
 				// failed -- and that is the one fact a caller needs to dead-letter or skip a poison event.

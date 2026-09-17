@@ -362,7 +362,7 @@ public interface EventStore extends AutoCloseable {
 	 * concrete or wildcard.
 	 * <p>
 	 * <b>{@code data()} is the stored JSON document, a {@link String}</b>, as the storage answers it:
-	 * the same text {@link org.sliceworkz.eventstore.spi.EventStorage.StoredEvent#immutableData()}
+	 * the same text {@link org.sliceworkz.eventstore.spi.EventStorage.StoredEvent#payload()}
 	 * carries and an import writes, parsed by nothing on the way out. It need not be byte for byte what
 	 * was appended — PostgreSQL hands back its {@code jsonb} rendering, and a file-backed store re-renders
 	 * what it reloaded — but it is the same document. A caller that wants to look inside parses it with

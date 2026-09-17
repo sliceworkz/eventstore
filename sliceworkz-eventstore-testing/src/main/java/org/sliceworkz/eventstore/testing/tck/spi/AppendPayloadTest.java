@@ -70,7 +70,7 @@ public class AppendPayloadTest extends AbstractEventStoreTest {
 		// equivalent, not byte-identical: a storage keeps the document, not its rendering. Postgres's
 		// jsonb re-renders it (its own whitespace, keys reordered, duplicate keys collapsed), so the
 		// contract a caller may rely on is the parsed document, which is what the serde reads
-		assertEquals("{\"a\":1}", withoutWhitespace(allEvents().getFirst().immutableData()));
+		assertEquals("{\"a\":1}", withoutWhitespace(allEvents().getFirst().payload()));
 	}
 
 	private static String withoutWhitespace ( String json ) {

@@ -304,7 +304,7 @@ public class EventImportTest extends AbstractEventStoreTest {
 	@ForEachBackend(requires = Capability.IMPORT)
 	void testInvalidJsonPayloadIsRejected ( ) {
 		List<StoredEvent> sourceEvents = seedSource();
-		List<EventToImport> batch = List.of(toImport(sourceEvents).getFirst().withImmutableData("not json at all"));
+		List<EventToImport> batch = List.of(toImport(sourceEvents).getFirst().withPayload("not json at all"));
 
 		assertThrows(EventStorageException.class, () -> target.importEvents(batch, ImportMode.FAIL_ON_EXISTING_ID));
 		assertTrue(allEventsIn(target).isEmpty());

@@ -68,7 +68,28 @@ class JsonEventCodecTest {
 		assertTrue(json.contains("\"context\" : \"ctx\""));
 		assertTrue(json.contains("\"purpose\" : \"p\""));
 		assertTrue(json.contains("\"type\" : \"CustomerRegistered\""));
+		assertTrue(json.contains("\"payload\" : {"));
+		assertTrue(json.contains("\"name\" : \"John Doe\""));
 		assertTrue(json.contains("\"customer\""));
+	}
+
+	@Test
+	void readsAPayloadStoredUnderImmutableData ( ) {
+		String json = """
+				{
+				  "stream": { "context": "ctx", "purpose": "p" },
+				  "type": "CustomerRegistered",
+				  "reference": { "id": "id-1", "position": 1, "tx": 1, "index": 0 },
+				  "immutableData": { "name": "John Doe" },
+				  "tags": [],
+				  "timestamp": "2026-04-19T12:34:56.789Z",
+				  "idempotencyKey": null
+				}
+				""";
+
+		StoredEvent restored = codec.read(json);
+
+		assertEquals("{\"name\":\"John Doe\"}", restored.payload());
 	}
 
 	@Test
@@ -134,7 +155,7 @@ class JsonEventCodecTest {
 	}
 
 	@Test
-	void preservesNullImmutableData ( ) {
+	void preservesNullPayload ( ) {
 		StoredEvent event = new StoredEvent(
 				EventStreamId.forContext("ctx").withPurpose("p"),
 				EventType.named("NoData"),
@@ -145,7 +166,7 @@ class JsonEventCodecTest {
 
 		StoredEvent restored = codec.read(codec.write(event));
 
-		assertNull(restored.immutableData());
+		assertNull(restored.payload());
 	}
 
 }

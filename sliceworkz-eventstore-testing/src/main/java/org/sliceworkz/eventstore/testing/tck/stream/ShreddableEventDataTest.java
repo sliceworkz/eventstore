@@ -101,7 +101,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		// is stored, which is exactly what an import or an export sees
 		String stored = eventStorage()
 				.query(EventFilter.matchAll(), STREAM, null, org.sliceworkz.eventstore.query.Limit.none()).stream()
-				.findFirst().orElseThrow().immutableData();
+				.findFirst().orElseThrow().payload();
 
 		assertFalse(stored.contains("Alice Martin"), "the payload still holds personal data in the clear: " + stored);
 		assertFalse(stored.contains("BE68 5390 0754 7034"), "the payload still holds personal data in the clear: " + stored);

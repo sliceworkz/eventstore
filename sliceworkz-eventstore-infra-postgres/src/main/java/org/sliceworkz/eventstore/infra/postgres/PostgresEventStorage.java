@@ -499,7 +499,7 @@ public interface PostgresEventStorage extends EventStorage {
 			if ( mode == null ) {
 				throw new IllegalArgumentException("databaseInitMode must not be null");
 			}
-			this.databaseInitMode = mode.canonical();
+			this.databaseInitMode = mode;
 			return this;
 		}
 
@@ -642,18 +642,6 @@ public interface PostgresEventStorage extends EventStorage {
 		public Builder recreateDatabase ( ) {
 			this.databaseInitMode = DatabaseInitMode.RECREATE;
 			return this;
-		}
-
-		/**
-		 * The former name of {@link #recreateDatabase()}, which it delegates to.
-		 *
-		 * @return this Builder for method chaining
-		 * @deprecated the mode drops and recreates the schema, and is named for it: use
-		 *             {@link #recreateDatabase()}
-		 */
-		@Deprecated(since = "0.11.0", forRemoval = true)
-		public Builder initializeDatabase ( ) {
-			return recreateDatabase();
 		}
 
 		/**

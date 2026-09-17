@@ -200,7 +200,7 @@ CREATE TABLE IF NOT EXISTS events (
 -- CREATE OR REPLACE, not a create-if-absent guard: a function body changed by a later release has
 -- to reach databases that already have the old one. A guard that skips an existing function leaves
 -- the old body in place forever and reports success -- and because drop-schema.sql only drops the
--- tables, not even INITIALIZE would replace it.
+-- tables, not even RECREATE would replace it.
 CREATE OR REPLACE FUNCTION notify_event_appended()
 RETURNS trigger AS $fn$
 DECLARE

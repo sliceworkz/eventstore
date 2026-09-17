@@ -64,12 +64,6 @@ public class EventTypeTest {
 		assertEquals(EventType.of(MockDomainObject.CustomerSignedUp.class), EventType.named("CustomerRegistered"));
 	}
 
-	@Test
-	@SuppressWarnings("removal")
-	void ofTypeIsTheDeprecatedNameOfNamed ( ) {
-		assertEquals(EventType.named("CustomerRegistered"), EventType.ofType("CustomerRegistered"));
-	}
-
 	public sealed interface MockDomainObject {
 		record SomeMockDomainOject ( String value ) implements MockDomainObject { }
 		@EventName("CustomerRegistered")

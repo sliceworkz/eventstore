@@ -935,7 +935,7 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		@Override
-		public List<Event<EVENT_TYPE>> append(AppendCriteria appendCriteria, List<EphemeralEvent<? extends EVENT_TYPE>> events) {
+		public List<Event<EVENT_TYPE>> append(AppendCriteria appendCriteria, List<? extends EphemeralEvent<? extends EVENT_TYPE>> events) {
 			checkStoreNotClosed();
 
 			// A wildcard stream is a source. An event is stored in exactly one stream, and a wildcard

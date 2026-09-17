@@ -48,6 +48,8 @@ import org.junit.jupiter.api.io.TempDir;
  * {@code getRawEventStream} fixes its own: a read-only {@code EventSource<String>} over the stored JSON
  * documents, assignable to no domain-typed stream. Also that {@code EventType.of} takes a class and
  * nothing else, so a stored name passed to it is a compile error rather than the type named {@code String}.
+ * And that an append takes the batch as {@code List<? extends EphemeralEvent<? extends E>>}, so an ordinary
+ * list of one event type needs no type witness while a list of a foreign one is still refused.
  * <p>
  * The guarantee is a compile-time one, so the only way to test it is to compile: each probe below is
  * handed to javac against this module's classes, and the test asserts which probes it rejects and which it
@@ -58,9 +60,12 @@ import org.junit.jupiter.api.io.TempDir;
 public class EventStoreTypeParameterTest {
 
 	private static final String PROBE_PRELUDE = """
+			import java.util.List;
 			import java.util.Set;
 			import org.sliceworkz.eventstore.EventStore;
+			import org.sliceworkz.eventstore.events.EphemeralEvent;
 			import org.sliceworkz.eventstore.events.EventType;
+			import org.sliceworkz.eventstore.stream.AppendCriteria;
 			import org.sliceworkz.eventstore.stream.EventSource;
 			import org.sliceworkz.eventstore.stream.EventStream;
 			import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -69,8 +74,11 @@ public class EventStoreTypeParameterTest {
 				interface CustomerEvent { }
 				interface LegacyCustomerEvent { }
 				interface OrderEvent { }
+				record CustomerRegistered ( String name ) implements CustomerEvent { }
 
-				void probe ( EventStore store, EventStreamId id ) {
+				void probe ( EventStore store, EventStreamId id,
+						List<EphemeralEvent<CustomerRegistered>> batch,
+						List<EphemeralEvent<OrderEvent>> foreign ) {
 			""";
 
 	private static final String PROBE_EPILOGUE = """
@@ -80,6 +88,9 @@ public class EventStoreTypeParameterTest {
 
 	// javac's key for "incompatible types", stable across locales and versions
 	private static final String INCOMPATIBLE_TYPES = "compiler.err.prob.found.req";
+
+	// javac's key for "no suitable method found", which is how an argument is rejected on an overloaded method
+	private static final String NO_APPLICABLE_METHOD = "compiler.err.cant.apply.symbols";
 
 	@TempDir
 	Path outputDirectory;
@@ -135,6 +146,22 @@ public class EventStoreTypeParameterTest {
 	}
 
 	@Test
+	void anOrdinaryListOfOneEventTypeIsAppendableWithoutATypeWitness ( ) {
+		// List is invariant, so a List<EphemeralEvent<CustomerRegistered>> only fits a parameter that
+		// wildcards the list too. Without that, every call site mapping domain events into ephemeral ones
+		// has to name the parameter type -- .<EphemeralEvent<? extends CustomerEvent>>map(...) -- to say
+		// what the signature can say once
+		assertAccepted("store.getEventStream(id, CustomerEvent.class).append(batch);");
+		assertAccepted("store.getEventStream(id, CustomerEvent.class).append(AppendCriteria.none(), batch);");
+	}
+
+	@Test
+	void aBatchOfAForeignEventTypeStillDoesNotCompile ( ) {
+		// what the inner wildcard keeps: widening the list must not widen what may go in it
+		assertRejected("store.getEventStream(id, CustomerEvent.class).append(foreign);", NO_APPLICABLE_METHOD);
+	}
+
+	@Test
 	void anEventTypeIsNamedByAClassAndNotByAnInstance ( ) {
 		assertAccepted("EventType t = EventType.of(CustomerEvent.class);");
 		// the trap an of(Object) overload beside of(Class) leaves open: a stored name passed by mistake
@@ -143,11 +170,15 @@ public class EventStoreTypeParameterTest {
 	}
 
 	private void assertRejected ( String statement ) {
+		assertRejected(statement, INCOMPATIBLE_TYPES);
+	}
+
+	private void assertRejected ( String statement, String expectedCode ) {
 		List<Diagnostic<? extends JavaFileObject>> errors = compile(statement);
 		assertFalse(errors.isEmpty(), "javac accepted: " + statement);
 		Diagnostic<? extends JavaFileObject> error = errors.get(0);
-		assertEquals(INCOMPATIBLE_TYPES, error.getCode(),
-				"javac rejected the probe, but not as a type mismatch: " + error.getMessage(Locale.ENGLISH));
+		assertEquals(expectedCode, error.getCode(),
+				"javac rejected the probe, but not for the expected reason: " + error.getMessage(Locale.ENGLISH));
 		assertEquals(probeLine(), error.getLineNumber(),
 				"javac rejected something other than the probe statement: " + error.getMessage(Locale.ENGLISH));
 	}

@@ -20,7 +20,6 @@ package org.sliceworkz.eventstore.examples;
 import java.util.List;
 
 import org.sliceworkz.eventstore.EventStore;
-import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventHandler;
 import org.sliceworkz.eventstore.events.EventReference;
@@ -103,7 +102,7 @@ public class AggregateAndDCBExample {
 	    students.append(
 	        AppendCriteria.of(studentQuery(student.studentId), student.lastEventReference()),
 	        events.stream()
-	            .<EphemeralEvent<? extends StudentDomainEvent>>map(e -> Event.of(e, Tags.of("student", student.studentId)))
+	            .map(e -> Event.of(e, Tags.of("student", student.studentId)))
 	            .toList()
 	    );
 	}
@@ -128,7 +127,7 @@ public class AggregateAndDCBExample {
 	    courses.append(
 	        AppendCriteria.of(courseQuery(course.courseId), course.lastEventReference()),
 	        events.stream()
-	            .<EphemeralEvent<? extends CourseDomainEvent>>map(e -> Event.of(e, Tags.of("course", course.courseId)))
+	            .map(e -> Event.of(e, Tags.of("course", course.courseId)))
 	            .toList()
 	    );
 	}

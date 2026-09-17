@@ -25,10 +25,10 @@ import java.util.Optional;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventFilter;
+import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
-import org.sliceworkz.eventstore.spi.EventStorage.QueryDirection;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -53,7 +53,7 @@ public class StreamScopeTest extends AbstractEventStoreTest {
 	}
 
 	private List<StoredEvent> read ( EventStreamId scope ) {
-		return eventStorage().query(EventFilter.matchAll(), scope, null, Limit.none(), QueryDirection.FORWARD);
+		return eventStorage().query(EventFilter.matchAll(), scope, null, Limit.none(), Direction.FORWARD);
 	}
 
 	@ForEachBackend
@@ -61,7 +61,7 @@ public class StreamScopeTest extends AbstractEventStoreTest {
 		EventStorage storage = eventStorage();
 
 		assertThrows(IllegalArgumentException.class,
-				() -> storage.query(EventFilter.matchAll(), null, null, Limit.none(), QueryDirection.FORWARD));
+				() -> storage.query(EventFilter.matchAll(), null, null, Limit.none(), Direction.FORWARD));
 		assertThrows(IllegalArgumentException.class,
 				() -> storage.append(AppendCriteria.none(), null, List.of(event(ORDERS, "OrderPlaced"))));
 		assertThrows(IllegalArgumentException.class, () -> storage.head(null));

@@ -29,13 +29,13 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventFilter;
+import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorage.AppendsToEventStoreNotification;
 import org.sliceworkz.eventstore.spi.EventStorage.BookmarkPlacedNotification;
 import org.sliceworkz.eventstore.spi.EventStorage.EventStoreListener;
 import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
-import org.sliceworkz.eventstore.spi.EventStorage.QueryDirection;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -70,7 +70,7 @@ public class AppendIdempotencyTest extends AbstractEventStoreTest {
 	}
 
 	private List<StoredEvent> allEvents ( ) {
-		return eventStorage().query(EventFilter.matchAll(), stream, null, Limit.none(), QueryDirection.FORWARD);
+		return eventStorage().query(EventFilter.matchAll(), stream, null, Limit.none(), Direction.FORWARD);
 	}
 
 	@ForEachBackend

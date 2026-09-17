@@ -37,6 +37,7 @@ import org.sliceworkz.eventstore.events.Lease;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.query.EventFilter;
+import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.serialization.json.JsonBookmark;
 import org.sliceworkz.eventstore.serialization.json.JsonBookmarkCodec;
@@ -113,8 +114,8 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 	}
 
 	@Override
-	public List<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit, QueryDirection queryDirection ) {
-		return delegate.query(filter, stream, after, limit, queryDirection);
+	public List<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit, Direction direction ) {
+		return delegate.query(filter, stream, after, limit, direction);
 	}
 
 	@Override

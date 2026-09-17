@@ -30,6 +30,7 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventFilter;
+import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -89,7 +90,7 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  *
  *     @Override
  *     public List<StoredEvent> query(EventFilter filter, EventStreamId stream,
- *                                    EventReference after, Limit limit, QueryDirection direction) {
+ *                                    EventReference after, Limit limit, Direction direction) {
  *         // 1. Filter events by stream (a wildcard component reads across it)
  *         // 2. Apply event type filters from the filter
  *         // 3. Apply tag filters and the until boundary from the filter
@@ -207,7 +208,12 @@ public interface EventStorage extends AutoCloseable {
 	 * {@link org.sliceworkz.eventstore.query.EventQuery}, which carries both. A backend is therefore
 	 * never handed two limits or two directions and left to decide which wins. The stream layer derives
 	 * both from the query it was given and passes them here; a caller overriding the query's own limit
-	 * — a projector paging in batches — passes its own.
+	 * — a projector paging in batches — passes its own. Both arrive as the query's own types,
+	 * {@link Limit} and {@link Direction EventQuery.Direction}: this SPI declares no direction type of
+	 * its own. The alternative — an enum here with the same two values — loses because it says one
+	 * thing in two types, so every path from a query to a backend carries a translation between them,
+	 * and it buys nothing, since this method already names {@link EventFilter}, {@link Limit} and
+	 * {@link EventStreamId} from the query and stream packages.
 	 * <p>
 	 * Query Parameters:
 	 * <ul>
@@ -218,7 +224,7 @@ public interface EventStorage extends AutoCloseable {
 	 *   <li><b>after</b> - Starting reference point; events after this reference are returned. Null
 	 *       starts at the beginning (or, going backward, at the end)</li>
 	 *   <li><b>limit</b> - Maximum number of events to return (or unlimited)</li>
-	 *   <li><b>queryDirection</b> - Direction of traversal (FORWARD or BACKWARD)</li>
+	 *   <li><b>direction</b> - Direction of traversal (FORWARD or BACKWARD)</li>
 	 * </ul>
 	 * <p>
 	 * Query Direction:
@@ -261,21 +267,21 @@ public interface EventStorage extends AutoCloseable {
 	 * @param stream the stream to read, with a wildcard component to read across it; never null
 	 * @param after the reference point to start querying after (exclusive - events after this reference), or null
 	 * @param limit maximum number of events to read; {@link Limit#none()} reads everything matching
-	 * @param queryDirection the direction of query traversal (FORWARD or BACKWARD)
+	 * @param direction the direction of query traversal (FORWARD or BACKWARD)
 	 * @return the stored events matching the filter, read in full
 	 * @throws IllegalArgumentException if the stream is null
 	 * @throws EventStorageException if an error occurs during query execution
 	 * @see EventFilter
-	 * @see QueryDirection
+	 * @see Direction
 	 * @see StoredEvent
 	 */
-	List<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit, QueryDirection queryDirection );
+	List<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit, Direction direction );
 
 	/**
 	 * Queries events from storage in forward (chronological) direction.
 	 * <p>
-	 * This is a convenience method that delegates to {@link #query(EventFilter, EventStreamId, EventReference, Limit, QueryDirection)}
-	 * with {@link QueryDirection#FORWARD}. Events are returned in chronological order from oldest to newest.
+	 * This is a convenience method that delegates to {@link #query(EventFilter, EventStreamId, EventReference, Limit, Direction)}
+	 * with {@link Direction#FORWARD}. Events are returned in chronological order from oldest to newest.
 	 *
 	 * @param filter the event filter defining type and tag criteria and the until boundary
 	 * @param stream the stream to read, with a wildcard component to read across it; never null
@@ -284,10 +290,10 @@ public interface EventStorage extends AutoCloseable {
 	 * @return the stored events matching the filter in chronological order, read in full
 	 * @throws IllegalArgumentException if the stream is null
 	 * @throws EventStorageException if an error occurs during query execution
-	 * @see #query(EventFilter, EventStreamId, EventReference, Limit, QueryDirection)
+	 * @see #query(EventFilter, EventStreamId, EventReference, Limit, Direction)
 	 */
 	default List<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit ) {
-		return query ( filter, stream, after, limit, QueryDirection.FORWARD);
+		return query ( filter, stream, after, limit, Direction.FORWARD);
 	}
 
 	/**
@@ -425,7 +431,7 @@ public interface EventStorage extends AutoCloseable {
 	 * @throws EventStorageClosedException if the storage has been closed
 	 */
 	default Optional<EventReference> head ( EventStreamId stream ) {
-		return query(EventFilter.matchAll(), stream, null, Limit.to(1), QueryDirection.BACKWARD)
+		return query(EventFilter.matchAll(), stream, null, Limit.to(1), Direction.BACKWARD)
 				.stream()
 				.findFirst()
 				.map(StoredEvent::reference);
@@ -516,28 +522,6 @@ public interface EventStorage extends AutoCloseable {
 	 */
 	default void unsubscribe ( EventStoreListener listener ) {
 		// backends predating this method keep their listeners forever; the TCK reports it
-	}
-
-	/**
-	 * Defines the direction of event query traversal.
-	 * <p>
-	 * This enum controls how events are ordered when retrieved from storage.
-	 * The direction affects the order of results but not which events are matched.
-	 *
-	 * @see #query(EventFilter, EventStreamId, EventReference, Limit, QueryDirection)
-	 */
-	enum QueryDirection {
-		/**
-		 * Events are returned in chronological order (oldest to newest).
-		 * This is the default direction for most query operations.
-		 */
-		FORWARD,
-
-		/**
-		 * Events are returned in reverse chronological order (newest to oldest).
-		 * Useful for retrieving recent events or working backwards through history.
-		 */
-		BACKWARD
 	}
 
 	/**
@@ -1050,7 +1034,7 @@ public interface EventStorage extends AutoCloseable {
 	 *                       scoped to the event stream (context and purpose)
 	 * @see EventToStore
 	 * @see EventReference
-	 * @see #query(EventFilter, EventStreamId, EventReference, Limit, QueryDirection)
+	 * @see #query(EventFilter, EventStreamId, EventReference, Limit, Direction)
 	 */
 	public record StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String immutableData, Tags tags, Instant timestamp, String idempotencyKey ) {
 

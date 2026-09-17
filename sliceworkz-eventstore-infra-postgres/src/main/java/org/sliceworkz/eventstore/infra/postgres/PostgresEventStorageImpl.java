@@ -74,6 +74,7 @@ import org.sliceworkz.eventstore.events.Lease;
 import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventFilter;
+import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.EventFilterItem;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec;
@@ -1464,7 +1465,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	}
 
 	@Override
-	public List<StoredEvent> query(EventFilter filter, EventStreamId stream, EventReference after, Limit limit, QueryDirection direction ) {
+	public List<StoredEvent> query(EventFilter filter, EventStreamId stream, EventReference after, Limit limit, Direction direction ) {
 		checkNotClosed();
 		requireStream(stream);
 		// Handle the case where the filter matches none - return empty stream
@@ -1500,7 +1501,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		}
 		
 		// Order by position
-		if ( direction == QueryDirection.BACKWARD ) {
+		if ( direction == Direction.BACKWARD ) {
 			sqlBuilder.append(" ORDER BY event_tx::xid8 DESC, event_position DESC");
 		} else {
 			sqlBuilder.append(" ORDER BY event_tx::xid8, event_position ");
@@ -1577,12 +1578,12 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 */
 	// package-private, not private: PostgresCursorBoundaryTest builds an EXPLAIN around the predicate
 	// this produces, so that the plan it asserts on is the store's own SQL and not a copy.
-	void addCursorBoundary(StringBuilder sqlBuilder, List<Object> parameters, EventReference after, QueryDirection direction) {
+	void addCursorBoundary(StringBuilder sqlBuilder, List<Object> parameters, EventReference after, Direction direction) {
 		if ( after == null ) {
 			return;
 		}
 		appendTupleBoundary(sqlBuilder, parameters, after,
-				direction == QueryDirection.FORWARD ? ">" : "<");
+				direction == Direction.FORWARD ? ">" : "<");
 	}
 
 	/**
@@ -2106,7 +2107,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 					// readers see and EventReference.happenedAfter defines. See addCursorBoundary: on a
 					// position-only comparison a committed event that every reader sorts after the
 					// reference can carry a lower position, and the check would not see it.
-					addCursorBoundary(sqlBuilder, parameters, appendCriteria.expectedLastEventReference().get(), QueryDirection.FORWARD);
+					addCursorBoundary(sqlBuilder, parameters, appendCriteria.expectedLastEventReference().get(), Direction.FORWARD);
 				}
 
 

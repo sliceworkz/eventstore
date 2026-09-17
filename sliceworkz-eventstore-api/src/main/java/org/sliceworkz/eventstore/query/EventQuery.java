@@ -90,6 +90,12 @@ public record EventQuery ( EventFilter filter, Direction direction, Limit limit 
 
 	/**
 	 * Defines the traversal direction for event queries.
+	 * <p>
+	 * The direction affects the order events come back in, never which events match. It is also the
+	 * direction the storage SPI is asked with —
+	 * {@link org.sliceworkz.eventstore.spi.EventStorage#query(EventFilter, org.sliceworkz.eventstore.stream.EventStreamId, org.sliceworkz.eventstore.events.EventReference, Limit, Direction)}
+	 * takes it as it takes the query's {@link Limit} — so a query's direction reaches a backend as the
+	 * value it holds, with no second type to translate into.
 	 */
 	public enum Direction {
 		/** Events are returned in chronological order (oldest to newest). */

@@ -153,7 +153,7 @@ public class EventStoreBuilderTest {
 
 			assertThrows(EventStorageClosedException.class, () -> appendOne(store, "c-1"), "the closed store still serves");
 			assertEquals(1, storage.query(org.sliceworkz.eventstore.query.EventFilter.matchAll(), EventStreamId.anyContext(), null,
-					org.sliceworkz.eventstore.query.Limit.none(), EventStorage.QueryDirection.FORWARD).size(),
+					org.sliceworkz.eventstore.query.Limit.none(), org.sliceworkz.eventstore.query.EventQuery.Direction.FORWARD).size(),
 					"closing the store closed the storage it was built on");
 
 			// and the composition for one handle on both still applies

@@ -48,6 +48,7 @@ import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
 import org.sliceworkz.eventstore.projection.Projection;
 import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.query.EventQuery;
+import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
@@ -55,7 +56,6 @@ import org.sliceworkz.eventstore.spi.EventStorage.AppendsToEventStoreNotificatio
 import org.sliceworkz.eventstore.spi.EventStorage.BookmarkPlacedNotification;
 import org.sliceworkz.eventstore.spi.EventStorage.EventStoreListener;
 import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
-import org.sliceworkz.eventstore.spi.EventStorage.QueryDirection;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
@@ -438,7 +438,7 @@ public class PostgresVisibilityStallTest {
 		}
 
 		private List<StoredEvent> query ( EventStorage storage, EventQuery query, EventStreamId stream ) {
-			return storage.query(query.filter(), stream, null, Limit.none(), QueryDirection.FORWARD);
+			return storage.query(query.filter(), stream, null, Limit.none(), Direction.FORWARD);
 		}
 
 		private int visibleCount ( EventStorage storage, EventStreamId stream ) {

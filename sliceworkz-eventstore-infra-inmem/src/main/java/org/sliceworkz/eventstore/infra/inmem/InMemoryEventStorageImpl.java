@@ -43,6 +43,7 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Lease;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventFilter;
+import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.spi.EventImportConflictException;
@@ -278,10 +279,10 @@ public class InMemoryEventStorageImpl implements EventStorage {
 	 * @throws EventStorageException if the result exceeds the configured absolute limit
 	 * @see EventFilter
 	 * @see EventReference
-	 * @see QueryDirection
+	 * @see Direction
 	 */
 	@Override
-	public synchronized List<StoredEvent> query(EventFilter filter, EventStreamId stream, EventReference after, Limit limit, QueryDirection direction ) {
+	public synchronized List<StoredEvent> query(EventFilter filter, EventStreamId stream, EventReference after, Limit limit, Direction direction ) {
 		checkNotClosed();
 		requireStream(stream);
 		Stream<StoredEvent> on;
@@ -305,7 +306,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		// then either skip the wrong events or, going backward past the end of the log, throw on a
 		// negative skip.
 		if ( after != null ) {
-			if ( direction == QueryDirection.FORWARD ) {
+			if ( direction == Direction.FORWARD ) {
 				on = on.skip(countNotAfter(after));
 			} else {
 				on = on.skip(eventlog.size() - countBefore(after));
@@ -320,7 +321,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 		// below, which is where the exact comparison lives.
 		if ( filter.until() != null ) {
 			EventReference until = filter.until();
-			if ( direction == QueryDirection.BACKWARD ) {
+			if ( direction == Direction.BACKWARD ) {
 				on = on.dropWhile(e->e.reference().happenedAfter(until));
 			} else {
 				on = on.takeWhile(e->!e.reference().happenedAfter(until));
@@ -408,7 +409,7 @@ public class InMemoryEventStorageImpl implements EventStorage {
 			
 			// we query the stream with the event filter from the last event known as our reference
 			// we only need to fetch max 1 event to prove a locking issue
-			List<StoredEvent> newEvents = query(appendCriteria.eventFilter(), streamId, appendCriteria.expectedLastEventReference().orElse(null), Limit.to(1), QueryDirection.FORWARD);
+			List<StoredEvent> newEvents = query(appendCriteria.eventFilter(), streamId, appendCriteria.expectedLastEventReference().orElse(null), Limit.to(1), Direction.FORWARD);
 
 			// if there are no new events in the stream ...
 			if ( newEvents.isEmpty() ) {

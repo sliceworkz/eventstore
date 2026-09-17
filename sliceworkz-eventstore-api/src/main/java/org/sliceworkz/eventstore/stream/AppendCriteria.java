@@ -36,6 +36,28 @@ import org.sliceworkz.eventstore.query.EventQuery;
  * If any event deemed relevant by the {@link EventFilter} is found after the reference {@link Event}, no append is done.
  * Simple appends without locking (without relevant facts to consider) are possible with AppendCriteria.none()
  *
+ * <h2>The filter must not carry an {@code until} boundary</h2>
+ * An {@link EventFilter} carrying an {@link EventFilter#until(EventReference) until} reference matches
+ * no event after that reference — in a query and in this check alike, since both ask the same
+ * {@link EventFilter#matches(Event)}. A criteria built from such a filter therefore finds no new
+ * relevant fact by construction: every append is admitted, and {@link OptimisticLockingException} can
+ * never be raised. The check is not weakened, it is off, and nothing fails to say so.
+ * <p>
+ * This is worth stating because the recommended way to pin a boundary — {@link EventSource#head()}
+ * taken before the read — puts two forms of one query in the caller's hands, and only one of them
+ * belongs here:
+ * <pre>{@code
+ * EventQuery relevant = EventQuery.forTags(Tags.of("customer", "123"));
+ * EventReference head = stream.head().orElse(null);
+ *
+ * stream.query(relevant.until(head));                     // the READ is bounded at the head
+ * stream.append(AppendCriteria.of(relevant, head), ...);  // the CHECK gets the unbounded filter
+ * }</pre>
+ * Handing {@code relevant.until(head)} to {@link #of(EventQuery, EventReference)} instead — reusing
+ * "the query I read with", which reads as the more careful of the two — is what silently admits every
+ * append. The head belongs in {@code expectedLastEventReference}, where it bounds the check as a
+ * cursor and the matching events after it are what conflict; in the filter it bounds the check away.
+ *
  * @param eventFilter the filter defining which events are relevant for the consistency check
  * @param expectedLastEventReference the last known Event matching the filter that our decision was based upon, or Optional.empty() for none assumed (empty EventStream).
  *                                   Never null — a null handed to the canonical constructor is normalised to Optional.empty().
@@ -73,7 +95,13 @@ public record AppendCriteria ( EventFilter eventFilter, Optional<EventReference>
 	 * input side and {@link java.util.Optional#empty()} on the answering side (see
 	 * {@link EventReference}).
 	 *
-	 * @param eventFilter the filter defining relevant events for the consistency check
+	 * <p>
+	 * The filter must carry no {@link EventFilter#until(EventReference) until} boundary: one that does
+	 * matches nothing after it, so the check finds no new relevant fact and admits every append. Bound
+	 * the <em>read</em> at the head and leave the filter here unbounded — see the class javadoc.
+	 *
+	 * @param eventFilter the filter defining relevant events for the consistency check, carrying no
+	 *                    {@code until} boundary
 	 * @param reference the last known Event matching the filter that our decision was based upon, or null for an empty boundary
 	 * @return AppendCriteria for conditional appends
 	 */
@@ -84,8 +112,15 @@ public record AppendCriteria ( EventFilter eventFilter, Optional<EventReference>
 	/**
 	 * Convenience method that creates an AppendCriteria from an {@link EventQuery}, extracting its filter.
 	 * Direction and limit from the query are discarded — only the pure matching criteria matter for optimistic locking.
+	 * <p>
+	 * <b>An {@code until} boundary is not discarded</b>, because it is part of the filter rather than of
+	 * the query's traversal: {@code of(relevant.until(head), head)} produces a criteria that matches
+	 * nothing after {@code head} and so admits every append without ever raising
+	 * {@link OptimisticLockingException}. Pass the query as you built it and let the {@code until} form
+	 * bound the read only — see the class javadoc.
 	 *
-	 * @param eventQuery the query whose filter will be used for the consistency check
+	 * @param eventQuery the query whose filter will be used for the consistency check, carrying no
+	 *                   {@code until} boundary
 	 * @param reference the last known Event matching the query that our decision was based upon, or null for an empty boundary
 	 * @return AppendCriteria for conditional appends
 	 */

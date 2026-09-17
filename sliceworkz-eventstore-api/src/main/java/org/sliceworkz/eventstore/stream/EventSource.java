@@ -343,6 +343,21 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * the decision. The event at the head need not match the boundary's filter: the reference is a
 	 * cursor for the check, and only matching events after it count.
 	 * <p>
+	 * <b>The head goes to the reads as an {@code until}, and to the check as the expected last event —
+	 * never as an {@code until} on the criteria's filter.</b> Those are two forms of one query, and only
+	 * the second is a boundary:
+	 * <pre>{@code
+	 * EventQuery relevant = EventQuery.forTags(Tags.of("customer", "123"));
+	 * EventReference head = stream.head().orElse(null);
+	 *
+	 * stream.query(relevant.until(head));                     // the READ is bounded at the head
+	 * stream.append(AppendCriteria.of(relevant, head), ...);  // the CHECK gets the unbounded filter
+	 * }</pre>
+	 * An {@code until} bounds a consistency boundary exactly as it bounds a query, so a criteria built
+	 * from {@code relevant.until(head)} matches nothing after the head, finds no new relevant fact and
+	 * admits every append — optimistic locking off, with nothing raised and nothing logged. See
+	 * {@link AppendCriteria}.
+	 * <p>
 	 * Three properties make that sound, and the compliance suite holds every backend to them:
 	 * <ul>
 	 *   <li><b>It is what a query would see</b>, not what has been committed. Everything a later query

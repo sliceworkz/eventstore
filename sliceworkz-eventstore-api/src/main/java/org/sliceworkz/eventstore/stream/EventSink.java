@@ -136,6 +136,17 @@ public interface EventSink<DOMAIN_EVENT_TYPE> {
 	 * wildcard's purpose and never under its own; and it buys nothing the shared serde does not already
 	 * give, at the price of a second relation on {@link EventStreamId} beside
 	 * {@link EventStreamId#covers(EventStreamId)}, saying which stream may write to which.
+	 * <p>
+	 * <b>The batch is taken as {@code List<? extends EphemeralEvent<? extends DOMAIN_EVENT_TYPE>>}, so an
+	 * ordinary list of one event type fits.</b> A caller mapping its domain events into ephemeral ones
+	 * holds a {@code List<EphemeralEvent<CustomerRegistered>>}, or a {@code List<EphemeralEvent<CustomerEvent>>},
+	 * and {@code List} is invariant: without the outer wildcard neither is a
+	 * {@code List<EphemeralEvent<? extends CustomerEvent>>}, so every such call site has to name the
+	 * parameter type it is producing — {@code .<EphemeralEvent<? extends CustomerEvent>>map(...)} — to say
+	 * something the signature could have said once. The wildcard costs nothing here because the batch is
+	 * only ever read: this method serializes each event and hands the payloads to storage, and nothing
+	 * writes into the list. The events themselves keep the inner wildcard, so a batch may still mix event
+	 * types of the hierarchy; what the outer one adds is that a batch of one type needs no witness.
 	 *
 	 * @param appendCriteria the criteria determining whether the append should proceed (use AppendCriteria.none() for unconditional append)
 	 * @param events the list of ephemeral events to append
@@ -153,7 +164,7 @@ public interface EventSink<DOMAIN_EVENT_TYPE> {
 	 *         unlike an {@link org.sliceworkz.eventstore.spi.EventStorageException} from the same call
 	 * @see AppendCriteria
 	 */
-	List<Event<DOMAIN_EVENT_TYPE>> append ( AppendCriteria appendCriteria, List<EphemeralEvent<? extends DOMAIN_EVENT_TYPE>> events );
+	List<Event<DOMAIN_EVENT_TYPE>> append ( AppendCriteria appendCriteria, List<? extends EphemeralEvent<? extends DOMAIN_EVENT_TYPE>> events );
 
 	/**
 	 * Appends a single event to the stream with conditional logic based on append criteria.
@@ -199,7 +210,7 @@ public interface EventSink<DOMAIN_EVENT_TYPE> {
 	 *         written; nothing is stored
 	 * @see #append(AppendCriteria, List)
 	 */
-	default List<Event<DOMAIN_EVENT_TYPE>> append ( List<EphemeralEvent<? extends DOMAIN_EVENT_TYPE>> events ) {
+	default List<Event<DOMAIN_EVENT_TYPE>> append ( List<? extends EphemeralEvent<? extends DOMAIN_EVENT_TYPE>> events ) {
 		return append(AppendCriteria.none(), events);
 	}
 

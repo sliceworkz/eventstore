@@ -134,6 +134,18 @@ mvn clean install -DskipTests
   a stream typed wider than its roots. `EventStoreTypeParameterTest` in the api module pins it by running
   javac against probe snippets
 - Combines `EventSource` (reading) and `EventSink` (writing) interfaces
+- **An append takes `List<? extends EphemeralEvent<? extends DOMAIN_EVENT_TYPE>>`, so an ordinary list
+  of one event type fits.** A caller mapping its domain events into ephemeral ones holds a
+  `List<EphemeralEvent<CustomerRegistered>>`, and `List` is invariant, so without the outer wildcard
+  that list is not a `List<EphemeralEvent<? extends CustomerEvent>>`: every such call site has to name
+  the parameter type it is producing — `.<EphemeralEvent<? extends CustomerEvent>>map(...)` — to say
+  what the signature can say once, for a list the append only ever reads. The inner wildcard is what
+  still lets a batch mix event types of the hierarchy, and what still refuses a batch of a foreign
+  one; the outer one only removes the witness. Widening a parameter this way is source-compatible for
+  callers and leaves the erasure alone, so a consumer compiled against the narrower signature keeps
+  working — an *implementor* of `EventSink` has to widen its override with it, since the narrower one
+  no longer overrides anything. `EventStoreTypeParameterTest` pins both the acceptance and the foreign
+  batch's rejection by running javac
 - **Raw mode is its own method, with its own type: `getRawEventStream(id)` returns an
   `EventSource<String>`.** No event root classes, so no type mapping: every stored event reads as the
   JSON document it is stored as — the same text `StoredEvent.payload()` carries, parsed by

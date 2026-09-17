@@ -90,7 +90,7 @@ public class EventStoreTypeParameterTest {
 	}
 
 	@Test
-	void aRootClassOfAnotherTypeDoesNotCompileWithAHistoricalRootEither ( ) {
+	void aRootClassOfAnotherTypeDoesNotCompileWithALegacyRootEither ( ) {
 		assertRejected("EventStream<OrderEvent> s = store.getEventStream(id, CustomerEvent.class, LegacyCustomerEvent.class);");
 	}
 
@@ -107,7 +107,7 @@ public class EventStoreTypeParameterTest {
 	}
 
 	@Test
-	void theHistoricalRootClassIsNotConstrainedByTheStreamsType ( ) {
+	void theLegacyRootClassIsNotConstrainedByTheStreamsType ( ) {
 		// legacy events upcast into current ones and never surface under their own type
 		assertAccepted("EventStream<CustomerEvent> s = store.getEventStream(id, CustomerEvent.class, LegacyCustomerEvent.class);");
 	}

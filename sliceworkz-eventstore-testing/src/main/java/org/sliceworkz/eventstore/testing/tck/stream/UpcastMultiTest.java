@@ -29,7 +29,7 @@ import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.LegacyEvent;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.events.Upcast;
+import org.sliceworkz.eventstore.events.Upcaster;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.testing.AbstractEventStoreTest;
@@ -696,13 +696,13 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 
 	sealed interface LegacyEvents {
 
-		@LegacyEvent(upcast=SplitRegistrationUpcaster.class)
+		@LegacyEvent(upcaster = SplitRegistrationUpcaster.class)
 		record CustomerRegisteredWithAddress ( String name, String street, String city ) implements LegacyEvents { }
 
-		@LegacyEvent(upcast=FilterAuditLogUpcaster.class)
+		@LegacyEvent(upcaster = FilterAuditLogUpcaster.class)
 		record CustomerLegacyAuditLog ( String message ) implements LegacyEvents { }
 
-		@LegacyEvent(upcast=RenameNameChangedUpcaster.class)
+		@LegacyEvent(upcaster = RenameNameChangedUpcaster.class)
 		record CustomerNameChanged ( String name ) implements LegacyEvents { }
 	}
 
@@ -711,13 +711,13 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 	// =========================================================================
 
 	/** Upcast-to-many: splits a combined event into CustomerRegistered + AddressRecorded */
-	public static class SplitRegistrationUpcaster implements Upcast<LegacyEvents.CustomerRegisteredWithAddress, CurrentEvent> {
+	public static class SplitRegistrationUpcaster implements Upcaster<LegacyEvents.CustomerRegisteredWithAddress, CurrentEvent> {
 
 		@Override
-		public List<CurrentEvent> upcast ( LegacyEvents.CustomerRegisteredWithAddress historicalEvent ) {
+		public List<CurrentEvent> upcast ( LegacyEvents.CustomerRegisteredWithAddress legacyEvent ) {
 			return List.of(
-				new CurrentEvent.CustomerRegistered(historicalEvent.name()),
-				new CurrentEvent.AddressRecorded(historicalEvent.street(), historicalEvent.city())
+				new CurrentEvent.CustomerRegistered(legacyEvent.name()),
+				new CurrentEvent.AddressRecorded(legacyEvent.street(), legacyEvent.city())
 			);
 		}
 
@@ -728,10 +728,10 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 	}
 
 	/** Upcast-to-zero: filters out obsolete audit log events */
-	public static class FilterAuditLogUpcaster implements Upcast<LegacyEvents.CustomerLegacyAuditLog, CurrentEvent> {
+	public static class FilterAuditLogUpcaster implements Upcaster<LegacyEvents.CustomerLegacyAuditLog, CurrentEvent> {
 
 		@Override
-		public List<CurrentEvent> upcast ( LegacyEvents.CustomerLegacyAuditLog historicalEvent ) {
+		public List<CurrentEvent> upcast ( LegacyEvents.CustomerLegacyAuditLog legacyEvent ) {
 			return List.of(); // filtered out
 		}
 
@@ -742,11 +742,11 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 	}
 
 	/** Upcast-to-one: simple rename */
-	public static class RenameNameChangedUpcaster implements Upcast<LegacyEvents.CustomerNameChanged, CurrentEvent.CustomerRenamed> {
+	public static class RenameNameChangedUpcaster implements Upcaster<LegacyEvents.CustomerNameChanged, CurrentEvent.CustomerRenamed> {
 
 		@Override
-		public List<CurrentEvent.CustomerRenamed> upcast ( LegacyEvents.CustomerNameChanged historicalEvent ) {
-			return List.of(new CurrentEvent.CustomerRenamed(historicalEvent.name()));
+		public List<CurrentEvent.CustomerRenamed> upcast ( LegacyEvents.CustomerNameChanged legacyEvent ) {
+			return List.of(new CurrentEvent.CustomerRenamed(legacyEvent.name()));
 		}
 
 		@Override

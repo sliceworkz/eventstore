@@ -46,6 +46,6 @@
  * @see org.sliceworkz.eventstore.shredding.Shreddable
  * @see ShreddableModule
  * @see org.sliceworkz.eventstore.events.LegacyEvent
- * @see org.sliceworkz.eventstore.events.Upcast
+ * @see org.sliceworkz.eventstore.events.Upcaster
  */
 package org.sliceworkz.eventstore.impl.serde;

@@ -26,7 +26,7 @@ package org.sliceworkz.eventstore.events;
  * stored with every event and matched by every query — so see {@link EventName} before renaming an event
  * class or giving two classes the same simple name.
  * <p>
- * Event types support upcasting scenarios where historical events may have different types than their
+ * Event types support upcasting scenarios where legacy events may have different types than their
  * current runtime representation. The {@link Event} record maintains both the current {@code type}
  * and the {@code storedType} to handle these cases.
  *
@@ -56,7 +56,7 @@ package org.sliceworkz.eventstore.events;
  * @see Event
  * @see EventName
  * @see LegacyEvent
- * @see Upcast
+ * @see Upcaster
  */
 public record EventType ( String name ) implements java.io.Serializable {
 

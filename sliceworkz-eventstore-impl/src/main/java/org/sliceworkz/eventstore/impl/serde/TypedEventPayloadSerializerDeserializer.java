@@ -34,7 +34,7 @@ import java.util.stream.Collectors;
 import org.sliceworkz.eventstore.events.EventDeserializationException;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.LegacyEvent;
-import org.sliceworkz.eventstore.events.Upcast;
+import org.sliceworkz.eventstore.events.Upcaster;
 import org.sliceworkz.eventstore.shredding.Shreddable;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.shredding.ShreddingException;
@@ -47,14 +47,14 @@ import tools.jackson.core.JacksonException;
  * This implementation provides type-safe event handling with full support for:
  * <ul>
  *   <li>Sealed interfaces for discovering event types automatically</li>
- *   <li>Event upcasting from historical/legacy events using {@link LegacyEvent} annotations</li>
+ *   <li>Event upcasting from legacy events using {@link LegacyEvent} annotations</li>
  *   <li>Personal data protected in place as {@link org.sliceworkz.eventstore.shredding.Shreddable} values</li>
  * </ul>
  * <p>
  * Event types must be registered via {@link #registerEventTypes(Class)} before they can be serialized or deserialized.
  * <p>
  * <strong>Upcasting follows a chain until it reaches a current type.</strong> An upcaster's
- * {@link Upcast#targetTypes() target} may itself be a {@link LegacyEvent}, registered on the same
+ * {@link Upcaster#targetTypes() target} may itself be a {@link LegacyEvent}, registered on the same
  * stream, whose own upcaster is then applied to what the first one produced: a history written as
  * {@code V1}, then {@code V2}, then {@code V3} reads through the two upcasters that were written when
  * each version arrived, and nothing has to be rewritten into a {@code V1 → V3} upcaster when {@code V3}
@@ -105,10 +105,10 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 
 	/**
 	 * A legacy type as registered: its upcaster, and the concrete event classes the upcaster declares it
-	 * produces, with a sealed interface among {@link Upcast#targetTypes()} already resolved into the
+	 * produces, with a sealed interface among {@link Upcaster#targetTypes()} already resolved into the
 	 * types under it.
 	 */
-	record LegacyRegistration ( EventType type, Class<?> clazz, Upcast<Object,Object> upcaster, Class<?> upcasterClass, Set<Class<?>> declaredTargets ) { }
+	record LegacyRegistration ( EventType type, Class<?> clazz, Upcaster<Object,Object> upcaster, Class<?> upcasterClass, Set<Class<?>> declaredTargets ) { }
 
 	/**
 	 * The upcast chains, resolved: for every registered type the current types it reads as (a current
@@ -188,7 +188,7 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		EventDeserializer eventDeserializer = new InstantiationEventDeserializer(clazz, eventType);
 		upcastGraph = null;
 
-		// when we need to upcast an historical legacy event
+		// a legacy event: instantiate the upcaster its annotation names, and read what it declares
 		if ( clazz.isAnnotationPresent(LegacyEvent.class)) {
 
 			if ( !assumeUpcasters ) {
@@ -196,10 +196,10 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 			}
 
 			LegacyEvent annotation = clazz.getAnnotation(LegacyEvent.class);
-			Class<? extends Upcast<?,?>> upcastClass = annotation.upcast();
-			Upcast<Object, Object> upcast;
+			Class<? extends Upcaster<?,?>> upcastClass = annotation.upcaster();
+			Upcaster<Object, Object> upcast;
 			try {
-				upcast = (Upcast<Object, Object>) upcastClass.getDeclaredConstructor().newInstance(new Object[0]);
+				upcast = (Upcaster<Object, Object>) upcastClass.getDeclaredConstructor().newInstance(new Object[0]);
 			} catch (InvocationTargetException e) {
 				// the constructor ran and threw: report what it threw, not the reflective wrapper
 				throw new IllegalArgumentException(
@@ -217,7 +217,18 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 						e);
 			}
 
-			Set<Class<?>> targetClasses = upcast.targetTypes();
+			Set<Class<?>> targetClasses;
+			try {
+				targetClasses = upcast.targetTypes();
+			} catch (RuntimeException e) {
+				// the default derives the targets from the TARGET_EVENT type argument and throws where the
+				// declaration does not fix one event class; an override may throw too. Either way it is a
+				// property of the class handed to getEventStream, reported like the other registration checks
+				throw new IllegalArgumentException(
+						"Upcaster %s declared by @LegacyEvent on %s threw from targetTypes(): %s".formatted(
+								upcastClass.getName(), clazz.getName(), e.getMessage()),
+						e);
+			}
 			if ( targetClasses == null ) {
 				throw new IllegalArgumentException(
 						"Upcaster %s declared by @LegacyEvent on %s returned null from targetTypes(); return an empty Set for an upcaster that produces no events."
@@ -471,8 +482,8 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 
 		@Override
 		public List<TypeAndPayload> deserialize ( String payload ) {
-			TypeAndPayload historical = deser.deserialize(payload).getFirst();
-			return upcast(registration, historical.eventData(), historical.type(), upcastGraph().legacyByClass());
+			TypeAndPayload legacy = deser.deserialize(payload).getFirst();
+			return upcast(registration, legacy.eventData(), legacy.type(), upcastGraph().legacyByClass());
 		}
 
 		/**
@@ -486,7 +497,7 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 			try {
 				upcastedEvents = hop.upcaster().upcast(legacyEvent);
 			} catch (RuntimeException e) {
-				// An upcaster is application code running on the read path, and Upcast's own javadoc warns
+				// An upcaster is application code running on the read path, and Upcaster's own javadoc warns
 				// that legacy data may not satisfy a current record's validation. Name the upcaster, so
 				// its failure is not read as Jackson failing to parse the JSON.
 				throw new EventDeserializationException(storedType,

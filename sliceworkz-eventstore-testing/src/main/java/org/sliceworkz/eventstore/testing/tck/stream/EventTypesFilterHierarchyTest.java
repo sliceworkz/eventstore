@@ -29,7 +29,7 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.LegacyEvent;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.events.Upcast;
+import org.sliceworkz.eventstore.events.Upcaster;
 import org.sliceworkz.eventstore.projection.Projection;
 import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.projection.Projector.ProjectorMetrics;
@@ -86,15 +86,15 @@ public class EventTypesFilterHierarchyTest extends AbstractEventStoreTest {
 	}
 
 	/** That history, as the reading side declares it: {@code OrderBooked} upcasts into {@link OrderPlaced}. */
-	public sealed interface ShopHistoricalEvent {
-		@LegacyEvent(upcast = OrderBookedUpcaster.class)
-		record OrderBooked ( String orderId ) implements ShopHistoricalEvent { }
+	public sealed interface LegacyShopEvent {
+		@LegacyEvent(upcaster = OrderBookedUpcaster.class)
+		record OrderBooked ( String orderId ) implements LegacyShopEvent { }
 	}
 
-	public static class OrderBookedUpcaster implements Upcast<ShopHistoricalEvent.OrderBooked, OrderPlaced> {
+	public static class OrderBookedUpcaster implements Upcaster<LegacyShopEvent.OrderBooked, OrderPlaced> {
 		@Override
-		public List<OrderPlaced> upcast ( ShopHistoricalEvent.OrderBooked historicalEvent ) {
-			return List.of(new OrderPlaced(historicalEvent.orderId()));
+		public List<OrderPlaced> upcast ( LegacyShopEvent.OrderBooked legacyEvent ) {
+			return List.of(new OrderPlaced(legacyEvent.orderId()));
 		}
 
 		@Override
@@ -209,7 +209,7 @@ public class EventTypesFilterHierarchyTest extends AbstractEventStoreTest {
 		EventStream<OriginalShopEvent> asWritten = eventStore().getEventStream(streamId, OriginalShopEvent.class);
 		asWritten.append(AppendCriteria.none(), Event.of(new OriginalShopEvent.OrderBooked("1"), order("1")));
 
-		EventStream<ShopEvent> asRead = eventStore().getEventStream(streamId, ShopEvent.class, ShopHistoricalEvent.class);
+		EventStream<ShopEvent> asRead = eventStore().getEventStream(streamId, ShopEvent.class, LegacyShopEvent.class);
 		asRead.append(AppendCriteria.none(), Event.of(new OrderPlaced("2"), order("2")));
 		asRead.append(AppendCriteria.none(), Event.of(new PaymentReceived("2"), order("2")));
 

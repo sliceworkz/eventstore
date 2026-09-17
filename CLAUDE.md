@@ -129,7 +129,7 @@ mvn clean install -DskipTests
   `getEventStream` fix from the root class: `getEventStream(id, CustomerEvent.class)` is an
   `EventStream<CustomerEvent>`, and assigning it to an `EventStream<OrderEvent>` — or widening it to an
   `EventStream<Object>`, which would let an append of a foreign event type compile — is a compile error
-  rather than a runtime append failure. The historical root class is not constrained, since legacy events
+  rather than a runtime append failure. The legacy root class is not constrained, since legacy events
   upcast into current ones. The `Set<Class<?>>` overloads carry no such constraint and are the way to open
   a stream typed wider than its roots. `EventStoreTypeParameterTest` in the api module pins it by running
   javac against probe snippets
@@ -174,7 +174,7 @@ mvn clean install -DskipTests
   and `testAppendToWildcardPurposeStream` pin it per backend
 - **`getEventById` answers in two levels: `Optional<List<Event<E>>>`.** The `Optional` says whether
   this stream holds a stored event with the id, the list what it reads as through the stream's
-  mappings — one event, or through an `@Upcast` several or none. A stored event that upcasts into
+  mappings — one event, or through an upcaster several or none. A stored event that upcasts into
   nothing is therefore *present with an empty list*, and an id the storage does not hold, or holds
   in a stream this one does not read across, is *absent*. The alternative — a bare list, empty in
   both cases — loses because a presence check through a stream with upcasters then reports every
@@ -197,7 +197,7 @@ mvn clean install -DskipTests
   with `page(q.limit(n), cursor)`, which answers an `EventPage`: the events, the number of stored
   events read, and the reference of the last stored event read, which is the cursor of the next
   page. The last two are what paging needs and the events alone cannot say once upcasting is
-  involved: a limit counts stored events, an `@Upcast` may turn one into several or into none, so a
+  involved: a limit counts stored events, an upcaster may turn one into several or into none, so a
   page holding no events may sit in the middle of a stream and the reference to continue from may
   be on no event returned. A page shorter than its limit is the last one. `query(q, cursor)` is the
   same read without that account, read whole exactly as a page is (an `EventDeserializationException`
@@ -447,8 +447,8 @@ mvn clean install -DskipTests
   and never absent: a wildcard component reads across it, so `EventStreamId.anyContext()` is the whole
   storage, and a null is refused with `IllegalArgumentException` on `query`, `append` and `head` alike
   (`StreamScopeTest` in the TCK pins it per backend, with what each wildcard reads).
-- **Without upcasting, n stored events are n events back. With it, they are not.** An `@Upcast`
-  method may turn one stored event into several or into none, and the limit is spent before it runs,
+- **Without upcasting, n stored events are n events back. With it, they are not.** An `Upcaster`
+  may turn one stored event into several or into none, and the limit is spent before it runs,
   so `.limit(1)` over an event upcasting into two returns two, and over one upcasting into none
   returns zero — having read exactly one stored event either way. Trimming the surplus would return a
   fragment of a stored event and leave a cursor pointing into its middle; `Projector` counts stored
@@ -1353,6 +1353,17 @@ guarantees.
 
 ### Upcasting: a chain of versions, and what `targetTypes()` commits to
 
+**The names: a `@LegacyEvent(upcaster = X.class)` names an `Upcaster`, whose one abstract method is
+`upcast`, and everything on the read side of an upcast is *legacy* — the annotation, the root class
+parameters of `getEventStream` (`legacyEventRootClasses`), the serde's `registerLegacyEventTypes`, the
+type parameter `LEGACY_EVENT`, the trace-back `determineLegacyTypes`.** The interface is named for
+what it is, an upcaster, not for what it does; `@LegacyEvent(upcaster = ...)` reads as "the upcaster
+for this legacy event" where a member called `upcast` named the class after the verb. And one word,
+not two: "historical" for the same thing in the api and "legacy" in the annotation would leave a
+reader wondering whether a historical root class is a legacy one. The other type parameter is
+`TARGET_EVENT`, since what an upcaster produces may be the next legacy version rather than a current
+type (below).
+
 **An upcaster's target may itself be a `@LegacyEvent`, and the chain is followed until it reaches a
 current type.** A history written as `V1`, then `V2`, then `V3` reads through a `V1 → V2` upcaster
 and a `V2 → V3` one, each written when its version arrived and neither rewritten when the next one
@@ -1376,6 +1387,23 @@ fetches `V2` and `V1`, and a boundary over `V3` counts an event two hops behind 
   root is registered — because the roots arrive as sets, in no order, and a target may sit in a
   root registered after the upcaster's own. A serde read before `validate()` runs the same check
   itself, so the call is not load-bearing for correctness, only for failing early
+- **`targetTypes()` defaults to the `TARGET_EVENT` type argument, for an upcaster declared over one
+  event class.** `class V1ToV2 implements Upcaster<V1, V2>` produces `V2` and nothing else, and its
+  declaration already says so; the default reads the type argument off the class — through a
+  generic superclass or superinterface too, where the argument is bound there — and answers that
+  one class, checked at stream creation and on the read exactly as a written declaration is, so
+  the ordinary one-to-one upcaster is the `upcast` method alone. Where the declaration does not fix
+  one event class — a sealed interface as the argument, which is how an upcaster that splits or
+  drops its event is typed, a raw `Upcaster`, a type variable the class leaves open — the default
+  throws, and the serde reports it as `IllegalArgumentException` at stream creation naming the
+  upcaster, the legacy event and the fix: override `targetTypes()`. The alternative — reading a
+  sealed interface as "every type under it", which is what the same class *written* in
+  `targetTypes()` means — loses because a splitting or dropping upcaster then declares the whole
+  hierarchy by omission: every query for any type in it fetches the legacy events only to discard
+  what they upcast into, correct and silently wasteful, with nothing to say the declaration was
+  never made. `UpcasterTest` in the api module pins what the default reads and refuses;
+  `UpcastChainSerdeTest` how the refusal is reported; `UpcastChainTest` in the TCK reads a chain
+  through derived defaults per backend
 - **What an upcaster produces is checked on the read.** An event whose class is not among its
   declared targets fails as `EventDeserializationException` naming the upcaster, the class produced
   and the declared set, carrying the stored event's reference like any other read failure. An
@@ -1425,7 +1453,7 @@ apart either retries forever on a poison event or gives up on a blip.
 - **A deserialization failure is a poison event, not a broken store.** The storage read *succeeded*. The
   realistic causes are configuration and history rather than bugs: a stream opened without the root class
   covering a stored type, a record that has since lost a component the stored JSON still carries
-  (`FAIL_ON_UNKNOWN_PROPERTIES` is enabled deliberately), a renamed event class, or an `@Upcast` throwing on
+  (`FAIL_ON_UNKNOWN_PROPERTIES` is enabled deliberately), a renamed event class, or an `Upcaster` throwing on
   legacy data that does not satisfy a current validation rule.
 - **`getReference()` is what makes the type useful rather than merely tidy.** The serde is handed a type name
   and two JSON strings and cannot say *which* stored event failed, so `EventStreamImpl.enrich` attaches the
@@ -2023,7 +2051,7 @@ in the order you would normally reach for them:
    declaration rather than in a migration script. This is the fix for a rename; when the *shape* changed
    too, it is not enough on its own.
 3. **Keep the old name alive in code.** Move a class carrying the old name into a legacy hierarchy, annotate
-   it `@LegacyEvent(upcast = ...)`, and upcast it to the renamed class — see the upcasting sections. The
+   it `@LegacyEvent(upcaster = ...)`, and upcast it to the renamed class — see the upcasting sections. The
    legacy class can carry the stored name in an `@EventName` too, so it need not be called what the
    history is called. This is the option when the event's shape changed as well as its name; for a bare
    rename it costs a permanent extra class plus an upcaster that option 2 does not.

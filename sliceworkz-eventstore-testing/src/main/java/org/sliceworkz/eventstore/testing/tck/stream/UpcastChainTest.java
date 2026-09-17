@@ -30,7 +30,7 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.LegacyEvent;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.events.Upcast;
+import org.sliceworkz.eventstore.events.Upcaster;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -72,32 +72,26 @@ public class UpcastChainTest extends AbstractEventStoreTest {
 
 	// --- the legacy versions as the reading side declares them: V1 upcasts to V2, V2 to V3 ----------
 
-	sealed interface CustomerHistoricalEvent {
-		@LegacyEvent(upcast = V1ToV2.class)
-		record CustomerRegistered ( String name ) implements CustomerHistoricalEvent { }
-		@LegacyEvent(upcast = V2ToV3.class)
-		record CustomerRegisteredV2 ( String name, String email ) implements CustomerHistoricalEvent { }
+	sealed interface LegacyCustomerEvent {
+		@LegacyEvent(upcaster = V1ToV2.class)
+		record CustomerRegistered ( String name ) implements LegacyCustomerEvent { }
+		@LegacyEvent(upcaster = V2ToV3.class)
+		record CustomerRegisteredV2 ( String name, String email ) implements LegacyCustomerEvent { }
 	}
 
-	public static class V1ToV2 implements Upcast<CustomerHistoricalEvent.CustomerRegistered, CustomerHistoricalEvent.CustomerRegisteredV2> {
+	// one target each, so targetTypes() is derived from the type argument: for V1ToV2 a legacy class,
+	// which the chain follows on from exactly as it would a written declaration
+	public static class V1ToV2 implements Upcaster<LegacyCustomerEvent.CustomerRegistered, LegacyCustomerEvent.CustomerRegisteredV2> {
 		@Override
-		public List<CustomerHistoricalEvent.CustomerRegisteredV2> upcast ( CustomerHistoricalEvent.CustomerRegistered historicalEvent ) {
-			return List.of(new CustomerHistoricalEvent.CustomerRegisteredV2(historicalEvent.name(), "unknown"));
-		}
-		@Override
-		public Set<Class<? extends CustomerHistoricalEvent.CustomerRegisteredV2>> targetTypes ( ) {
-			return Set.of(CustomerHistoricalEvent.CustomerRegisteredV2.class);
+		public List<LegacyCustomerEvent.CustomerRegisteredV2> upcast ( LegacyCustomerEvent.CustomerRegistered legacyEvent ) {
+			return List.of(new LegacyCustomerEvent.CustomerRegisteredV2(legacyEvent.name(), "unknown"));
 		}
 	}
 
-	public static class V2ToV3 implements Upcast<CustomerHistoricalEvent.CustomerRegisteredV2, CustomerRegisteredV3> {
+	public static class V2ToV3 implements Upcaster<LegacyCustomerEvent.CustomerRegisteredV2, CustomerRegisteredV3> {
 		@Override
-		public List<CustomerRegisteredV3> upcast ( CustomerHistoricalEvent.CustomerRegisteredV2 historicalEvent ) {
-			return List.of(new CustomerRegisteredV3(historicalEvent.name(), historicalEvent.email(), "legacy"));
-		}
-		@Override
-		public Set<Class<? extends CustomerRegisteredV3>> targetTypes ( ) {
-			return Set.of(CustomerRegisteredV3.class);
+		public List<CustomerRegisteredV3> upcast ( LegacyCustomerEvent.CustomerRegisteredV2 legacyEvent ) {
+			return List.of(new CustomerRegisteredV3(legacyEvent.name(), legacyEvent.email(), "legacy"));
 		}
 	}
 
@@ -105,14 +99,14 @@ public class UpcastChainTest extends AbstractEventStoreTest {
 		EventStream<AsWritten> asWritten = eventStore().getEventStream(streamId, AsWritten.class);
 		asWritten.append(AppendCriteria.none(), Event.of(new AsWritten.CustomerRegistered("John"), customer));
 		asWritten.append(AppendCriteria.none(), Event.of(new AsWritten.CustomerRegisteredV2("Jane", "jane@example.org"), customer));
-		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, CustomerHistoricalEvent.class);
+		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, LegacyCustomerEvent.class);
 		current.append(AppendCriteria.none(), Event.of(new CustomerRegisteredV3("Joe", "joe@example.org", "web"), customer));
 	}
 
 	@ForEachBackend
 	void aLegacyEventUpcastsThroughEveryHopToTheCurrentType ( ) {
 		writeOneOfEachVersion();
-		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, CustomerHistoricalEvent.class);
+		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, LegacyCustomerEvent.class);
 
 		List<Event<CustomerEvent>> events = current.query(EventQuery.matchAll());
 
@@ -134,7 +128,7 @@ public class UpcastChainTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void aQueryForTheCurrentTypeFetchesEveryLegacyTypeOnTheChain ( ) {
 		writeOneOfEachVersion();
-		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, CustomerHistoricalEvent.class);
+		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, LegacyCustomerEvent.class);
 		EventQuery registrations = EventQuery.forEvents(EventTypesFilter.of(CustomerRegisteredV3.class), customer);
 
 		assertEquals(List.of("John", "Jane", "Joe"),
@@ -148,7 +142,7 @@ public class UpcastChainTest extends AbstractEventStoreTest {
 
 	@ForEachBackend
 	void aBoundaryOverTheCurrentTypeCountsAnEventTwoHopsBehindIt ( ) {
-		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, CustomerHistoricalEvent.class);
+		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, LegacyCustomerEvent.class);
 		EventStream<AsWritten> asWritten = eventStore().getEventStream(streamId, AsWritten.class);
 		current.append(AppendCriteria.none(), Event.of(new CustomerEvent.CustomerChurned(), customer));
 
@@ -169,19 +163,19 @@ public class UpcastChainTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void aFilterNamingALegacyTypeOnTheChainIsRefusedNamingTheCurrentTypeItEndsIn ( ) {
 		writeOneOfEachVersion();
-		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, CustomerHistoricalEvent.class);
+		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, LegacyCustomerEvent.class);
 
 		IllegalArgumentException midChain = assertThrows(IllegalArgumentException.class,
-				() -> current.query(EventQuery.forEvents(EventTypesFilter.of(CustomerHistoricalEvent.CustomerRegisteredV2.class), customer)));
+				() -> current.query(EventQuery.forEvents(EventTypesFilter.of(LegacyCustomerEvent.CustomerRegisteredV2.class), customer)));
 		assertTrue(midChain.getMessage().endsWith("'CustomerRegisteredV2' (a legacy type, read as 'CustomerRegisteredV3')"), midChain.getMessage());
 
 		IllegalArgumentException start = assertThrows(IllegalArgumentException.class,
-				() -> current.query(EventQuery.forEvents(EventTypesFilter.of(CustomerHistoricalEvent.CustomerRegistered.class), customer)));
+				() -> current.query(EventQuery.forEvents(EventTypesFilter.of(LegacyCustomerEvent.CustomerRegistered.class), customer)));
 		assertTrue(start.getMessage().endsWith("'CustomerRegistered' (a legacy type, read as 'CustomerRegisteredV3')"), start.getMessage());
 
 		// both at once: named in one message, in name order
 		IllegalArgumentException both = assertThrows(IllegalArgumentException.class,
-				() -> current.query(EventQuery.forEvents(EventTypesFilter.of(CustomerHistoricalEvent.class), customer)));
+				() -> current.query(EventQuery.forEvents(EventTypesFilter.of(LegacyCustomerEvent.class), customer)));
 		assertTrue(both.getMessage().endsWith("'CustomerRegistered' (a legacy type, read as 'CustomerRegisteredV3'), 'CustomerRegisteredV2' (a legacy type, read as 'CustomerRegisteredV3')"), both.getMessage());
 	}
 
@@ -191,13 +185,13 @@ public class UpcastChainTest extends AbstractEventStoreTest {
 		record CustomerMoved ( String name ) implements Elsewhere { }
 	}
 
-	@LegacyEvent(upcast = ToAnUnregisteredType.class)
+	@LegacyEvent(upcaster = ToAnUnregisteredType.class)
 	record CustomerRelocated ( String name ) { }
 
-	public static class ToAnUnregisteredType implements Upcast<CustomerRelocated, Elsewhere.CustomerMoved> {
+	public static class ToAnUnregisteredType implements Upcaster<CustomerRelocated, Elsewhere.CustomerMoved> {
 		@Override
-		public List<Elsewhere.CustomerMoved> upcast ( CustomerRelocated historicalEvent ) {
-			return List.of(new Elsewhere.CustomerMoved(historicalEvent.name()));
+		public List<Elsewhere.CustomerMoved> upcast ( CustomerRelocated legacyEvent ) {
+			return List.of(new Elsewhere.CustomerMoved(legacyEvent.name()));
 		}
 		@Override
 		public Set<Class<? extends Elsewhere.CustomerMoved>> targetTypes ( ) {
@@ -218,19 +212,19 @@ public class UpcastChainTest extends AbstractEventStoreTest {
 	}
 
 	sealed interface Cyclic {
-		@LegacyEvent(upcast = AToB.class)
+		@LegacyEvent(upcaster = AToB.class)
 		record A ( String name ) implements Cyclic { }
-		@LegacyEvent(upcast = BToA.class)
+		@LegacyEvent(upcaster = BToA.class)
 		record B ( String name ) implements Cyclic { }
 	}
 
-	public static class AToB implements Upcast<Cyclic.A, Cyclic.B> {
-		@Override public List<Cyclic.B> upcast ( Cyclic.A historicalEvent ) { return List.of(new Cyclic.B(historicalEvent.name())); }
+	public static class AToB implements Upcaster<Cyclic.A, Cyclic.B> {
+		@Override public List<Cyclic.B> upcast ( Cyclic.A legacyEvent ) { return List.of(new Cyclic.B(legacyEvent.name())); }
 		@Override public Set<Class<? extends Cyclic.B>> targetTypes ( ) { return Set.of(Cyclic.B.class); }
 	}
 
-	public static class BToA implements Upcast<Cyclic.B, Cyclic.A> {
-		@Override public List<Cyclic.A> upcast ( Cyclic.B historicalEvent ) { return List.of(new Cyclic.A(historicalEvent.name())); }
+	public static class BToA implements Upcaster<Cyclic.B, Cyclic.A> {
+		@Override public List<Cyclic.A> upcast ( Cyclic.B legacyEvent ) { return List.of(new Cyclic.A(legacyEvent.name())); }
 		@Override public Set<Class<? extends Cyclic.A>> targetTypes ( ) { return Set.of(Cyclic.A.class); }
 	}
 
@@ -250,12 +244,12 @@ public class UpcastChainTest extends AbstractEventStoreTest {
 		record CustomerNoteAdded ( String note ) { }
 	}
 
-	@LegacyEvent(upcast = DeclaresNothingProducesSomething.class)
+	@LegacyEvent(upcaster = DeclaresNothingProducesSomething.class)
 	record CustomerNoteAdded ( String note ) { }
 
-	public static class DeclaresNothingProducesSomething implements Upcast<CustomerNoteAdded, CustomerEvent> {
+	public static class DeclaresNothingProducesSomething implements Upcaster<CustomerNoteAdded, CustomerEvent> {
 		@Override
-		public List<CustomerEvent> upcast ( CustomerNoteAdded historicalEvent ) {
+		public List<CustomerEvent> upcast ( CustomerNoteAdded legacyEvent ) {
 			return List.of(new CustomerEvent.CustomerChurned());
 		}
 		@Override

@@ -18,13 +18,12 @@
 package org.sliceworkz.eventstore.examples;
 
 import java.util.List;
-import java.util.Set;
 
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.LegacyEvent;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.events.Upcast;
+import org.sliceworkz.eventstore.events.Upcaster;
 import org.sliceworkz.eventstore.examples.AppendAndQueryAllExample.CustomerEvent.CustomerChurned;
 import org.sliceworkz.eventstore.examples.UpcastingExample.CustomerEvent.CustomerRegisteredV2;
 import org.sliceworkz.eventstore.examples.UpcastingExample.CustomerEvent.CustomerRenamed;
@@ -57,13 +56,13 @@ public class UpcastingExample {
 
 		// query and print all events that are now in the stream, using the new definitions and upcasting
 
-		EventStream<CustomerEvent> streamNew = eventstore.getEventStream(streamId, CustomerEvent.class, CustomerHistoricalEvent.class);
+		EventStream<CustomerEvent> streamNew = eventstore.getEventStream(streamId, CustomerEvent.class, LegacyCustomerEvent.class);
 		
 		// now when we read the new stream, the upcasters are run to provide us with the latest versions of the events...
 
 		System.out.println("querying all events in the store, the result will include (upcasted) legacy Event types:");
 
-		// explicit cast to verify that no HistoricalEvents are returned
+		// explicit cast to verify that no legacy events are returned
 		streamNew.query(EventQuery.matchAll()).stream().map(e->(CustomerEvent)e.data())
 			.forEach(System.out::println);
 		
@@ -79,7 +78,7 @@ public class UpcastingExample {
 		streamNew.query(EventQuery.forEvents(EventTypesFilter.of(CustomerRegisteredV2.class, CustomerRenamed.class, CustomerChurned.class), Tags.none())).stream().map(e->(CustomerEvent)e.data())
 			.forEach(System.out::println);
 
-		// ... while appending a historical event type is not possible thanks to string typing!
+		// ... while appending a legacy event type is not possible thanks to string typing!
 		// COMPILER CHECK: streamNew.append(AppendCriteria.none(), new OriginalEvent.CustomerNameChanged("test"));
 	}
 	
@@ -133,48 +132,39 @@ public class UpcastingExample {
 	}
 
 	/*
-	 * Deprecated historical event definitions, needed to deserialization, but will be upcasted
+	 * Deprecated legacy event definitions, needed to deserialization, but will be upcasted
 	 */
-	sealed interface CustomerHistoricalEvent {
+	sealed interface LegacyCustomerEvent {
 		
-		@LegacyEvent(upcast=CustomerRegisteredUpcaster.class)
-		public record CustomerRegistered ( String name ) implements CustomerHistoricalEvent { }
+		@LegacyEvent(upcaster = CustomerRegisteredUpcaster.class)
+		public record CustomerRegistered ( String name ) implements LegacyCustomerEvent { }
 		
-		@LegacyEvent(upcast=CustomerNameChangedUpcaster.class)
-		public record CustomerNameChanged (String name ) implements CustomerHistoricalEvent { }
+		@LegacyEvent(upcaster = CustomerNameChangedUpcaster.class)
+		public record CustomerNameChanged (String name ) implements LegacyCustomerEvent { }
 		
 	}
 	
 	/*
-	 * Our upcasters that transform the legacy events to current event definitions
+	 * Our upcasters that transform the legacy events to current event definitions. Each produces one
+	 * type, the one its declaration names, so neither has to declare targetTypes()
 	 */
 	
-	public static class CustomerRegisteredUpcaster implements Upcast<CustomerHistoricalEvent.CustomerRegistered, CustomerEvent.CustomerRegisteredV2> {
+	public static class CustomerRegisteredUpcaster implements Upcaster<LegacyCustomerEvent.CustomerRegistered, CustomerEvent.CustomerRegisteredV2> {
 
 		@Override
-		public List<CustomerEvent.CustomerRegisteredV2> upcast(CustomerHistoricalEvent.CustomerRegistered historicalEvent) {
-			// using the constructor, not the "of" utility method to allow historical values that don't adhere to the new length business rules
-			return List.of(new CustomerEvent.CustomerRegisteredV2(new CustomerEvent.Name(historicalEvent.name())));
-		}
-
-		@Override
-		public Set<Class<? extends CustomerRegisteredV2>> targetTypes() {
-			return Set.of(CustomerRegisteredV2.class);
+		public List<CustomerEvent.CustomerRegisteredV2> upcast(LegacyCustomerEvent.CustomerRegistered legacyEvent) {
+			// using the constructor, not the "of" utility method to allow legacy values that don't adhere to the new length business rules
+			return List.of(new CustomerEvent.CustomerRegisteredV2(new CustomerEvent.Name(legacyEvent.name())));
 		}
 
 	}
 
-	public static class CustomerNameChangedUpcaster implements Upcast<CustomerHistoricalEvent.CustomerNameChanged, CustomerEvent.CustomerRenamed> {
+	public static class CustomerNameChangedUpcaster implements Upcaster<LegacyCustomerEvent.CustomerNameChanged, CustomerEvent.CustomerRenamed> {
 
 		@Override
-		public List<CustomerEvent.CustomerRenamed> upcast(CustomerHistoricalEvent.CustomerNameChanged historicalEvent) {
-			// using the constructor, not the "of" utility method to allow historical values that don't adhere to the new length business rules
-			return List.of(new CustomerEvent.CustomerRenamed(new CustomerEvent.Name(historicalEvent.name())));
-		}
-
-		@Override
-		public Set<Class<? extends CustomerRenamed>> targetTypes() {
-			return Set.of(CustomerRenamed.class);
+		public List<CustomerEvent.CustomerRenamed> upcast(LegacyCustomerEvent.CustomerNameChanged legacyEvent) {
+			// using the constructor, not the "of" utility method to allow legacy values that don't adhere to the new length business rules
+			return List.of(new CustomerEvent.CustomerRenamed(new CustomerEvent.Name(legacyEvent.name())));
 		}
 
 	}

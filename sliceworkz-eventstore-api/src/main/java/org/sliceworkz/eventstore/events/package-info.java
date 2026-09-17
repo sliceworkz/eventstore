@@ -41,8 +41,8 @@
  *
  * <h2>Event Evolution and GDPR:</h2>
  * <ul>
- *   <li>{@link org.sliceworkz.eventstore.events.LegacyEvent} - Marks historical events requiring upcasting</li>
- *   <li>{@link org.sliceworkz.eventstore.events.Upcast} - Interface for transforming legacy events to current types</li>
+ *   <li>{@link org.sliceworkz.eventstore.events.LegacyEvent} - Marks legacy events requiring upcasting</li>
+ *   <li>{@link org.sliceworkz.eventstore.events.Upcaster} - Interface for transforming legacy events to current types</li>
  *   <li>{@link org.sliceworkz.eventstore.shredding.Shreddable} - Wraps personal data so it can be erased for GDPR compliance</li>
  * </ul>
  *

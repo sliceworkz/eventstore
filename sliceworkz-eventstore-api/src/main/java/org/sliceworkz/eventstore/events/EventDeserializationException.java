@@ -37,7 +37,7 @@ import java.util.Optional;
  *   <li>the record has since lost a component the stored JSON still carries (the store enables
  *       {@code FAIL_ON_UNKNOWN_PROPERTIES} deliberately), or an event class was renamed, so the old
  *       name has no current class — see "Event type names are wire format" in the project docs;</li>
- *   <li>an {@link Upcast} threw on legacy data that does not satisfy a current validation rule.</li>
+ *   <li>an {@link Upcaster} threw on legacy data that does not satisfy a current validation rule.</li>
  * </ul>
  *
  * <h2>Where it surfaces</h2>
@@ -106,7 +106,7 @@ public class EventDeserializationException extends RuntimeException {
 	 * @param eventType the type the event was stored under, never null
 	 * @param message the detail message explaining what failed
 	 * @param cause the underlying failure, typically a Jackson exception or a failure thrown by an
-	 *        {@link Upcast}
+	 *        {@link Upcaster}
 	 */
 	public EventDeserializationException ( EventType eventType, String message, Throwable cause ) {
 		this(eventType, message, cause, null);

@@ -35,7 +35,7 @@ import org.sliceworkz.eventstore.events.EventSerializationException;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.LegacyEvent;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.events.Upcast;
+import org.sliceworkz.eventstore.events.Upcaster;
 import org.sliceworkz.eventstore.projection.Projection;
 import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.projection.ProjectorException;
@@ -102,13 +102,13 @@ public class SerdeFailureTest extends AbstractEventStoreTest {
 	}
 
 	/**
-	 * The historical hierarchy, as the reading side declares it. Its {@code LegacyPlaced} shares its
+	 * The legacy hierarchy, as the reading side declares it. Its {@code LegacyPlaced} shares its
 	 * simple name — which is the stored name — with {@link Written#LegacyPlaced}, which is how a legacy
 	 * event gets written here in the first place: a class annotated {@code @LegacyEvent} cannot be
 	 * registered as a current type, so it cannot append.
 	 */
-	interface Historical {
-		@LegacyEvent(upcast = ThrowingUpcast.class)
+	interface Legacy {
+		@LegacyEvent(upcaster = ThrowingUpcaster.class)
 		record LegacyPlaced ( String orderId ) { }
 	}
 
@@ -117,10 +117,10 @@ public class SerdeFailureTest extends AbstractEventStoreTest {
 		record LegacyPlaced ( String orderId ) { }
 	}
 
-	public static class ThrowingUpcast implements Upcast<Historical.LegacyPlaced, CurrentEvent> {
+	public static class ThrowingUpcaster implements Upcaster<Legacy.LegacyPlaced, CurrentEvent> {
 		@Override
-		public List<CurrentEvent> upcast ( Historical.LegacyPlaced historicalEvent ) {
-			throw new IllegalArgumentException("legacy id %s does not satisfy the current rule".formatted(historicalEvent.orderId()));
+		public List<CurrentEvent> upcast ( Legacy.LegacyPlaced legacyEvent ) {
+			throw new IllegalArgumentException("legacy id %s does not satisfy the current rule".formatted(legacyEvent.orderId()));
 		}
 		@Override
 		public Set<Class<? extends CurrentEvent>> targetTypes ( ) {
@@ -128,13 +128,13 @@ public class SerdeFailureTest extends AbstractEventStoreTest {
 		}
 	}
 
-	@LegacyEvent(upcast = NoNoArgConstructorUpcast.class)
+	@LegacyEvent(upcaster = NoNoArgConstructorUpcaster.class)
 	record LegacyUninstantiable ( String orderId ) { }
 
-	public static class NoNoArgConstructorUpcast implements Upcast<LegacyUninstantiable, CurrentEvent> {
-		public NoNoArgConstructorUpcast ( String required ) { /* deliberately not a no-arg constructor */ }
+	public static class NoNoArgConstructorUpcaster implements Upcaster<LegacyUninstantiable, CurrentEvent> {
+		public NoNoArgConstructorUpcaster ( String required ) { /* deliberately not a no-arg constructor */ }
 		@Override
-		public List<CurrentEvent> upcast ( LegacyUninstantiable historicalEvent ) { return List.of(); }
+		public List<CurrentEvent> upcast ( LegacyUninstantiable legacyEvent ) { return List.of(); }
 		@Override
 		public Set<Class<? extends CurrentEvent>> targetTypes ( ) { return Set.of(CurrentEvent.Renamed.class); }
 	}
@@ -147,7 +147,7 @@ public class SerdeFailureTest extends AbstractEventStoreTest {
 				() -> eventStore().getEventStream(streamId, CurrentEvent.class, LegacyUninstantiable.class));
 
 		// the whole point: the old bare RuntimeException(NoSuchMethodException) named neither class
-		assertTrue(e.getMessage().contains(NoNoArgConstructorUpcast.class.getName()),
+		assertTrue(e.getMessage().contains(NoNoArgConstructorUpcaster.class.getName()),
 				"the upcaster that could not be instantiated should be named: " + e.getMessage());
 		assertTrue(e.getMessage().contains(LegacyUninstantiable.class.getName()),
 				"the legacy event declaring it should be named: " + e.getMessage());
@@ -234,12 +234,12 @@ public class SerdeFailureTest extends AbstractEventStoreTest {
 		eventStore().getEventStream(streamId, Written.LegacyPlaced.class)
 				.append(AppendCriteria.none(), Event.of(new Written.LegacyPlaced("order-1"), Tags.none()));
 
-		EventStream<CurrentEvent> current = eventStore().getEventStream(streamId, CurrentEvent.class, Historical.LegacyPlaced.class);
+		EventStream<CurrentEvent> current = eventStore().getEventStream(streamId, CurrentEvent.class, Legacy.LegacyPlaced.class);
 
 		EventDeserializationException e = assertThrows(EventDeserializationException.class,
 				() -> current.query(EventQuery.matchAll()));
 
-		assertTrue(e.getMessage().contains(ThrowingUpcast.class.getName()),
+		assertTrue(e.getMessage().contains(ThrowingUpcaster.class.getName()),
 				"the upcaster that threw should be named, not just the event: " + e.getMessage());
 		assertInstanceOf(IllegalArgumentException.class, e.getCause(),
 				"what the upcaster threw should be the cause");

@@ -41,7 +41,7 @@ import org.sliceworkz.eventstore.shredding.KeyId;
  *   <li><b>Data Erasure:</b> {@link org.sliceworkz.eventstore.shredding.Shreddable} values are encrypted
  *       per data subject, so destroying a key satisfies a GDPR "right to be forgotten" request without
  *       rewriting a single event</li>
- *   <li><b>Event Upcasting:</b> Historical events annotated with {@link org.sliceworkz.eventstore.events.LegacyEvent}
+ *   <li><b>Event Upcasting:</b> Legacy events annotated with {@link org.sliceworkz.eventstore.events.LegacyEvent}
  *       are automatically transformed to current event types using registered upcast functions</li>
  *   <li><b>Sealed Interfaces:</b> Java sealed interfaces are introspected to discover all permitted event types</li>
  * </ul>
@@ -82,7 +82,7 @@ public interface EventPayloadSerializerDeserializer {
 	 * For typed mode, the event type name is used to determine the target Java class.
 	 * For raw mode, returns the stored JSON document itself, a {@link String}, wrapped in a singleton list.
 	 * <p>
-	 * This method supports multi-event upcasting where a single historical event can produce
+	 * This method supports multi-event upcasting where a single legacy event can produce
 	 * zero or more current events. This is useful for:
 	 * <ul>
 	 *   <li><b>Event splitting:</b> One legacy event becomes multiple current events</li>
@@ -123,10 +123,10 @@ public interface EventPayloadSerializerDeserializer {
 	EventPayloadSerializerDeserializer registerEventTypes ( Class<?> rootClass );
 
 	/**
-	 * Registers historical/legacy event types that require upcasting to current types.
+	 * Registers legacy event types that require upcasting to current types.
 	 * <p>
 	 * Events registered via this method MUST be annotated with {@link org.sliceworkz.eventstore.events.LegacyEvent}
-	 * and must specify an {@link org.sliceworkz.eventstore.events.Upcast} implementation to transform
+	 * and must specify an {@link org.sliceworkz.eventstore.events.Upcaster} implementation to transform
 	 * the legacy event to the current event type.
 	 *
 	 * @param rootClass the legacy event root class or sealed interface to register
@@ -139,7 +139,7 @@ public interface EventPayloadSerializerDeserializer {
 	 * Checks the registrations as a whole, once they are complete.
 	 * <p>
 	 * A registration can only be checked against the others: an upcaster's
-	 * {@link org.sliceworkz.eventstore.events.Upcast#targetTypes() target types} must be types registered
+	 * {@link org.sliceworkz.eventstore.events.Upcaster#targetTypes() target types} must be types registered
 	 * on this serde, current or legacy, and the chains they form must not cycle — and the root classes
 	 * arrive as sets, in no order, so a target may sit in a root registered later. This is the call that
 	 * says there is no later, and it is what makes a misdeclared upcaster fail at stream creation rather
@@ -157,7 +157,7 @@ public interface EventPayloadSerializerDeserializer {
 	/**
 	 * Determines all legacy event types that upcast to the specified current types.
 	 * <p>
-	 * This method traces back the upcasting chain to find all historical event type names
+	 * This method traces back the upcasting chain to find all legacy event type names
 	 * that should be included when querying for events of the current types. This ensures
 	 * that queries match both current and legacy events.
 	 * <p>

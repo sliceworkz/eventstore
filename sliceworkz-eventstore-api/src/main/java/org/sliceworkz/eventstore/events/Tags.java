@@ -171,23 +171,23 @@ public record Tags ( Set<Tag> tags ) {
 	 * values are an ordinary shape — a transfer tagged {@code customer:alice} and {@code customer:bob},
 	 * an order tagged with each of its products. This method is for keys that carry <b>one</b> value
 	 * on the event, and it refuses to guess when they do not: if more than one tag carries
-	 * {@code name}, it throws rather than answering one of them, because a set has no first element
+	 * {@code key}, it throws rather than answering one of them, because a set has no first element
 	 * and whichever tag came back would depend on hash order, silently and differently per run.
 	 * A caller expecting several tags under a key reads them with {@link #tags(String)}.
 	 * <p>
-	 * A {@code null} name finds the tags that have no key — {@code Tag.of(null, "value")} — under
+	 * A {@code null} key finds the tags that have no key — {@code Tag.of(null, "value")} — under
 	 * the same rule.
 	 *
-	 * @param name the key name to search for
+	 * @param key the key to search for
 	 * @return the tag with that key, or empty if no tag carries it
 	 * @throws IllegalStateException if more than one tag carries the key
 	 * @see #tags(String)
 	 */
-	public Optional<Tag> tag ( String name ) {
-		Set<Tag> matching = tags(name);
+	public Optional<Tag> tag ( String key ) {
+		Set<Tag> matching = tags(key);
 		if ( matching.size() > 1 ) {
 			throw new IllegalStateException(
-					"tags carry " + matching.size() + " tags with key '" + name + "' (" + matching + "): tag(key) answers a"
+					"tags carry " + matching.size() + " tags with key '" + key + "' (" + matching + "): tag(key) answers a"
 							+ " single tag, use tags(key) to read them all");
 		}
 		return matching.stream().findAny();

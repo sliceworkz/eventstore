@@ -71,7 +71,7 @@ public final class Given<DOMAIN_EVENT_TYPE> {
 
 	/**
 	 * The reference of the last event in the store, useful as a boundary for
-	 * {@link ProjectionRun#upTo(EventReference)}.
+	 * {@link ProjectionRun#until(EventReference)}.
 	 *
 	 * @return the last event's reference, or {@code null} if the store is empty
 	 */

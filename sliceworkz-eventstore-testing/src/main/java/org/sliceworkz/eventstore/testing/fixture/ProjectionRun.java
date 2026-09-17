@@ -65,19 +65,6 @@ public final class ProjectionRun<DOMAIN_EVENT_TYPE, P extends Projection<DOMAIN_
 	}
 
 	/**
-	 * Stops the projection at this event instead of at the head of the store.
-	 *
-	 * @param until the last event to process, typically from {@code given(...).lastReference()}
-	 * @return this
-	 * @deprecated the projector runs <em>until</em> a reference, and the method is called that: use
-	 *             {@link #until(EventReference)}
-	 */
-	@Deprecated(since = "0.11.0", forRemoval = true)
-	public ProjectionRun<DOMAIN_EVENT_TYPE, P> upTo ( EventReference until ) {
-		return until(until);
-	}
-
-	/**
 	 * Processes events in batches of this size, exercising the projector's multi-query path.
 	 *
 	 * @param batchSize maximum events per query
@@ -124,19 +111,6 @@ public final class ProjectionRun<DOMAIN_EVENT_TYPE, P extends Projection<DOMAIN_
 					.formatted(expected, metrics.eventsHandled()));
 		}
 		return this;
-	}
-
-	/**
-	 * Asserts how many events the projection handled.
-	 *
-	 * @param expected the expected number of handled events
-	 * @return this
-	 * @deprecated the metrics count the events <em>handled</em>, and the method is called that: use
-	 *             {@link #expectEventsHandled(long)}
-	 */
-	@Deprecated(since = "0.11.0", forRemoval = true)
-	public ProjectionRun<DOMAIN_EVENT_TYPE, P> expectEventsProcessed ( long expected ) {
-		return expectEventsHandled(expected);
 	}
 
 	/**

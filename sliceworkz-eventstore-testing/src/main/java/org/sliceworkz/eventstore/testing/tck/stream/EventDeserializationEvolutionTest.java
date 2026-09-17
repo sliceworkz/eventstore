@@ -114,7 +114,7 @@ public class EventDeserializationEvolutionTest extends AbstractEventStoreTest {
 		EventDeserializationException exception = assertThrows(EventDeserializationException.class,
 				() -> v3Stream.query(EventQuery.matchAll()));
 
-		assertEquals(EventType.ofType("OrderPlaced"), exception.getEventType());
+		assertEquals(EventType.named("OrderPlaced"), exception.getEventType());
 		assertEquals(true, exception.getMessage().contains("Failed to deserialize stored event type 'OrderPlaced'"),
 				"Expected deserialization failure due to unknown property, but got: " + exception.getMessage());
 		// the message names the record it could not be read onto, which is the half Jackson does not say

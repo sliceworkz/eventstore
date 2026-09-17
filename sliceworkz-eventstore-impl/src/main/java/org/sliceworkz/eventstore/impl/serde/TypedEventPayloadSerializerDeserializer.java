@@ -184,7 +184,7 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 							.formatted(clazz.getName()));
 		}
 
-		EventType eventType = EventType.ofType(eventName);
+		EventType eventType = EventType.named(eventName);
 		EventDeserializer eventDeserializer = new InstantiationEventDeserializer(clazz, eventType);
 		upcastGraph = null;
 
@@ -311,7 +311,7 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 		registeredClasses.forEach((name, clazz) -> {
 			LegacyRegistration registration = legacyRegistrations.get(name);
 			if ( registration == null ) {
-				currentTypesOf.put(EventType.ofType(name), Set.of(EventType.ofType(name)));
+				currentTypesOf.put(EventType.named(name), Set.of(EventType.named(name)));
 			} else {
 				currentTypesOf.put(registration.type(), currentTypesReachedFrom(registration, legacyByClass, new ArrayDeque<>(), currentTypesOf));
 			}
@@ -517,7 +517,7 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 				}
 				LegacyRegistration next = legacyByClass.get(upcasted.getClass());
 				if ( next == null ) {
-					result.add(new TypeAndPayload(EventType.of(upcasted), upcasted));
+					result.add(new TypeAndPayload(EventType.of(upcasted.getClass()), upcasted));
 				} else {
 					result.addAll(upcast(next, upcasted, storedType, legacyByClass));
 				}

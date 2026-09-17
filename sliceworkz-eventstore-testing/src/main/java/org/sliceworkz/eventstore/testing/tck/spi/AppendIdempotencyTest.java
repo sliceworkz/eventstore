@@ -62,7 +62,7 @@ public class AppendIdempotencyTest extends AbstractEventStoreTest {
 	private final EventStreamId stream = EventStreamId.forContext("app").withPurpose("default");
 
 	private EventToStore event ( String value, String idempotencyKey ) {
-		return new EventToStore(stream, EventType.ofType("Something"), "{\"v\":\"%s\"}".formatted(value), Tags.none(), idempotencyKey);
+		return new EventToStore(stream, EventType.named("Something"), "{\"v\":\"%s\"}".formatted(value), Tags.none(), idempotencyKey);
 	}
 
 	private List<StoredEvent> append ( EventToStore... events ) {

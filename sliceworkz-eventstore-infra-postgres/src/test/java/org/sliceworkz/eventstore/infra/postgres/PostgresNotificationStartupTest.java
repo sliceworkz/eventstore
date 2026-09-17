@@ -450,7 +450,7 @@ class PostgresNotificationStartupTest {
 
 				EventStreamId stream = EventStreamId.forContext("junk").withPurpose("p");
 				StoredEvent stored = storage.append(AppendCriteria.none(), stream,
-					List.of(new EventToStore(stream, EventType.ofType("SomethingHappened"), "{}", Tags.none(), null))).getFirst();
+					List.of(new EventToStore(stream, EventType.named("SomethingHappened"), "{}", Tags.none(), null))).getFirst();
 				storage.bookmark("reader", stored.reference(), Tags.none());
 
 				awaitTrue(() -> !listener.appends.isEmpty() && !listener.bookmarks.isEmpty(),

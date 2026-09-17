@@ -46,7 +46,8 @@ import org.junit.jupiter.api.io.TempDir;
 /**
  * Pins that the single-class {@code getEventStream} overloads fix the stream's type parameter, and that
  * {@code getRawEventStream} fixes its own: a read-only {@code EventSource<String>} over the stored JSON
- * documents, assignable to no domain-typed stream.
+ * documents, assignable to no domain-typed stream. Also that {@code EventType.of} takes a class and
+ * nothing else, so a stored name passed to it is a compile error rather than the type named {@code String}.
  * <p>
  * The guarantee is a compile-time one, so the only way to test it is to compile: each probe below is
  * handed to javac against this module's classes, and the test asserts which probes it rejects and which it
@@ -59,6 +60,7 @@ public class EventStoreTypeParameterTest {
 	private static final String PROBE_PRELUDE = """
 			import java.util.Set;
 			import org.sliceworkz.eventstore.EventStore;
+			import org.sliceworkz.eventstore.events.EventType;
 			import org.sliceworkz.eventstore.stream.EventSource;
 			import org.sliceworkz.eventstore.stream.EventStream;
 			import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -130,6 +132,14 @@ public class EventStoreTypeParameterTest {
 	@Test
 	void aRawStreamIsNotAnEventStreamBecauseItCannotAppend ( ) {
 		assertRejected("EventStream<Object> s = store.getRawEventStream(id);");
+	}
+
+	@Test
+	void anEventTypeIsNamedByAClassAndNotByAnInstance ( ) {
+		assertAccepted("EventType t = EventType.of(CustomerEvent.class);");
+		// the trap an of(Object) overload beside of(Class) leaves open: a stored name passed by mistake
+		// compiles, and is the type named "String", matching no stored event and failing nothing
+		assertRejected("EventType t = EventType.of(\"CustomerRegistered\");");
 	}
 
 	private void assertRejected ( String statement ) {

@@ -108,7 +108,7 @@ public abstract class AbstractEventPayloadSerializerDeserializer implements Even
 
 	@Override
 	public TypeAndSerializedPayload serialize ( Object payload ) {
-		EventType eventType = payload == null ? null : EventType.of(payload);
+		EventType eventType = payload == null ? null : EventType.of(payload.getClass());
 		ShreddableModule.beginCollectingSealedKeys();
 		try {
 			String json = objectMapper.writeValueAsString(payload);

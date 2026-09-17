@@ -75,7 +75,7 @@ class UpcastChainSerdeTest {
 	}
 
 	private static TypeAndSerializedPayload stored ( String type, String json ) {
-		return new TypeAndSerializedPayload(EventType.ofType(type), json);
+		return new TypeAndSerializedPayload(EventType.named(type), json);
 	}
 
 	@Test
@@ -83,22 +83,22 @@ class UpcastChainSerdeTest {
 		EventPayloadSerializerDeserializer serde = serdeOver(Current.class, Legacy.class);
 
 		List<TypeAndPayload> fromV1 = serde.deserialize(stored("V1", "{\"name\":\"John\"}"));
-		assertEquals(List.of(new TypeAndPayload(EventType.ofType("V3"), new Current.V3("John", 0))), fromV1);
+		assertEquals(List.of(new TypeAndPayload(EventType.named("V3"), new Current.V3("John", 0))), fromV1);
 
 		List<TypeAndPayload> fromV2 = serde.deserialize(stored("V2", "{\"name\":\"Jane\",\"age\":\"42\"}"));
-		assertEquals(List.of(new TypeAndPayload(EventType.ofType("V3"), new Current.V3("Jane", 42))), fromV2);
+		assertEquals(List.of(new TypeAndPayload(EventType.named("V3"), new Current.V3("Jane", 42))), fromV2);
 	}
 
 	@Test
 	void aQueryForTheCurrentTypeTracesBackThroughEveryHop ( ) {
 		EventPayloadSerializerDeserializer serde = serdeOver(Current.class, Legacy.class);
 
-		assertEquals(Set.of(EventType.ofType("V3"), EventType.ofType("V2"), EventType.ofType("V1")),
-				serde.determineLegacyTypes(Set.of(EventType.ofType("V3"))));
+		assertEquals(Set.of(EventType.named("V3"), EventType.named("V2"), EventType.named("V1")),
+				serde.determineLegacyTypes(Set.of(EventType.named("V3"))));
 		// a legacy type is never a current one, so nothing traces back to it; the stream refuses a
 		// filter naming one before this is asked, on what legacyTypesAmong answers below
-		assertEquals(Set.of(EventType.ofType("V2")), serde.determineLegacyTypes(Set.of(EventType.ofType("V2"))));
-		assertEquals(Set.of(EventType.ofType("Churned")), serde.determineLegacyTypes(Set.of(EventType.ofType("Churned"))));
+		assertEquals(Set.of(EventType.named("V2")), serde.determineLegacyTypes(Set.of(EventType.named("V2"))));
+		assertEquals(Set.of(EventType.named("Churned")), serde.determineLegacyTypes(Set.of(EventType.named("Churned"))));
 	}
 
 	@Test
@@ -107,11 +107,11 @@ class UpcastChainSerdeTest {
 
 		// each legacy type is mapped to the end of its chain, not to its next hop; a current type and a
 		// name this serde does not register are not legacy
-		assertEquals(Map.of(EventType.ofType("V1"), Set.of(EventType.ofType("V3")), EventType.ofType("V2"), Set.of(EventType.ofType("V3"))),
-				serde.legacyTypesAmong(Set.of(EventType.ofType("V1"), EventType.ofType("V2"), EventType.ofType("V3"), EventType.ofType("Churned"), EventType.ofType("Unknown"))));
-		assertEquals(Map.of(), serde.legacyTypesAmong(Set.of(EventType.ofType("V3"), EventType.ofType("Unknown"))));
+		assertEquals(Map.of(EventType.named("V1"), Set.of(EventType.named("V3")), EventType.named("V2"), Set.of(EventType.named("V3"))),
+				serde.legacyTypesAmong(Set.of(EventType.named("V1"), EventType.named("V2"), EventType.named("V3"), EventType.named("Churned"), EventType.named("Unknown"))));
+		assertEquals(Map.of(), serde.legacyTypesAmong(Set.of(EventType.named("V3"), EventType.named("Unknown"))));
 		// raw mode registers no legacy types
-		assertEquals(Map.of(), EventPayloadSerializerDeserializer.raw().legacyTypesAmong(Set.of(EventType.ofType("V1"))));
+		assertEquals(Map.of(), EventPayloadSerializerDeserializer.raw().legacyTypesAmong(Set.of(EventType.named("V1"))));
 	}
 
 	@Test
@@ -121,7 +121,7 @@ class UpcastChainSerdeTest {
 				.registerLegacyEventTypes(Legacy.class);
 
 		assertEquals(new Current.V3("John", 0), serde.deserialize(stored("V1", "{\"name\":\"John\"}")).getFirst().eventData());
-		assertTrue(serde.determineLegacyTypes(Set.of(EventType.ofType("V3"))).contains(EventType.ofType("V1")));
+		assertTrue(serde.determineLegacyTypes(Set.of(EventType.named("V3"))).contains(EventType.named("V1")));
 	}
 
 	// --- an upcaster's declaration is checked once the registrations are complete ---------------------
@@ -218,8 +218,8 @@ class UpcastChainSerdeTest {
 		EventPayloadSerializerDeserializer serde = serdeOver(Current.class, Broad.class);
 
 		assertEquals(2, serde.deserialize(stored("Broad", "{\"name\":\"x\"}")).size());
-		assertTrue(serde.determineLegacyTypes(Set.of(EventType.ofType("V3"))).contains(EventType.ofType("Broad")));
-		assertTrue(serde.determineLegacyTypes(Set.of(EventType.ofType("Churned"))).contains(EventType.ofType("Broad")));
+		assertTrue(serde.determineLegacyTypes(Set.of(EventType.named("V3"))).contains(EventType.named("Broad")));
+		assertTrue(serde.determineLegacyTypes(Set.of(EventType.named("Churned"))).contains(EventType.named("Broad")));
 	}
 
 	// --- what an upcaster produces is checked against what it declared -------------------------------
@@ -239,7 +239,7 @@ class UpcastChainSerdeTest {
 		EventDeserializationException e = assertThrows(EventDeserializationException.class,
 				() -> serde.deserialize(stored("Understated", "{\"name\":\"x\"}")));
 
-		assertEquals(EventType.ofType("Understated"), e.getEventType());
+		assertEquals(EventType.named("Understated"), e.getEventType());
 		assertTrue(e.getMessage().contains(DeclaresNothingProducesSomething.class.getName()), e.getMessage());
 		assertTrue(e.getMessage().contains(Current.Churned.class.getName()), e.getMessage());
 		assertTrue(e.getMessage().contains("targetTypes()"), e.getMessage());
@@ -261,7 +261,7 @@ class UpcastChainSerdeTest {
 				() -> serde.deserialize(stored("Doomed", "{\"name\":\"x\"}")));
 
 		// the stored event is the one a caller can dead-letter; the upcaster that threw is the one to fix
-		assertEquals(EventType.ofType("Doomed"), e.getEventType());
+		assertEquals(EventType.named("Doomed"), e.getEventType());
 		assertTrue(e.getMessage().contains(V2ToV3.class.getName()), e.getMessage());
 		assertInstanceOf(NumberFormatException.class, e.getCause());
 	}

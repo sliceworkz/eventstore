@@ -113,10 +113,10 @@ class ExceptionSerializationTest {
 				5L, 2L, 0);
 
 		EventDeserializationException restored = roundTrip(
-				new EventDeserializationException(EventType.ofType("CustomerRegistered"), "no mapping found")
+				new EventDeserializationException(EventType.named("CustomerRegistered"), "no mapping found")
 						.withReference(reference));
 
-		assertEquals(EventType.ofType("CustomerRegistered"), restored.getEventType());
+		assertEquals(EventType.named("CustomerRegistered"), restored.getEventType());
 		assertEquals(Optional.of(reference), restored.getReference());
 	}
 

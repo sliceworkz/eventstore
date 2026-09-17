@@ -121,7 +121,7 @@ public class PostgresPrefixCaseTest {
 				try ( EventStorage lower = build("samestore_", dataSource, false) ) {
 					List<StoredEvent> events = lower.query(EventFilter.matchAll(), STREAM, null, Limit.none());
 					assertEquals(1, events.size(), "the event appended through the mixed-case spelling");
-					assertEquals(EventType.ofType("PrefixCaseProbe"), events.get(0).type());
+					assertEquals(EventType.named("PrefixCaseProbe"), events.get(0).type());
 				}
 			} finally {
 				PostgresContainer.closeDataSource(image);
@@ -151,7 +151,7 @@ public class PostgresPrefixCaseTest {
 
 		private void append ( EventStorage storage ) {
 			storage.append(AppendCriteria.none(), STREAM, List.of(
-				new EventToStore(STREAM, EventType.ofType("PrefixCaseProbe"), "{}", Tags.none(), null)));
+				new EventToStore(STREAM, EventType.named("PrefixCaseProbe"), "{}", Tags.none(), null)));
 		}
 
 		private void waitForNotification ( AtomicInteger notifications ) throws InterruptedException {

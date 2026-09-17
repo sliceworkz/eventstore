@@ -207,7 +207,7 @@ class PostgresMonitorLivenessTest {
 
 	private static StoredEvent append ( PostgresEventStorage storage ) {
 		return storage.append(AppendCriteria.none(), STREAM,
-			List.of(new EventToStore(STREAM, EventType.ofType("SomethingHappened"), "{}", Tags.none(), null))).getFirst();
+			List.of(new EventToStore(STREAM, EventType.named("SomethingHappened"), "{}", Tags.none(), null))).getFirst();
 	}
 
 	private static boolean announced ( RecordingListener listener, StoredEvent event ) {

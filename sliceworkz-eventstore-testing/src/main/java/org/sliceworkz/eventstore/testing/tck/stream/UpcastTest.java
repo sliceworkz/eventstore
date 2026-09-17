@@ -73,26 +73,26 @@ public class UpcastTest extends AbstractEventStoreTest {
 
 		// verify data on the Register events
 		List<Event<CustomerEvent>> registers = streamWithUpcasts.query(EventQuery.forEvents(EventTypesFilter.of(CustomerEvent.CustomerRegisteredV2.class), Tags.none()));
-		assertEquals(EventType.ofType("CustomerRegisteredV2"), registers.get(0).type());
-		assertEquals(EventType.ofType("CustomerRegistered"), registers.get(0).storedType());
+		assertEquals(EventType.named("CustomerRegisteredV2"), registers.get(0).type());
+		assertEquals(EventType.named("CustomerRegistered"), registers.get(0).storedType());
 		assertEquals("John", ((CustomerRegisteredV2)(registers.get(0).data())).name().value());
 		assertEquals(1, registers.get(0).reference().position());
 		assertEquals(CustomerRegisteredV2.class, registers.get(0).data().getClass());
-		assertEquals(EventType.ofType("CustomerRegisteredV2"), registers.get(1).type());
-		assertEquals(EventType.ofType("CustomerRegisteredV2"), registers.get(1).storedType());
+		assertEquals(EventType.named("CustomerRegisteredV2"), registers.get(1).type());
+		assertEquals(EventType.named("CustomerRegisteredV2"), registers.get(1).storedType());
 		assertEquals(CustomerRegisteredV2.class, registers.get(1).data().getClass());
 		assertEquals("Superman", ((CustomerRegisteredV2)(registers.get(1).data())).name().value());
 		assertEquals(4, registers.get(1).reference().position());
 
 		// verify data on the Rename events
 		List<Event<CustomerEvent>> renames = streamWithUpcasts.query(EventQuery.forEvents(EventTypesFilter.of(CustomerEvent.CustomerRenamed.class), Tags.none()));
-		assertEquals(EventType.ofType("CustomerRenamed"), renames.get(0).type());
-		assertEquals(EventType.ofType("CustomerNameChanged"), renames.get(0).storedType());
+		assertEquals(EventType.named("CustomerRenamed"), renames.get(0).type());
+		assertEquals(EventType.named("CustomerNameChanged"), renames.get(0).storedType());
 		assertEquals("Jane", ((CustomerRenamed)(renames.get(0).data())).name().value());
 		assertEquals(2, renames.get(0).reference().position());
 		assertEquals(CustomerRenamed.class, renames.get(0).data().getClass());
-		assertEquals(EventType.ofType("CustomerRenamed"), renames.get(1).type());
-		assertEquals(EventType.ofType("CustomerRenamed"), renames.get(1).storedType());
+		assertEquals(EventType.named("CustomerRenamed"), renames.get(1).type());
+		assertEquals(EventType.named("CustomerRenamed"), renames.get(1).storedType());
 		assertEquals(CustomerRenamed.class, renames.get(1).data().getClass());
 		assertEquals("Batman", ((CustomerRenamed)(renames.get(1).data())).name().value());
 		assertEquals(5, renames.get(1).reference().position());
@@ -108,32 +108,32 @@ public class UpcastTest extends AbstractEventStoreTest {
 
 		assertEquals(6, rawEvents.size());
 
-		assertEquals(EventType.ofType("CustomerRegistered"), rawEvents.get(0).type());
-		assertEquals(EventType.ofType("CustomerRegistered"), rawEvents.get(0).storedType());
+		assertEquals(EventType.named("CustomerRegistered"), rawEvents.get(0).type());
+		assertEquals(EventType.named("CustomerRegistered"), rawEvents.get(0).storedType());
 		assertTrue(rawEvents.get(0).data().contains("John"));
 		assertEquals(1, rawEvents.get(0).reference().position());
 
-		assertEquals(EventType.ofType("CustomerNameChanged"), rawEvents.get(1).type());
-		assertEquals(EventType.ofType("CustomerNameChanged"), rawEvents.get(1).storedType());
+		assertEquals(EventType.named("CustomerNameChanged"), rawEvents.get(1).type());
+		assertEquals(EventType.named("CustomerNameChanged"), rawEvents.get(1).storedType());
 		assertTrue(rawEvents.get(1).data().contains("Jane"));
 		assertEquals(2, rawEvents.get(1).reference().position());
 
-		assertEquals(EventType.ofType("CustomerChurned"), rawEvents.get(2).type());
-		assertEquals(EventType.ofType("CustomerChurned"), rawEvents.get(2).storedType());
+		assertEquals(EventType.named("CustomerChurned"), rawEvents.get(2).type());
+		assertEquals(EventType.named("CustomerChurned"), rawEvents.get(2).storedType());
 		assertEquals(3, rawEvents.get(2).reference().position());
 
-		assertEquals(EventType.ofType("CustomerRegisteredV2"), rawEvents.get(3).type());
-		assertEquals(EventType.ofType("CustomerRegisteredV2"), rawEvents.get(3).storedType());
+		assertEquals(EventType.named("CustomerRegisteredV2"), rawEvents.get(3).type());
+		assertEquals(EventType.named("CustomerRegisteredV2"), rawEvents.get(3).storedType());
 		assertTrue(rawEvents.get(3).data().toString().contains("Superman"));
 		assertEquals(4, rawEvents.get(3).reference().position());
 
-		assertEquals(EventType.ofType("CustomerRenamed"), rawEvents.get(4).type());
-		assertEquals(EventType.ofType("CustomerRenamed"), rawEvents.get(4).storedType());
+		assertEquals(EventType.named("CustomerRenamed"), rawEvents.get(4).type());
+		assertEquals(EventType.named("CustomerRenamed"), rawEvents.get(4).storedType());
 		assertTrue(rawEvents.get(4).data().toString().contains("Batman"));
 		assertEquals(5, rawEvents.get(4).reference().position());
 
-		assertEquals(EventType.ofType("CustomerChurned"), rawEvents.get(5).type());
-		assertEquals(EventType.ofType("CustomerChurned"), rawEvents.get(5).storedType());
+		assertEquals(EventType.named("CustomerChurned"), rawEvents.get(5).type());
+		assertEquals(EventType.named("CustomerChurned"), rawEvents.get(5).storedType());
 		assertEquals(6, rawEvents.get(5).reference().position());
 	}
 
@@ -190,7 +190,7 @@ public class UpcastTest extends AbstractEventStoreTest {
 
 		// by class and by the stored name alike: the filter carries the name either way
 		EventQuery byClass = EventQuery.forEvents(EventTypesFilter.of(CustomerHistoricalEvent.CustomerNameChanged.class), customer);
-		EventQuery byName = EventQuery.forEvents(EventTypesFilter.of(Set.of(EventType.ofType("CustomerNameChanged"))), customer);
+		EventQuery byName = EventQuery.forEvents(EventTypesFilter.of(Set.of(EventType.named("CustomerNameChanged"))), customer);
 		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> current.query(byClass));
 		assertEquals("a query or a consistency boundary on this stream names the current event types, and it returns and counts the legacy events that upcast into them; it cannot name a legacy type: 'CustomerNameChanged' (a legacy type, read as 'CustomerRenamed')", e.getMessage());
 		assertEquals(e.getMessage(), assertThrows(IllegalArgumentException.class, () -> current.query(byName)).getMessage());
@@ -210,7 +210,7 @@ public class UpcastTest extends AbstractEventStoreTest {
 
 		// a raw stream registers no legacy types: the stored name is read as stored
 		EventSource<?> raw = eventStore().getRawEventStream(streamId);
-		assertEquals(1, raw.query(EventQuery.forEvents(EventTypesFilter.of(Set.of(EventType.ofType("CustomerNameChanged"))), customer)).size());
+		assertEquals(1, raw.query(EventQuery.forEvents(EventTypesFilter.of(Set.of(EventType.named("CustomerNameChanged"))), customer)).size());
 		// and on a typed stream where the name is a current type, the filter is an ordinary one
 		assertEquals(1, asWritten.query(EventQuery.forEvents(EventTypesFilter.of(OriginalEvent.CustomerNameChanged.class), customer)).size());
 	}

@@ -88,7 +88,7 @@ public class InMemoryEventStorageImplTest {
 		assertEquals("Failed to deserialize stored event type 'ProblematicParsingRecord' onto org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImplTest$ProblematicParsing$ProblematicParsingRecord: Unrecognized property \"derivedValueThatIsNotPartOfRecord\" (class org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImplTest$ProblematicParsing$ProblematicParsingRecord), not marked as ignorable", e.getMessage());
 		// one wrapping layer, not two: Jackson's own complaint is the direct cause
 		assertEquals("Unrecognized property \"derivedValueThatIsNotPartOfRecord\" (class org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImplTest$ProblematicParsing$ProblematicParsingRecord), not marked as ignorable (one known property: \"value\")", e.getCause().getMessage().split("\n")[0]);
-		assertEquals(EventType.ofType("ProblematicParsingRecord"), e.getEventType());
+		assertEquals(EventType.named("ProblematicParsingRecord"), e.getEventType());
 		assertTrue(e.getReference().isPresent(), "the stream layer should name the stored event that failed");
 	}
 	
@@ -127,7 +127,7 @@ public class InMemoryEventStorageImplTest {
 	private static final EventStreamId STREAM = EventStreamId.forContext("ctx").withPurpose("p");
 
 	private static StoredEvent storedAt ( long position, long tx ) {
-		return new StoredEvent(STREAM, EventType.ofType("Something"), EventReference.create(position, tx), "{}", Tags.none(), Instant.now());
+		return new StoredEvent(STREAM, EventType.named("Something"), EventReference.create(position, tx), "{}", Tags.none(), Instant.now());
 	}
 
 	private static List<Long> positions ( List<StoredEvent> events ) {
@@ -200,12 +200,12 @@ public class InMemoryEventStorageImplTest {
 		EventStorage storage = new InMemoryEventStorageImpl("gap", Limit.none(), List.of(storedAt(1, 1), storedAt(2, 1), afterTheGap), Map.of());
 
 		List<StoredEvent> appended = storage.append(AppendCriteria.none(), STREAM,
-				List.of(new EventToStore(STREAM, EventType.ofType("Something"), "{}", Tags.none(), null)));
+				List.of(new EventToStore(STREAM, EventType.named("Something"), "{}", Tags.none(), null)));
 		assertEquals(5L, appended.get(0).reference().position());
 		assertEquals(3L, appended.get(0).reference().tx());
 
 		List<StoredEvent> imported = storage.importEvents(
-				List.of(new EventToImport(STREAM, EventType.ofType("Something"), EventId.create(), "{}", Tags.none(), Instant.now(), null)),
+				List.of(new EventToImport(STREAM, EventType.named("Something"), EventId.create(), "{}", Tags.none(), Instant.now(), null)),
 				EventStorage.ImportMode.FAIL_ON_EXISTING_ID);
 		assertEquals(6L, imported.get(0).reference().position());
 

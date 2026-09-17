@@ -49,7 +49,7 @@ class PostgresEventStorageVersionDetectionTest {
 	private static EventToStore sampleEvent ( ) {
 		return new EventToStore(
 			EventStreamId.forContext("version-detection").withPurpose("smoke"),
-			EventType.ofType("Smoke"),
+			EventType.named("Smoke"),
 			"{}",
 			Tags.none(),
 			"idem-" + UUID.randomUUID()

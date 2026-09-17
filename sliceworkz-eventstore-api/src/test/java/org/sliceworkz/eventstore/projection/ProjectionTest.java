@@ -52,8 +52,8 @@ public class ProjectionTest {
 		EventReference ref2 = EventReference.create(2, 2);
 		Instant now = Instant.now();
 		this.mockEvents = Arrays.asList(new Event[] {
-				Event.of(mockStream, ref1, EventType.of(new FirstDomainEvent()), EventType.of(new FirstDomainEvent()), new FirstDomainEvent(), Tags.none(), now),
-				Event.of(mockStream, ref2, EventType.of(new SecondDomainEvent()), EventType.of(new SecondDomainEvent()), new SecondDomainEvent(), Tags.none(), now)});
+				Event.of(mockStream, ref1, EventType.of(FirstDomainEvent.class), EventType.of(FirstDomainEvent.class), new FirstDomainEvent(), Tags.none(), now),
+				Event.of(mockStream, ref2, EventType.of(SecondDomainEvent.class), EventType.of(SecondDomainEvent.class), new SecondDomainEvent(), Tags.none(), now)});
 	}
 	
 	

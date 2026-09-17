@@ -362,7 +362,7 @@ public class InMemoryFsEventStorageImplTest {
 					.build();
 
 			storage.importEvents(
-					List.of(new EventToImport(streamId, EventType.ofType("CustomerRegistered"), id,
+					List.of(new EventToImport(streamId, EventType.named("CustomerRegistered"), id,
 							"{\"name\":\"John\"}", Tags.of("customer", "42"), timestamp, "imported-key")),
 					ImportMode.FAIL_ON_EXISTING_ID);
 		}

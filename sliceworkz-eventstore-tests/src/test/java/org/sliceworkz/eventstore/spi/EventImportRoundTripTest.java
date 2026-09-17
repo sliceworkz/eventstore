@@ -68,9 +68,9 @@ class EventImportRoundTripTest {
 
 		try {
 			origin.append(AppendCriteria.none(), stream, List.of(
-					new EventToStore(stream, EventType.ofType("Plain"), "{\"a\":1}", Tags.of("kind", "plain"), null),
-					new EventToStore(stream, EventType.ofType("Keyed"), "{\"b\":2}", Tags.none(), "the-key"),
-					new EventToStore(stream, EventType.ofType("Nested"), "{\"keep\":true,\"inner\":{\"n\":[1,2,3]}}", Tags.of("kind", "nested"), null)));
+					new EventToStore(stream, EventType.named("Plain"), "{\"a\":1}", Tags.of("kind", "plain"), null),
+					new EventToStore(stream, EventType.named("Keyed"), "{\"b\":2}", Tags.none(), "the-key"),
+					new EventToStore(stream, EventType.named("Nested"), "{\"keep\":true,\"inner\":{\"n\":[1,2,3]}}", Tags.of("kind", "nested"), null)));
 
 			List<StoredEvent> originals = allEventsIn(origin);
 			assertEquals(3, originals.size());

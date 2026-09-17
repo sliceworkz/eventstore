@@ -8,7 +8,7 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
 ## PostgreSQL Specific Notes
 
 - Table schema can be prefixed (useful for multi-tenancy or isolation)
-- Database initialization performed via `.initializeDatabase()` on builder
+- Schema handling is the builder's `DatabaseInitMode`: `ENSURE` (the default) creates what is missing, `VALIDATE` only checks, `NONE` trusts the DBA, and `RECREATE` (`.recreateDatabase()`) drops and recreates the tables — the one destructive mode, named for it, for tests and fresh deployments only
 - Uses HikariCP for connection pooling
 - Separate DataSource for monitoring queries (optional, defaults to main DataSource)
 - Tests use Testcontainers for isolated PostgreSQL instances
@@ -392,7 +392,7 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   the trigger is already correct, is a catalog read that takes no lock on the events table. `CREATE OR
   REPLACE TRIGGER` would be simpler but is PG14+ *and* rewrites unconditionally, taking `ACCESS EXCLUSIVE`
   on every start of every instance. `drop-schema.sql` drops the two functions as well as the tables, which
-  is what makes `INITIALIZE` mean what it says: the triggers go with the tables via `CASCADE`, the functions
+  is what makes `RECREATE` mean what it says: the triggers go with the tables via `CASCADE`, the functions
   do not, so dropping the tables alone would leave a stale body to survive the "drop and recreate from
   scratch" mode, with the freshly created trigger wired straight back to it — a store reporting a validated
   schema with its notifications dead
@@ -401,7 +401,7 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   `CREATE TABLE / INDEX / EXTENSION IF NOT EXISTS` is not atomic against a concurrent creator, so without
   the lock several instances starting together on a database without the schema race on the system catalogs
   (measured: 64 of 80 fail to start, on PG17 and PG18 alike). One transaction across *all* scripts also
-  makes `INITIALIZE`'s drop-then-ensure indivisible, so a second instance cannot drop what the first has just
+  makes `RECREATE`'s drop-then-ensure indivisible, so a second instance cannot drop what the first has just
   recreated
 - **The table prefix is folded to lowercase, and may not start with a digit.** The prefix is an
   *unquoted* identifier everywhere it names an object — the DDL, every statement the store issues,

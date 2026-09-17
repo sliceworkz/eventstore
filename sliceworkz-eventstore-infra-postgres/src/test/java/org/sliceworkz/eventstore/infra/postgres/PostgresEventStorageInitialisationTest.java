@@ -40,12 +40,12 @@ public class PostgresEventStorageInitialisationTest {
 		}
 
 		@Test
-		public void testInitializeTwice ( ) {
+		public void testRecreateTwice ( ) {
 			EventStorage storage = PostgresEventStorage.newBuilder()
 				.name("unit-test")
 				.prefix("inittwice_")
 				.dataSource(PostgresContainer.dataSource(image))
-				.initializeDatabase()
+				.recreateDatabase()
 				.build();
 
 			storage.close();
@@ -56,7 +56,7 @@ public class PostgresEventStorageInitialisationTest {
 				.name("unit-test")
 				.prefix("inittwice_")
 				.dataSource(PostgresContainer.dataSource(image))
-				.initializeDatabase()
+				.recreateDatabase()
 				.build();
 
 			storage.close();

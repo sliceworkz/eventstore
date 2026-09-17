@@ -105,7 +105,7 @@ public class PostgresSchemaDriftTest {
 		// ---------------------------------------------------------------- §3.2
 
 		/**
-		 * {@code INITIALIZE} means what it says: the functions go with the tables.
+		 * {@code RECREATE} means what it says: the functions go with the tables.
 		 * <p>
 		 * This was the sharpest form of the old bug — {@code drop-schema.sql} dropped the two tables
 		 * (taking the triggers with them via {@code CASCADE}) and nothing else, so the function was
@@ -114,23 +114,39 @@ public class PostgresSchemaDriftTest {
 		 * body.
 		 */
 		@Test
-		public void testInitializeReplacesAStaleFunction ( ) throws Exception {
-			String prefix = "driftinit_";
+		public void testRecreateReplacesAStaleFunction ( ) throws Exception {
+			assertRecreatesFromScratch("driftrecreate_", PostgresEventStorage.newBuilder().recreateDatabase());
+		}
+
+		/**
+		 * The deprecated spelling is the same mode, through the constant and through the builder
+		 * method alike: it drops the tables and the functions, exactly as {@code RECREATE} does. An
+		 * alias that quietly became {@code ENSURE} would leave a test suite relying on it running
+		 * every scenario against the previous one's data.
+		 */
+		@Test
+		@SuppressWarnings("removal")
+		public void testTheDeprecatedInitializeSpellingIsTheRecreateMode ( ) throws Exception {
+			assertRecreatesFromScratch("driftinitmode_",
+				PostgresEventStorage.newBuilder().databaseInitMode(DatabaseInitMode.INITIALIZE));
+			assertRecreatesFromScratch("driftinitcall_", PostgresEventStorage.newBuilder().initializeDatabase());
+		}
+
+		private void assertRecreatesFromScratch ( String prefix, PostgresEventStorage.Builder builder ) throws Exception {
 			DataSource dataSource = PostgresContainer.dataSource(image);
 
 			ensure(prefix, dataSource).close();
 			hijackNotifyFunction(dataSource, prefix);
 
-			// INITIALIZE: drop everything and recreate from scratch. Reports success.
-			try ( EventStorage storage = PostgresEventStorage.newBuilder()
-					.name("unit-test").prefix(prefix).dataSource(dataSource)
-					.initializeDatabase().build() ) {
+			// drop everything and recreate from scratch. Reports success.
+			try ( EventStorage storage = builder
+					.name("unit-test").prefix(prefix).dataSource(dataSource).build() ) {
 				// the events table really was dropped and recreated -- it is empty
-				assertEquals(0, eventCount(dataSource, prefix), "INITIALIZE did drop and recreate the table");
+				assertEquals(0, eventCount(dataSource, prefix), "the table was dropped and recreated");
 			}
 
 			assertFalse(functionBody(dataSource, prefix).contains(HIJACKED_CHANNEL),
-				"INITIALIZE really is from scratch: the stale function body is gone");
+				"a recreate really is from scratch: the stale function body is gone");
 
 			PostgresContainer.closeDataSource(image);
 		}
@@ -144,7 +160,7 @@ public class PostgresSchemaDriftTest {
 		 * and the store logs success either way.
 		 */
 		@Test
-		public void testNotificationsWorkAfterInitializeRepairsAStaleFunction ( ) throws Exception {
+		public void testNotificationsWorkAfterRecreateRepairsAStaleFunction ( ) throws Exception {
 			String prefix = "driftnotify_";
 			DataSource dataSource = PostgresContainer.dataSource(image);
 
@@ -154,7 +170,7 @@ public class PostgresSchemaDriftTest {
 			AtomicInteger notifications = new AtomicInteger();
 			try ( EventStorage storage = PostgresEventStorage.newBuilder()
 					.name("unit-test").prefix(prefix).dataSource(dataSource)
-					.initializeDatabase().build() ) {
+					.recreateDatabase().build() ) {
 
 				storage.subscribe(new EventStorage.EventStoreListener() {
 					@Override public void notify ( EventStorage.AppendsToEventStoreNotification n ) { notifications.incrementAndGet(); }
@@ -165,7 +181,7 @@ public class PostgresSchemaDriftTest {
 				waitForNotification(notifications);
 
 				assertEquals(1, notifications.get(),
-					"the trigger created by INITIALIZE calls the shipped function, which notifies '"
+					"the trigger created by RECREATE calls the shipped function, which notifies '"
 						+ prefix + "event_appended'");
 			}
 

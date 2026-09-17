@@ -261,7 +261,7 @@ class PostgresNotificationStartupTest {
 						.prefix("split_")
 						.dataSource(main)
 						.monitoringDataSource(unreachableMonitoring)
-						.databaseInitMode(DatabaseInitMode.INITIALIZE)
+						.databaseInitMode(DatabaseInitMode.RECREATE)
 						.notificationStartupTimeout(Duration.ofSeconds(1))
 						.build());
 
@@ -288,7 +288,7 @@ class PostgresNotificationStartupTest {
 
 				PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl(
 					"startup-close", main, unreachable, Limit.none(), "close_", false, new SimpleMeterRegistry());
-				storage.initializeDatabase();
+				storage.recreateDatabase();
 
 				// a deliberately long deadline: this is the case where only close() can release the caller
 				AtomicReference<Throwable> outcome = new AtomicReference<>();
@@ -325,7 +325,7 @@ class PostgresNotificationStartupTest {
 
 				PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl(
 					"startup-interrupt", main, unreachable, Limit.none(), "interrupt_", false, new SimpleMeterRegistry());
-				storage.initializeDatabase();
+				storage.recreateDatabase();
 
 				AtomicBoolean returnedNormally = new AtomicBoolean();
 				AtomicBoolean threw = new AtomicBoolean();
@@ -364,7 +364,7 @@ class PostgresNotificationStartupTest {
 			try {
 				PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl(
 					"slow-arrival", main, monitoring, Limit.none(), "slow_", false, registry);
-				storage.initializeDatabase();
+				storage.recreateDatabase();
 
 				CompletableFuture<Void> starting = CompletableFuture.runAsync(
 					() -> storage.start(MUST_RETURN_WITHIN));
@@ -394,7 +394,7 @@ class PostgresNotificationStartupTest {
 			try {
 				PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl(
 					"losing-notifications", main, monitoring, Limit.none(), "losing_", false, registry);
-				storage.initializeDatabase();
+				storage.recreateDatabase();
 				storage.start(MUST_RETURN_WITHIN);
 				assertTrue(storage.isNotificationsAvailable());
 
@@ -431,7 +431,7 @@ class PostgresNotificationStartupTest {
 			try {
 				PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl(
 					"junk-on-the-channel", main, main, Limit.none(), "junk_", false, registry);
-				storage.initializeDatabase();
+				storage.recreateDatabase();
 				storage.start(MUST_RETURN_WITHIN);
 				RecordingListener listener = new RecordingListener();
 				storage.subscribe(listener);
@@ -474,7 +474,7 @@ class PostgresNotificationStartupTest {
 			try {
 				PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl(
 					"closing-in-outage", main, monitoring, Limit.none(), "outage_", false, new SimpleMeterRegistry());
-				storage.initializeDatabase();
+				storage.recreateDatabase();
 				storage.start(MUST_RETURN_WITHIN);
 
 				monitoring.goDown();

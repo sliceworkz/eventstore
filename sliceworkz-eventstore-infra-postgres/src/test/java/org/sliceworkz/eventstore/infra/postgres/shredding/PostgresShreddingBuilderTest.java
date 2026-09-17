@@ -73,7 +73,7 @@ public class PostgresShreddingBuilderTest {
 			EventStorage storage = PostgresEventStorage.newBuilder()
 					.name("shredding-build").prefix(PREFIX)
 					.dataSource(PostgresContainer.dataSource(image))
-					.initializeDatabase()
+					.recreateDatabase()
 					.shredding()
 					.build();
 			assertTrue(storage.shreddingCodec().isPresent(), "the storage does not carry the codec its builder was given");
@@ -105,7 +105,7 @@ public class PostgresShreddingBuilderTest {
 			try ( EventStorage storage = PostgresEventStorage.newBuilder()
 					.name("no-shredding-build").prefix(PREFIX)
 					.dataSource(PostgresContainer.dataSource(image))
-					.initializeDatabase()
+					.recreateDatabase()
 					.build() ) {
 				assertEquals(Optional.empty(), storage.shreddingCodec());
 			}

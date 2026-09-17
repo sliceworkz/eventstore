@@ -105,7 +105,7 @@ class PostgresLockTimeoutTest {
 				.prefix(prefix)
 				.dataSource(main)
 				.monitoringDataSource(monitoring)
-				.databaseInitMode(DatabaseInitMode.INITIALIZE)
+				.databaseInitMode(DatabaseInitMode.RECREATE)
 				.meterRegistry(new SimpleMeterRegistry())
 				.lockTimeout(lockTimeout)
 				.build();
@@ -263,7 +263,7 @@ class PostgresLockTimeoutTest {
 				.name("lock-timeout-default")
 				.prefix("lt_default_")
 				.dataSource(main)
-				.databaseInitMode(DatabaseInitMode.INITIALIZE)
+				.databaseInitMode(DatabaseInitMode.RECREATE)
 				.meterRegistry(new SimpleMeterRegistry())
 				.build() ) {
 			PostgresEventStorageImpl impl = assertInstanceOf(PostgresEventStorageImpl.class, storage);

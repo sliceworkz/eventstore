@@ -134,7 +134,7 @@ public class PostgresShreddingKeyStoreCacheTest {
 			CountingDataSource dataSource = new CountingDataSource(pool);
 
 			try ( EventStorage schema = PostgresEventStorage.newBuilder()
-					.name("kscache-schema").prefix(PREFIX).dataSource(pool).initializeDatabase().build();
+					.name("kscache-schema").prefix(PREFIX).dataSource(pool).recreateDatabase().build();
 				  PostgresShreddingKeyStore keys = new PostgresShreddingKeyStore(dataSource, PREFIX, Duration.ofHours(1), 2) ) {
 
 				assertEquals(2, keys.maxCachedKeys());

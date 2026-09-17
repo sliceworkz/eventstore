@@ -631,7 +631,13 @@ EventStore store = EventStore.on(storage).build();
 EventStorage storage = PostgresEventStorage.newBuilder()
     .name("mystore")
     .prefix("tenant1_")
-    .initializeDatabase()
+    .validateDatabase()
+    .build();
+
+// A test store: drop and recreate the tables on every start. RECREATE is the one destructive
+// mode, and named for it -- ENSURE, the default, is the mode that initializes a database
+EventStorage storage = PostgresEventStorage.newBuilder()
+    .recreateDatabase()
     .build();
 
 // With custom DataSource
@@ -1857,7 +1863,7 @@ and covers **all five in-tree storages**: `inmem`, `inmem-fs`, `postgres:16`, `p
 
 Backends run one after another in a single JVM, and in-JVM parallelism
 (`junit.jupiter.execution.parallel.enabled`) is not an option without changing how isolation works
-first: per-test isolation on Postgres is `initializeDatabase()` dropping and recreating the tables
+first: per-test isolation on Postgres is `recreateDatabase()` dropping and recreating the tables
 for the store's prefix, so two scenarios sharing a backend concurrently would drop each other's
 tables mid-test. To split a run anyway, `-Deventstore.testing.backends=...` partitions it across
 separate JVMs.
@@ -1874,7 +1880,7 @@ tests that are repo-internal rather than part of the storage contract: `TckBacke
 `EventImportRoundTripTest`, and the store-level tests of the impl module's meters and serde sharing
 (`MeterPurposeCardinalityTest`, `AppendPositionGaugeTest`, `QueryTimerTest`,
 `EventStreamSerdeSharingTest`). Postgres containers are managed by `PostgresContainer`, started once
-per JVM per image; per-test isolation comes from `initializeDatabase()` dropping and recreating the
+per JVM per image; per-test isolation comes from `recreateDatabase()` dropping and recreating the
 schema, not from a fresh container.
 
 **Testing application code:**

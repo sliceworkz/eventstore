@@ -71,7 +71,7 @@ class PostgresEventStorageVersionDetectionTest {
 				.name("version-detection-pg17")
 				.prefix("ver17_")
 				.dataSource(PostgresContainer.dataSource(PostgresContainer.IMAGE_PG17))
-				.initializeDatabase()
+				.recreateDatabase()
 				.build();
 			try {
 				assertInstanceOf(PostgresLegacyEventStorageImpl.class, storage,
@@ -88,7 +88,7 @@ class PostgresEventStorageVersionDetectionTest {
 				.name("version-detection-pg17-append")
 				.prefix("verapp17_")
 				.dataSource(PostgresContainer.dataSource(PostgresContainer.IMAGE_PG17))
-				.initializeDatabase()
+				.recreateDatabase()
 				.build();
 			try {
 				List<StoredEvent> stored = storage.append(AppendCriteria.none(), EventStreamId.anyContext(), List.of(sampleEvent()));
@@ -117,7 +117,7 @@ class PostgresEventStorageVersionDetectionTest {
 				.name("version-detection-pg18")
 				.prefix("ver18_")
 				.dataSource(PostgresContainer.dataSource(PostgresContainer.IMAGE_PG18))
-				.initializeDatabase()
+				.recreateDatabase()
 				.build();
 			try {
 				assertNotNull(storage);
@@ -137,7 +137,7 @@ class PostgresEventStorageVersionDetectionTest {
 				.name("version-detection-pg18-append")
 				.prefix("verapp18_")
 				.dataSource(PostgresContainer.dataSource(PostgresContainer.IMAGE_PG18))
-				.initializeDatabase()
+				.recreateDatabase()
 				.build();
 			try {
 				List<StoredEvent> stored = storage.append(AppendCriteria.none(), EventStreamId.anyContext(), List.of(sampleEvent()));

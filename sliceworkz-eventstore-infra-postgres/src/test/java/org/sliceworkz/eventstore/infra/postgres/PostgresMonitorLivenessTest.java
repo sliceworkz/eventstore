@@ -226,7 +226,7 @@ class PostgresMonitorLivenessTest {
 					.prefix("liveness_")
 					.dataSource(main)
 					.monitoringDataSource(monitoring)
-					.databaseInitMode(DatabaseInitMode.INITIALIZE)
+					.databaseInitMode(DatabaseInitMode.RECREATE)
 					.meterRegistry(registry)
 					.notificationProbeInterval(Duration.ofSeconds(1))
 					.build() ) {
@@ -283,7 +283,7 @@ class PostgresMonitorLivenessTest {
 					.name("liveness-quiet")
 					.prefix("liveness_quiet_")
 					.dataSource(main)
-					.databaseInitMode(DatabaseInitMode.INITIALIZE)
+					.databaseInitMode(DatabaseInitMode.RECREATE)
 					.meterRegistry(registry)
 					// far more often than anyone would configure, so that probes interleave with traffic
 					.notificationProbeInterval(Duration.ofMillis(200))

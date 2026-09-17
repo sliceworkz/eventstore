@@ -208,7 +208,7 @@ public class PostgresRestoredIntoYoungerClusterTest {
 					.name("prepare")
 					.prefix(prefix)
 					.dataSource(dataSource)
-					.initializeDatabase()
+					.recreateDatabase()
 					.build() ) {
 				storage.append(AppendCriteria.none(), EventStreamId.forContext("account").withPurpose("1"),
 					List.of(new EventToStore(EventStreamId.forContext("account").withPurpose("1"), new EventType("Opened"), "{}", Tags.none(), null)));

@@ -62,7 +62,7 @@ public class EventStreamIdTest {
 	}
 	
 	@Test
-	void testCanRead ( ) {
+	void testCovers ( ) {
 		EventStreamId customer1 = EventStreamId.forContext("customer").withPurpose("1");
 		EventStreamId customer2 = EventStreamId.forContext("customer").withPurpose("2");
 		EventStreamId customerDefault = EventStreamId.forContext("customer");
@@ -75,52 +75,52 @@ public class EventStreamIdTest {
 		EventStreamId anyContextAnyPurposeExplicit = EventStreamId.anyContext().anyPurpose(); // read-only
 		
 		assertFalse(customer1.isAnyContext() || customer1.isAnyPurpose());
-		assertTrue(customer1.canRead(customer1));
-		assertFalse(customer2.canRead(customer1));
-		assertFalse(customerDefault.canRead(customer1));
-		assertFalse(customerDefaultExplicit.canRead(customer1));
-		assertTrue(customerAnyPurpose.canRead(customer1));
-		assertTrue(anyContextPurpose1.canRead(customer1));
-		assertFalse(anyContextPurpose2.canRead(customer1));
-		assertTrue(anyContextAnyPurpose.canRead(customer1));
-		assertFalse(anyContextDefaultPurpose.canRead(customer1));
-		assertTrue(anyContextAnyPurposeExplicit.canRead(customer1));
+		assertTrue(customer1.covers(customer1));
+		assertFalse(customer2.covers(customer1));
+		assertFalse(customerDefault.covers(customer1));
+		assertFalse(customerDefaultExplicit.covers(customer1));
+		assertTrue(customerAnyPurpose.covers(customer1));
+		assertTrue(anyContextPurpose1.covers(customer1));
+		assertFalse(anyContextPurpose2.covers(customer1));
+		assertTrue(anyContextAnyPurpose.covers(customer1));
+		assertFalse(anyContextDefaultPurpose.covers(customer1));
+		assertTrue(anyContextAnyPurposeExplicit.covers(customer1));
 		
 		assertFalse(customer2.isAnyContext() || customer2.isAnyPurpose());
-		assertFalse(customer1.canRead(customer2));
-		assertTrue(customer2.canRead(customer2));
-		assertFalse(customerDefault.canRead(customer2));
-		assertFalse(customerDefaultExplicit.canRead(customer2));
-		assertTrue(customerAnyPurpose.canRead(customer2));
-		assertFalse(anyContextPurpose1.canRead(customer2));
-		assertTrue(anyContextPurpose2.canRead(customer2));
-		assertTrue(anyContextAnyPurpose.canRead(customer2));
-		assertFalse(anyContextDefaultPurpose.canRead(customer2));
-		assertTrue(anyContextAnyPurposeExplicit.canRead(customer2));
+		assertFalse(customer1.covers(customer2));
+		assertTrue(customer2.covers(customer2));
+		assertFalse(customerDefault.covers(customer2));
+		assertFalse(customerDefaultExplicit.covers(customer2));
+		assertTrue(customerAnyPurpose.covers(customer2));
+		assertFalse(anyContextPurpose1.covers(customer2));
+		assertTrue(anyContextPurpose2.covers(customer2));
+		assertTrue(anyContextAnyPurpose.covers(customer2));
+		assertFalse(anyContextDefaultPurpose.covers(customer2));
+		assertTrue(anyContextAnyPurposeExplicit.covers(customer2));
 
 		assertFalse(customerDefault.isAnyContext() || customerDefault.isAnyPurpose());
-		assertFalse(customer1.canRead(customerDefault));
-		assertFalse(customer2.canRead(customerDefault));
-		assertTrue(customerDefault.canRead(customerDefault));
-		assertTrue(customerDefaultExplicit.canRead(customerDefault));
-		assertTrue(customerAnyPurpose.canRead(customerDefault));
-		assertFalse(anyContextPurpose1.canRead(customerDefault));
-		assertFalse(anyContextPurpose2.canRead(customerDefault));
-		assertTrue(anyContextAnyPurpose.canRead(customerDefault));
-		assertTrue(anyContextDefaultPurpose.canRead(customerDefault));
-		assertTrue(anyContextAnyPurposeExplicit.canRead(customerDefault));
+		assertFalse(customer1.covers(customerDefault));
+		assertFalse(customer2.covers(customerDefault));
+		assertTrue(customerDefault.covers(customerDefault));
+		assertTrue(customerDefaultExplicit.covers(customerDefault));
+		assertTrue(customerAnyPurpose.covers(customerDefault));
+		assertFalse(anyContextPurpose1.covers(customerDefault));
+		assertFalse(anyContextPurpose2.covers(customerDefault));
+		assertTrue(anyContextAnyPurpose.covers(customerDefault));
+		assertTrue(anyContextDefaultPurpose.covers(customerDefault));
+		assertTrue(anyContextAnyPurposeExplicit.covers(customerDefault));
 
 		assertFalse(customerDefaultExplicit.isAnyContext() || customerDefaultExplicit.isAnyPurpose());
-		assertFalse(customer1.canRead(customerDefaultExplicit));
-		assertFalse(customer2.canRead(customerDefaultExplicit));
-		assertTrue(customerDefault.canRead(customerDefaultExplicit));
-		assertTrue(customerDefaultExplicit.canRead(customerDefaultExplicit));
-		assertTrue(customerAnyPurpose.canRead(customerDefaultExplicit));
-		assertFalse(anyContextPurpose1.canRead(customerDefaultExplicit));
-		assertFalse(anyContextPurpose2.canRead(customerDefaultExplicit));
-		assertTrue(anyContextAnyPurpose.canRead(customerDefaultExplicit));
-		assertTrue(anyContextDefaultPurpose.canRead(customerDefaultExplicit));
-		assertTrue(anyContextAnyPurposeExplicit.canRead(customerDefaultExplicit));
+		assertFalse(customer1.covers(customerDefaultExplicit));
+		assertFalse(customer2.covers(customerDefaultExplicit));
+		assertTrue(customerDefault.covers(customerDefaultExplicit));
+		assertTrue(customerDefaultExplicit.covers(customerDefaultExplicit));
+		assertTrue(customerAnyPurpose.covers(customerDefaultExplicit));
+		assertFalse(anyContextPurpose1.covers(customerDefaultExplicit));
+		assertFalse(anyContextPurpose2.covers(customerDefaultExplicit));
+		assertTrue(anyContextAnyPurpose.covers(customerDefaultExplicit));
+		assertTrue(anyContextDefaultPurpose.covers(customerDefaultExplicit));
+		assertTrue(anyContextAnyPurposeExplicit.covers(customerDefaultExplicit));
 		
 		// the others are read-only as no Event appends can be done on generic/wildcard streams
 		
@@ -130,6 +130,19 @@ public class EventStreamIdTest {
 		assertTrue(anyContextAnyPurpose.isAnyContext() || anyContextAnyPurpose.isAnyPurpose());
 		assertTrue(anyContextDefaultPurpose.isAnyContext() || anyContextDefaultPurpose.isAnyPurpose());
 		assertTrue(anyContextAnyPurposeExplicit.isAnyContext() || anyContextAnyPurposeExplicit.isAnyPurpose());
+	}
+
+	@Test
+	@SuppressWarnings("removal")
+	void canReadIsTheDeprecatedNameOfCovers ( ) {
+		EventStreamId customer1 = EventStreamId.forContext("customer").withPurpose("1");
+		EventStreamId customer2 = EventStreamId.forContext("customer").withPurpose("2");
+		EventStreamId anyCustomer = EventStreamId.forContext("customer").anyPurpose();
+		assertEquals(anyCustomer.covers(customer1), anyCustomer.canRead(customer1));
+		assertEquals(customer1.covers(customer1), customer1.canRead(customer1));
+		assertEquals(customer2.covers(customer1), customer2.canRead(customer1));
+		assertTrue(anyCustomer.canRead(customer1));
+		assertFalse(customer2.canRead(customer1));
 	}
 
 }

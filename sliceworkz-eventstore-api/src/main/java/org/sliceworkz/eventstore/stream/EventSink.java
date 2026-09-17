@@ -134,8 +134,8 @@ public interface EventSink<DOMAIN_EVENT_TYPE> {
 	 * decided per call rather than per stream; the store meters every append under the tags of the
 	 * stream it went through, so a write landing in {@code customer#123} would be counted under the
 	 * wildcard's purpose and never under its own; and it buys nothing the shared serde does not already
-	 * give, at the price of a second identity relation on {@link EventStreamId} beside
-	 * {@link EventStreamId#canRead(EventStreamId)} saying which stream may write to which.
+	 * give, at the price of a second relation on {@link EventStreamId} beside
+	 * {@link EventStreamId#covers(EventStreamId)}, saying which stream may write to which.
 	 *
 	 * @param appendCriteria the criteria determining whether the append should proceed (use AppendCriteria.none() for unconditional append)
 	 * @param events the list of ephemeral events to append

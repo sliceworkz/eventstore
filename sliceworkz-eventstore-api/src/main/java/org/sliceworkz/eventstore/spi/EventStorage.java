@@ -876,15 +876,16 @@ public interface EventStorage extends AutoCloseable {
 		 * Checks if this notification is relevant for a given event stream criteria.
 		 * <p>
 		 * This method determines whether an event stream identified by the criteria should
-		 * be notified about events appended to the stream in this notification. The check
-		 * uses the stream's read compatibility logic.
+		 * be notified about events appended to the stream in this notification: it is relevant
+		 * when the criteria {@linkplain EventStreamId#covers(EventStreamId) covers} the stream
+		 * appended to.
 		 *
 		 * @param eventStreamCriteria the event stream criteria to check relevance against
 		 * @return true if the notification is relevant for the criteria, false otherwise
-		 * @see EventStreamId#canRead(EventStreamId)
+		 * @see EventStreamId#covers(EventStreamId)
 		 */
 		public boolean isRelevantFor ( EventStreamId eventStreamCriteria ) {
-			return eventStreamCriteria.canRead(stream);
+			return eventStreamCriteria.covers(stream);
 		}
 
 	}

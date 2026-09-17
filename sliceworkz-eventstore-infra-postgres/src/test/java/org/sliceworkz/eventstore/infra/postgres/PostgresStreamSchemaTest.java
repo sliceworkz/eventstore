@@ -104,8 +104,8 @@ public class PostgresStreamSchemaTest {
 					"SQL default stream_purpose must match EventStreamId.forContext(...) purpose");
 
 				// ...so a context-scoped read (which matches on equality) can actually see the row.
-				assertTrue(contextStream.canRead(new EventStreamId(context, storedPurpose)),
-					"a context-scoped stream id must be able to read a row written via the SQL default purpose");
+				assertTrue(contextStream.covers(new EventStreamId(context, storedPurpose)),
+					"a context-scoped stream id must cover a row written via the SQL default purpose");
 			} finally {
 				storage.close();
 				PostgresContainer.closeDataSource(image);

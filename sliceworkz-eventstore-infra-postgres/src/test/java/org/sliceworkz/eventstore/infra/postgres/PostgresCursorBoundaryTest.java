@@ -225,7 +225,7 @@ public class PostgresCursorBoundaryTest {
 					.name("unit-test")
 					.prefix(prefix)
 					.dataSource(dataSource)
-					.initializeDatabase()
+					.recreateDatabase()
 					.build();
 		}
 

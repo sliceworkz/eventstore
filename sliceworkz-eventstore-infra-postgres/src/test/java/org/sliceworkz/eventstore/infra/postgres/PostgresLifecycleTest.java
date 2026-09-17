@@ -80,7 +80,7 @@ class PostgresLifecycleTest {
 			return PostgresEventStorage.newBuilder()
 					.name("lifecycle-test")
 					.dataSource(dataSource)
-					.initializeDatabase()
+					.recreateDatabase()
 					.build();
 		}
 
@@ -193,7 +193,7 @@ class PostgresLifecycleTest {
 			EventStore eventStore = PostgresEventStorage.newBuilder()
 					.name("lifecycle-owned")
 					.prefix("owned_")
-					.initializeDatabase()
+					.recreateDatabase()
 					.buildStore();
 
 			EventStream<Ping> stream = eventStore.getEventStream(EventStreamId.forContext("lifecycle"), Ping.class);
@@ -226,7 +226,7 @@ class PostgresLifecycleTest {
 					.name("lifecycle-rebuilt")
 					.prefix("rebuilt_")
 					.configuration(dbProperties)
-					.initializeDatabase();
+					.recreateDatabase();
 
 			EventStorage first = builder.build();
 			first.close();
@@ -263,7 +263,7 @@ class PostgresLifecycleTest {
 			assertThrows(EventStorageException.class, builder::build);
 			assertTrue(awaitNoSelfBuiltBackends(), "a failed build must not strand the pools it created");
 
-			EventStorage storage = builder.initializeDatabase().build();
+			EventStorage storage = builder.recreateDatabase().build();
 			try {
 				EventStream<Ping> stream = EventStoreFactory.get().eventStore(storage)
 						.getEventStream(EventStreamId.forContext("lifecycle"), Ping.class);
@@ -286,7 +286,7 @@ class PostgresLifecycleTest {
 					.name("lifecycle-twins")
 					.prefix("twins_")
 					.configuration(dbProperties)
-					.initializeDatabase();
+					.recreateDatabase();
 
 			EventStorage first = builder.build();
 			EventStorage second = builder.build();

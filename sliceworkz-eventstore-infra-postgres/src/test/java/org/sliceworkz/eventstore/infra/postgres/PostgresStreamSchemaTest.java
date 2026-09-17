@@ -66,7 +66,7 @@ public class PostgresStreamSchemaTest {
 				.name("unit-test")
 				.prefix(prefix)
 				.dataSource(dataSource)
-				.initializeDatabase()
+				.recreateDatabase()
 				.build();
 
 			try {
@@ -121,7 +121,7 @@ public class PostgresStreamSchemaTest {
 				.name("unit-test")
 				.prefix(prefix)
 				.dataSource(dataSource)
-				.initializeDatabase()
+				.recreateDatabase()
 				.build();
 
 			try ( Connection connection = dataSource.getConnection() ) {

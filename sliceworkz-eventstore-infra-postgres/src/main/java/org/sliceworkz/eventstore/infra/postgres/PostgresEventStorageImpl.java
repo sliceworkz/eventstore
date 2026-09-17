@@ -552,15 +552,15 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 	/**
 	 * Drops all event store objects and recreates them from scratch, then validates the schema.
 	 * <p>
-	 * This is equivalent to using {@link DatabaseInitMode#INITIALIZE}.
+	 * This is equivalent to using {@link DatabaseInitMode#RECREATE}.
 	 * <p>
 	 * <strong>Warning:</strong> This is destructive — all existing event data will be lost.
 	 *
 	 * @return this instance for method chaining
-	 * @throws EventStorageException if schema initialization or validation fails
+	 * @throws EventStorageException if dropping, recreating or validating the schema fails
 	 */
-	PostgresEventStorageImpl initializeDatabase ( ) {
-		LOGGER.info("Initializing database schema for prefix '{}' (drop and recreate)", prefix);
+	PostgresEventStorageImpl recreateDatabase ( ) {
+		LOGGER.info("Dropping and recreating database schema for prefix '{}'", prefix);
 		executeSqlScripts("drop-schema.sql", "ensure-schema.sql");
 		checkDatabase();
 		return this;
@@ -579,7 +579,7 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 	 * instances failed, on PostgreSQL 17 and 18 alike. {@code CREATE OR REPLACE FUNCTION} racing itself
 	 * has the same problem, reported as {@code tuple concurrently updated}.
 	 * <p>
-	 * <b>Why all scripts in one transaction.</b> {@code INITIALIZE} runs drop-then-ensure. Split across
+	 * <b>Why all scripts in one transaction.</b> {@code RECREATE} runs drop-then-ensure. Split across
 	 * two transactions it releases the lock in between, so a second instance can drop the schema the
 	 * first has just recreated, and the first's {@link #checkDatabase()} then fails against a database
 	 * that is momentarily empty. One transaction makes the whole drop-and-recreate indivisible.

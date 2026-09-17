@@ -90,7 +90,7 @@ public class PostgresLockCheckOrderingTest {
 				.name("unit-test")
 				.prefix(prefix)
 				.dataSource(dataSource)
-				.initializeDatabase()
+				.recreateDatabase()
 				.build();
 
 			try {

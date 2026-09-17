@@ -105,7 +105,7 @@ import io.micrometer.core.instrument.Metrics;
  *
  * // Test environment: fresh schema every time, closed when the block ends
  * try ( EventStore eventStore = PostgresEventStorage.newBuilder()
- *         .initializeDatabase()
+ *         .recreateDatabase()
  *         .buildStore() ) {
  *     ...
  * }
@@ -486,16 +486,20 @@ public interface PostgresEventStorage extends EventStorage {
 		 *
 		 * // Test environment: fresh schema every time
 		 * EventStorage storage = PostgresEventStorage.newBuilder()
-		 *     .databaseInitMode(DatabaseInitMode.INITIALIZE)
+		 *     .databaseInitMode(DatabaseInitMode.RECREATE)
 		 *     .build();
 		 * }</pre>
 		 *
 		 * @param mode the database initialization mode
 		 * @return this Builder for method chaining
+		 * @throws IllegalArgumentException if the mode is null
 		 * @see DatabaseInitMode
 		 */
 		public Builder databaseInitMode ( DatabaseInitMode mode ) {
-			this.databaseInitMode = mode;
+			if ( mode == null ) {
+				throw new IllegalArgumentException("databaseInitMode must not be null");
+			}
+			this.databaseInitMode = mode.canonical();
 			return this;
 		}
 
@@ -623,21 +627,33 @@ public interface PostgresEventStorage extends EventStorage {
 		}
 
 		/**
-		 * Sets the database initialization mode to {@link DatabaseInitMode#INITIALIZE}.
+		 * Sets the database initialization mode to {@link DatabaseInitMode#RECREATE}.
 		 * <p>
 		 * Drops all event store objects and recreates them from scratch.
 		 * <strong>Warning:</strong> This is destructive — all existing event data will be lost.
 		 * <p>
 		 * This is a convenience method equivalent to
-		 * {@code databaseInitMode(DatabaseInitMode.INITIALIZE)}.
+		 * {@code databaseInitMode(DatabaseInitMode.RECREATE)}.
 		 *
 		 * @return this Builder for method chaining
-		 * @see DatabaseInitMode#INITIALIZE
+		 * @see DatabaseInitMode#RECREATE
 		 * @see #databaseInitMode(DatabaseInitMode)
 		 */
-		public Builder initializeDatabase ( ) {
-			this.databaseInitMode = DatabaseInitMode.INITIALIZE;
+		public Builder recreateDatabase ( ) {
+			this.databaseInitMode = DatabaseInitMode.RECREATE;
 			return this;
+		}
+
+		/**
+		 * The former name of {@link #recreateDatabase()}, which it delegates to.
+		 *
+		 * @return this Builder for method chaining
+		 * @deprecated the mode drops and recreates the schema, and is named for it: use
+		 *             {@link #recreateDatabase()}
+		 */
+		@Deprecated(since = "0.11.0", forRemoval = true)
+		public Builder initializeDatabase ( ) {
+			return recreateDatabase();
 		}
 
 		/**
@@ -767,7 +783,7 @@ public interface PostgresEventStorage extends EventStorage {
 		 *   <li>{@link DatabaseInitMode#NONE}: No schema operations</li>
 		 *   <li>{@link DatabaseInitMode#VALIDATE}: Schema validation only</li>
 		 *   <li>{@link DatabaseInitMode#ENSURE}: Create missing objects, then validate (default)</li>
-		 *   <li>{@link DatabaseInitMode#INITIALIZE}: Drop and recreate all objects, then validate</li>
+		 *   <li>{@link DatabaseInitMode#RECREATE}: Drop and recreate all objects, then validate</li>
 		 * </ul>
 		 * <p>
 		 * The returned storage can be passed to {@link EventStore#on(EventStorage)} to create an EventStore
@@ -860,11 +876,12 @@ public interface PostgresEventStorage extends EventStorage {
 
 				result.lockTimeout(lockTimeout).notificationProbeInterval(notificationProbeInterval);
 
+				// the setter folds the deprecated spelling into RECREATE, so this is every mode there is
 				switch ( databaseInitMode ) {
-					case NONE       -> { }
-					case VALIDATE   -> result.validateDatabase();
-					case ENSURE     -> result.ensureDatabase();
-					case INITIALIZE -> result.initializeDatabase();
+					case NONE     -> { }
+					case VALIDATE -> result.validateDatabase();
+					case ENSURE   -> result.ensureDatabase();
+					case RECREATE -> result.recreateDatabase();
 				}
 				// if we didn't fail until here, then we can start the executor threads. The wait for their
 				// LISTEN is bounded: they retry forever rather than failing, so an unbounded wait here is

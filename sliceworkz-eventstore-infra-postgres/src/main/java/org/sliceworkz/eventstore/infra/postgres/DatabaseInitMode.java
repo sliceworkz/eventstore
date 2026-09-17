@@ -25,7 +25,7 @@ package org.sliceworkz.eventstore.infra.postgres;
  * via {@link PostgresEventStorage.Builder#databaseInitMode(DatabaseInitMode)} or via
  * the convenience methods {@link PostgresEventStorage.Builder#validateDatabase()},
  * {@link PostgresEventStorage.Builder#ensureDatabase()}, and
- * {@link PostgresEventStorage.Builder#initializeDatabase()}.
+ * {@link PostgresEventStorage.Builder#recreateDatabase()}.
  *
  * @see PostgresEventStorage.Builder
  */
@@ -74,7 +74,30 @@ public enum DatabaseInitMode {
 	 * <p>
 	 * <strong>Warning:</strong> This mode is destructive — all existing event data will be lost.
 	 * Use only for test environments, fresh deployments, or when a clean slate is explicitly needed.
+	 * <p>
+	 * The name says what the mode does, and that is deliberate for the one mode that destroys data.
+	 * The alternative — a name like {@code INITIALIZE} — loses because it reads as the setup the
+	 * default mode performs, creating what is missing and leaving the rest alone, and so invites the
+	 * one misconfiguration that cannot be undone: a store with history started with the mode that
+	 * drops its tables. {@link #ENSURE} is the mode that initializes a database.
 	 */
-	INITIALIZE
+	RECREATE,
+
+	/**
+	 * The former name of {@link #RECREATE}, treated identically wherever a mode is read.
+	 *
+	 * @deprecated the mode drops and recreates the schema, and is named for it: use {@link #RECREATE}
+	 */
+	@Deprecated(since = "0.11.0", forRemoval = true)
+	INITIALIZE;
+
+	/**
+	 * This mode under its current name: {@link #INITIALIZE} answers {@link #RECREATE}, every other
+	 * mode itself. The builder folds a mode through this on the way in, so nothing past its setter
+	 * has to know the deprecated spelling exists.
+	 */
+	DatabaseInitMode canonical ( ) {
+		return this == INITIALIZE ? RECREATE : this;
+	}
 
 }

@@ -29,9 +29,9 @@ Cause: `ensure-schema.sql` is create-if-absent throughout. Tables and indexes us
 the two functions and two triggers are wrapped in `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_proc …)
 THEN CREATE FUNCTION …` guards. Nothing is `CREATE OR REPLACE`.
 
-### 1.2 A stale function survives `INITIALIZE` — confirmed (the headline)
+### 1.2 A stale function survives `RECREATE` — confirmed (the headline)
 
-`testStaleFunctionSurvivesInitialize`. Same setup, but run `INITIALIZE` — documented on
+`testStaleFunctionSurvivesInitialize`. Same setup, but run `RECREATE` — documented on
 `DatabaseInitMode` as *"Drop all event store objects and recreate them from scratch"*. The events
 table really is dropped and recreated (the test asserts it comes back empty), and the hijacked
 function body is **still there afterwards**.
@@ -47,7 +47,7 @@ problem: there is currently **no mode, and no supported operation, that updates 
 ### 1.3 The drift is functional, not cosmetic — confirmed
 
 `testStaleFunctionBreaksNotificationsAfterInitialize`. With the stale body in place, a listener
-registered on a storage that has just run `INITIALIZE` receives nothing when a row is inserted: the
+registered on a storage that has just run `RECREATE` receives nothing when a row is inserted: the
 trigger fires, calls the old function, and notifies the old channel. The store's LISTEN/NOTIFY path
 is dead while the store reports a healthy, validated schema — projections simply stop waking up.
 
@@ -165,7 +165,7 @@ already does per stream. The project has the pattern in place and documented.
 ### Step 1 — C: make every object idempotently replaceable — **landed**
 
 The functions are now `CREATE OR REPLACE`d rather than guarded, and `drop-schema.sql` drops them as
-well as the tables, which is what makes `INITIALIZE` a genuine reset.
+well as the tables, which is what makes `RECREATE` a genuine reset.
 
 The triggers are **compared, then recreated only when they differ**, rather than rewritten every
 start:
@@ -188,7 +188,7 @@ catalog read that locks nothing, and it repairs drifted timing, orientation and 
 side effect, which the unconditional form would too but the old name-only guard did not.
 
 Schema scripts now run **as one transaction under a per-prefix advisory lock**
-(`executeSqlScripts`), which removes the concurrency finding in §2 and makes `INITIALIZE`'s
+(`executeSqlScripts`), which removes the concurrency finding in §2 and makes `RECREATE`'s
 drop-then-ensure indivisible.
 
 This needs no dependency, no DDL of its own and no version marker. It does **not** solve data
@@ -253,7 +253,7 @@ Today a store runs happily against a database older than it expects. Once a vers
 | `NONE` | unchanged: no check at all | unchanged |
 | `VALIDATE` | **fail**, naming both versions and the steps not applied | **fail** — an older library against a newer database is not safe |
 | `ENSURE` | apply the missing steps | **fail** — never downgrade |
-| `INITIALIZE` | drop and recreate at the current version | drop and recreate at the current version |
+| `RECREATE` | drop and recreate at the current version | drop and recreate at the current version |
 
 Note that for *additive* drift `VALIDATE` already fails loudly and correctly today (a database
 missing `idx_events_stream_tags` fails with `Required index … does not exist`). D closes the mutative

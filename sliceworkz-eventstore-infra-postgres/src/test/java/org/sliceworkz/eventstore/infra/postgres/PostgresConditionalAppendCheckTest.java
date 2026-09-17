@@ -199,7 +199,7 @@ public class PostgresConditionalAppendCheckTest {
 					.prefix(prefix)
 					.dataSource(writePool)
 					.monitoringDataSource(monitoring)
-					.initializeDatabase()
+					.recreateDatabase()
 					.build();
 			return new Session(storage, writePool);
 		}

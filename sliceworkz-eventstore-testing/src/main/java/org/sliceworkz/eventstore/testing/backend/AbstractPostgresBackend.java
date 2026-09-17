@@ -36,7 +36,7 @@ import org.sliceworkz.eventstore.testing.StorageOptions;
  * <p>
  * The container is shared for the lifetime of the JVM; the connection pool is not, and is dropped
  * after each test — see {@link PostgresContainer#close(String)} for why. Per-test isolation comes
- * from {@code initializeDatabase()}, which drops and recreates the tables for the store's prefix, so
+ * from {@code recreateDatabase()}, which drops and recreates the tables for the store's prefix, so
  * a store handed to a scenario is always empty even though the database outlives it.
  * <p>
  * Requires {@code sliceworkz-eventstore-infra-postgres}, the PostgreSQL JDBC driver, HikariCP and
@@ -89,7 +89,7 @@ public abstract class AbstractPostgresBackend implements EventStoreBackend {
 				.prefix(prefix(options))
 				.dataSource(PostgresContainer.dataSource(image))
 				// drops and recreates this prefix's tables: what makes each test start empty
-				.initializeDatabase()
+				.recreateDatabase()
 				// build() already fails if LISTEN/NOTIFY is not established; the longer deadline is for a
 				// container that has just been started and a pool that is rebuilt per test, so a slow
 				// first connection shows up as a slow test rather than a failed one

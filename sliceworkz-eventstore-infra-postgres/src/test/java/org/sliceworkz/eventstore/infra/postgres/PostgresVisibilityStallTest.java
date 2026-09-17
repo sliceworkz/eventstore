@@ -420,7 +420,7 @@ public class PostgresVisibilityStallTest {
 				.name("unit-test")
 				.prefix(prefix)
 				.dataSource(dataSource)
-				.initializeDatabase()
+				.recreateDatabase()
 				.build();
 			try {
 				scenario.run(storage, dataSource, prefix);

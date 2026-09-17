@@ -62,7 +62,7 @@ class EventImportRoundTripTest {
 				.name("roundtrip")
 				.prefix("roundtrip_")
 				.dataSource(PostgresContainer.dataSource(PostgresContainer.IMAGE_PG18))
-				.initializeDatabase()
+				.recreateDatabase()
 				.build();
 		EventStorage destination = InMemoryEventStorage.newBuilder().name("destination").build();
 

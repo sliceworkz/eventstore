@@ -93,7 +93,7 @@ public class PostgresShreddingReportingRoleTest {
 			KeyId bobsKey;
 			Sealed alicesValue;
 			try ( EventStorage schema = PostgresEventStorage.newBuilder()
-					.name("reporting-schema").prefix(PREFIX).dataSource(application).initializeDatabase().build();
+					.name("reporting-schema").prefix(PREFIX).dataSource(application).recreateDatabase().build();
 				  ShreddingKeyStore applicationKeys = PostgresShreddingKeyStore.on(application, PREFIX);
 				  ShreddingCodec applicationCodec = AesGcmShreddingCodec.over(applicationKeys) ) {
 				alicesValue = applicationCodec.seal("\"Alice Martin\"", ALICE);

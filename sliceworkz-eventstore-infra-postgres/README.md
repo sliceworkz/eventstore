@@ -97,7 +97,7 @@ that is not a table: the **`btree_gin` extension**, which the combined stream+ta
 |---|---|
 | `NONE`, `VALIDATE` | `CONNECT`, `USAGE` on the schema, and no DDL at all — see the runtime grants below |
 | `ENSURE` (default) | the above, plus `CREATE` on the **schema** — and, *only if `btree_gin` is not installed yet*, `CREATE` on the **database** |
-| `INITIALIZE` | the above, plus ownership of the store's tables and functions (it drops them) |
+| `RECREATE` | the above, plus ownership of the store's tables and functions (it drops them) |
 
 Every mode needs these at runtime. They come for free when the role created the tables itself; when a
 DBA created them, they have to be granted:

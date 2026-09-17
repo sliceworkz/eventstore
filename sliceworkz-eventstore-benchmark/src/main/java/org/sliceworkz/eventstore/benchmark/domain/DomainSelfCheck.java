@@ -23,11 +23,8 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
 
-import io.micrometer.core.instrument.Metrics;
 
 import org.sliceworkz.eventstore.EventStore;
-import org.sliceworkz.eventstore.EventStoreFactory;
-import org.sliceworkz.eventstore.MeterOptions;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventType;
@@ -126,8 +123,7 @@ public final class DomainSelfCheck {
 		// CrmEvent at getEventStream.  (buildStore() does exactly this, and hands back no storage.)
 		ShreddingCodec codec = AesGcmShreddingCodec.over(new InMemoryShreddingKeyStore());
 		try ( EventStorage storage = InMemoryEventStorage.newBuilder().build();
-				EventStore store = EventStoreFactory.get()
-						.eventStore(storage, Metrics.globalRegistry, MeterOptions.defaults(), codec) ) {
+				EventStore store = EventStore.on(storage).shredding(codec).build() ) {
 
 			problems += roundTrip(store, WebshopContext.INVENTORY, InventoryEvent.class, inventorySamples());
 			problems += roundTrip(store, WebshopContext.SALES, SalesEvent.class, salesSamples());

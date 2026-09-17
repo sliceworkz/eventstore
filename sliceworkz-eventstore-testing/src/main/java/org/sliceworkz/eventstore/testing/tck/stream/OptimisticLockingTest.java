@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.Collections;
-import org.sliceworkz.eventstore.EventStoreFactory;
+import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
@@ -315,7 +315,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 	}
 
 	private EventStream<MockDomainEvent> createEventStream() {
-		return EventStoreFactory.get().eventStore(eventStorage()).getEventStream(EventStreamId.forContext(UNITTEST_BOUNDEDCONTEXT), MockDomainEvent.class);
+		return EventStore.on(eventStorage()).build().getEventStream(EventStreamId.forContext(UNITTEST_BOUNDEDCONTEXT), MockDomainEvent.class);
 	}
 
 }

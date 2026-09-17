@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-import org.sliceworkz.eventstore.EventStoreFactory;
+import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
@@ -162,7 +162,7 @@ public class ConcurrentOptimisticLockingTest extends AbstractEventStoreTest {
 	}
 
 	private EventStream<MockDomainEvent> createEventStream ( ) {
-		return EventStoreFactory.get().eventStore(eventStorage()).getEventStream(EventStreamId.forContext(UNITTEST_BOUNDEDCONTEXT), MockDomainEvent.class);
+		return EventStore.on(eventStorage()).build().getEventStream(EventStreamId.forContext(UNITTEST_BOUNDEDCONTEXT), MockDomainEvent.class);
 	}
 
 }

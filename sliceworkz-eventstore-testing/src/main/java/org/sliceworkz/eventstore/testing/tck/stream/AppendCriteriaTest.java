@@ -26,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.Collections;
 import java.util.Optional;
 
-import org.sliceworkz.eventstore.EventStoreFactory;
+import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
@@ -149,7 +149,7 @@ public class AppendCriteriaTest extends AbstractEventStoreTest {
 	}
 
 	private EventStream<MockDomainEvent> createEventStream() {
-		return EventStoreFactory.get().eventStore(eventStorage()).getEventStream(EventStreamId.forContext(UNITTEST_BOUNDEDCONTEXT), MockDomainEvent.class);
+		return EventStore.on(eventStorage()).build().getEventStream(EventStreamId.forContext(UNITTEST_BOUNDEDCONTEXT), MockDomainEvent.class);
 	}
 
 }

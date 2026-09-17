@@ -52,13 +52,13 @@
  * EventStorage storage = InMemoryEventStorage.newBuilder()
  *     .resultLimit(10000)
  *     .build();
- * EventStore eventStore = EventStoreFactory.get().eventStore(storage);
+ * EventStore eventStore = EventStore.on(storage).build();
  *
  * // Using PostgreSQL storage (default mode ENSURE creates schema if missing)
  * EventStorage storage = PostgresEventStorage.newBuilder()
  *     .prefix("tenant1_")
  *     .build();
- * EventStore eventStore = EventStoreFactory.get().eventStore(storage);
+ * EventStore eventStore = EventStore.on(storage).build();
  * }</pre>
  *
  * <h2>Implementing Custom Storage:</h2>

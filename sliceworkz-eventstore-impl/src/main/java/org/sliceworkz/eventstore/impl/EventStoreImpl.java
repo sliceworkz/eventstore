@@ -104,7 +104,7 @@ import io.micrometer.core.instrument.Timer;
  * </ul>
  * <p>
  * This class is instantiated via the {@link EventStoreFactoryImpl} using Java's ServiceLoader mechanism.
- * Users should obtain EventStore instances through {@link org.sliceworkz.eventstore.EventStoreFactory#get()}.
+ * Users should obtain EventStore instances through {@link EventStore#on(org.sliceworkz.eventstore.spi.EventStorage)}.
  * <p>
  * The implementation uses virtual threads for asynchronous notification of eventually consistent subscribers,
  * ensuring efficient handling of concurrent event processing without blocking the main append operations.

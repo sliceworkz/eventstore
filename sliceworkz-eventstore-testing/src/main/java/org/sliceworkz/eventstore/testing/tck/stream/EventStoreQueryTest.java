@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import java.math.BigDecimal;
 import java.util.Collections;
 import java.util.List;
-import org.sliceworkz.eventstore.EventStoreFactory;
+import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
@@ -295,7 +295,7 @@ public class EventStoreQueryTest extends AbstractEventStoreTest {
 	void testProjectionWithHigherNumberOfEvents ( ) {
 		int expectedQueries = (10000+Projector.Builder.DEFAULT_MAX_EVENTS_PER_QUERY)/Projector.Builder.DEFAULT_MAX_EVENTS_PER_QUERY;
 
-		EventStream<MockDomainEvent> str = EventStoreFactory.get().eventStore(eventStorage()).getEventStream(EventStreamId.forContext("UnitTestBoundedContext").withPurpose("domain"), MockDomainEvent.class);
+		EventStream<MockDomainEvent> str = EventStore.on(eventStorage()).build().getEventStream(EventStreamId.forContext("UnitTestBoundedContext").withPurpose("domain"), MockDomainEvent.class);
 
 		for ( int i = 0; i < 10000; i++ ) {
 			str.append(AppendCriteria.none(), Event.of(new MockDomainEvent.FirstDomainEvent("test " + i), Tags.none()));

@@ -29,7 +29,6 @@ import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.sliceworkz.eventstore.EventStore;
-import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.MeterOptions;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.infra.postgres.shredding.PostgresShreddingKeyStore;
@@ -129,7 +128,7 @@ import io.micrometer.core.instrument.Metrics;
  *     .resultLimit(10000)
  *     .databaseInitMode(DatabaseInitMode.VALIDATE)
  *     .build();
- * EventStore eventStore = EventStoreFactory.get().eventStore(storage);
+ * EventStore eventStore = EventStore.on(storage).build();
  * }</pre>
  *
  * <h2>Optional uuid-creator Dependency (PostgreSQL 16-17 only)</h2>
@@ -153,7 +152,7 @@ import io.micrometer.core.instrument.Metrics;
  *
  * @see EventStorage
  * @see EventStore
- * @see EventStoreFactory
+ * @see EventStore#on(EventStorage)
  * @see DataSourceFactory
  * @see HikariConfigurationUtil
  */
@@ -605,9 +604,8 @@ public interface PostgresEventStorage {
 		 * <p>
 		 * Defaults to {@link MeterOptions#defaults()}, which caps the {@code purpose} tag at
 		 * {@link MeterOptions#DEFAULT_MAX_PURPOSE_TAG_VALUES} distinct values. Ignored by {@link #build()},
-		 * which returns a storage rather than a store — pass the options to
-		 * {@link org.sliceworkz.eventstore.EventStoreFactory#eventStore(EventStorage, MeterRegistry, MeterOptions)}
-		 * there instead.
+		 * which returns a storage rather than a store — give them to the store's own builder,
+		 * {@code EventStore.on(storage).meterOptions(...)}, instead.
 		 *
 		 * @param meterOptions how much detail the store's meters may carry
 		 * @return this Builder instance for method chaining
@@ -645,7 +643,7 @@ public interface PostgresEventStorage {
 		 * <p>
 		 * Honoured by {@link #build()} as much as by {@link #buildStore()}: the codec travels with the
 		 * storage ({@link EventStorage#shreddingCodec()}), so a store built on {@code build()}'s result
-		 * through {@link EventStoreFactory#eventStore(EventStorage)} protects and erases personal data
+		 * through {@link EventStore#on(EventStorage)} protects and erases personal data
 		 * too. That matters most for this overload, since the key store it stands for needs the
 		 * {@code DataSource} the builder resolves — one loaded from {@code db.properties} is never handed
 		 * out, so a caller could not construct it.
@@ -712,7 +710,7 @@ public interface PostgresEventStorage {
 		 *   <li>{@link DatabaseInitMode#INITIALIZE}: Drop and recreate all objects, then validate</li>
 		 * </ul>
 		 * <p>
-		 * The returned EventStorage can be passed to {@link EventStoreFactory#eventStore(EventStorage)}
+		 * The returned EventStorage can be passed to {@link EventStore#on(EventStorage)}
 		 * to create an EventStore instance. Shredding configured on this builder travels with the storage
 		 * ({@link EventStorage#shreddingCodec()}), so a store built that way protects and erases personal
 		 * data exactly as one from {@link #buildStore()} does; only {@link #meterOptions(MeterOptions)} is
@@ -726,7 +724,7 @@ public interface PostgresEventStorage {
 		 * @return a configured EventStorage instance backed by PostgreSQL
 		 * @throws EventStorageException if no database configuration can be found, or schema operations fail
 		 * @see #buildStore()
-		 * @see EventStoreFactory#eventStore(EventStorage)
+		 * @see EventStore#on(EventStorage)
 		 */
 		public EventStorage build ( ) {
 			return build(resolveDataSources());
@@ -838,13 +836,13 @@ public interface PostgresEventStorage {
 		 * Builds and returns a fully configured {@link EventStore} instance.
 		 * <p>
 		 * This is a convenience method that combines {@link #build()} with
-		 * {@link EventStoreFactory#eventStore(EventStorage)} to create a ready-to-use
+		 * {@link EventStore#on(EventStorage)} to create a ready-to-use
 		 * EventStore in a single call.
 		 * <p>
 		 * Equivalent to:
 		 * <pre>{@code
 		 * EventStorage storage = builder.build();
-		 * EventStore eventStore = EventStoreFactory.get().eventStore(storage);
+		 * EventStore eventStore = EventStore.on(storage).build();
 		 * }</pre>
 		 * <p>
 		 * The returned EventStore is the only handle on the storage this creates, so it is also the only
@@ -855,7 +853,7 @@ public interface PostgresEventStorage {
 		 * @return a fully configured EventStore backed by PostgreSQL
 		 * @throws RuntimeException if database configuration cannot be loaded or schema initialization fails
 		 * @see #build()
-		 * @see EventStoreFactory#eventStore(EventStorage)
+		 * @see EventStore#on(EventStorage)
 		 */
 		public EventStore buildStore ( ) {
 			// the storage is created here and never handed to the caller, so the returned store owns it:
@@ -863,7 +861,7 @@ public interface PostgresEventStorage {
 			EventStorage eventStorage = build();
 			// the codec travels with the storage (EventStorage.shreddingCodec()), so the store picks it up
 			// here exactly as a store built by the caller on build()'s result would
-			return EventStore.owning(EventStoreFactory.get().eventStore(eventStorage, meterRegistry, meterOptions), eventStorage);
+			return EventStore.owning(EventStore.on(eventStorage).meterRegistry(meterRegistry).meterOptions(meterOptions).build(), eventStorage);
 		}
 
 		/**

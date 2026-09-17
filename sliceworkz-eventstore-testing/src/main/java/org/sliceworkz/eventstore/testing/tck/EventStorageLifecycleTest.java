@@ -32,7 +32,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.sliceworkz.eventstore.EventStore;
-import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.Tags;
@@ -175,7 +174,7 @@ public class EventStorageLifecycleTest extends AbstractEventStoreTest {
 
 	@ForEachBackend
 	void closingAStoreWhileNotificationsAreInFlightLeavesTheStorageIntact ( ) throws InterruptedException {
-		EventStore survivingStore = EventStoreFactory.get().eventStore(eventStorage());
+		EventStore survivingStore = EventStore.on(eventStorage()).build();
 		EventStream<MockDomainEvent> survivingStream = stream(survivingStore);
 		AtomicInteger notifications = new AtomicInteger();
 		survivingStream.subscribe((EventStreamEventuallyConsistentAppendListener) reference -> {
@@ -208,7 +207,7 @@ public class EventStorageLifecycleTest extends AbstractEventStoreTest {
 				// dropped with it — holding every round's streams would leave the storage notifying
 				// hundreds of dead ones, which slows notifications down and narrows the very window
 				// this is trying to hit.
-				EventStore closingStore = EventStoreFactory.get().eventStore(eventStorage());
+				EventStore closingStore = EventStore.on(eventStorage()).build();
 				List<EventStream<MockDomainEvent>> doomedStreams = new ArrayList<>();
 				for ( int i = 0; i < RACE_STREAMS_PER_ROUND; i++ ) {
 					doomedStreams.add(stream(closingStore)); // held, so the storage's weak refs survive
@@ -285,8 +284,8 @@ public class EventStorageLifecycleTest extends AbstractEventStoreTest {
 
 	@ForEachBackend
 	void closingOneStoreLeavesItsSiblingsWorking ( ) {
-		EventStore closedStore = EventStoreFactory.get().eventStore(eventStorage());
-		EventStore survivingStore = EventStoreFactory.get().eventStore(eventStorage());
+		EventStore closedStore = EventStore.on(eventStorage()).build();
+		EventStore survivingStore = EventStore.on(eventStorage()).build();
 
 		EventStream<MockDomainEvent> closedStream = stream(closedStore);
 		EventStream<MockDomainEvent> survivingStream = stream(survivingStore);

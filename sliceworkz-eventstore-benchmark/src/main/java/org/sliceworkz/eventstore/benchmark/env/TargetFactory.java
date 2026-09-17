@@ -24,7 +24,6 @@ import io.micrometer.core.instrument.composite.CompositeMeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 import org.sliceworkz.eventstore.EventStore;
-import org.sliceworkz.eventstore.EventStoreFactory;
 import org.sliceworkz.eventstore.MeterOptions;
 import org.sliceworkz.eventstore.benchmark.env.TargetSpec.SchemaMode;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
@@ -34,7 +33,6 @@ import org.sliceworkz.eventstore.infra.postgres.DatabaseInitMode;
 import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
 import org.sliceworkz.eventstore.infra.postgres.shredding.PostgresShreddingKeyStore;
 import org.sliceworkz.eventstore.shredding.AesGcmShreddingCodec;
-import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.testing.backend.PostgresContainer;
 
@@ -44,7 +42,7 @@ import org.sliceworkz.eventstore.testing.backend.PostgresContainer;
  * <p>The store and the storage are built <b>separately</b> rather than through {@code buildStore()},
  * because a benchmark needs both handles and {@code buildStore()} returns only the store. That means
  * reproducing the one thing {@code buildStore()} does that the plain factory does not: passing the
- * shredding codec to {@code EventStoreFactory.eventStore(storage, registry, options, codec)}. A
+ * shredding codec to the store's builder, {@code EventStore.on(storage).shredding(codec)}. A
  * store assembled without it rejects every {@code crm} event at {@code getEventStream}, and does so
  * at stream-creation time rather than on the append -- which reads as a configuration bug in the
  * benchmark rather than in the wiring, so it is worth being explicit about.
@@ -98,14 +96,13 @@ public final class TargetFactory {
 		}
 
 		EventStorage storage = builder.build();
-		ShreddingCodec codec = spec.shredding()
-				? AesGcmShreddingCodec.over(new InMemoryShreddingKeyStore())
-				: null;
-
 		MeterRegistry registry = registryFor(spec);
-		EventStore store = EventStoreFactory.get().eventStore(storage, registry, meterOptionsFor(spec), codec);
+		EventStore.Builder storeBuilder = EventStore.on(storage).meterRegistry(registry).meterOptions(meterOptionsFor(spec));
+		if ( spec.shredding() ) {
+			storeBuilder.shredding(AesGcmShreddingCodec.over(new InMemoryShreddingKeyStore()));
+		}
 
-		return new BenchmarkTarget(spec, prefix, store, storage, null, false, registry);
+		return new BenchmarkTarget(spec, prefix, storeBuilder.build(), storage, null, false, registry);
 	}
 
 	private static BenchmarkTarget openPostgres ( TargetSpec spec, String prefix ) {
@@ -159,14 +156,13 @@ public final class TargetFactory {
 			// ensure-schema.sql creates <prefix>shredding_keys unconditionally, so a key store on this
 			// store's own database needs no extra builder call -- only a schema that has been ensured
 			// at least once, which provisioning guarantees
-			ShreddingCodec codec = spec.shredding()
-					? AesGcmShreddingCodec.over(PostgresShreddingKeyStore.on(dataSource, prefix))
-					: null;
-
 			MeterRegistry registry = registryFor(spec);
-			EventStore store = EventStoreFactory.get().eventStore(storage, registry, meterOptionsFor(spec), codec);
+			EventStore.Builder storeBuilder = EventStore.on(storage).meterRegistry(registry).meterOptions(meterOptionsFor(spec));
+			if ( spec.shredding() ) {
+				storeBuilder.shredding(AesGcmShreddingCodec.over(PostgresShreddingKeyStore.on(dataSource, prefix)));
+			}
 
-			return new BenchmarkTarget(spec, prefix, store, storage, dataSource, ownsDataSource, registry);
+			return new BenchmarkTarget(spec, prefix, storeBuilder.build(), storage, dataSource, ownsDataSource, registry);
 		} catch ( RuntimeException e ) {
 			// the storage never reached the caller, so nothing else will close what this created
 			if ( ownsDataSource ) {

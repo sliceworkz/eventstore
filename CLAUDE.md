@@ -56,8 +56,9 @@ artifact is what its code needs and nothing more:
   file codecs, the in-memory store's payload validation, the Postgres notification payloads. It is
   `tools.jackson.*`, a different groupId and package from Jackson 2, so an application on Jackson 2
   runs both side by side: two Jacksons on the classpath, no conflict, and its own mapper untouched. That is the cost of building the serde on Jackson 3 and it is not hidden.
-- **`Metrics.globalRegistry` is the default wherever a registry is not given** — the one-argument
-  `EventStoreFactory.eventStore(storage)` and every storage builder's `buildStore()`. Micrometer's
+- **`Metrics.globalRegistry` is the default wherever a registry is not given** — `EventStore.on(storage)`
+  without `.meterRegistry(...)`, the one-argument `EventStoreFactory.eventStore(storage)` and every
+  storage builder's `buildStore()`. Micrometer's
   global registry is a composite with no children until something adds one, so meters registered
   there cost a map entry and record nothing; an application that binds its real registry to it
   gets the store's meters in its own series without configuring anything. The testing module never registers there: `AbstractEventStoreTest` and
@@ -98,7 +99,26 @@ mvn clean install -DskipTests
 
 **EventStore:**
 - Main entry point for interacting with the event storage system
-- Obtained via `EventStoreFactory.get().eventStore(eventStorage)`
+- Built on an `EventStorage` with `EventStore.on(storage).build()`, or taken from a storage builder's
+  `buildStore()`, which does the same and hands back one handle owning both
+- **`EventStore.on(storage)` is the one entry point, and `EventStoreFactory` is the SPI behind it.**
+  Everything a store can be given beyond its storage is a call on the builder, each defaulting to what
+  the storage builders use: `.meterRegistry(r)` (default `Metrics.globalRegistry`), `.meterOptions(o)`
+  (default `MeterOptions.defaults()`) and `.shredding(codec)` (default the storage's own codec, which a
+  storage builder's `.shredding(...)` put there). Every setter refuses `null`, since each has a default
+  and a null could only be a mistake, and `build()` is where the `ServiceLoader` lookup happens, so a
+  builder is configured before anything is resolved and fails at `build()` with the same
+  `EventStorageException` the factory throws when no implementation is on the classpath. The built
+  store does not own the storage (see "Lifecycle: closing a store"); `EventStore.owning` composes the
+  two. The alternative — calling the factory, as
+  `EventStoreFactory.get().eventStore(storage, registry, options, codec)` — loses because it puts a
+  `ServiceLoader` chain and four positional arguments, one of them a `null` meaning "the storage's own
+  codec", at every call site that wants anything but the defaults. The factory stays public and
+  unchanged: it is what an implementation of this library provides through the `ServiceLoader`, what
+  the builder and the storage builders' `buildStore()` call, and nothing application code needs to
+  name. `EventStoreTest` in the api module pins the builder's argument checks and its failure with no
+  implementation on the classpath; `EventStoreBuilderTest` in the tests module pins that each setting
+  reaches the built store and that each default is the documented one
 - Provides access to event streams via `getEventStream()`
 
 **EventStream:**
@@ -513,7 +533,7 @@ preloaded log put in order; `InMemoryFsEventStorageImplTest` the reload with a g
 
 ```java
 EventStorage storage = InMemoryEventStorage.newBuilder().build();
-EventStore store = EventStoreFactory.get().eventStore(storage);
+EventStore store = EventStore.on(storage).build();
 
 // Or use convenience method to get EventStore directly
 EventStore store = InMemoryEventStorage.newBuilder().buildStore();
@@ -524,7 +544,7 @@ EventStore store = InMemoryEventStorage.newBuilder().buildStore();
 // Basic setup with defaults
 EventStorage storage = PostgresEventStorage.newBuilder()
     .build();
-EventStore store = EventStoreFactory.get().eventStore(storage);
+EventStore store = EventStore.on(storage).build();
 
 // With custom configuration
 EventStorage storage = PostgresEventStorage.newBuilder()
@@ -986,14 +1006,14 @@ secondary identifier … (e.g. customer ID, order number)", and half the example
   The flip side is that *which* purposes get through is arrival order and not stable across restarts —
   the accepted cost of a bound that needs no configuration. Past the cap a per-purpose breakdown was not
   going to be readable anyway.
-- **Configuring it** — the two-argument factory calls and every existing caller keep working unchanged
-  and get the default cap:
+- **Configuring it** — a store built without naming options, through the builder or the factory's
+  two-argument overloads, gets the default cap:
   ```java
   // purpose is an entity id here: never break down by it
-  EventStoreFactory.get().eventStore(storage, registry, MeterOptions.withoutPurposeBreakdown());
+  EventStore.on(storage).meterRegistry(registry).meterOptions(MeterOptions.withoutPurposeBreakdown()).build();
 
   // a broad but genuinely bounded set of purposes
-  EventStoreFactory.get().eventStore(storage, registry, MeterOptions.withMaxPurposeTagValues(5000));
+  EventStore.on(storage).meterRegistry(registry).meterOptions(MeterOptions.withMaxPurposeTagValues(5000)).build();
 
   // same thing through the storage builders' buildStore()
   InMemoryEventStorage.newBuilder().meterOptions(MeterOptions.withoutPurposeBreakdown()).buildStore();
@@ -1424,8 +1444,8 @@ PostgresEventStorage.newBuilder().shredding(myKmsCodec).buildStore(); // take ov
 
 - **The codec travels with the storage, so `build()` honours `.shredding(...)` as `buildStore()` does.**
   `EventStorage.shreddingCodec()` answers the codec a builder was given (empty by default, so a backend
-  written before it keeps working), and `EventStoreFactory.eventStore(storage)` — every overload not
-  handed a codec of its own — uses it; a codec passed to the four-argument overload wins. The storage
+  written before it keeps working), and `EventStore.on(storage).build()` — and every factory overload
+  not handed a codec of its own — uses it; a codec given to the builder's `.shredding(codec)` wins. The storage
   never seals or unseals anything itself, which is what keeps raw mode, exports and imports seeing the
   envelope as stored. The alternative — a codec living on the store alone, wired only by `buildStore()`
   — loses because a caller taking the storage from `build()` then gets a store that refuses the very
@@ -1917,7 +1937,7 @@ annotation is the tool for keeping it where a class name cannot, not an enforcem
 3. **Immutable Events**: All events are records and immutable
 4. **Optimistic Locking via DCB**: Use `AppendCriteria` for conditional appends based on relevant facts
 5. **Storage Abstraction**: Code against `EventStorage` interface for backend independence
-6. **Service Loader Pattern**: `EventStoreFactory` uses Java ServiceLoader for implementation discovery
+6. **Service Loader Pattern**: `EventStoreFactory` is the SPI Java's ServiceLoader discovers; `EventStore.on(storage)` is the entry point that resolves it
 7. **Builder Pattern**: Storage implementations use fluent builders for configuration
 
 ## Documentation Conventions

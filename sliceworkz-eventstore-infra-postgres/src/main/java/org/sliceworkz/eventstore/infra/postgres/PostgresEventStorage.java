@@ -44,12 +44,22 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Metrics;
 
 /**
- * Factory interface for creating production-ready PostgreSQL-backed event storage implementations.
+ * The PostgreSQL-backed {@link EventStorage}: the type {@link Builder#build()} returns, and the
+ * {@link #newBuilder() builder} that creates one.
  * <p>
- * PostgresEventStorage provides a production-ready {@link EventStorage} implementation that persists events
+ * PostgresEventStorage is a production-ready {@link EventStorage} implementation that persists events
  * to a PostgreSQL database using JDBC. This implementation is fully compliant with the Dynamic Consistency
  * Boundary (DCB) specification and supports high-performance event querying, optimistic locking, and
  * real-time event notifications via PostgreSQL's LISTEN/NOTIFY mechanism.
+ * <p>
+ * The class behind this interface is not public. Everything a storage is configured with is a builder
+ * setting, and everything it does is a method of {@link EventStorage}; the one thing this backend
+ * answers beyond that contract — {@link #isNotificationsAvailable() whether its LISTEN/NOTIFY monitors
+ * are up} — is declared here, so a health endpoint keeps the handle {@code build()} hands back and never
+ * downcasts. The alternative — a public implementation class with public constructors, a {@code start()}
+ * and the schema methods on the instance — loses because it offers a second way to build a storage that
+ * skips the builder's version detection, the bounded wait for the monitors and the pool ownership rules,
+ * and because every public member of it is one a consumer can come to depend on.
  * <p>
  * Key features:
  * <ul>
@@ -156,8 +166,28 @@ import io.micrometer.core.instrument.Metrics;
  * @see DataSourceFactory
  * @see HikariConfigurationUtil
  */
-public interface PostgresEventStorage {
-	
+public interface PostgresEventStorage extends EventStorage {
+
+	/**
+	 * Whether both LISTEN/NOTIFY monitors currently hold a live registration, i.e. whether appends and
+	 * bookmark placements are reaching subscribers.
+	 * <p>
+	 * {@code false} means the storage is <em>degraded</em>, not broken: queries, appends and bookmarks all
+	 * go through the main {@code DataSource} and keep working, but nothing wakes a subscriber, so
+	 * projections only advance when run explicitly. The monitors retry with backoff, so this comes back to
+	 * {@code true} on its own once the database is reachable again. A storage {@link Builder#build()}
+	 * hands back answers {@code true}, since the build waits for the monitors and fails when they do not
+	 * register in time; a {@link #close() closed} one answers {@code false} for good.
+	 * <p>
+	 * Intended for health endpoints. The same state is published as the
+	 * {@code sliceworkz.eventstore.notifications.up} gauge, one series per channel, which needs no
+	 * reference to the storage at all.
+	 *
+	 * @return {@code true} if both monitors are listening
+	 * @see Builder#notificationStartupTimeout(Duration)
+	 */
+	boolean isNotificationsAvailable ( );
+
 	/**
 	 * Creates a new builder for configuring a PostgreSQL event storage instance.
 	 * <p>
@@ -216,15 +246,45 @@ public interface PostgresEventStorage {
 		 */
 		static final int OLDEST_SUPPORTED_MAJOR_VERSION = 16;
 
+		/**
+		 * How long {@link #build()} waits for the monitors to register their {@code LISTEN} before deciding
+		 * they are not going to, when {@link #notificationStartupTimeout(Duration)} has not been called.
+		 * <p>
+		 * Expiry fails the startup, so this errs generous: a database that is up answers in milliseconds, and
+		 * the cost of being too impatient with one that is merely slow — a cold pool, a connection storm on a
+		 * simultaneous restart — is an application that refuses to boot. It still has to be a deadline, since
+		 * the monitors themselves have none.
+		 */
+		public static final Duration DEFAULT_NOTIFICATION_STARTUP_TIMEOUT = Duration.ofSeconds(10);
+
+		/**
+		 * How long an operation waits for one of the storage's advisory locks — the per-stream append lock
+		 * a conditional append takes, the per-lease lock a lease request takes — before failing, when
+		 * {@link #lockTimeout(Duration)} has not been called.
+		 * <p>
+		 * Generous on purpose, for the same reason {@link #DEFAULT_NOTIFICATION_STARTUP_TIMEOUT} is: the
+		 * lock is held for the duration of one INSERT, so a healthy stream hands it over in milliseconds and
+		 * even a queue of writers at one hot boundary clears in well under this. What it bounds is the other
+		 * case — a holder that is not coming back — where the alternative to a deadline is every conditional
+		 * append to that stream parking in a checked-out pool connection until the pool is empty.
+		 */
+		public static final Duration DEFAULT_LOCK_TIMEOUT = Duration.ofSeconds(10);
+
+		/**
+		 * How long a monitoring connection may go without traffic before the monitor asks the server whether
+		 * it is still there, when {@link #notificationProbeInterval(Duration)} has not been called.
+		 */
+		public static final Duration DEFAULT_NOTIFICATION_PROBE_INTERVAL = Duration.ofSeconds(30);
+
 		private String prefix = "";
 		private String name = "psql";
 		private DataSource dataSource;
 		private DataSource monitoringDataSource;
 		private Properties configuration;
 		private DatabaseInitMode databaseInitMode = DatabaseInitMode.ENSURE;
-		private Duration notificationStartupTimeout = PostgresEventStorageImpl.DEFAULT_NOTIFICATION_STARTUP_TIMEOUT;
-		private Duration lockTimeout = PostgresEventStorageImpl.DEFAULT_LOCK_TIMEOUT;
-		private Duration notificationProbeInterval = PostgresEventStorageImpl.DEFAULT_NOTIFICATION_PROBE_INTERVAL;
+		private Duration notificationStartupTimeout = DEFAULT_NOTIFICATION_STARTUP_TIMEOUT;
+		private Duration lockTimeout = DEFAULT_LOCK_TIMEOUT;
+		private Duration notificationProbeInterval = DEFAULT_NOTIFICATION_PROBE_INTERVAL;
 		private Limit limit = Limit.none();
 		private MeterRegistry meterRegistry = Metrics.globalRegistry;
 		private MeterOptions meterOptions = MeterOptions.defaults();
@@ -449,7 +509,7 @@ public interface PostgresEventStorage {
 		 * quietly stop advancing, so there is deliberately no option to start anyway.
 		 * <p>
 		 * The default,
-		 * {@link PostgresEventStorageImpl#DEFAULT_NOTIFICATION_STARTUP_TIMEOUT} (10 seconds), suits a
+		 * {@link #DEFAULT_NOTIFICATION_STARTUP_TIMEOUT} (10 seconds), suits a
 		 * database that is up. Raise it where startup legitimately races the database coming up — several
 		 * services restarting at once, a cold pool — since the penalty for being too impatient is a refused
 		 * boot.
@@ -466,10 +526,10 @@ public interface PostgresEventStorage {
 		 *
 		 * @param timeout how long to wait in total for both monitors; {@code null} restores the default
 		 * @return this Builder for method chaining
-		 * @see PostgresEventStorageImpl#isNotificationsAvailable()
+		 * @see PostgresEventStorage#isNotificationsAvailable()
 		 */
 		public Builder notificationStartupTimeout ( Duration timeout ) {
-			this.notificationStartupTimeout = timeout == null ? PostgresEventStorageImpl.DEFAULT_NOTIFICATION_STARTUP_TIMEOUT : timeout;
+			this.notificationStartupTimeout = timeout == null ? DEFAULT_NOTIFICATION_STARTUP_TIMEOUT : timeout;
 			return this;
 		}
 
@@ -483,7 +543,7 @@ public interface PostgresEventStorage {
 		 * behind the holder inside a checked-out pool connection until the pool is empty and the whole
 		 * store fails on the pool's connection timeout. With it the parked appends fail one at a time,
 		 * naming the stream, and the store stays up for everything else. The default,
-		 * {@link PostgresEventStorageImpl#DEFAULT_LOCK_TIMEOUT} (10 seconds), is generous on purpose;
+		 * {@link #DEFAULT_LOCK_TIMEOUT} (10 seconds), is generous on purpose;
 		 * {@link Duration#ZERO} removes the bound. Set with {@code SET LOCAL}, so it never leaks to another
 		 * statement on the pooled connection, and it does not cover the schema scripts' own lock.
 		 * <pre>{@code
@@ -494,8 +554,7 @@ public interface PostgresEventStorage {
 		 *
 		 * @param timeout the bound; {@code null} restores the default, zero waits without bound
 		 * @return this Builder for method chaining
-		 * @throws IllegalArgumentException for a negative timeout
-		 * @see PostgresEventStorageImpl#lockTimeout(Duration)
+		 * @throws IllegalArgumentException for a negative timeout, or one PostgreSQL cannot represent
 		 */
 		public Builder lockTimeout ( Duration timeout ) {
 			this.lockTimeout = PostgresEventStorageImpl.validateLockTimeout(timeout);
@@ -510,16 +569,17 @@ public interface PostgresEventStorage {
 		 * socket whose peer has vanished without closing it — a dropped NAT or firewall state, a network
 		 * partition, a crashed host — looks exactly like a quiet channel, indefinitely, with the
 		 * {@code notifications.up} gauge reading 1. After this long without traffic the monitor sends one
-		 * round trip, bounded by {@link PostgresEventStorageImpl#NOTIFICATION_PROBE_TIMEOUT}, and drops a
-		 * connection that does not answer for a new one. Traffic resets the interval, so a busy channel is
-		 * never probed. The default, {@link PostgresEventStorageImpl#DEFAULT_NOTIFICATION_PROBE_INTERVAL}
-		 * (30 seconds), notices a dead connection within about half a minute for two round trips a minute
-		 * on an idle channel.
+		 * round trip, bounded by the 5-second network timeout every monitoring connection runs under, and
+		 * drops a connection that does not answer for a new one. Traffic resets the interval, so a busy
+		 * channel is never probed. The default, {@link #DEFAULT_NOTIFICATION_PROBE_INTERVAL} (30 seconds),
+		 * notices a dead connection within about half a minute for two round trips a minute on an idle
+		 * channel. TCP keepalive on the driver ({@code tcpKeepAlive=true}) is complementary rather than an
+		 * alternative: it detects the same condition, but only after the operating system's keepalive
+		 * time, which defaults to two hours on Linux and cannot be set through the driver.
 		 *
 		 * @param interval the interval; {@code null} restores the default
 		 * @return this Builder for method chaining
 		 * @throws IllegalArgumentException for a zero or negative interval
-		 * @see PostgresEventStorageImpl#notificationProbeInterval(Duration)
 		 */
 		public Builder notificationProbeInterval ( Duration interval ) {
 			this.notificationProbeInterval = PostgresEventStorageImpl.validateNotificationProbeInterval(interval);
@@ -695,10 +755,10 @@ public interface PostgresEventStorage {
 		}
 
 		/**
-		 * Builds and returns the configured {@link EventStorage} implementation.
+		 * Builds and returns the configured storage.
 		 * <p>
-		 * This method creates a {@link PostgresEventStorageImpl} instance with all configured
-		 * settings. If no custom DataSource was provided, the pools are created from the
+		 * The storage is created with all configured settings, against the implementation the connected
+		 * server's version calls for. If no custom DataSource was provided, the pools are created from the
 		 * {@link #configuration(Properties) configuration} given, or else from the {@code db.properties}
 		 * file {@link DataSourceFactory#loadProperties()} finds.
 		 * <p>
@@ -710,8 +770,10 @@ public interface PostgresEventStorage {
 		 *   <li>{@link DatabaseInitMode#INITIALIZE}: Drop and recreate all objects, then validate</li>
 		 * </ul>
 		 * <p>
-		 * The returned EventStorage can be passed to {@link EventStore#on(EventStorage)}
-		 * to create an EventStore instance. Shredding configured on this builder travels with the storage
+		 * The returned storage can be passed to {@link EventStore#on(EventStorage)} to create an EventStore
+		 * instance. It is returned as a {@link PostgresEventStorage} rather than as the {@link EventStorage}
+		 * it also is, so that {@link PostgresEventStorage#isNotificationsAvailable()} is reachable on the
+		 * handle a caller keeps, without a cast. Shredding configured on this builder travels with the storage
 		 * ({@link EventStorage#shreddingCodec()}), so a store built that way protects and erases personal
 		 * data exactly as one from {@link #buildStore()} does; only {@link #meterOptions(MeterOptions)} is
 		 * a store-level setting that has to be passed to the factory again.
@@ -721,12 +783,12 @@ public interface PostgresEventStorage {
 		 * {@link #dataSource(DataSource)} was supplied, this method also creates the connection pools, and
 		 * closing the storage is then the only thing that will ever close them.
 		 *
-		 * @return a configured EventStorage instance backed by PostgreSQL
+		 * @return a configured, started storage backed by PostgreSQL
 		 * @throws EventStorageException if no database configuration can be found, or schema operations fail
 		 * @see #buildStore()
 		 * @see EventStore#on(EventStorage)
 		 */
-		public EventStorage build ( ) {
+		public PostgresEventStorage build ( ) {
 			return build(resolveDataSources());
 		}
 
@@ -755,7 +817,7 @@ public interface PostgresEventStorage {
 			return new ResolvedDataSources(main, monitoring != null ? monitoring : main, true);
 		}
 
-		private EventStorage build ( ResolvedDataSources dataSources ) {
+		private PostgresEventStorage build ( ResolvedDataSources dataSources ) {
 			DataSource dataSource = dataSources.main();
 			DataSource monitoringDataSource = dataSources.monitoring();
 			boolean createdDataSources = dataSources.created();

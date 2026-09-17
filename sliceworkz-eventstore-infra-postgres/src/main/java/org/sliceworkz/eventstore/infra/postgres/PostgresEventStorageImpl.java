@@ -132,14 +132,16 @@ import tools.jackson.databind.json.JsonMapper;
  *   <li>Bookmark operations: O(1) upsert with unique constraint</li>
  * </ul>
  * <p>
- * This class is not intended to be instantiated directly. Use {@link PostgresEventStorage.Builder}
- * to create instances.
+ * Package-private: {@link PostgresEventStorage.Builder} is the only way to obtain one, and
+ * {@link PostgresEventStorage} is the type it is handed out as. Nothing on this class beyond that
+ * interface is reachable from another package, which is what keeps {@link #start(Duration)}, the
+ * schema methods and the timeout setters the builder's to call, in the builder's order.
  *
  * @see PostgresEventStorage
  * @see EventStorage
  * @see org.sliceworkz.eventstore.EventStore
  */
-public class PostgresEventStorageImpl implements EventStorage {
+class PostgresEventStorageImpl implements PostgresEventStorage {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(PostgresEventStorageImpl.class);
 
@@ -207,7 +209,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * to the pool intact. Interrupting it instead would be faster, but it closes the socket underneath
 	 * the driver, so the pool discards the connection and logs a stack trace about it on every shutdown.
 	 */
-	public static final int WAIT_FOR_NOTIFICATIONS_TIMEOUT = 100;
+	static final int WAIT_FOR_NOTIFICATIONS_TIMEOUT = 100;
 
 	/**
 	 * How long {@link #close()} waits for the monitors to finish by themselves before resorting to
@@ -239,37 +241,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 	static final long WITHHELD_NOTIFICATION_WARN_MILLIS = 10_000;
 
 	/**
-	 * How long {@link #start()} waits for the monitors to register their {@code LISTEN} before deciding
-	 * they are not going to, when no other timeout has been configured.
-	 * <p>
-	 * Expiry fails the startup, so this errs generous: a database that is up answers in milliseconds, and
-	 * the cost of being too impatient with one that is merely slow — a cold pool, a connection storm on a
-	 * simultaneous restart — is an application that refuses to boot. It still has to be a deadline, since
-	 * the monitors themselves have none.
-	 */
-	public static final Duration DEFAULT_NOTIFICATION_STARTUP_TIMEOUT = Duration.ofSeconds(10);
-
-	/**
-	 * How long an operation waits for one of this storage's advisory locks — the per-stream append lock
-	 * a conditional append takes, the per-lease lock a lease request takes — before failing, when
-	 * nothing else has been configured; see {@link #lockTimeout(Duration)}.
-	 * <p>
-	 * Generous on purpose, for the same reason {@link #DEFAULT_NOTIFICATION_STARTUP_TIMEOUT} is: the
-	 * lock is held for the duration of one INSERT, so a healthy stream hands it over in milliseconds and
-	 * even a queue of writers at one hot boundary clears in well under this. What it bounds is the other
-	 * case — a holder that is not coming back — where the alternative to a deadline is every conditional
-	 * append to that stream parking in a checked-out pool connection until the pool is empty.
-	 */
-	public static final Duration DEFAULT_LOCK_TIMEOUT = Duration.ofSeconds(10);
-
-	/**
-	 * How long a monitoring connection may go without traffic before the monitor asks the server whether
-	 * it is still there, when nothing else has been configured; see
-	 * {@link #notificationProbeInterval(Duration)}.
-	 */
-	public static final Duration DEFAULT_NOTIFICATION_PROBE_INTERVAL = Duration.ofSeconds(30);
-
-	/**
 	 * How long a monitor waits for the server to answer — a liveness probe, the {@code LISTEN}, the
 	 * barrier read — before it presumes its connection dead and drops it for a new one.
 	 * <p>
@@ -279,7 +250,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * firewall that dropped its state, a partitioned network, a crashed host — answers nothing, and a
 	 * read on it with no deadline waits forever.
 	 */
-	public static final Duration NOTIFICATION_PROBE_TIMEOUT = Duration.ofSeconds(5);
+	static final Duration NOTIFICATION_PROBE_TIMEOUT = Duration.ofSeconds(5);
 
 	/**
 	 * The slice {@link #start()} waits in, so that it notices a concurrent {@link #close()} promptly even
@@ -291,53 +262,13 @@ public class PostgresEventStorageImpl implements EventStorage {
 	private static final int MAX_PREFIX_LENGTH = 32;
 
 	/**
-	 * Constructs a new PostgreSQL-backed event storage instance with observability support.
+	 * Constructs a new PostgreSQL-backed event storage instance without shredding, stating who owns the
+	 * DataSources and where the notification-availability meters go.
 	 * <p>
-	 * This constructor is package-private and should not be called directly. Use
-	 * {@link PostgresEventStorage.Builder} to create instances.
-	 * <p>
-	 * The constructor initializes:
-	 * <ul>
-	 *   <li>Virtual thread executors for PostgreSQL LISTEN/NOTIFY monitoring</li>
-	 *   <li>Background monitors for event append and bookmark notifications</li>
-	 * </ul>
-	 *
-	 * @param name the logical name for this storage instance (used in logging and monitoring)
-	 * @param dataSource the main JDBC DataSource for event operations
-	 * @param monitoringDataSource the JDBC DataSource for LISTEN/NOTIFY operations
-	 * @param absoluteLimit the absolute limit on query results, or {@link Limit#none()} for no limit
-	 * @param prefix the table name prefix (validated, or empty string for no prefix)
-	 * @see PostgresEventStorage.Builder#build()
-	 */
-	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix ) {
-		this(name, dataSource, monitoringDataSource, absoluteLimit, prefix, false);
-	}
-
-	/**
-	 * Constructs a new PostgreSQL-backed event storage instance, stating who owns the DataSources.
-	 * <p>
-	 * This constructor is used by {@link PostgresEventStorage.Builder} and should not be called
-	 * directly. It exists so that {@link #close()} can close a pool the builder created without ever
-	 * closing one the caller supplied.
-	 *
-	 * @param name the logical name for this storage instance (used in logging and monitoring)
-	 * @param dataSource the main JDBC DataSource for event operations
-	 * @param monitoringDataSource the JDBC DataSource for LISTEN/NOTIFY operations
-	 * @param absoluteLimit the absolute limit on query results, or {@link Limit#none()} for no limit
-	 * @param prefix the table name prefix (validated, or empty string for no prefix)
-	 * @param ownsDataSources {@code true} if the DataSources were created for this storage and should
-	 *                        be closed by {@link #close()}; {@code false} if they belong to the caller
-	 * @see PostgresEventStorage.Builder#build()
-	 */
-	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources ) {
-		this(name, dataSource, monitoringDataSource, absoluteLimit, prefix, ownsDataSources, Metrics.globalRegistry);
-	}
-
-	/**
-	 * Constructs a new PostgreSQL-backed event storage instance, stating who owns the DataSources and
-	 * where the notification-availability meters go.
-	 * <p>
-	 * This constructor is used by {@link PostgresEventStorage.Builder} and should not be called directly.
+	 * The storage is not started: {@link PostgresEventStorage.Builder#build()} runs the schema mode and
+	 * then {@link #start(Duration)}, and a test constructing one directly does the same. The owner flag
+	 * exists so that {@link #close()} can close a pool the builder created without ever closing one the
+	 * caller supplied.
 	 *
 	 * @param name the logical name for this storage instance (used in logging and monitoring)
 	 * @param dataSource the main JDBC DataSource for event operations
@@ -349,7 +280,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * @param meterRegistry where to register the {@code sliceworkz.eventstore.notifications.*} meters
 	 * @see PostgresEventStorage.Builder#build()
 	 */
-	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources, MeterRegistry meterRegistry ) {
+	PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources, MeterRegistry meterRegistry ) {
 		this(name, dataSource, monitoringDataSource, absoluteLimit, prefix, ownsDataSources, meterRegistry, null);
 	}
 
@@ -357,7 +288,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * Constructs a new PostgreSQL-backed event storage instance that also carries the codec protecting
 	 * its events' {@link org.sliceworkz.eventstore.shredding.Shreddable} values.
 	 * <p>
-	 * This constructor is used by {@link PostgresEventStorage.Builder} and should not be called directly.
 	 * The storage never seals or unseals anything itself; the codec is answered from
 	 * {@link #shreddingCodec()} so that a store built on this storage — through
 	 * {@link org.sliceworkz.eventstore.EventStoreFactory#eventStore(EventStorage)} as much as through
@@ -376,7 +306,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * @param shreddingCodec seals and unseals protected values, or null for a storage without shredding
 	 * @see PostgresEventStorage.Builder#build()
 	 */
-	public PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources, MeterRegistry meterRegistry, ShreddingCodec shreddingCodec ) {
+	PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources, MeterRegistry meterRegistry, ShreddingCodec shreddingCodec ) {
 		this.prefix = validatePrefix(prefix);
 		this.name = name;
 		this.dataSource = dataSource;
@@ -407,30 +337,16 @@ public class PostgresEventStorageImpl implements EventStorage {
 			bookmarkMonitorListening, up -> up.get() ? 1d : 0d);
 	}
 
-	/**
-	 * Whether both LISTEN/NOTIFY monitors currently hold a live registration, i.e. whether appends and
-	 * bookmark placements are reaching subscribers.
-	 * <p>
-	 * {@code false} means the storage is <em>degraded</em>, not broken: queries, appends and bookmarks all
-	 * go through the main {@code DataSource} and keep working, but nothing wakes a subscriber, so
-	 * projections only advance when run explicitly. The monitors retry with backoff, so this comes back to
-	 * {@code true} on its own once the database is reachable again.
-	 * <p>
-	 * Intended for health endpoints. The same state is published as the
-	 * {@code sliceworkz.eventstore.notifications.up} gauge, which needs no downcast from
-	 * {@link EventStorage}.
-	 *
-	 * @return {@code true} if both monitors are listening
-	 */
+	@Override
 	public boolean isNotificationsAvailable ( ) {
 		return eventMonitorListening.get() && bookmarkMonitorListening.get();
 	}
 
 	/** see {@link #lockTimeout(Duration)} */
-	private volatile Duration lockTimeout = DEFAULT_LOCK_TIMEOUT;
+	private volatile Duration lockTimeout = PostgresEventStorage.Builder.DEFAULT_LOCK_TIMEOUT;
 
 	/** see {@link #notificationProbeInterval(Duration)} */
-	private volatile Duration notificationProbeInterval = DEFAULT_NOTIFICATION_PROBE_INTERVAL;
+	private volatile Duration notificationProbeInterval = PostgresEventStorage.Builder.DEFAULT_NOTIFICATION_PROBE_INTERVAL;
 
 	/**
 	 * Bounds how long an operation waits for one of this storage's advisory locks: the per-stream lock
@@ -463,17 +379,19 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * {@link Duration#ZERO} removes the bound, which restores waiting indefinitely — PostgreSQL's own
 	 * meaning of a zero {@code lock_timeout}.
 	 *
-	 * @param timeout the bound; {@code null} restores {@link #DEFAULT_LOCK_TIMEOUT}, zero waits forever
+	 * Set by {@link PostgresEventStorage.Builder#lockTimeout(Duration)}, which is the public spelling.
+	 *
+	 * @param timeout the bound; {@code null} restores {@link PostgresEventStorage.Builder#DEFAULT_LOCK_TIMEOUT}, zero waits forever
 	 * @return this instance for method chaining
 	 * @throws IllegalArgumentException for a negative timeout, or one PostgreSQL cannot represent
 	 */
-	public PostgresEventStorageImpl lockTimeout ( Duration timeout ) {
+	PostgresEventStorageImpl lockTimeout ( Duration timeout ) {
 		this.lockTimeout = validateLockTimeout(timeout);
 		return this;
 	}
 
 	/** @return the bound on waiting for an advisory lock; zero means no bound */
-	public Duration lockTimeout ( ) {
+	Duration lockTimeout ( ) {
 		return lockTimeout;
 	}
 
@@ -493,29 +411,32 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * failure. Traffic on the connection — a notification, a barrier read — is proof enough and resets
 	 * the interval, so a busy channel is never probed.
 	 * <p>
-	 * The default, {@link #DEFAULT_NOTIFICATION_PROBE_INTERVAL}, notices a dead connection within about
-	 * half a minute at the cost of two round trips a minute on an idle channel. TCP keepalive on the
-	 * driver ({@code tcpKeepAlive=true}) is complementary rather than an alternative: it detects the
-	 * same condition, but only after the operating system's keepalive time, which defaults to two hours
-	 * on Linux and cannot be set through the driver.
+	 * The default, {@link PostgresEventStorage.Builder#DEFAULT_NOTIFICATION_PROBE_INTERVAL}, notices a
+	 * dead connection within about half a minute at the cost of two round trips a minute on an idle
+	 * channel. TCP keepalive on the driver ({@code tcpKeepAlive=true}) is complementary rather than an
+	 * alternative: it detects the same condition, but only after the operating system's keepalive time,
+	 * which defaults to two hours on Linux and cannot be set through the driver.
+	 * <p>
+	 * Set by {@link PostgresEventStorage.Builder#notificationProbeInterval(Duration)}, which is the
+	 * public spelling.
 	 *
-	 * @param interval the interval; {@code null} restores {@link #DEFAULT_NOTIFICATION_PROBE_INTERVAL}
+	 * @param interval the interval; {@code null} restores {@link PostgresEventStorage.Builder#DEFAULT_NOTIFICATION_PROBE_INTERVAL}
 	 * @return this instance for method chaining
 	 * @throws IllegalArgumentException for a zero or negative interval
 	 */
-	public PostgresEventStorageImpl notificationProbeInterval ( Duration interval ) {
+	PostgresEventStorageImpl notificationProbeInterval ( Duration interval ) {
 		this.notificationProbeInterval = validateNotificationProbeInterval(interval);
 		return this;
 	}
 
 	/** @return how long a monitoring connection may stay silent before it is probed */
-	public Duration notificationProbeInterval ( ) {
+	Duration notificationProbeInterval ( ) {
 		return notificationProbeInterval;
 	}
 
 	static Duration validateLockTimeout ( Duration timeout ) {
 		if ( timeout == null ) {
-			return DEFAULT_LOCK_TIMEOUT;
+			return PostgresEventStorage.Builder.DEFAULT_LOCK_TIMEOUT;
 		}
 		if ( timeout.isNegative() ) {
 			throw new IllegalArgumentException("lock timeout must not be negative: " + timeout);
@@ -528,7 +449,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 
 	static Duration validateNotificationProbeInterval ( Duration interval ) {
 		if ( interval == null ) {
-			return DEFAULT_NOTIFICATION_PROBE_INTERVAL;
+			return PostgresEventStorage.Builder.DEFAULT_NOTIFICATION_PROBE_INTERVAL;
 		}
 		if ( interval.isZero() || interval.isNegative() ) {
 			throw new IllegalArgumentException("notification probe interval must be positive: " + interval);
@@ -605,7 +526,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * @return this instance for method chaining
 	 * @throws EventStorageException if the schema is invalid
 	 */
-	public PostgresEventStorageImpl validateDatabase ( ) {
+	PostgresEventStorageImpl validateDatabase ( ) {
 		checkDatabase();
 		return this;
 	}
@@ -621,7 +542,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * @return this instance for method chaining
 	 * @throws EventStorageException if schema creation or validation fails
 	 */
-	public PostgresEventStorageImpl ensureDatabase ( ) {
+	PostgresEventStorageImpl ensureDatabase ( ) {
 		LOGGER.info("Ensuring database schema for prefix '{}'", prefix);
 		executeSqlScripts("ensure-schema.sql");
 		checkDatabase();
@@ -638,7 +559,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * @return this instance for method chaining
 	 * @throws EventStorageException if schema initialization or validation fails
 	 */
-	public PostgresEventStorageImpl initializeDatabase ( ) {
+	PostgresEventStorageImpl initializeDatabase ( ) {
 		LOGGER.info("Initializing database schema for prefix '{}' (drop and recreate)", prefix);
 		executeSqlScripts("drop-schema.sql", "ensure-schema.sql");
 		checkDatabase();
@@ -1091,14 +1012,15 @@ public class PostgresEventStorageImpl implements EventStorage {
 	
 	/**
 	 * Starts the LISTEN/NOTIFY monitor threads, waiting up to
-	 * {@link #DEFAULT_NOTIFICATION_STARTUP_TIMEOUT} for both to register their listener.
+	 * {@link PostgresEventStorage.Builder#DEFAULT_NOTIFICATION_STARTUP_TIMEOUT} for both to register
+	 * their listener.
 	 *
 	 * @throws IllegalStateException if this storage has been stopped
 	 * @throws EventStorageException if LISTEN/NOTIFY is not established in time
 	 * @see #start(Duration)
 	 */
-	public void start ( ) {
-		start(DEFAULT_NOTIFICATION_STARTUP_TIMEOUT);
+	void start ( ) {
+		start(PostgresEventStorage.Builder.DEFAULT_NOTIFICATION_STARTUP_TIMEOUT);
 	}
 
 	/**
@@ -1122,16 +1044,16 @@ public class PostgresEventStorageImpl implements EventStorage {
 	 * rather than merely throwing matters too: the two monitor threads started here would otherwise go on
 	 * retrying behind a storage the caller never received.
 	 *
-	 * @param timeout how long to wait in total; {@code null} means {@link #DEFAULT_NOTIFICATION_STARTUP_TIMEOUT}
+	 * @param timeout how long to wait in total; {@code null} means {@link PostgresEventStorage.Builder#DEFAULT_NOTIFICATION_STARTUP_TIMEOUT}
 	 * @throws IllegalStateException if this storage has been stopped
 	 * @throws EventStorageException if the wait expires, or if the calling thread is interrupted while
 	 *                               waiting; in both cases this storage has been closed
 	 */
-	public void start ( Duration timeout ) {
+	void start ( Duration timeout ) {
 		if ( stopped.get() ) {
 			throw new IllegalStateException("event storage '%s' has been stopped and cannot be started again".formatted(name));
 		}
-		Duration effectiveTimeout = timeout == null ? DEFAULT_NOTIFICATION_STARTUP_TIMEOUT : timeout;
+		Duration effectiveTimeout = timeout == null ? PostgresEventStorage.Builder.DEFAULT_NOTIFICATION_STARTUP_TIMEOUT : timeout;
 
 		// before the monitors, on a connection that is returned before they take theirs. The other order
 		// -- monitors first, then this check -- deadlocks on a shared pool: each monitor holds its
@@ -1384,29 +1306,6 @@ public class PostgresEventStorageImpl implements EventStorage {
 				LOGGER.warn("failed to close the DataSource created for event storage '{}': {}", name, e.getMessage(), e);
 			}
 		}
-	}
-
-	/**
-	 * Stops the LISTEN/NOTIFY monitor threads and waits for them to finish.
-	 * <p>
-	 * The monitors poll for notifications in {@value #WAIT_FOR_NOTIFICATIONS_TIMEOUT}ms slices, so they
-	 * see the stop flag within that and wind themselves up: UNLISTEN, then the connection returns to the
-	 * pool healthy and no shutdown noise is logged. Only if that has not happened within
-	 * {@value #GRACEFUL_SHUTDOWN_TIMEOUT_MILLIS}ms are they interrupted, which is abrupt — it closes the
-	 * socket underneath the driver, so the pool discards the connection and logs a "marked as broken"
-	 * warning about it.
-	 * <p>
-	 * Idempotent: only the first call does anything, later calls return immediately. When this method
-	 * returns, no monitor thread of this storage is running any more (unless the bounded wait expired,
-	 * which is logged).
-	 *
-	 * @deprecated use {@link #close()} instead, which is on the {@link EventStorage} interface and so
-	 *             needs no downcast, and which additionally closes DataSources the builder created.
-	 *             This method now simply delegates to it.
-	 */
-	@Deprecated(since = "0.10.0", forRemoval = true)
-	public void stop ( ) {
-		close();
 	}
 
 	/**

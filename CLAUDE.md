@@ -667,8 +667,9 @@ EventStorage storage = PostgresEventStorage.newBuilder()
   exists reading 0 from the moment the storage does — a gauge that only appears once notifications work
   is no use for alerting on notifications not working. It also drops back to 0 when a *running* store
   loses its monitoring connection, which is the same silence as never having had one.
-  `PostgresEventStorageImpl.isNotificationsAvailable()` is the same state for a health endpoint, at the
-  cost of a downcast from `EventStorage`.
+  `PostgresEventStorage.isNotificationsAvailable()` is the same state for a health endpoint, on the
+  type the builder's `build()` returns, so no downcast: keep that handle rather than widening it to
+  `EventStorage` where a health check needs it.
 - **What arrives on the channel cannot take a monitor down, and a monitor that does go down cannot
   leave the gauge reading 1.** A `NOTIFY` channel is a database-wide name: any session in the database
   can publish on it, and a trigger left behind by another release may not agree with this one on the
@@ -740,9 +741,30 @@ The contract every backend implements (documented on `EventStorage.close()`):
 - **A closed `EventStore`'s streams throw too**, for the same reason a closed storage's operations do —
   its notifications have stopped, so letting it keep reading would strand its subscribers silently.
 
-`PostgresEventStorageImpl.stop()` still exists, deprecated, and delegates to `close()`. Prefer `close()`:
-it is on the interface, so no downcast, and it works for framework integration (Spring infers `close` as
-the destroy method for a `@Bean`; CDI `@Disposes`; try-with-resources).
+`close()` is the only way to stop a storage. It is on the interface, so no downcast, and it works for
+framework integration (Spring infers `close` as the destroy method for a `@Bean`; CDI `@Disposes`;
+try-with-resources).
+
+### The storage classes are not public
+
+`PostgresEventStorageImpl`, `PostgresLegacyEventStorageImpl`, `InMemoryEventStorageImpl` and
+`InMemoryFsEventStorageImpl` are package-private. A builder is the only way to obtain a storage, and
+what it hands back is typed by what a caller may do with it: `InMemoryEventStorage.Builder.build()` and
+the fs builder return `EventStorage`, since nothing those backends do is beyond the contract, and
+`PostgresEventStorage.Builder.build()` returns `PostgresEventStorage`, an `EventStorage` that also
+answers `isNotificationsAvailable()` — the one thing the Postgres backend has to say that the contract
+does not cover, and what a health endpoint asks. Everything else the Postgres class does beyond the
+contract is the builder's to call, in the builder's order — the schema mode, `start(timeout)`, the two
+timeout setters — and the defaults a caller may want to name are constants on
+`PostgresEventStorage.Builder` (`DEFAULT_NOTIFICATION_STARTUP_TIMEOUT`, `DEFAULT_LOCK_TIMEOUT`,
+`DEFAULT_NOTIFICATION_PROBE_INTERVAL`). The alternative — public implementation classes with public
+constructors, `start()`, the schema methods and the setters on the instance — loses because it offers
+a second way to build a storage that skips the builder's version detection, its bounded wait for the
+monitors and its pool ownership rules, and because every public member is one a consumer can come to
+depend on, a `@Deprecated` removal cycle away from being changed. The tests of a backend live in its
+package and reach what they need without any of it being public.
+`PostgresLifecycleTest.testTheHandleTheBuilderReturnsAnswersWhetherNotificationsAreUp` pins the
+public health path.
 
 ### Lifecycle: closing a stream
 

@@ -205,7 +205,7 @@ class PostgresMonitorLivenessTest {
 		return registry.get("sliceworkz.eventstore.notifications.up").tag("channel", channel).gauge().value();
 	}
 
-	private static StoredEvent append ( PostgresEventStorageImpl storage ) {
+	private static StoredEvent append ( PostgresEventStorage storage ) {
 		return storage.append(AppendCriteria.none(), STREAM,
 			List.of(new EventToStore(STREAM, EventType.ofType("SomethingHappened"), "{}", Tags.none(), null))).getFirst();
 	}
@@ -221,7 +221,7 @@ class PostgresMonitorLivenessTest {
 		MeterRegistry registry = new SimpleMeterRegistry();
 		try ( BlackholingProxy proxy = new BlackholingProxy(database.getHost(), database.getPort());
 			  HikariDataSource monitoring = monitoringPoolThrough(proxy);
-			  PostgresEventStorageImpl storage = (PostgresEventStorageImpl) PostgresEventStorage.newBuilder()
+			  PostgresEventStorage storage = PostgresEventStorage.newBuilder()
 					.name("liveness")
 					.prefix("liveness_")
 					.dataSource(main)
@@ -279,7 +279,7 @@ class PostgresMonitorLivenessTest {
 	void probingDoesNotDisturbALiveChannel ( ) throws Exception {
 		DataSource main = PostgresContainer.dataSource(PostgresContainer.IMAGE_PG18);
 		MeterRegistry registry = new SimpleMeterRegistry();
-		try ( PostgresEventStorageImpl storage = (PostgresEventStorageImpl) PostgresEventStorage.newBuilder()
+		try ( PostgresEventStorage storage = PostgresEventStorage.newBuilder()
 					.name("liveness-quiet")
 					.prefix("liveness_quiet_")
 					.dataSource(main)

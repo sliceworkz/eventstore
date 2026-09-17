@@ -215,7 +215,7 @@ try ( EventStore eventStore = PostgresEventStorage.newBuilder().buildStore() ) {
 Closing blocks until the background threads have really stopped, is idempotent and terminal, and never
 closes a `DataSource` you supplied yourself. Afterwards every operation throws
 `EventStorageClosedException` rather than half-working with dead notifications. The full contract is on
-`EventStorage.close()`; `PostgresEventStorageImpl.stop()` is deprecated and delegates to it.
+`EventStorage.close()`.
 
 Closing an `EventStore` shuts down that store, not the storage under it — a storage can back several
 stores and usually outlives them, so you close it yourself once the stores built on it are closed. The

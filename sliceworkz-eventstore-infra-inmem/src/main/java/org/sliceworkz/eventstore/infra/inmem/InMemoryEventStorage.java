@@ -94,7 +94,6 @@ import io.micrometer.core.instrument.Metrics;
  * @see EventStorage
  * @see EventStore
  * @see EventStore#on(EventStorage)
- * @see InMemoryEventStorageImpl
  */
 public interface InMemoryEventStorage {
 
@@ -323,17 +322,16 @@ public interface InMemoryEventStorage {
 		/**
 		 * Builds and returns the configured {@link EventStorage} implementation.
 		 * <p>
-		 * This method creates an {@link InMemoryEventStorageImpl} instance with all the
-		 * configured settings. The returned EventStorage can then be passed to
-		 * {@link EventStore#on(EventStorage)} to obtain an EventStore.
+		 * The storage is created with all the configured settings; the class behind it is not public,
+		 * since nothing it does is beyond the {@link EventStorage} contract. The returned EventStorage can
+		 * then be passed to {@link EventStore#on(EventStorage)} to obtain an EventStore.
 		 * <p>
 		 * For convenience, consider using {@link #buildStore()} instead, which performs
 		 * both steps in one call.
 		 *
-		 * @return a new InMemoryEventStorageImpl instance with the configured settings
+		 * @return a new in-memory storage with the configured settings
 		 * @see #buildStore()
 		 * @see EventStorage
-		 * @see InMemoryEventStorageImpl
 		 */
 		public EventStorage build ( ) {
 			return new InMemoryEventStorageImpl(name, limit, initialEvents, initialBookmarks, shreddingCodec);

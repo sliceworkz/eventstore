@@ -76,7 +76,7 @@ class PostgresLifecycleTest {
 			PostgresContainer.closeDataSource(image);
 		}
 
-		private EventStorage storageOn ( DataSource dataSource ) {
+		private PostgresEventStorage storageOn ( DataSource dataSource ) {
 			return PostgresEventStorage.newBuilder()
 					.name("lifecycle-test")
 					.dataSource(dataSource)
@@ -125,14 +125,18 @@ class PostgresLifecycleTest {
 		}
 
 		@Test
-		@SuppressWarnings("removal")
-		void testDeprecatedStopBehavesLikeClose ( ) {
-			EventStorage storage = storageOn(PostgresContainer.dataSource(image));
+		void testTheHandleTheBuilderReturnsAnswersWhetherNotificationsAreUp ( ) {
+			// the type build() returns, not a cast: a health endpoint keeps this handle and asks it
+			PostgresEventStorage storage = storageOn(PostgresContainer.dataSource(image));
 
-			((PostgresEventStorageImpl) storage).stop();
+			assertTrue(storage.isNotificationsAvailable(),
+				"build() waits for both monitors to register, so a storage it hands back has its notifications up");
 
-			assertThrows(EventStorageClosedException.class, storage::getBookmarks,
-				"the deprecated stop() must have the same effect as close()");
+			storage.close();
+
+			assertFalse(storage.isNotificationsAvailable(),
+				"a closed storage listens on nothing, and must say so rather than report the last state it had");
+			assertThrows(EventStorageClosedException.class, storage::getBookmarks);
 		}
 
 		private boolean usable ( DataSource dataSource ) {

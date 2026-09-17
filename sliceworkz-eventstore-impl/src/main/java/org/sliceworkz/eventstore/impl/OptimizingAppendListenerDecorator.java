@@ -21,12 +21,12 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 
 import org.sliceworkz.eventstore.events.EventReference;
-import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
+import org.sliceworkz.eventstore.stream.AppendListener;
 
 /**
  * Decorator that optimizes event append notifications by batching and deduplicating them.
  * <p>
- * This decorator wraps an {@link EventStreamEventuallyConsistentAppendListener} and optimizes
+ * This decorator wraps an {@link AppendListener} and optimizes
  * notification delivery by:
  * <ul>
  *   <li>Batching multiple rapid notifications into a single call to the delegate listener</li>
@@ -40,7 +40,7 @@ import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendLis
  * efficiently. When multiple threads trigger notifications simultaneously, only one proceeds
  * while others register their target event references for batch processing.
  * <p>
- * The optimization leverages the return value of {@link EventStreamEventuallyConsistentAppendListener#eventsAppended(EventReference)}
+ * The optimization leverages the return value of {@link AppendListener#eventsAppended(EventReference)}
  * to track what the delegate listener has actually processed, allowing it to skip notifications
  * for event references already handled.
  * <p>
@@ -49,10 +49,10 @@ import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendLis
  * before subscribing it only gets it wrapped twice. It lives in the implementation package the
  * ServiceLoader exists to hide, and carries no compatibility promise.
  *
- * @see EventStreamEventuallyConsistentAppendListener
+ * @see AppendListener
  */
-public class OptimizingAppendListenerDecorator implements EventStreamEventuallyConsistentAppendListener {
-    private final EventStreamEventuallyConsistentAppendListener delegate;
+public class OptimizingAppendListenerDecorator implements AppendListener {
+    private final AppendListener delegate;
     private final ReentrantLock lock;
     private final AtomicReference<EventReference> lastNotifiedReference;
     private final AtomicReference<EventReference> nextEventReference;
@@ -63,7 +63,7 @@ public class OptimizingAppendListenerDecorator implements EventStreamEventuallyC
      *
      * @param delegate the listener to decorate with optimization logic; must not be null
      */
-    public OptimizingAppendListenerDecorator(EventStreamEventuallyConsistentAppendListener delegate) {
+    public OptimizingAppendListenerDecorator(AppendListener delegate) {
         this.delegate = delegate;
         this.lock = new ReentrantLock();
         this.lastNotifiedReference = new AtomicReference<>();
@@ -80,7 +80,7 @@ public class OptimizingAppendListenerDecorator implements EventStreamEventuallyC
      *
      * @return the decorated listener, never null
      */
-    public EventStreamEventuallyConsistentAppendListener delegate ( ) {
+    public AppendListener delegate ( ) {
         return delegate;
     }
 

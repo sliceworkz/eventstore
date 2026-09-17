@@ -75,12 +75,13 @@ import org.sliceworkz.eventstore.spi.EventStorage.EventStoreListener;
 import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
+import org.sliceworkz.eventstore.stream.AppendListener;
+import org.sliceworkz.eventstore.stream.BookmarkListener;
 import org.sliceworkz.eventstore.stream.EventPage;
 import org.sliceworkz.eventstore.stream.EventStream;
-import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
-import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentBookmarkListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
+import org.sliceworkz.eventstore.stream.Subscription;
 
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
@@ -603,12 +604,27 @@ public class EventStoreImpl implements EventStore {
 		 */
 		private final AtomicLong gaugeHighestEventPosition;
 
-		private final List<EventStreamEventuallyConsistentAppendListener> eventuallyConsistentSubscribers = new CopyOnWriteArrayList<>();
-		private final List<EventStreamEventuallyConsistentBookmarkListener> bookmarkSubscribers = new CopyOnWriteArrayList<>();
+		/**
+		 * The live subscriptions of this stream, one per {@code subscribe} call, each holding the listener it
+		 * stands for (an append listener wrapped in its {@link OptimizingAppendListenerDecorator}). Read
+		 * without a lock by the notification tasks, which is what the copy-on-write lists are for; written
+		 * under {@link #subscriptionLock} only.
+		 */
+		private final List<StreamSubscription<AppendListener>> appendSubscriptions = new CopyOnWriteArrayList<>();
+		private final List<StreamSubscription<BookmarkListener>> bookmarkSubscriptions = new CopyOnWriteArrayList<>();
+
+		/**
+		 * Guards the invariant that this stream is registered with the storage exactly while it has a live
+		 * subscription. Every change to the subscription lists and to {@link #subscribedToStorage} is made
+		 * under it, so a subscription closing as the last one and a new one arriving cannot interleave into
+		 * a stream that holds a listener the storage never notifies, or a registration no listener needs.
+		 */
+		private final Object subscriptionLock = new Object();
 
 		/**
 		 * Whether this stream currently holds a listener registration with the storage. Flipped by
-		 * {@link #subscribeToStorage()} and {@link #close()}, which are the only two places it changes.
+		 * {@link #subscribeToStorage()} and {@link #unsubscribeFromStorage()}, which are the only two places
+		 * it changes, both under {@link #subscriptionLock}.
 		 */
 		private final AtomicBoolean subscribedToStorage = new AtomicBoolean();
 
@@ -668,13 +684,14 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		/**
-		 * Registers this stream with the storage, on the first subscription and not before.
+		 * Registers this stream with the storage, on the first live subscription and not before. Called
+		 * under {@link #subscriptionLock}.
 		 * <p>
 		 * A stream that nobody subscribes to has nothing to do with a notification — {@link #notify} does
-		 * no more than fan out to the three subscriber lists — so registering one would only lengthen the
+		 * no more than fan out to the subscription lists — so registering one would only lengthen the
 		 * list the storage walks on every append, on the single thread that serves every store attached to
 		 * it. Streams are handed out per operation and most of them only query and append, so that list
-		 * used to grow with traffic rather than with the number of things actually listening.
+		 * would otherwise grow with traffic rather than with the number of things actually listening.
 		 * <p>
 		 * Deferring registration to here is also what makes the storage's strong reference safe: it holds
 		 * exactly the streams somebody asked to be notified through, which are the streams that were
@@ -696,37 +713,108 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		/**
-		 * Ends this stream's subscriptions and hands its registration back to the storage.
+		 * Hands this stream's registration back to the storage, if it holds one. Called under
+		 * {@link #subscriptionLock}, by whichever ends the last live subscription — a handle's
+		 * {@link Subscription#close()} or the stream's own {@link #close()} — so that the storage holds
+		 * the stream exactly while something is listening through it.
+		 */
+		private void unsubscribeFromStorage ( ) {
+			if ( subscribedToStorage.compareAndSet(true, false) ) {
+				eventStorage.unsubscribe(this);
+				subscribedStreams.remove(this);
+			}
+		}
+
+		/**
+		 * Ends every subscription of this stream and hands its registration back to the storage.
 		 * <p>
 		 * Idempotent, and not terminal: the stream stays usable for querying, appending and bookmarking,
 		 * and subscribing again re-registers it. See {@link org.sliceworkz.eventstore.stream.EventSource#close()}
 		 * for why a stream is closable at all and why closing it is not the end of it.
 		 * <p>
-		 * The subscriber lists are cleared as well as the registration released, so that a listener cannot
-		 * survive into a later subscription of the same stream and be notified twice.
+		 * The subscriptions are ended one by one — so every handle handed out reads inactive afterwards —
+		 * and the lists are left empty, so that a listener cannot survive into a later subscription of the
+		 * same stream and be notified twice. The registration is released explicitly as well, for the
+		 * case where the store closed while a subscription was registering (see {@link #subscribeToStorage()}).
 		 */
 		@Override
 		public void close ( ) {
-			if ( subscribedToStorage.compareAndSet(true, false) ) {
-				eventStorage.unsubscribe(this);
-				subscribedStreams.remove(this);
+			synchronized ( subscriptionLock ) {
+				List.copyOf(appendSubscriptions).forEach(StreamSubscription::close);
+				List.copyOf(bookmarkSubscriptions).forEach(StreamSubscription::close);
+				unsubscribeFromStorage();
 			}
-			eventuallyConsistentSubscribers.clear();
-			bookmarkSubscribers.clear();
 		}
 
 		@Override
-		public void subscribe(EventStreamEventuallyConsistentAppendListener eventuallyConsistentSubscriber) {
-			checkStoreNotClosed();
-			this.eventuallyConsistentSubscribers.add(new OptimizingAppendListenerDecorator(eventuallyConsistentSubscriber));
-			subscribeToStorage();
+		public Subscription subscribe ( AppendListener listener ) {
+			if ( listener == null ) {
+				throw new IllegalArgumentException("listener must not be null");
+			}
+			return subscribe(appendSubscriptions, new OptimizingAppendListenerDecorator(listener));
 		}
 
 		@Override
-		public void subscribe(EventStreamEventuallyConsistentBookmarkListener listener) {
+		public Subscription subscribe ( BookmarkListener listener ) {
+			if ( listener == null ) {
+				throw new IllegalArgumentException("listener must not be null");
+			}
+			return subscribe(bookmarkSubscriptions, listener);
+		}
+
+		/**
+		 * Adds a subscription to one of the lists and registers this stream with the storage if it was
+		 * not already. The subscription is in its list before the registration is made, so a store that
+		 * closed in between finds it there and ends it, and the handle handed back reads inactive.
+		 */
+		private <LISTENER> Subscription subscribe ( List<StreamSubscription<LISTENER>> subscriptions, LISTENER listener ) {
 			checkStoreNotClosed();
-			this.bookmarkSubscribers.add(listener);
-			subscribeToStorage();
+			StreamSubscription<LISTENER> subscription = new StreamSubscription<>(subscriptions, listener);
+			synchronized ( subscriptionLock ) {
+				subscriptions.add(subscription);
+				subscribeToStorage();
+			}
+			return subscription;
+		}
+
+		/**
+		 * One listener's subscription to this stream: the handle {@code subscribe} returns.
+		 * <p>
+		 * Closing it removes it from its list, so the next notification task does not see it, and releases
+		 * the stream's registration when it was the last live subscription of either kind. Identity is the
+		 * subscription object, never the listener, so the same listener subscribed twice gets two handles
+		 * that each end their own subscription.
+		 */
+		private final class StreamSubscription<LISTENER> implements Subscription {
+
+			private final List<StreamSubscription<LISTENER>> subscriptions;
+			private final LISTENER listener;
+			private volatile boolean active = true;
+
+			private StreamSubscription ( List<StreamSubscription<LISTENER>> subscriptions, LISTENER listener ) {
+				this.subscriptions = subscriptions;
+				this.listener = listener;
+			}
+
+			@Override
+			public void close ( ) {
+				synchronized ( subscriptionLock ) {
+					if ( !active ) {
+						return;
+					}
+					active = false;
+					subscriptions.remove(this);
+					if ( appendSubscriptions.isEmpty() && bookmarkSubscriptions.isEmpty() ) {
+						unsubscribeFromStorage();
+					}
+				}
+			}
+
+			@Override
+			public boolean isActive ( ) {
+				return active;
+			}
+
 		}
 
 		@Override
@@ -1017,12 +1105,14 @@ public class EventStoreImpl implements EventStore {
 			}
 			// if the events are in the logical stream we care about...
 			if ( newEventsInStore.isRelevantFor(eventStreamId) ) {
-				LOGGER.debug("Must asynchronously notify {} eventually consistent clients of stream {} about append up until at least {}", eventuallyConsistentSubscribers.size(), eventStreamId, newEventsInStore.atLeastUntil());
+				LOGGER.debug("Must asynchronously notify {} append listeners of stream {} about append up until at least {}", appendSubscriptions.size(), eventStreamId, newEventsInStore.atLeastUntil());
 
 				// schedule for execution on different thread to notify/interrupt any waiting eventual consistent processors
 				submitOrDropIfClosed(executorServiceForEventAppends, ( ) -> {
-						LOGGER.debug("Notifying {} eventually consistent clients of stream {} about append up until at least {}", eventuallyConsistentSubscribers.size(), eventStreamId, newEventsInStore.atLeastUntil());
-						eventuallyConsistentSubscribers.stream().forEach(s->notifyQuietly(s, newEventsInStore.atLeastUntil()));
+						LOGGER.debug("Notifying {} append listeners of stream {} about append up until at least {}", appendSubscriptions.size(), eventStreamId, newEventsInStore.atLeastUntil());
+						// the isActive check narrows the window in which a subscription closed during this
+						// task is still delivered to; it cannot close it, and the contract does not promise that
+						appendSubscriptions.stream().filter(StreamSubscription::isActive).forEach(s -> notifyQuietly(s.listener, newEventsInStore.atLeastUntil()));
 				});
 			}
 		}
@@ -1032,12 +1122,12 @@ public class EventStoreImpl implements EventStore {
 			if ( closed.get() ) {
 				return; // see notify(AppendsToEventStoreNotification)
 			}
-			LOGGER.debug("Must asynchronously notify {} eventually consistent bookmark listeners on {} of update for {} to {}", bookmarkSubscribers.size(), eventStreamId, bookmarkPlaced.reader(), bookmarkPlaced.bookmark());
+			LOGGER.debug("Must asynchronously notify {} bookmark listeners on {} of update for {} to {}", bookmarkSubscriptions.size(), eventStreamId, bookmarkPlaced.reader(), bookmarkPlaced.bookmark());
 
 			// schedule for execution on different thread to notify/interrupt any waiting eventual consistent processors
 			submitOrDropIfClosed(executorServiceForBookmarkUpdates, ( ) -> {
-					LOGGER.debug("Notifying {} eventually consistent bookmark listeners on {} of update for {} to {}", bookmarkSubscribers.size(), eventStreamId, bookmarkPlaced.reader(), bookmarkPlaced.bookmark());
-					bookmarkSubscribers.stream().forEach(s->notifyQuietly(s, bookmarkPlaced));
+					LOGGER.debug("Notifying {} bookmark listeners on {} of update for {} to {}", bookmarkSubscriptions.size(), eventStreamId, bookmarkPlaced.reader(), bookmarkPlaced.bookmark());
+					bookmarkSubscriptions.stream().filter(StreamSubscription::isActive).forEach(s -> notifyQuietly(s.listener, bookmarkPlaced));
 			});
 		}
 
@@ -1056,12 +1146,12 @@ public class EventStoreImpl implements EventStore {
 		 * ({@code notifyQuietly} in the in-memory backends, and the Postgres LISTEN/NOTIFY monitors): a
 		 * listener's failure is never anybody else's failure, and never silent.
 		 */
-		private void notifyQuietly ( EventStreamEventuallyConsistentAppendListener subscriber, EventReference atLeastUntil ) {
+		private void notifyQuietly ( AppendListener subscriber, EventReference atLeastUntil ) {
 			try {
 				subscriber.eventsAppended(atLeastUntil);
 			} catch ( Exception e ) {
 				// through the decorator every subscriber is wrapped in, so the name is one the caller recognises
-				EventStreamEventuallyConsistentAppendListener subscribed =
+				AppendListener subscribed =
 					( subscriber instanceof OptimizingAppendListenerDecorator decorator ) ? decorator.delegate() : subscriber;
 				LOGGER.error("eventually consistent append listener {} failed handling the append notification up until at least {} on stream {}: {}",
 						subscribed.getClass().getName(), atLeastUntil, eventStreamId, e.getMessage(), e);
@@ -1070,11 +1160,11 @@ public class EventStoreImpl implements EventStore {
 
 		/**
 		 * Notifies one bookmark subscriber, containing its failure — see
-		 * {@link #notifyQuietly(EventStreamEventuallyConsistentAppendListener, EventReference)}, which this
+		 * {@link #notifyQuietly(AppendListener, EventReference)}, which this
 		 * exists for the same reasons. The bookmark executor is single-threaded, so an escaping throwable
 		 * additionally costs a thread, replaced by the pool.
 		 */
-		private void notifyQuietly ( EventStreamEventuallyConsistentBookmarkListener subscriber, BookmarkPlacedNotification bookmarkPlaced ) {
+		private void notifyQuietly ( BookmarkListener subscriber, BookmarkPlacedNotification bookmarkPlaced ) {
 			try {
 				subscriber.bookmarkUpdated(bookmarkPlaced.reader(), bookmarkPlaced.bookmark());
 			} catch ( Exception e ) {

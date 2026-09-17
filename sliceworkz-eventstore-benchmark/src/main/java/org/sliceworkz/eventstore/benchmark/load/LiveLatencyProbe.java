@@ -35,7 +35,7 @@ import org.sliceworkz.eventstore.projection.BatchAwareProjection;
 import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.stream.EventStream;
-import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
+import org.sliceworkz.eventstore.stream.AppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
 /**
@@ -87,7 +87,7 @@ final class LiveLatencyProbe implements AutoCloseable {
 		if ( scenario == LoadScenario.NOTIFY_LATENCY ) {
 			// The listener does nothing but stop the clock.  Anything else it did would be counted as
 			// delivery, which is exactly the conflation this scenario exists to avoid.
-			subscribedStream.subscribe(( EventStreamEventuallyConsistentAppendListener ) atLeastUntil -> {
+			subscribedStream.subscribe(( AppendListener ) atLeastUntil -> {
 				pending.drainUpTo(atLeastUntil.position(), System.nanoTime(), deliveryLatency);
 				return atLeastUntil;
 			});

@@ -18,9 +18,9 @@
 package org.sliceworkz.eventstore.testing.tck.mock;
 
 import org.sliceworkz.eventstore.events.EventReference;
-import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
+import org.sliceworkz.eventstore.stream.AppendListener;
 
-public class MockEventuallyConsistentAppendListener implements EventStreamEventuallyConsistentAppendListener {
+public class MockAppendListener implements AppendListener {
 
 	private volatile EventReference lastReference;
 	private volatile int count;

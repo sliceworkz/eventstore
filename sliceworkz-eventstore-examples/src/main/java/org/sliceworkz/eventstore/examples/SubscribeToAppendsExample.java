@@ -27,7 +27,7 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.stream.EventSource;
-import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
+import org.sliceworkz.eventstore.stream.AppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
 /**
@@ -74,7 +74,7 @@ public class SubscribeToAppendsExample {
 
 			System.out.println("following all events as from " + lastSeen.get());
 
-			stream.subscribe(new EventStreamEventuallyConsistentAppendListener() {
+			stream.subscribe(new AppendListener() {
 
 				@Override
 				public synchronized EventReference eventsAppended(EventReference atLeastUntil) {

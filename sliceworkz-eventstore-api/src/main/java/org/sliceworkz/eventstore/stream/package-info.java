@@ -36,8 +36,9 @@
  *
  * <h2>Event Subscriptions:</h2>
  * <ul>
- *   <li>{@link org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener} - Delayed notification with reference only, about every append to the stream</li>
- *   <li>{@link org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentBookmarkListener} - Notification on bookmark updates</li>
+ *   <li>{@link org.sliceworkz.eventstore.stream.AppendListener} - Delayed notification with reference only, about every append to the stream</li>
+ *   <li>{@link org.sliceworkz.eventstore.stream.BookmarkListener} - Notification on bookmark updates</li>
+ *   <li>{@link org.sliceworkz.eventstore.stream.Subscription} - The handle {@code subscribe} returns, which ends that one subscription</li>
  * </ul>
  *
  * <h2>Example Stream Usage:</h2>
@@ -72,10 +73,11 @@
  * appended.forEach(event -> System.out.println("New event: " + event.data()));
  *
  * // Subscribe to appends made by anyone, on any handle, in any process
- * stream.subscribe((EventStreamEventuallyConsistentAppendListener) atLeastUntil -> {
+ * Subscription subscription = stream.subscribe((AppendListener) atLeastUntil -> {
  *     // query the stream up to atLeastUntil and process what is new
  *     return atLeastUntil;
  * });
+ * subscription.close();   // this listener only; stream.close() ends every subscription on the stream
  * }</pre>
  *
  * @see org.sliceworkz.eventstore.stream.EventStream

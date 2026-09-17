@@ -28,7 +28,7 @@ import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.stream.EventPage;
 import org.sliceworkz.eventstore.stream.EventSource;
-import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
+import org.sliceworkz.eventstore.stream.AppendListener;
 
 /**
  * Processes a {@link Projection} by efficiently streaming events from an {@link EventSource} and applying them to the projection handler.
@@ -134,7 +134,7 @@ import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendLis
  * @see ProjectorMetrics
  * @see EventSource
  */
-public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyConsistentAppendListener {
+public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(Projector.class);
 
@@ -719,10 +719,14 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		 * also means the pair is released only by
 		 * {@link org.sliceworkz.eventstore.stream.EventSource#close()}, or by closing the
 		 * {@link org.sliceworkz.eventstore.EventStore} the source came from. Long-lived projections need
-		 * nothing; one per request, per tenant or per test should close its source when done.
+		 * nothing; one per request, per tenant or per test should close its source when done. The
+		 * projector keeps no {@link org.sliceworkz.eventstore.stream.Subscription} handle of its own; to
+		 * end its subscription without closing the source, build it without this setting and subscribe
+		 * it yourself — {@code source.subscribe(projector)} — since a projector is an {@link AppendListener}.
 		 *
 		 * @return this builder for method chaining
-		 * @see EventStreamEventuallyConsistentAppendListener
+		 * @see AppendListener
+		 * @see org.sliceworkz.eventstore.stream.Subscription
 		 * @see org.sliceworkz.eventstore.stream.EventSource#close()
 		 */
 		public Builder<EVENT_TYPE> subscribe ( ) {
@@ -974,7 +978,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 	 * Handles notifications of newly appended events when the projector is subscribed to an event source.
 	 * <p>
 	 * This method is called by the event source when new events are appended, triggering an automatic
-	 * projection run to process the new events. It implements the {@link EventStreamEventuallyConsistentAppendListener}
+	 * projection run to process the new events. It implements the {@link AppendListener}
 	 * interface to enable reactive, near-real-time projection updates.
 	 * <p>
 	 * The method runs the projection and returns the reference of the last processed event. This allows

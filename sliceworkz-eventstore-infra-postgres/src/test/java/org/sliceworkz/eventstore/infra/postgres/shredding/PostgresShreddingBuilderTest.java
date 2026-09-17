@@ -89,7 +89,7 @@ public class PostgresShreddingBuilderTest {
 				ShreddingAudit audit = store.shreddingAudit().orElseThrow();
 				assertEquals(1, audit.keys(KeyAuditQuery.forSubject(ALICE)).size());
 
-				assertEquals(1, store.erase(ALICE, ErasureReason.of("GDPR art.17 request #4711")).keysShredded());
+				assertEquals(1, store.eraseCategory(ALICE, ErasureReason.of("GDPR art.17 request #4711")).keysShredded());
 
 				ContactRecorded after = (ContactRecorded) contacts.query(EventQuery.matchAll()).stream().findFirst().orElseThrow().data();
 				Shreddable.Shredded<String> shredded = assertInstanceOf(Shreddable.Shredded.class, after.name());

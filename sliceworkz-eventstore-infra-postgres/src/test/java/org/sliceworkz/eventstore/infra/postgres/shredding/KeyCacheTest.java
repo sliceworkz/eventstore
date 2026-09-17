@@ -103,10 +103,10 @@ public class KeyCacheTest {
 	@Test
 	public void testADenialIsCachedLikeAKey ( ) {
 		KeyCache cache = new KeyCache(TTL, 10, new ManualClock());
-		KeyResolution denied = new KeyResolution.Denied("no SELECT on key_material");
+		KeyResolution withheld = new KeyResolution.Withheld("no SELECT on key_material");
 
-		cache.put(key(1), denied);
-		assertEquals(denied, cache.get(key(1)).orElseThrow());
+		cache.put(key(1), withheld);
+		assertEquals(withheld, cache.get(key(1)).orElseThrow());
 	}
 
 	@Test

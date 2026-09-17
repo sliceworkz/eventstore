@@ -33,7 +33,7 @@ import java.util.TreeSet;
  * and not others — the data-minimisation boundary a service states about itself, honoured by the read
  * path and the append path alike. It is not a security boundary: the process still holds the codec it
  * wraps. The boundary that cannot be argued with from inside the JVM is the key store's own refusal,
- * {@link ShreddingKeyStore.KeyResolution.Denied}, and the two compose — a restricted codec over a key
+ * {@link ShreddingKeyStore.KeyResolution.Withheld}, and the two compose — a restricted codec over a key
  * store that also refuses gives the cheap answer for the categories it never asks about and the hard
  * one for the rest.
  * <h2>Symmetric, deliberately</h2>
@@ -45,7 +45,7 @@ import java.util.TreeSet;
  * Erasing a subject destroys every key the subject holds, in every category, exactly as on the wrapped
  * codec. The alternative — erasing only the permitted categories — loses because an erasure that
  * reports success while leaving data readable is the worst outcome an erasure can have; a process not
- * entitled to erase should not be handed {@link org.sliceworkz.eventstore.EventStore#erase} at all.
+ * entitled to erase should not be handed {@link org.sliceworkz.eventstore.EventStore#eraseCategory} at all.
  *
  * @see ShreddingCodec#restrictedTo(Set)
  * @see Shreddable.Withheld

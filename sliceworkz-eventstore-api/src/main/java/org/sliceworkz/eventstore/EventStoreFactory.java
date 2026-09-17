@@ -96,8 +96,8 @@ public interface EventStoreFactory {
 	 * Creates an EventStore that can protect and erase personal data.
 	 * <p>
 	 * The codec seals {@link org.sliceworkz.eventstore.shredding.Shreddable} values on append and unseals
-	 * them on read, and {@link EventStore#erase(org.sliceworkz.eventstore.shredding.DataSubject,
-	 * org.sliceworkz.eventstore.shredding.ErasureReason)} destroys the keys behind them. Without one, an
+	 * them on read, and {@link EventStore#erase(String, String, org.sliceworkz.eventstore.shredding.ErasureReason)}
+	 * destroys the keys behind them. Without one, an
 	 * event type declaring a {@code Shreddable} component cannot be registered at all, rather than being
 	 * stored in the clear.
 	 * <pre>{@code

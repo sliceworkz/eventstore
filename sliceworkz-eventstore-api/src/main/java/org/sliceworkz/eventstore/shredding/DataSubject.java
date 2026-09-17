@@ -20,12 +20,12 @@ package org.sliceworkz.eventstore.shredding;
 /**
  * Whose personal data a {@link Shreddable} value holds, and under which retention category.
  * <p>
- * A data subject is the unit of erasure: {@link org.sliceworkz.eventstore.EventStore#erase} takes one
- * and destroys the keys held for it, which makes every {@link Shreddable} sealed under those keys
- * unreadable everywhere at once — in the events table, in WAL, on replicas and in every backup. A
- * subject always names one {@link #category() category}, so that erasure is of one category; erasing a
- * person outright, whichever categories their data was written under, is
- * {@link org.sliceworkz.eventstore.EventStore#eraseAllCategories}, which takes the type and id only.
+ * A data subject is the unit of erasure. {@link org.sliceworkz.eventstore.EventStore#erase} takes the
+ * type and id and destroys every key held for the person, which makes every {@link Shreddable} sealed
+ * under those keys unreadable everywhere at once — in the events table, in WAL, on replicas and in
+ * every backup. A subject always names one {@link #category() category}, so a method taking a subject
+ * erases one category: that is {@link org.sliceworkz.eventstore.EventStore#eraseCategory}, the narrow
+ * erasure, and the reason the whole-person one takes no subject at all.
  *
  * <h2>The subject id must not itself be personal data</h2>
  * The id is stored in the sealed envelope in plaintext and is used to key the key store, so it
@@ -49,7 +49,7 @@ package org.sliceworkz.eventstore.shredding;
  * The same partition is what a reader can be given or refused. A category is written in the clear on
  * every sealed envelope, so a codec can decide on it before looking up any key
  * ({@link ShreddingCodec#restrictedTo(java.util.Set)}), and a key store that holds keys per category
- * can refuse them per role ({@link ShreddingKeyStore.KeyResolution.Denied}). "This service reads names
+ * can refuse them per role ({@link ShreddingKeyStore.KeyResolution.Withheld}). "This service reads names
  * and never addresses" is therefore a modelling decision made when the event is written: the name and
  * the address are two {@link Shreddable} values under two categories, not one value holding both.
  * Nothing finer than a value is addressable — the value is what is encrypted — and a category chosen at
@@ -63,14 +63,14 @@ package org.sliceworkz.eventstore.shredding;
  * DataSubject financial = DataSubject.of("customer", "alice-42").withCategory("financial");
  *
  * // erases the marketing data only; the financial history keeps decrypting
- * eventStore.erase(marketing, ErasureReason.of("consent withdrawn, ticket #4711"));
+ * eventStore.eraseCategory(marketing, ErasureReason.of("consent withdrawn, ticket #4711"));
  *
  * // erases the person: every category, without having to know which ones exist
- * eventStore.eraseAllCategories("customer", "alice-42", ErasureReason.of("GDPR art.17 request #4711"));
+ * eventStore.erase("customer", "alice-42", ErasureReason.of("GDPR art.17 request #4711"));
  * }</pre>
  * Note that {@code DataSubject.of("customer", "alice-42")} is the subject under {@link #DEFAULT_CATEGORY},
- * so erasing <em>it</em> erases the default category and leaves the others readable, exactly as erasing
- * {@code marketing} above leaves {@code financial}.
+ * so {@code eraseCategory} on <em>it</em> erases the default category and leaves the others readable,
+ * exactly as erasing {@code marketing} above leaves {@code financial}.
  * Each category a subject uses is one more key row and, on append, one more key lookup per event that
  * carries it — a handful per subject is the intended scale, not one per field.
  *
@@ -92,7 +92,7 @@ package org.sliceworkz.eventstore.shredding;
  * @see Shreddable
  * @see ShreddingKeyStore
  * @see ShreddingCodec#restrictedTo(java.util.Set)
- * @see org.sliceworkz.eventstore.EventStore#erase(DataSubject, ErasureReason)
+ * @see org.sliceworkz.eventstore.EventStore#eraseCategory(DataSubject, ErasureReason)
  */
 public record DataSubject ( String type, String id, String category ) {
 

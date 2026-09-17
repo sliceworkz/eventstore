@@ -87,7 +87,7 @@ import org.sliceworkz.eventstore.shredding.ShreddingKeyStore.KeyResolution;
  *
  * <h2>A key store's refusal is passed on as withheld</h2>
  * {@link #open} asks the key store through {@link ShreddingKeyStore#resolveKey}, and a
- * {@link KeyResolution.Denied} becomes {@link Unsealed.Withheld} — the reader sees whose data it is not
+ * {@link KeyResolution.Withheld} becomes {@link Unsealed.Withheld} — the reader sees whose data it is not
  * shown and carries on, rather than seeing an erasure that did not happen or an exception that would
  * stop its projections. An in-process policy on categories is a decorator over this codec,
  * {@link ShreddingCodec#restrictedTo(java.util.Set)}, and needs no support here.
@@ -221,7 +221,7 @@ public class AesGcmShreddingCodec implements ShreddingCodec {
 			case KeyResolution.Erased erased -> Unsealed.Erased.INSTANCE;
 			// The key exists and this reader may not have it: the key store's own boundary, passed on as
 			// what it is rather than as an erasure or a retry.
-			case KeyResolution.Denied denied -> new Unsealed.Withheld(denied.reason());
+			case KeyResolution.Withheld withheld -> new Unsealed.Withheld(withheld.reason());
 			case KeyResolution.Resolved resolved -> new Unsealed.Plaintext(decrypt(sealed, resolved.key()));
 		};
 	}

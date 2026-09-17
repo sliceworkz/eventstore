@@ -135,7 +135,7 @@ public class StorageShreddingCodecTest {
 		ContactRecorded before = (ContactRecorded) contacts.query(EventQuery.matchAll()).getFirst().data();
 		assertEquals("Alice Martin", before.name().map(n -> n).orElse("[erased]"));
 
-		assertEquals(1, store.erase(ALICE, ErasureReason.of("GDPR art.17 request #4711")).keysShredded());
+		assertEquals(1, store.eraseCategory(ALICE, ErasureReason.of("GDPR art.17 request #4711")).keysShredded());
 
 		ContactRecorded after = (ContactRecorded) contacts.query(EventQuery.matchAll()).getFirst().data();
 		Shreddable.Shredded<String> shredded = assertInstanceOf(Shreddable.Shredded.class, after.name());

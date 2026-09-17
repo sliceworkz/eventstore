@@ -116,7 +116,7 @@ import org.sliceworkz.eventstore.shredding.ShreddingKeyStore.KeyResolution;
  * A reader that must never decrypt anything can be given a role with {@code SELECT} on every column of
  * the key table except {@code key_material}. Resolving a key then fails with
  * {@code insufficient_privilege} (SQLSTATE 42501), which {@link #resolveKey} reports as
- * {@link KeyResolution.Denied}, so the reader sees {@link org.sliceworkz.eventstore.shredding.Shreddable.Withheld}
+ * {@link KeyResolution.Withheld}, so the reader sees {@link org.sliceworkz.eventstore.shredding.Shreddable.Withheld}
  * and its projections advance — rather than an outage to retry forever, which is what any other
  * {@code SQLException} is. The audit statements never touch that column, so the same role can still
  * report on erasures. This is the hard boundary the database enforces; it is all-or-nothing per role,
@@ -363,10 +363,10 @@ public class PostgresShreddingKeyStore implements ShreddingKeyStore {
 				// This role may not read key_material: the database's own entitlement boundary, passed on
 				// as what it is. Recognised by SQLSTATE, never by message text, like every other
 				// server-reported condition in this backend.
-				KeyResolution denied = new KeyResolution.Denied(
+				KeyResolution withheld = new KeyResolution.Withheld(
 						"role is not granted SELECT on %s.key_material (SQLSTATE %s)".formatted(tableName, e.getSQLState()));
-				cacheResolution(key, denied);
-				return denied;
+				cacheResolution(key, withheld);
+				return withheld;
 			}
 			// Loudly, and never as erased: reported as erased, a database blip would make every
 			// protected value read as destroyed, and bookmarked projections would write those gaps into

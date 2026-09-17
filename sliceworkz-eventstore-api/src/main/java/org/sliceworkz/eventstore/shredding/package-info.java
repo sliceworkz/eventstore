@@ -45,9 +45,9 @@
  *         Tags.of("customer", "alice-42")));
  *
  * // later: the person, under every category their data was ever written under
- * eventStore.eraseAllCategories("customer", "alice-42", ErasureReason.of("GDPR art.17 request #4711"));
+ * eventStore.erase("customer", "alice-42", ErasureReason.of("GDPR art.17 request #4711"));
  * // or one category only -- a DataSubject always names one, "default" unless set
- * eventStore.erase(alice.withCategory("marketing"), ErasureReason.of("consent withdrawn"));
+ * eventStore.eraseCategory(alice.withCategory("marketing"), ErasureReason.of("consent withdrawn"));
  *
  * // the event still reads; the personal data does not
  * event.data().customerId();              // "alice-42"
@@ -87,7 +87,7 @@
  * ShreddingCodec.withholdingAll()
  *
  * // the hard boundary: a key store that refuses keys this role is not granted
- * KeyResolution resolveKey(KeyId key) { ... return new KeyResolution.Denied("vault: 403"); }
+ * KeyResolution resolveKey(KeyId key) { ... return new KeyResolution.Withheld("vault: 403"); }
  * }</pre>
  * The unit of access is the unit of encryption, the {@code Shreddable} value, partitioned by the
  * {@link org.sliceworkz.eventstore.shredding.DataSubject#category() category} chosen when the event is

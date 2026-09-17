@@ -1372,7 +1372,7 @@ serialization complaint naming nothing about the conflict, so every exception he
 **Personal data is wrapped, not annotated, and erasure destroys a key rather than rewriting an event.**
 A record component declared `Shreddable<T>` is bound to a `DataSubject`, encrypted on append under the
 key held for that subject, and stored as a sealed envelope inside the ordinary payload.
-`EventStore.erase(subject, reason)` destroys the keys; nothing in the events table is written.
+`EventStore.erase(type, id, reason)` destroys the keys; nothing in the events table is written.
 
 ```java
 record TransferMade(
@@ -1385,7 +1385,7 @@ record TransferMade(
 DataSubject alice = DataSubject.of("customer", "alice-42");
 payments.append(AppendCriteria.none(), Event.of(new TransferMade(..., Shreddable.of(details, alice), ...), tags));
 
-eventStore.erase(alice, ErasureReason.of("GDPR art.17 request #4711"));
+eventStore.erase("customer", "alice-42", ErasureReason.of("GDPR art.17 request #4711"));
 
 transfer.from();   // Shredded[customer/alice-42/default, k-7f2a91c4]
 transfer.to();     // Present[PartyDetails[Bob Jansen, ...]]   -- unaffected
@@ -1408,19 +1408,27 @@ transfer.from().map(PartyDetails::name).orElse("[erased]");
 - **Two subjects in one event each get their own key**, which no per-field annotation or per-event key
   can express. Keys are scoped to `(type, id, category)`, so "erase marketing, retain financial" is a
   category away.
-- **`erase(DataSubject, reason)` erases one category; `eraseAllCategories(type, id, reason)` erases the
-  person.** A `DataSubject` always names a category — `DataSubject.of("customer", id)` is the `default`
-  one — and `erase` destroys the keys of that category only, reporting success because the erasure it
-  names was performed. So `erase(DataSubject.of("customer", id))` on a subject that also holds
-  `marketing` data leaves the marketing data readable, which is right for a per-category request and
-  wrong for an art.17 request. The whole-person erasure takes the type and id and no category, so it
-  cannot be narrowed by accident, and answers a `SubjectErasureReport` with one `ErasureReport` per
-  category that held live keys. It is a separate SPI method on `ShreddingKeyStore` and `ShreddingCodec`
-  (`shredAllCategories`), whose defaults throw `UnsupportedOperationException` so a key store written
-  before it is told rather than made to erase one category and report success; a restricted codec
-  passes it through whole. The alternative — having `erase` of the default category mean "every
-  category" — loses because it makes erasing only the default category inexpressible, and because a
-  category is what a subject's data is *written* under, so which one a caller happens to name is not a
+- **`erase(type, id, reason)` erases the person; `eraseCategory(subject, reason)` erases one
+  category.** The plain name is the whole-person erasure because that is what an art.17 request asks
+  for, and the erasure that can leave data readable carries the qualifier. A `DataSubject` always
+  names a category — `DataSubject.of("customer", id)` is the `default` one — so `eraseCategory`
+  destroys the keys of that category only, reporting success because the erasure it names was
+  performed: on a subject that also holds `marketing` data it leaves the marketing data readable,
+  which is right for "erase marketing, retain financial" and wrong for an art.17 request. The
+  whole-person erasure takes the type and id and no category, so it cannot be narrowed by accident,
+  and answers a `SubjectErasureReport` with one `ErasureReport` per category that held live keys. It
+  is a separate SPI method on `ShreddingKeyStore` and `ShreddingCodec` (`shredAllCategories`, beside
+  the per-category `shred` a key store implements), whose defaults throw
+  `UnsupportedOperationException` so a key store written before it is told rather than made to erase
+  one category and report success; a restricted codec passes it through whole. The alternative —
+  `erase` taking a `DataSubject` too and erasing the person it belongs to — loses because the category
+  the argument carries is then either ignored or refused: ignored,
+  `erase(alice.withCategory("marketing"), reason)` destroys the financial history a retention rule
+  says to keep; refused, a subject read off a `Shredded` value cannot be handed straight to it. Two
+  parameter shapes keep the two erasures apart at compile time, so a call that meant one category
+  cannot silently become the whole person, or the other way round. Having the default-category
+  erasure mean "every category" loses too: it makes erasing only the default category inexpressible,
+  and a category is what a subject's data is *written* under, so which one a caller names is not a
   statement about the others.
 - **The subject id must not itself be personal data.** It is stored in the clear in the envelope and
   survives erasure by construction — use a customer number, never an email address.
@@ -1632,15 +1640,17 @@ told; `ShreddingAudit` stays the account of erasures.
   has to decide what a withheld value looks like. `orElse("[erased]")` call sites are the ones to review,
   since the fallback now covers both cases.
 - **The seams carry it as sealed results, not exceptions.** `ShreddingKeyStore.resolveKey` answers
-  `KeyResolution.Resolved | Erased | Denied`, and `ShreddingCodec.open` answers
-  `Unsealed.Plaintext | Erased | Withheld`; each is the one abstract read method of its seam. A sealed
-  type rather than a `ShreddingException` subtype because the difference between "erased", "denied"
+  `KeyResolution.Resolved | Erased | Withheld`, and `ShreddingCodec.open` answers
+  `Unsealed.Plaintext | Erased | Withheld`; each is the one abstract read method of its seam, and the
+  refusal carries the same name on both, and on `Shreddable`, so that one word follows a refused key
+  from the key store through the codec to the value a reader is handed. A sealed
+  type rather than a `ShreddingException` subtype because the difference between "erased", "withheld"
   and "down" is the most important contract in this subsystem, and a `catch (ShreddingException)`
   retry loop would swallow a refusal by accident. The alternative — a two-answer
   `Optional`-returning method beside it, abstract, with the three-answer one a default derived from
-  it — loses because such a method cannot say denied, so the derived default never would: a new key
+  it — loses because such a method cannot say withheld, so the derived default never would: a new key
   store or codec would implement what nothing in the library calls and inherit an answer it never
-  chose, and a `Denied` could only be smuggled through the two-answer method as an exception, which
+  chose, and a `Withheld` could only be smuggled through the two-answer method as an exception, which
   is the retry-loop conflation above.
 - **Three ways a reader is limited, from cheap to hard:**
   ```java
@@ -1652,7 +1662,7 @@ told; `ShreddingAudit` stays the account of erasures.
   PostgresEventStorage.newBuilder().shredding(AesGcmShreddingCodec.over(keyStore).restrictedTo(Set.of("identity"))).buildStore();
 
   // the hard boundary: a key store that refuses keys this role is not granted
-  KeyResolution resolveKey ( KeyId key ) { ... return new KeyResolution.Denied("vault: 403"); }
+  KeyResolution resolveKey ( KeyId key ) { ... return new KeyResolution.Withheld("vault: 403"); }
   ```
   `restrictedTo` decides on the category the envelope carries in the clear, before any key lookup, so a
   denied category costs no key-store traffic. It is symmetric — the codec seals nothing outside its
@@ -1662,7 +1672,7 @@ told; `ShreddingAudit` stays the account of erasures.
   boundary a deployment declares for itself, not a security boundary: the process still holds the codec.
   The security boundary is the key store's refusal — a KMS policy per service role, or on Postgres a
   role granted every column of `shredding_keys` *except* `key_material`, which `PostgresShreddingKeyStore`
-  recognises by SQLSTATE 42501 and reports as `Denied` (cached for the key ttl). Row-level security on
+  recognises by SQLSTATE 42501 and reports as `Withheld` (cached for the key ttl). Row-level security on
   that table does **not** produce a denial: a hidden row reads as erased. The two compose.
 - **The unit of access is the unit of encryption: the `Shreddable` value, partitioned by `category`.**
   "Name but not address" is two wrapped values under two categories, chosen when the event is written,
@@ -1689,7 +1699,7 @@ too), idempotent erasure and a fresh key afterwards, the `dek:` tags, the audit 
 throws instead of reporting the data as erased and so does one asked for a key it never held — and, for entitlement, that a withholding codec reads the
 typed events with every value withheld, that a restricted codec reads its categories and withholds the
 rest without a key lookup, seals nothing outside them and erases everything, that a withheld value says
-nothing about erasure, that a key store's `Denied` reads as withheld and a projector advances over it,
+nothing about erasure, that a key store's `Withheld` reads as withheld and a projector advances over it,
 and that a withheld value cannot be appended again. `ReaderEntitlementTest` in the api module pins the
 seams below the store.
 

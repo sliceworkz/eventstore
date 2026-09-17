@@ -132,17 +132,4 @@ public class EventStreamIdTest {
 		assertTrue(anyContextAnyPurposeExplicit.isAnyContext() || anyContextAnyPurposeExplicit.isAnyPurpose());
 	}
 
-	@Test
-	@SuppressWarnings("removal")
-	void canReadIsTheDeprecatedNameOfCovers ( ) {
-		EventStreamId customer1 = EventStreamId.forContext("customer").withPurpose("1");
-		EventStreamId customer2 = EventStreamId.forContext("customer").withPurpose("2");
-		EventStreamId anyCustomer = EventStreamId.forContext("customer").anyPurpose();
-		assertEquals(anyCustomer.covers(customer1), anyCustomer.canRead(customer1));
-		assertEquals(customer1.covers(customer1), customer1.canRead(customer1));
-		assertEquals(customer2.covers(customer1), customer2.canRead(customer1));
-		assertTrue(anyCustomer.canRead(customer1));
-		assertFalse(customer2.canRead(customer1));
-	}
-
 }

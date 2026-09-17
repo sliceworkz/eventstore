@@ -213,19 +213,6 @@ public record EventStreamId ( String context, String purpose ) {
 	}
 
 	/**
-	 * Whether the given stream lies within the scope this id names.
-	 *
-	 * @param actualStreamId the stream to test for lying within this id's scope
-	 * @return true if this id covers the given stream, false otherwise
-	 * @deprecated the relation is a scope containing a stream, not a permission a stream holds, and
-	 *             the method is called that: use {@link #covers(EventStreamId)}
-	 */
-	@Deprecated(since = "0.11.0", forRemoval = true)
-	public boolean canRead ( EventStreamId actualStreamId ) {
-		return covers(actualStreamId);
-	}
-
-	/**
 	 * Returns a string representation of this stream ID in the format "context#purpose".
 	 * <p>
 	 * The format varies based on the presence of context and purpose:

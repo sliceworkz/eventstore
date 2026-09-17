@@ -165,8 +165,8 @@ mvn clean install -DskipTests
   `covers`, which says whether an id's scope contains a stream, and is what scopes every read and
   decides which subscribers a notification is relevant to. It is called that because it is a
   relation between two values, a scope containing a stream, and not a permission a stream holds:
-  the alternative name — `canRead`, its deprecated spelling — loses because it invites a `canWrite`
-  beside it, the very relation this design refuses. The alternative — an `append(criteria, events,
+  the alternative name — `canRead` — loses because it invites a `canWrite` beside it, the very
+  relation this design refuses. The alternative — an `append(criteria, events,
   target)` through a wildcard stream bound to the target's context — loses because a stream is then
   a sink for some targets and not others, decided per call; because every append is metered under
   the tags of the stream it went through, so a write landing in `customer#123` would be counted

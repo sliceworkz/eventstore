@@ -359,9 +359,8 @@ mvn clean install -DskipTests
   `a.tagged(t).or(b.tagged(t))` — which is what makes it well-defined on a filter of several items;
   a match-all narrowed is `forTags(t)`, a match-none stays match-none. `or` is the union: the items of
   both side by side, match-all on either side making the union match-all, and the same `until` on both
-  or `IllegalArgumentException`. `combineWith` is the deprecated name of `or`, delegating to it. Both
-  spellings resolve to the same `EventFilterItem`s, so a query built one way compares equal to the same
-  query built the other way. `EventFilterTest` pins each rule, `EventQueryTest` the mirror on the query
+  or `IllegalArgumentException`. Both spellings resolve to the same `EventFilterItem`s, so a query
+  built one way compares equal to the same query built the other way. `EventFilterTest` pins each rule, `EventQueryTest` the mirror on the query
 - **A sealed interface in a type filter stands for every event type under it.** An event is stored
   under the simple name of its record, never under an interface it implements, so
   `EventTypesFilter.of(Class...)` resolves a sealed interface into the event types it permits,

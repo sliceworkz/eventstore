@@ -469,8 +469,8 @@ mvn clean install -DskipTests
   that differ from the default, so they are the two that exist. The alternative — a sub-builder for
   the bookmark, entered and left around its own settings — loses because the sub-builder holds three
   settings and costs two calls to get to them, and because it puts the validation on the way out
-  (`done()`) rather than on the setting itself. `towards`, `newBuilder()`, `Builder.from` and the
-  `bookmarkProgress()` sub-builder remain, deprecated for removal, delegating to the flat methods
+  (`done()`) rather than on the setting itself. There is no other spelling: the source is given to
+  `from`, so the builder has no public constructor and no `from` of its own
 - `Projector.from(null)` is refused with `IllegalArgumentException` at the call; `build()` refuses a
   missing projection, and a bookmark read setting without a reader, with `IllegalStateException`
   naming the call to make, rather than leaving it to fail as a `NullPointerException` from inside the

@@ -607,19 +607,6 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 	}
 
 	/**
-	 * Creates a builder with no source yet.
-	 *
-	 * @param <EVENT_TYPE> the type of events to be processed
-	 * @return a new Builder instance
-	 * @deprecated a projector is built over a source: use {@link #from(EventSource)}, which is the same
-	 *             builder with the source already given
-	 */
-	@Deprecated(since = "0.11.0", forRemoval = true)
-	public static <EVENT_TYPE> Builder<EVENT_TYPE> newBuilder ( ) {
-		return new Builder<EVENT_TYPE>();
-	}
-
-	/**
 	 * Builds a {@link Projector}: a source, a projection, and optionally a bookmark, a starting position,
 	 * a batch size and a subscription.
 	 * <p>
@@ -651,7 +638,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		 */
 		public static final int DEFAULT_MAX_EVENTS_PER_QUERY = 500;
 
-		private EventSource<EVENT_TYPE> eventSource;
+		private final EventSource<EVENT_TYPE> eventSource;
 		private Projection<EVENT_TYPE> projection;
 		private EventReference after;
 		private boolean subscribe;
@@ -667,29 +654,6 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		}
 
 		/**
-		 * Creates a builder with no source yet.
-		 *
-		 * @deprecated a projector is built over a source: use {@link Projector#from(EventSource)}
-		 */
-		@Deprecated(since = "0.11.0", forRemoval = true)
-		public Builder ( ) {
-		}
-
-		/**
-		 * Configures the event source from which to read events.
-		 *
-		 * @param eventSource the event source (typically an EventStream)
-		 * @return this builder for method chaining
-		 * @deprecated the source is given to {@link Projector#from(EventSource)}, which is where a
-		 *             projector starts
-		 */
-		@Deprecated(since = "0.11.0", forRemoval = true)
-		public Builder<EVENT_TYPE> from ( EventSource<EVENT_TYPE> eventSource ) {
-			this.eventSource = eventSource;
-			return this;
-		}
-
-		/**
 		 * Names the projection the events are projected into.
 		 *
 		 * @param projection the projection that defines the query and the event handler
@@ -698,19 +662,6 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		public Builder<EVENT_TYPE> into ( Projection<EVENT_TYPE> projection ) {
 			this.projection = projection;
 			return this;
-		}
-
-		/**
-		 * Names the projection the events are projected into.
-		 *
-		 * @param projection the projection that defines the query and the event handler
-		 * @return this builder for method chaining
-		 * @deprecated events are projected <em>into</em> a projection, and the method is called that: use
-		 *             {@link #into(Projection)}
-		 */
-		@Deprecated(since = "0.11.0", forRemoval = true)
-		public Builder<EVENT_TYPE> towards ( Projection<EVENT_TYPE> projection ) {
-			return into(projection);
 		}
 
 		/**
@@ -866,36 +817,20 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 		}
 
 		/**
-		 * Provides access to the nested bookmark builder.
-		 *
-		 * @return the BookmarkBuilder for configuring bookmark behavior
-		 * @deprecated the bookmark settings are methods on this builder: {@link #bookmarkAs(String)},
-		 *             {@link #bookmarkAs(String, Tags)}, {@link #readBookmarkOnce()} and
-		 *             {@link #readBookmarkOnRequest()}, with no sub-builder to enter and leave
-		 */
-		@Deprecated(since = "0.11.0", forRemoval = true)
-		public BookmarkBuilder bookmarkProgress ( ) {
-			return new BookmarkBuilder(this);
-		}
-
-		/**
 		 * Builds the Projector instance.
 		 * <p>
-		 * A source and a projection are required, and are checked here rather than left to fail inside
-		 * the first {@link Projector#run()}: a null there surfaces as a {@code NullPointerException} from
-		 * the middle of a batch, after the bookmark has been read and, for a subscribed projector,
-		 * after the source has been registered with the storage. A bookmark read setting without a
-		 * reader is refused for the same reason: there is no bookmark to read, and a projector silently
-		 * keeping its own cursor is not what the caller asked for.
+		 * A projection is required, and is checked here rather than left to fail inside the first
+		 * {@link Projector#run()}: a null there surfaces as a {@code NullPointerException} from the
+		 * middle of a batch, after the bookmark has been read and, for a subscribed projector, after
+		 * the source has been registered with the storage. A bookmark read setting without a reader is
+		 * refused for the same reason: there is no bookmark to read, and a projector silently keeping
+		 * its own cursor is not what the caller asked for.
 		 *
 		 * @return a new Projector configured with the builder's settings
-		 * @throws IllegalStateException if no event source or no projection was configured, or a bookmark
-		 *         read setting was chosen without a reader
+		 * @throws IllegalStateException if no projection was configured, or a bookmark read setting was
+		 *         chosen without a reader
 		 */
 		public Projector<EVENT_TYPE> build ( ) {
-			if ( eventSource == null ) {
-				throw new IllegalStateException("no event source configured, start with Projector.from(...)");
-			}
 			if ( projection == null ) {
 				throw new IllegalStateException("no projection configured, call into(...) before build()");
 			}
@@ -912,114 +847,6 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 				eventSource.subscribe(projector);
 			}
 			return projector;
-		}
-
-		/**
-		 * The nested bookmark builder. Every method here sets the same field the flat builder's
-		 * {@link Builder#bookmarkAs(String)}, {@link Builder#bookmarkAs(String, Tags)},
-		 * {@link Builder#readBookmarkOnce()} and {@link Builder#readBookmarkOnRequest()} set.
-		 *
-		 * @deprecated use the bookmark methods on {@link Builder} directly
-		 */
-		@Deprecated(since = "0.11.0", forRemoval = true)
-		public class BookmarkBuilder {
-
-			private final Builder<EVENT_TYPE> parent;
-
-			private BookmarkBuilder ( Builder<EVENT_TYPE> builder ) {
-				this.parent = builder;
-			}
-
-			/**
-			 * Configures the reader name.
-			 *
-			 * @param readerName the name of the reader whose bookmark records the progress
-			 * @return this builder for method chaining
-			 * @deprecated use {@link Builder#bookmarkAs(String)}
-			 */
-			@Deprecated(since = "0.11.0", forRemoval = true)
-			public BookmarkBuilder withReader ( String readerName ) {
-				parent.bookmarkReader = readerName;
-				return this;
-			}
-
-			/**
-			 * Configures the tags stored with the bookmark.
-			 *
-			 * @param tags the tags to store with the bookmark
-			 * @return this builder for method chaining
-			 * @deprecated use {@link Builder#bookmarkAs(String, Tags)}
-			 */
-			@Deprecated(since = "0.11.0", forRemoval = true)
-			public BookmarkBuilder withTags ( Tags tags ) {
-				parent.bookmarkTags = tags;
-				return this;
-			}
-
-			/**
-			 * Reads the bookmark only on {@link Projector#readBookmark()}.
-			 *
-			 * @return this builder for method chaining
-			 * @deprecated use {@link Builder#readBookmarkOnRequest()}
-			 */
-			@Deprecated(since = "0.11.0", forRemoval = true)
-			public BookmarkBuilder readOnManualTriggerOnly ( ) {
-				parent.readBookmarkOnRequest();
-				return this;
-			}
-
-			/**
-			 * Reads the bookmark once, before the first run.
-			 *
-			 * @return this builder for method chaining
-			 * @deprecated use {@link Builder#readBookmarkOnce()}, which reads it before the first run rather
-			 *             than while the projector is built; nothing runs in between that could move it
-			 */
-			@Deprecated(since = "0.11.0", forRemoval = true)
-			public BookmarkBuilder readAtCreationOnly ( ) {
-				parent.readBookmarkOnce();
-				return this;
-			}
-
-			/**
-			 * Reads the bookmark once, before the first run.
-			 *
-			 * @return this builder for method chaining
-			 * @deprecated use {@link Builder#readBookmarkOnce()}
-			 */
-			@Deprecated(since = "0.11.0", forRemoval = true)
-			public BookmarkBuilder readBeforeFirstExecution ( ) {
-				parent.readBookmarkOnce();
-				return this;
-			}
-
-			/**
-			 * Reads the bookmark before every run, which is the default.
-			 *
-			 * @return this builder for method chaining
-			 * @deprecated this is the default, so there is nothing to call
-			 */
-			@Deprecated(since = "0.11.0", forRemoval = true)
-			public BookmarkBuilder readBeforeEachExecution ( ) {
-				parent.readBookmark(BookmarkRead.BEFORE_EACH_RUN);
-				return this;
-			}
-
-			/**
-			 * Returns to the main builder.
-			 *
-			 * @return the parent Builder for method chaining
-			 * @throws IllegalArgumentException if no reader name was configured
-			 * @deprecated there is no sub-builder to leave once the bookmark methods on {@link Builder} are used
-			 */
-			@Deprecated(since = "0.11.0", forRemoval = true)
-			public Builder<EVENT_TYPE> done ( ) {
-				if ( parent.bookmarkReader == null ) {
-					throw new IllegalArgumentException("bookmarking requires a reader name");
-				}
-				return parent;
-			}
-
 		}
 
 	}

@@ -162,16 +162,21 @@ mvn clean install -DskipTests
   cheap and shares its serde (see "Lifecycle: closing a stream" below), and a stream per operation
   is the intended usage. There is deliberately no append that names a target stream as a further
   argument, and `EventStreamId` carries no relation saying which stream may write to which — only
-  `canRead`. The alternative — an `append(criteria, events, target)` through a wildcard stream
-  bound to the target's context — loses because a stream is then a sink for some targets and not
-  others, decided per call; because every append is metered under the tags of the stream it went
-  through, so a write landing in `customer#123` would be counted under the wildcard's purpose and
-  never under its own, and the `purpose` cap below would never see the writes; and because it buys
-  nothing the shared serde does not already give. The refusal is at runtime, not at compile time,
-  because whether an id is a wildcard is a property of its value: the same `EventStream` type reads
-  a context or one of its streams depending only on the id it was opened with (the raw stream, whose
-  read-only nature *is* static, is a separate case). `EventStreamTest.testAppendToNonSpecificStream`
-  and `testAppendToWildcardPurposeStream` pin it per backend
+  `covers`, which says whether an id's scope contains a stream, and is what scopes every read and
+  decides which subscribers a notification is relevant to. It is called that because it is a
+  relation between two values, a scope containing a stream, and not a permission a stream holds:
+  the alternative name — `canRead` — loses because it invites a `canWrite` beside it, the very
+  relation this design refuses. The alternative — an `append(criteria, events,
+  target)` through a wildcard stream bound to the target's context — loses because a stream is then
+  a sink for some targets and not others, decided per call; because every append is metered under
+  the tags of the stream it went through, so a write landing in `customer#123` would be counted
+  under the wildcard's purpose and never under its own, and the `purpose` cap below would never see
+  the writes; and because it buys nothing the shared serde does not already give. The refusal is at
+  runtime, not at compile time, because whether an id is a wildcard is a property of its value: the
+  same `EventStream` type reads a context or one of its streams depending only on the id it was
+  opened with (the raw stream, whose read-only nature *is* static, is a separate case).
+  `EventStreamTest.testAppendToNonSpecificStream` and `testAppendToWildcardPurposeStream` pin it per
+  backend
 - **`getEventById` answers in two levels: `Optional<List<Event<E>>>`.** The `Optional` says whether
   this stream holds a stored event with the id, the list what it reads as through the stream's
   mappings — one event, or through an upcaster several or none. A stored event that upcasts into

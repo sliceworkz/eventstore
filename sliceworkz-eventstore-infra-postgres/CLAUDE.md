@@ -453,8 +453,8 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     a reference the reader has already passed is dropped by the optimizing decorator, so getting this
     wrong strands subscriptions silently rather than loudly.
   - **One notification per *distinct stream*, never a single collapsed "something happened".**
-    `AppendsToEventStoreNotification.isRelevantFor` matches through `EventStreamId.canRead`, so the
-    notification has to name a concrete stream or no concrete subscriber matches it.
+    `AppendsToEventStoreNotification.isRelevantFor` matches through `EventStreamId.covers`, so the
+    notification has to name a concrete stream or no concrete subscriber covers it.
   - `eventTx` is rendered as a JSON *string* by `jsonb_build_object`; the Java side parses it as one.
   - **The trigger's expected `tgtype` is 4** (`INSERT` with the `ROW` bit clear); a row-level trigger's is
     5, so a database still carrying one fails the shape compare and is repaired by `ENSURE`.
@@ -468,8 +468,8 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   deployment never gets the `ENSURE` repair, so without this an un-migrated database would start and
   misbehave. The failure it prevents is not loud: a statement-level trigger bound to a stale row-level
   function body does *not* raise in PostgreSQL — `NEW` is unassigned, so it emits a notification with
-  every field null, which becomes a wildcard stream with a zero reference that every concrete
-  subscriber's `canRead` rejects. Live updates would stop with nothing thrown and nothing logged.
+  every field null, which becomes a wildcard stream with a zero reference that no concrete
+  subscriber's id covers. Live updates would stop with nothing thrown and nothing logged.
 - **The async notification queue is not a binding constraint, even per row.** Measured on PG16, 100.000
   pending notifications occupy 0.217% of it, so it holds ~46 million and a single transaction would need
   that many events to hit `NOTIFY queue is full` (SQLSTATE 53200) — far past where the in-memory

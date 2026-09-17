@@ -320,8 +320,8 @@ class InMemoryEventStorageImpl implements EventStorage {
 		
 		Stream<StoredEvent> result = on;
 
-		// a wildcard stream reads everything, so canRead is the whole of the stream scoping
-		result = result.filter(e->stream.canRead(e.stream()));
+		// a wildcard stream reads everything, so covers is the whole of the stream scoping
+		result = result.filter(e->stream.covers(e.stream()));
 		
 		result = result.filter(filter::matches);
 
@@ -622,7 +622,7 @@ class InMemoryEventStorageImpl implements EventStorage {
 		checkNotClosed();
 		requireStream(stream);
 		return eventlog.reversed().stream()
-				.filter(e -> stream.canRead(e.stream()))
+				.filter(e -> stream.covers(e.stream()))
 				.findFirst()
 				.map(StoredEvent::reference);
 	}

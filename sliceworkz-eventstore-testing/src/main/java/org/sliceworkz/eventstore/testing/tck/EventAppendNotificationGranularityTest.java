@@ -56,7 +56,7 @@ import org.sliceworkz.eventstore.testing.tck.mock.MockDomainEvent.FirstDomainEve
  * <p>
  * The notification must also name a <em>concrete</em> stream, because
  * {@link EventStorage.AppendsToEventStoreNotification#isRelevantFor} matches through
- * {@link EventStreamId#canRead}: a wildcard or null-valued stream is rejected by every concrete
+ * {@link EventStreamId#covers}: a wildcard or null-valued stream is covered by no concrete
  * subscriber, so live updates stop with nothing thrown and nothing logged.
  */
 public class EventAppendNotificationGranularityTest extends AbstractEventStoreTest {
@@ -127,7 +127,7 @@ public class EventAppendNotificationGranularityTest extends AbstractEventStoreTe
 
 		EventStorage.AppendsToEventStoreNotification notification = received.getFirst();
 
-		// a concrete stream, so a concrete subscriber's canRead matches it
+		// a concrete stream, so a concrete subscriber's id covers it
 		assertEquals(streamId, notification.stream(), "the notification must name the stream that was appended to");
 		assertTrue(notification.isRelevantFor(streamId), "a subscriber to this very stream must find it relevant");
 		assertTrue(notification.isRelevantFor(EventStreamId.anyContext()), "a wildcard subscriber must find it relevant too");

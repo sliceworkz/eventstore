@@ -48,7 +48,7 @@ package org.sliceworkz.eventstore.stream;
  * <p>
  * <strong>A wildcard names streams to read, never a stream to write.</strong> An event is stored in
  * exactly one stream, so a stream opened on a wildcard id is a source: it reads across every stream
- * the wildcard {@linkplain #canRead(EventStreamId) matches}, and an append through it is refused with
+ * the wildcard {@linkplain #covers(EventStreamId) covers}, and an append through it is refused with
  * {@link IllegalArgumentException} (see {@link EventSink#append(AppendCriteria, java.util.List)}). To
  * write to one of the streams it reads, open that stream by its own id. Whether an id is a wildcard is
  * a property of its value rather than of its type, which is why the refusal is at runtime and a
@@ -70,8 +70,8 @@ package org.sliceworkz.eventstore.stream;
  * EventStreamId allCustomers = EventStreamId.forContext("customer").anyPurpose();
  * EventStreamId allStreams = EventStreamId.anyContext();
  *
- * // Check if a wildcard can read a specific stream
- * boolean canRead = allCustomers.canRead(customerId); // true
+ * // Check whether a wildcard covers a specific stream
+ * boolean covered = allCustomers.covers(customerId); // true
  * }</pre>
  *
  * @param context the primary identifier for the stream, or null for wildcard matching any context
@@ -178,25 +178,35 @@ public record EventStreamId ( String context, String purpose ) {
 	}
 
 	/**
-	 * Determines if this stream ID can read from the specified actual stream ID.
+	 * Whether the given stream lies within the scope this id names.
 	 * <p>
-	 * This method implements the wildcard matching logic:
+	 * An id names a scope of streams: a concrete id names one stream, a wildcard component widens the
+	 * scope to every value of that component. This is the containment relation between the two:
 	 * <ul>
-	 *   <li>If this context is a wildcard (null), it matches any context</li>
-	 *   <li>If this purpose is a wildcard (null), it matches any purpose</li>
-	 *   <li>Otherwise, both context and purpose must match exactly</li>
+	 *   <li>a wildcard context ({@code null}) covers any context, and a wildcard purpose any purpose</li>
+	 *   <li>a concrete component covers exactly its own value</li>
 	 * </ul>
+	 * So {@code forContext("customer").anyPurpose()} covers {@code customer#123}, {@code anyContext()}
+	 * covers everything, and a concrete id covers itself and nothing else. It is a relation between
+	 * two values, not a permission held by a stream: it is what scopes a read to the streams its
+	 * id names — a storage answers a query, a head and a lookup by id from the stored events whose
+	 * stream the id covers — and what decides whether a notification naming a stream is relevant to
+	 * a subscriber. Whether a stream may <em>append</em> is a different question, answered by
+	 * {@link #isAnyContext()} and {@link #isAnyPurpose()}: a wildcard covers streams to read and names
+	 * none to write (see {@link EventSink#append(AppendCriteria, java.util.List)}).
 	 * <p>
-	 * This is primarily used internally to determine stream access permissions.
+	 * The argument is read as it is: a wildcard component on the argument side is a value like any
+	 * other, covered only by a wildcard on this side. A storage never stores an event under a wildcard,
+	 * so a notification naming one is relevant to no concrete subscriber.
 	 *
-	 * @param actualStreamId the actual stream ID to check against
-	 * @return true if this stream ID can read from the actual stream ID, false otherwise
+	 * @param stream the stream to test for lying within this id's scope
+	 * @return true if this id covers the given stream, false otherwise
 	 */
-	public boolean canRead ( EventStreamId actualStreamId ) {
+	public boolean covers ( EventStreamId stream ) {
 		boolean result = true;
-		if ( !this.isAnyContext() && !this.context().equals(actualStreamId.context()) ) {
+		if ( !this.isAnyContext() && !this.context().equals(stream.context()) ) {
 			result = false;
-		} else if ( !this.isAnyPurpose() && !this.purpose().equals(actualStreamId.purpose())){
+		} else if ( !this.isAnyPurpose() && !this.purpose().equals(stream.purpose())){
 			result = false;
 		}
 		return result;

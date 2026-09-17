@@ -1251,7 +1251,7 @@ public class EventStoreImpl implements EventStore {
 			// query; a stored event this stream holds is present whatever it upcasts into, an empty list
 			// included -- the two levels are the contract, so nothing collapses them
 			return eventStorage.getEventById(eventId)
-				.filter(e->eventStreamId.canRead(e.stream()))
+				.filter(e->eventStreamId.covers(e.stream()))
 				.map(e->enrich(e, Direction.FORWARD));
 		}
 

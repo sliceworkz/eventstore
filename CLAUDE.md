@@ -390,10 +390,22 @@ mvn clean install -DskipTests
 - Created via `EventQuery.forEvents(eventTypesFilter, tags)`, or `EventQuery.forTags(tags)` for events of
   any type carrying the tags — the usual shape of a consistency boundary — or as a chain,
   `EventQuery.forTypes(CustomerEvent.class).tagged("customer", id)`, where a sealed root names its
-  whole hierarchy. `EventQuery` re-exposes every `EventFilter` method: `forTypes`, `tagged` and `or`
-  behave as they do on the filter (see EventFilter above), `tagged` keeping the query's direction and
-  limit, `or` refusing two directions or a limit on either side, since a shared limit over a union does
-  not mean "the last of each"
+  whole hierarchy. `EventQuery` re-exposes the `EventFilter` builders and none of its readers:
+  `forTypes`, `forTags`, `forEvents`, `tagged`, `or`, `until` and `untilIfEarlier` behave as they do
+  on the filter (see EventFilter above), `tagged` keeping the query's direction and limit, `or`
+  refusing two directions or a limit on either side, since a shared limit over a union does not mean
+  "the last of each". Whether an event matches, whether the query matches everything or nothing, its
+  items and its `until` boundary are the filter's to answer, through `filter()`:
+  `query.filter().matches(event)`, `query.filter().isMatchNone()` — which is how `Projector` asks
+  them. The readers of the query's own are the two it adds, `isBackwards()` and `limit()`. The
+  alternative — the query delegating each filter reader through a method of its own — loses because it
+  hands every caller two spellings of one question and makes the filter's read surface something to
+  keep in step on the query. In the same spirit, the query names no `EventFilterItem`: its constructor
+  takes an `EventFilter`, and `forEvents(types, tags)` builds one. `EventFilterItem` stays public
+  because it is the component type of `EventFilter.items()`, which the impl (the legacy-type
+  trace-back), the Postgres backend (the SQL it builds from each item) and the fixture read; it is a
+  filter's item, and nothing application code needs to construct. `EventQueryTest` pins the surface
+  reflectively
 - **`.limit(n)` means "read n stored events", and it is pushed into the storage query** — a SQL
   `LIMIT` on Postgres, a short-circuiting `Stream.limit` in memory — not applied to the result. That
   is what makes it bound memory as well as output: a storage query materialises its whole result set

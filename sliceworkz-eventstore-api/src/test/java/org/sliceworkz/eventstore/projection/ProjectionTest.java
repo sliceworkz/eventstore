@@ -66,7 +66,7 @@ public class ProjectionTest {
 	void theDefaultInitQueryIsMatchNone ( ) {
 		Projection<MockDomainEvent> projection = new TestProjection();
 		assertNotNull(projection.initQuery());
-		assertTrue(projection.initQuery().isMatchNone());
+		assertTrue(projection.initQuery().filter().isMatchNone());
 	}
 
 	@Test

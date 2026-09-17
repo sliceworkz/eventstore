@@ -17,19 +17,13 @@
  */
 package org.sliceworkz.eventstore.query;
 
-import java.util.Collections;
-import java.util.List;
-
-import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
-import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
-import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
 /**
- * Dynamic Consistency Boundary (DCB) style query that allows to dynamically select the {@link Event}s that are of interest.
+ * Dynamic Consistency Boundary (DCB) style query that allows to dynamically select the {@link org.sliceworkz.eventstore.events.Event}s that are of interest.
  *
  * <p>EventQuery wraps an {@link EventFilter} (which contains the pure matching criteria: event types, tags,
  * and temporal boundary) together with traversal semantics (direction and limit) that control how results
@@ -44,6 +38,17 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
  * <p>When used for optimistic locking via {@link org.sliceworkz.eventstore.stream.AppendCriteria},
  * only the {@link EventFilter} is needed (via {@link #filter()}), since direction and limit are
  * presentation concerns that must not affect conflict detection.
+ *
+ * <p>The query builds its filter and reads nothing off it. {@link #forTypes(Class...)},
+ * {@link #forTags(Tags)}, {@link #forEvents(EventTypesFilter, Tags)}, {@link #tagged(Tags)},
+ * {@link #or(EventQuery)}, {@link #until(EventReference)} and {@link #untilIfEarlier(EventReference)}
+ * build the same filter their {@link EventFilter} namesakes build, carrying the query's direction and
+ * limit along; whether an event matches, whether the filter matches everything or nothing, its items
+ * and its boundary are questions for the filter, asked through {@link #filter()}:
+ * {@code query.filter().matches(event)}, {@code query.filter().isMatchNone()}. The alternative -- the
+ * query re-exposing each of those readers as a method of its own -- loses because it hands every
+ * caller two spellings of one question and makes the filter's readers a surface to keep in step here;
+ * the readers of a query's own are the two it adds, {@link #isBackwards()} and {@link #limit()}.
  *
  * <p><strong>Usage Examples:</strong>
  * <pre>{@code
@@ -81,7 +86,6 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
  * @param limit the maximum number of events to return, defaults to no limit
  *
  * @see EventFilter
- * @see EventFilterItem
  * @see EventTypesFilter
  * @see org.sliceworkz.eventstore.stream.AppendCriteria
  * @see Tags
@@ -104,101 +108,19 @@ public record EventQuery ( EventFilter filter, Direction direction, Limit limit 
 		BACKWARD
 	}
 
+	/**
+	 * Creates a query over the given filter, read in the given direction and bounded by the given limit.
+	 * Each defaults where absent: a {@code null} filter matches nothing, a {@code null} direction is
+	 * {@link Direction#FORWARD} and a {@code null} limit is {@link Limit#none()}.
+	 *
+	 * @param filter the matching criteria, or {@code null} for {@link EventFilter#matchNone()}
+	 * @param direction the traversal direction, or {@code null} for {@link Direction#FORWARD}
+	 * @param limit how many stored events to read, or {@code null} for {@link Limit#none()}
+	 */
 	public EventQuery ( EventFilter filter, Direction direction, Limit limit ) {
 		this.filter = filter != null ? filter : EventFilter.matchNone();
 		this.direction = direction != null ? direction : Direction.FORWARD;
 		this.limit = limit != null ? limit : Limit.none();
-	}
-
-	/**
-	 * Convenience constructor from raw filter components.
-	 */
-	public EventQuery ( List<EventFilterItem> items, EventReference until, Direction direction, Limit limit ) {
-		this(new EventFilter(items, until), direction, limit);
-	}
-
-	/**
-	 * Convenience constructor from raw filter components with default direction and limit.
-	 */
-	public EventQuery ( List<EventFilterItem> items, EventReference until ) {
-		this(new EventFilter(items, until), Direction.FORWARD, Limit.none());
-	}
-
-	/**
-	 * Creates a match-none EventQuery.
-	 */
-	public EventQuery ( ) {
-		this(EventFilter.matchNone(), Direction.FORWARD, Limit.none());
-	}
-
-	/**
-	 * Returns the list of query items from the underlying filter.
-	 *
-	 * @return the list of query items (null for match-all, empty for match-none)
-	 */
-	public List<EventFilterItem> items ( ) {
-		return filter.items();
-	}
-
-	/**
-	 * Returns the "until" reference from the underlying filter.
-	 *
-	 * @return the "until" reference, or null if no boundary is set
-	 */
-	public EventReference until ( ) {
-		return filter.until();
-	}
-
-	/**
-	 * Tests whether the given event matches this query.
-	 *
-	 * @param event the event to test
-	 * @return true if the event matches this query, false otherwise
-	 */
-	public boolean matches ( Event<?> event ) {
-		return filter.matches(event);
-	}
-
-	/**
-	 * Tests whether the given stored event matches this query.
-	 *
-	 * @param event the stored event to test
-	 * @return true if the stored event matches this query, false otherwise
-	 */
-	public boolean matches ( StoredEvent event ) {
-		return filter.matches(event);
-	}
-
-	/**
-	 * Tests whether an event with the given attributes matches this query.
-	 *
-	 * @param eventType the type of the event
-	 * @param tags the tags of the event
-	 * @param reference the reference of the event
-	 * @return true if the event matches this query, false otherwise
-	 */
-	public boolean matches ( EventType eventType, Tags tags, EventReference reference ) {
-		return filter.matches(eventType, tags, reference);
-	}
-
-	/**
-	 * Checks if this query is a match-none query (will match no events).
-	 *
-	 * @return true if this query has an empty items list (match-none), false otherwise
-	 */
-	@JsonIgnore
-	public boolean isMatchNone ( ) {
-		return filter.isMatchNone();
-	}
-
-	/**
-	 * Checks if this query is a match-all query (will match all events).
-	 *
-	 * @return true if this query has null items (match-all), false otherwise
-	 */
-	@JsonIgnore
-	public boolean isMatchAll ( ) {
-		return filter.isMatchAll();
 	}
 
 	/**
@@ -327,7 +249,7 @@ public record EventQuery ( EventFilter filter, Direction direction, Limit limit 
 	 * @return an EventQuery that matches no events
 	 */
 	public static final EventQuery matchNone (  ) {
-		return new EventQuery();
+		return new EventQuery(EventFilter.matchNone(), Direction.FORWARD, Limit.none());
 	}
 
 	/**
@@ -350,7 +272,7 @@ public record EventQuery ( EventFilter filter, Direction direction, Limit limit 
 	 * @return an EventQuery matching the specified criteria
 	 */
 	public static final EventQuery forEvents ( EventTypesFilter eventTypes, Tags tags ) {
-		return forEvents(new EventFilterItem(eventTypes, tags));
+		return new EventQuery(EventFilter.forEvents(eventTypes, tags), Direction.FORWARD, Limit.none());
 	}
 
 	/**
@@ -387,16 +309,6 @@ public record EventQuery ( EventFilter filter, Direction direction, Limit limit 
 	 */
 	public static final EventQuery forTags ( Tags tags ) {
 		return forEvents(EventTypesFilter.any(), tags);
-	}
-
-	/**
-	 * Creates a query from a single query item.
-	 *
-	 * @param queryItem the query item defining the match criteria
-	 * @return an EventQuery containing the single query item
-	 */
-	public static final EventQuery forEvents ( EventFilterItem queryItem ) {
-		return new EventQuery(Collections.singletonList(queryItem), null);
 	}
 
 	/**

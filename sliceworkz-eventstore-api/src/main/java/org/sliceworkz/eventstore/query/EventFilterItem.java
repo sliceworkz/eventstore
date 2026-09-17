@@ -28,6 +28,14 @@ import org.sliceworkz.eventstore.events.Tags;
  * When multiple EventFilterItems are present in a filter, they represent an OR condition.
  * Within a single EventFilterItem, the event type filter and tags represent an AND condition.
  *
+ * <p><strong>Who builds one, and who reads one.</strong> Application code spells a filter from its
+ * types and tags — {@link EventFilter#forTypes(Class...)}, {@link EventFilter#tagged(String, String)},
+ * {@link EventFilter#or(EventFilter)}, {@link EventFilter#forEvents(EventTypesFilter, Tags)} — and every
+ * spelling resolves to items, so the record is rarely constructed by hand. It is public because it is
+ * what a storage reads off {@link EventFilter#items()} to answer the filter: each item is one OR-branch
+ * of the query a backend builds, and the storage SPI is a published contract. An {@link EventQuery}
+ * names it nowhere; its items are reached through {@link EventQuery#filter()}.
+ *
  * <p><strong>Matching Logic:</strong>
  * <ul>
  *   <li>An event matches if its type is ANY of the types specified in the {@link EventTypesFilter}</li>

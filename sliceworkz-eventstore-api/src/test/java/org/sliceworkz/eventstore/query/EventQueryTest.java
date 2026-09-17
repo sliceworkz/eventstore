@@ -303,11 +303,12 @@ public class EventQueryTest {
 
 		EventFilter filter = q.filter();
 
-		// filter contains items and until
-		assertEquals(q.filter().items(), filter.items());
-		assertEquals(q.filter().until(), filter.until());
+		// the filter is the one the query was built from, with its until; the direction and the limit
+		// are the query's own and leave no trace on it
+		assertEquals(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.of("A", "1")).until(e4_event2TagsA1.reference()), filter);
+		assertEquals(e4_event2TagsA1.reference(), filter.until());
 
-		// matching behavior is identical to the query
+		// and it is where a query's matching is answered
 		assertTrue(filter.matches(e3_event1TagsA1));
 		assertFalse(filter.matches(e5_event1TagsA1B1));
 	}

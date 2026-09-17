@@ -44,7 +44,7 @@ import org.sliceworkz.eventstore.spi.EventStorage.ImportMode;
 import org.sliceworkz.eventstore.spi.EventStorageClosedException;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
-import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
+import org.sliceworkz.eventstore.stream.AppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.testing.AbstractEventStoreTest;
 import org.sliceworkz.eventstore.testing.EventStoreBackend.Capability;
@@ -177,7 +177,7 @@ public class EventStorageLifecycleTest extends AbstractEventStoreTest {
 		EventStore survivingStore = EventStore.on(eventStorage()).build();
 		EventStream<MockDomainEvent> survivingStream = stream(survivingStore);
 		AtomicInteger notifications = new AtomicInteger();
-		survivingStream.subscribe((EventStreamEventuallyConsistentAppendListener) reference -> {
+		survivingStream.subscribe((AppendListener) reference -> {
 			notifications.incrementAndGet();
 			return reference;
 		});
@@ -293,12 +293,12 @@ public class EventStorageLifecycleTest extends AbstractEventStoreTest {
 		// listeners on both: closing a store unregisters its streams from the storage, and anything
 		// already in flight when that happens must be declined quietly rather than rejected
 		AtomicInteger notificationsAfterClose = new AtomicInteger();
-		closedStream.subscribe((EventStreamEventuallyConsistentAppendListener) reference -> {
+		closedStream.subscribe((AppendListener) reference -> {
 			notificationsAfterClose.incrementAndGet();
 			return reference;
 		});
 		AtomicInteger survivorNotifications = new AtomicInteger();
-		survivingStream.subscribe((EventStreamEventuallyConsistentAppendListener) reference -> {
+		survivingStream.subscribe((AppendListener) reference -> {
 			survivorNotifications.incrementAndGet();
 			return reference;
 		});

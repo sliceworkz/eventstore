@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
-import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
+import org.sliceworkz.eventstore.stream.AppendListener;
 
 class OptimizingAppendListenerDecoratorTest {
 
@@ -101,7 +101,7 @@ class OptimizingAppendListenerDecoratorTest {
 	@Test
 	void testNotificationAlreadySeenByTheListenerIsSkipped ( ) {
 		AtomicInteger deliveries = new AtomicInteger();
-		EventStreamEventuallyConsistentAppendListener counting = reference -> {
+		AppendListener counting = reference -> {
 			deliveries.incrementAndGet();
 			return reference;
 		};

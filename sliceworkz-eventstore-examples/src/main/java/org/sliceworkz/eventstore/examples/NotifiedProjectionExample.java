@@ -32,10 +32,10 @@ import org.sliceworkz.eventstore.projection.ProjectorException;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
-import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
+import org.sliceworkz.eventstore.stream.AppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
-public class NotifiedProjectionExample implements EventStreamEventuallyConsistentAppendListener {
+public class NotifiedProjectionExample implements AppendListener {
 
 	public static int CUSTOMER_COUNT = 25;
 	

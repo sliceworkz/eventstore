@@ -18,7 +18,9 @@
 package org.sliceworkz.eventstore.testing.tck;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.ref.WeakReference;
 import java.util.Collections;
@@ -30,8 +32,9 @@ import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
-import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
+import org.sliceworkz.eventstore.stream.AppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
+import org.sliceworkz.eventstore.stream.Subscription;
 import org.sliceworkz.eventstore.testing.AbstractEventStoreTest;
 import org.sliceworkz.eventstore.testing.ForEachBackend;
 import org.sliceworkz.eventstore.testing.tck.mock.MockDomainEvent;
@@ -49,7 +52,9 @@ import org.sliceworkz.eventstore.testing.tck.mock.MockDomainEvent.FirstDomainEve
  * while live updates are broken in production.
  * <p>
  * The rest pin down the other side of holding listeners strongly: since nothing will ever release
- * them on the caller's behalf, {@code close()} has to, exactly and repeatably.
+ * them on the caller's behalf, {@code close()} has to, exactly and repeatably — the stream's, which
+ * ends every subscription on it, and the {@link Subscription} handle's, which ends one and releases
+ * the stream when it was the last.
  */
 public class EventStreamSubscriptionLifecycleTest extends AbstractEventStoreTest {
 
@@ -61,7 +66,7 @@ public class EventStreamSubscriptionLifecycleTest extends AbstractEventStoreTest
 		stream.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FirstDomainEvent(payload), Tags.none())));
 	}
 
-	private EventStreamEventuallyConsistentAppendListener counting ( AtomicInteger counter ) {
+	private AppendListener counting ( AtomicInteger counter ) {
 		return reference -> {
 			counter.incrementAndGet();
 			return reference;
@@ -202,6 +207,116 @@ public class EventStreamSubscriptionLifecycleTest extends AbstractEventStoreTest
 		waitBecauseOfEventualConsistency(( ) -> witnessNotifications.get() >= 2);
 		assertEquals(afterTheBlock, notifications.get(),
 			"a stream closed by try-with-resources must stop receiving notifications");
+	}
+
+	@ForEachBackend
+	void closingASubscriptionEndsThatListenerAndLeavesTheOthersOnTheStream ( ) {
+		EventStream<MockDomainEvent> stream = stream();
+		AtomicInteger endedNotifications = new AtomicInteger();
+		Subscription ended = stream.subscribe(counting(endedNotifications));
+		AtomicInteger remainingNotifications = new AtomicInteger();
+		stream.subscribe(counting(remainingNotifications));
+
+		assertTrue(ended.isActive(), "a subscription is active from subscribe on");
+		ended.close();
+		assertFalse(ended.isActive(), "a closed subscription reads inactive");
+
+		append(stream, "appended after one of two subscriptions on the stream was closed");
+
+		// the remaining listener on the *same* stream is the witness: the stream stayed registered and
+		// the round trip completed, so the closed listener was passed over rather than merely late
+		waitBecauseOfEventualConsistency(( ) -> remainingNotifications.get() >= 1);
+		assertEquals(0, endedNotifications.get(),
+			"closing a subscription must stop its listener without touching the other listeners on the stream");
+	}
+
+	@ForEachBackend
+	void closingASubscriptionIsIdempotentAndLeavesTheStreamUsable ( ) {
+		EventStream<MockDomainEvent> stream = stream();
+		Subscription subscription = stream.subscribe(counting(new AtomicInteger()));
+
+		subscription.close();
+		subscription.close();
+
+		AtomicInteger notifications = new AtomicInteger();
+		stream.subscribe(counting(notifications));
+		append(stream, "appended after re-subscribing through a stream whose subscription was closed");
+
+		// a stream whose last subscription was closed must re-register on the next subscribe
+		waitBecauseOfEventualConsistency(( ) -> notifications.get() >= 1);
+	}
+
+	/**
+	 * Subscribes a stream, closes the subscription — never the stream — and hands back only a weak
+	 * reference, so that after this frame returns the storage's registration is the only thing that
+	 * could still be holding the stream.
+	 */
+	private WeakReference<EventStream<MockDomainEvent>> subscribeCloseTheSubscriptionAndKeepOnlyAWeakReference ( ) {
+		EventStream<MockDomainEvent> stream = stream();
+		stream.subscribe(counting(new AtomicInteger())).close();
+		return new WeakReference<>(stream);
+	}
+
+	@ForEachBackend
+	void closingTheLastSubscriptionLetsTheStorageReleaseTheStream ( ) {
+		WeakReference<EventStream<MockDomainEvent>> released = subscribeCloseTheSubscriptionAndKeepOnlyAWeakReference();
+
+		provokeGarbageCollection();
+
+		// a stream is registered with the storage exactly while it has a live subscription. Were the
+		// registration to outlive the last subscription, a caller holding only the handle would have no
+		// way to release the stream, and the storage would hold it for good
+		assertNull(released.get(),
+			"a stream whose last subscription was closed must be released by the storage, as a closed stream is");
+	}
+
+	@ForEachBackend
+	void closingTheStreamEndsEverySubscriptionHandle ( ) {
+		EventStream<MockDomainEvent> stream = stream();
+		Subscription append = stream.subscribe(counting(new AtomicInteger()));
+		Subscription bookmark = stream.subscribe(( reader, reference ) -> { });
+
+		stream.close();
+
+		assertFalse(append.isActive(), "closing the stream ends its append subscriptions");
+		assertFalse(bookmark.isActive(), "closing the stream ends its bookmark subscriptions");
+		// and a handle the stream already ended has nothing left to do
+		append.close();
+		bookmark.close();
+	}
+
+	@ForEachBackend
+	void closingABookmarkSubscriptionEndsThatListenerAlone ( ) {
+		EventStream<MockDomainEvent> stream = stream();
+		AtomicInteger endedNotifications = new AtomicInteger();
+		Subscription ended = stream.subscribe(( reader, reference ) -> endedNotifications.incrementAndGet());
+		AtomicInteger remainingNotifications = new AtomicInteger();
+		stream.subscribe(( reader, reference ) -> remainingNotifications.incrementAndGet());
+
+		ended.close();
+
+		append(stream, "an event to bookmark");
+		stream.placeBookmark("reader", stream.head().orElseThrow(), Tags.none());
+
+		waitBecauseOfEventualConsistency(( ) -> remainingNotifications.get() >= 1);
+		assertEquals(0, endedNotifications.get(),
+			"closing a bookmark subscription must stop its listener without touching the other bookmark listeners");
+	}
+
+	@ForEachBackend
+	void theSameListenerSubscribedTwiceGetsTwoSubscriptions ( ) {
+		EventStream<MockDomainEvent> stream = stream();
+		AtomicInteger notifications = new AtomicInteger();
+		AppendListener listener = counting(notifications);
+		Subscription first = stream.subscribe(listener);
+		Subscription second = stream.subscribe(listener);
+
+		first.close();
+		assertTrue(second.isActive(), "a subscription is identified by its handle, not by its listener");
+
+		append(stream, "appended with one of the two subscriptions of a listener closed");
+
+		waitBecauseOfEventualConsistency(( ) -> notifications.get() >= 1);
 	}
 
 }

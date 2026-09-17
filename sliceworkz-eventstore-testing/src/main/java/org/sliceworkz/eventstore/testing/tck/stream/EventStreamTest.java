@@ -48,7 +48,7 @@ import org.sliceworkz.eventstore.testing.AbstractEventStoreTest;
 import org.sliceworkz.eventstore.testing.ForEachBackend;
 import org.sliceworkz.eventstore.testing.tck.mock.MockDomainEventWithNonSealedInterface.DomainEventPartOfMockDomainEventWithNonSealedInterface;
 import org.sliceworkz.eventstore.testing.tck.mock.MockDomainEventWithNonSealedInterface;
-import org.sliceworkz.eventstore.testing.tck.mock.MockEventuallyConsistentAppendListener;
+import org.sliceworkz.eventstore.testing.tck.mock.MockAppendListener;
 import org.sliceworkz.eventstore.testing.tck.mockdomain.MockDomainDuplicatedEvent;
 import org.sliceworkz.eventstore.testing.tck.mockdomain.MockDomainEvent.FirstDomainEvent;
 import org.sliceworkz.eventstore.testing.tck.mockdomain.MockDomainEvent.FourthDomainEvent;
@@ -58,7 +58,7 @@ import org.sliceworkz.eventstore.testing.tck.mockdomain.OtherMockDomainEvent.Ano
 import org.sliceworkz.eventstore.testing.tck.mockdomain.OtherMockDomainEvent;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
-import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
+import org.sliceworkz.eventstore.stream.AppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.junit.jupiter.api.BeforeEach;
@@ -115,13 +115,13 @@ public class EventStreamTest extends AbstractEventStoreTest {
 
 		// s1 and s2 are two handles on the *same* logical stream: a subscriber on either must hear about
 		// an append made through the other, since it is the stream that is subscribed to, not the handle
-		MockEventuallyConsistentAppendListener s1ecal = new MockEventuallyConsistentAppendListener();
+		MockAppendListener s1ecal = new MockAppendListener();
 		s1.subscribe(s1ecal);
 
-		MockEventuallyConsistentAppendListener s2ecal = new MockEventuallyConsistentAppendListener();
+		MockAppendListener s2ecal = new MockAppendListener();
 		s2.subscribe(s2ecal);
 
-		MockEventuallyConsistentAppendListener s3ecal = new MockEventuallyConsistentAppendListener();
+		MockAppendListener s3ecal = new MockAppendListener();
 		s3.subscribe(s3ecal);
 
 		// first append via the first stream instance ...
@@ -173,7 +173,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void testAppend ( ) {
 
-		MockEventuallyConsistentAppendListener appendListener = new MockEventuallyConsistentAppendListener();
+		MockAppendListener appendListener = new MockAppendListener();
 		es.subscribe(appendListener);
 
 		List<Event<MockDomainEvent>> events = es.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FirstDomainEvent("1"), Tags.none())));
@@ -215,7 +215,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void testAppendWithIdempotency ( ) {
 
-		MockEventuallyConsistentAppendListener appendListener = new MockEventuallyConsistentAppendListener();
+		MockAppendListener appendListener = new MockAppendListener();
 		es.subscribe(appendListener);
 
 		List<Event<MockDomainEvent>> events = es.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FirstDomainEvent("1"), Tags.none()).withIdempotencyKey("some-idempotency-key")));
@@ -237,7 +237,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void testAppendMultiple ( ) {
 
-		MockEventuallyConsistentAppendListener appendListener = new MockEventuallyConsistentAppendListener();
+		MockAppendListener appendListener = new MockAppendListener();
 		es.subscribe(appendListener);
 
 		EphemeralEvent<MockDomainEvent> e1 = Event.of(new FirstDomainEvent("1"), Tags.none());
@@ -358,7 +358,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void anAppendWithoutCriteriaIsAnAppendWithNoCriteria ( ) {
 
-		MockEventuallyConsistentAppendListener appendListener = new MockEventuallyConsistentAppendListener();
+		MockAppendListener appendListener = new MockAppendListener();
 		es.subscribe(appendListener);
 
 		// the single-event and the list overload store, return the typed events with their references
@@ -517,7 +517,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 
 }
 
-class SlowMockListener implements EventStreamEventuallyConsistentAppendListener {
+class SlowMockListener implements AppendListener {
 
 	private AtomicInteger counter = new AtomicInteger();
 	private AtomicReference<EventReference> lastReference = new AtomicReference<>();

@@ -29,7 +29,7 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
-import org.sliceworkz.eventstore.stream.EventStreamEventuallyConsistentAppendListener;
+import org.sliceworkz.eventstore.stream.AppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.testing.AbstractEventStoreTest;
 import org.sliceworkz.eventstore.testing.ForEachBackend;
@@ -44,7 +44,7 @@ import org.sliceworkz.eventstore.testing.tck.mockdomain.MockDomainEvent.FirstDom
  * subscriber of that notification, which an escaping throwable skips entirely. The store therefore
  * contains each listener's failure, logs it at ERROR, and carries on to the next.
  *
- * @see EventStreamEventuallyConsistentAppendListener
+ * @see AppendListener
  */
 public class AppendListenerFailureTest extends AbstractEventStoreTest {
 
@@ -70,10 +70,10 @@ public class AppendListenerFailureTest extends AbstractEventStoreTest {
 
 		// subscribed first, so it is notified first and the bystander only ever hears about an append the
 		// throwing listener has already failed on
-		stream.subscribe((EventStreamEventuallyConsistentAppendListener) atLeastUntil -> {
+		stream.subscribe((AppendListener) atLeastUntil -> {
 			throw new IllegalStateException("listener is broken");
 		});
-		stream.subscribe((EventStreamEventuallyConsistentAppendListener) atLeastUntil -> {
+		stream.subscribe((AppendListener) atLeastUntil -> {
 			seenByBystander.add(atLeastUntil);
 			return atLeastUntil;
 		});
@@ -112,11 +112,11 @@ public class AppendListenerFailureTest extends AbstractEventStoreTest {
 		AtomicInteger deliveries = new AtomicInteger();
 		List<EventReference> seenByBystander = new CopyOnWriteArrayList<>();
 
-		stream.subscribe((EventStreamEventuallyConsistentAppendListener) atLeastUntil -> {
+		stream.subscribe((AppendListener) atLeastUntil -> {
 			deliveries.incrementAndGet();
 			return null; // "I processed nothing" -- what Projector returns when its query matched no events
 		});
-		stream.subscribe((EventStreamEventuallyConsistentAppendListener) atLeastUntil -> {
+		stream.subscribe((AppendListener) atLeastUntil -> {
 			seenByBystander.add(atLeastUntil);
 			return atLeastUntil;
 		});

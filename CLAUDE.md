@@ -815,8 +815,9 @@ stream owns is its subscriptions.
 
 - **A stream you only query and append through owns nothing.** `getEventStream()` registers nothing with
   the storage; the registration happens on the *first* `subscribe(...)`, because a stream with no
-  subscribers has nothing to do with a notification anyway. Most streams are in this category, are handed
-  out per operation, and need no lifecycle handling at all.
+  subscribers has nothing to do with a notification anyway, and is released by whatever ends the
+  *last* subscription. Most streams are in this category, are handed out per operation, and need no
+  lifecycle handling at all.
 - **A stream you subscribe to is held by the storage, strongly, until closed.** This is what makes live
   updates survive the caller dropping the variable:
   ```java
@@ -839,9 +840,33 @@ stream owns is its subscriptions.
   clears the listeners; the handle stays usable for query, append and bookmark, and subscribing again
   re-registers it. A stream is a cheap per-operation handle, not a connection — there is nothing to
   protect by poisoning it. Idempotent, and closing a never-subscribed stream is a no-op.
-- **There is only one kind of append listener, and it is eventually consistent.** To react to your own
-  append on the appending thread, nothing is subscribed: the typed events, with their assigned
-  references, are the return value of `append()`.
+- **`subscribe(...)` returns a `Subscription`, which ends that one listener.** Closing a stream ends
+  every subscription on it; closing the handle ends one and leaves the others going, and the two
+  compose because the registration follows the subscriptions: **a stream is registered with the
+  storage exactly while it has a live subscription**, so closing the last handle releases the stream
+  as closing the stream does, and subscribing again after that re-registers it. A handle is identified
+  by itself, not by its listener (the same listener subscribed twice has two subscriptions), closing
+  it is idempotent, and a handle the stream or the store already ended reads `isActive() == false`
+  and closes as a no-op. A notification already being dispatched when a handle closes may still reach
+  its listener, the same promise the SPI makes for an unsubscribed listener. The alternative — a
+  stream registered from its first `subscribe` until its own `close()`, whatever its handles do —
+  loses because a caller holding only the handle then has no way to release the stream, and a stream
+  whose every subscription was closed stays held by the storage for the life of the storage, the exact
+  leak the handle exists to avoid. Inside `EventStreamImpl` every change to the subscription lists and
+  to the registration flag is made under one lock, so a last handle closing and a new subscription
+  arriving cannot interleave into a listener the storage never notifies. `Projector.Builder.subscribe()`
+  keeps no handle — the projector subscribes itself and ends with its source — so a projector that
+  must be unsubscribed on its own is built without that setting and subscribed by hand, since a
+  `Projector` is an `AppendListener`. `EventStreamSubscriptionLifecycleTest` pins it per backend,
+  reachability of a stream whose last handle closed included.
+- **There is only one kind of append listener, `AppendListener`, and it is eventually consistent** — and
+  one kind of bookmark listener, `BookmarkListener`. That is why the names carry no qualifier: every
+  listener is told after the commit, on a notification thread, so "eventually consistent" in a name
+  would distinguish it from nothing. To react to your own append on the appending thread, nothing is
+  subscribed: the typed events, with their assigned references, are the return value of `append()`.
+  `EventStreamEventuallyConsistentAppendListener` and `EventStreamEventuallyConsistentBookmarkListener`
+  are the deprecated former names, kept as sub-interfaces for removal so a listener declared under
+  them still subscribes.
 - **What makes it cheap is that the expensive part is shared, not rebuilt.** `getEventStream` allocates a
   stream object and resolves ~10 Micrometer meters (a map lookup each, since Micrometer dedups by name +
   tags) — about **2µs and 1KB**. The payload serde is *not* rebuilt: `EventStoreImpl` caches one per
@@ -884,9 +909,8 @@ or not the storage let go of it.
 
 **`append()` returns the events it wrote** — typed, with their assigned references, the same list the
 caller would otherwise have had to query back. That is the whole of this store's read-your-own-writes
-story, and it is why there is exactly one listener interface:
-`EventStreamEventuallyConsistentAppendListener`. To react to your own append on the appending thread,
-write the code after the call.
+story, and it is why there is exactly one append listener interface: `AppendListener`. To react to
+your own append on the appending thread, write the code after the call.
 
 **No listener runs in a transaction, and none can veto an append.** `EventStorage.append` commits before
 it returns — on Postgres by issuing the `COMMIT` inside it, in memory by having the events in the log — so

@@ -168,6 +168,10 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * not closing it costs nothing either. Streams used only to query and append, which is most of
 	 * them, need no lifecycle handling at all.
 	 * <p>
+	 * This ends <em>every</em> subscription on the source. To end one listener's subscription and leave
+	 * the others going, close the {@link Subscription} its {@code subscribe} call returned; the
+	 * registration is released by whichever ends the last live subscription, so the two compose.
+	 * <p>
 	 * <b>Closing is not terminal.</b> The source stays usable for querying, appending and bookmarking
 	 * afterwards, and subscribing again re-registers it. The only resource a source owns is its
 	 * subscriptions, so closing means "stop listening", not "throw this handle away" — poisoning a
@@ -179,7 +183,8 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * Idempotent. Declared without a checked exception, unlike {@link AutoCloseable#close()}, so that
 	 * try-with-resources needs no catch block. The default implementation does nothing.
 	 *
-	 * @see #subscribe(EventStreamEventuallyConsistentAppendListener)
+	 * @see #subscribe(AppendListener)
+	 * @see Subscription
 	 */
 	@Override
 	default void close ( ) {
@@ -375,13 +380,17 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * typed events, with their assigned references, are the return value of
 	 * {@link EventSink#append(AppendCriteria, java.util.List)}.
 	 * <p>
-	 * Subscribing registers this source with the underlying storage, which then keeps it alive until
-	 * {@link #close()}. Close the source when the subscription is no longer wanted — see {@link #close()}.
+	 * Subscribing registers this source with the underlying storage, which then keeps it alive for as
+	 * long as it has a live subscription. Close the returned {@link Subscription} when this listener is
+	 * no longer wanted, or close the source to end every subscription on it — see {@link #close()}.
 	 *
 	 * @param listener the listener to receive append notifications
+	 * @return the handle that ends this subscription, never null
+	 * @throws org.sliceworkz.eventstore.spi.EventStorageClosedException if the store this source came from is closed
+	 * @see Subscription
 	 * @see #close()
 	 */
-	void subscribe ( EventStreamEventuallyConsistentAppendListener listener );
+	Subscription subscribe ( AppendListener listener );
 
 	/**
 	 * Subscribes to be notified when bookmarks are placed in this stream (eventually consistent).
@@ -389,12 +398,16 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * This subscription allows monitoring bookmark updates, useful for coordinating
 	 * multiple readers or tracking processing progress.
 	 * <p>
-	 * As with the append overloads, this registers the source with the storage until {@link #close()}.
+	 * As with the append overload, this registers the source with the storage for as long as it has a
+	 * live subscription, and the returned handle ends this one.
 	 *
 	 * @param listener the listener to receive bookmark notifications
+	 * @return the handle that ends this subscription, never null
+	 * @throws org.sliceworkz.eventstore.spi.EventStorageClosedException if the store this source came from is closed
+	 * @see Subscription
 	 * @see #close()
 	 */
-	void subscribe ( EventStreamEventuallyConsistentBookmarkListener listener );
+	Subscription subscribe ( BookmarkListener listener );
 
 
 	/**

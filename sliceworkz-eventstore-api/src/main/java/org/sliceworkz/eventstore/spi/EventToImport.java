@@ -207,29 +207,6 @@ public record EventToImport ( EventStreamId stream, EventType type, EventId id, 
 	}
 
 	/**
-	 * Creates a copy of this event with a different payload.
-	 *
-	 * @param payload the JSON payload to store
-	 * @return a new EventToImport with the specified payload
-	 * @deprecated the component is the payload, and is called that: use {@link #withPayload(String)}
-	 */
-	@Deprecated(since = "0.11.0", forRemoval = true)
-	public EventToImport withImmutableData ( String payload ) {
-		return withPayload(payload);
-	}
-
-	/**
-	 * The serialized event payload.
-	 *
-	 * @return the payload
-	 * @deprecated the component is the payload, and is called that: use {@link #payload()}
-	 */
-	@Deprecated(since = "0.11.0", forRemoval = true)
-	public String immutableData ( ) {
-		return payload;
-	}
-
-	/**
 	 * Creates a copy of this event with different tags.
 	 *
 	 * @param tags the tags to attach

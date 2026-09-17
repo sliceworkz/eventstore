@@ -1012,17 +1012,6 @@ public interface EventStorage extends AutoCloseable {
 	public record EventToStore ( EventStreamId stream, EventType type, String payload, Tags tags, String idempotencyKey ) {
 
 		/**
-		 * The serialized event payload.
-		 *
-		 * @return the payload
-		 * @deprecated the component is the payload, and is called that: use {@link #payload()}
-		 */
-		@Deprecated(since = "0.11.0", forRemoval = true)
-		public String immutableData ( ) {
-			return payload;
-		}
-
-		/**
 		 * Converts this event to a stored event by assigning a reference and timestamp.
 		 * <p>
 		 * This method is typically called by storage implementations during the append operation
@@ -1064,17 +1053,6 @@ public interface EventStorage extends AutoCloseable {
 	 * @see #query(EventFilter, EventStreamId, EventReference, Limit, QueryDirection)
 	 */
 	public record StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String payload, Tags tags, Instant timestamp, String idempotencyKey ) {
-
-		/**
-		 * The serialized event payload, as stored.
-		 *
-		 * @return the payload
-		 * @deprecated the component is the payload, and is called that: use {@link #payload()}
-		 */
-		@Deprecated(since = "0.11.0", forRemoval = true)
-		public String immutableData ( ) {
-			return payload;
-		}
 
 		/**
 		 * Convenience constructor for stored events without an idempotency key.

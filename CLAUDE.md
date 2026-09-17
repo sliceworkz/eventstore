@@ -249,7 +249,7 @@ mvn clean install -DskipTests
   what `EventToImport.withPayload` rewrites, and the in-memory backends refuse one that is not a JSON
   document. The file codec writes it under that key as the document it is, not as an escaped string, and
   reads a file carrying it under `immutableData` the same, so an events directory reloads whichever key
-  its files carry. `immutableData()` and `withImmutableData` are the deprecated names, delegating
+  its files carry
 
 **EphemeralEvent:**
 - Lightweight event representation before persistence (no stream, reference, or timestamp)

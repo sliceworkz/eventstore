@@ -301,7 +301,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 			// The main eventQuery then starts from that savepoint's reference.
 			// On subsequent run() calls, lastEventReference is already set, so initQuery is skipped.
 			EventQuery initQuery = projection.initQuery();
-			if ( bookmarkReader == null && lastEventReference == null && initQuery != null && !initQuery.isMatchNone() ) {
+			if ( bookmarkReader == null && lastEventReference == null && initQuery != null && !initQuery.filter().isMatchNone() ) {
 				// The boundary of a bounded run applies to the savepoint too: without it, runUntil() would
 				// initialise the read model from the newest savepoint in the store -- possibly one written
 				// after the requested point in time -- and then start the main query beyond the boundary,
@@ -469,7 +469,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 			// the boundary is over stored events: every event the stored event at the boundary upcasts
 			// into is at or before it, exactly as EventFilter.matches decides for the query itself
 			if ( until == null || !e.reference().storedEventHappenedAfter(until) ) {
-				if ( eventQuery.matches(e) ) {
+				if ( eventQuery.filter().matches(e) ) {
 					batch.startBatchIfNeeded(e);
 					currentEventReference = e.reference();
 					projection.when(e);
@@ -837,7 +837,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements EventStreamEventuallyCons
 				throw new IllegalStateException("no bookmark to read: call bookmarkAs(...) before choosing when the bookmark is read");
 			}
 			EventQuery initQuery = projection.initQuery();
-			if ( bookmarkReader != null && initQuery != null && !initQuery.isMatchNone() ) {
+			if ( bookmarkReader != null && initQuery != null && !initQuery.filter().isMatchNone() ) {
 				LOGGER.warn("Projection has initQuery but bookmarking is enabled — initQuery will be ignored. Remove bookmarking for live-model use, or remove initQuery for full replay.");
 			}
 			Projector<EVENT_TYPE> projector = new Projector<>(eventSource, projection, after, maxEventsPerQuery, bookmarkReader, bookmarkTags, bookmarkRead);

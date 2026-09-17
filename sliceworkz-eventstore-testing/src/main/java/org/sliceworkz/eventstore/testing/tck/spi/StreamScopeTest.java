@@ -49,7 +49,7 @@ public class StreamScopeTest extends AbstractEventStoreTest {
 	private static final EventStreamId INVOICES = EventStreamId.forContext("invoices").withPurpose("42");
 
 	private static EventToStore event ( EventStreamId stream, String type ) {
-		return new EventToStore(stream, EventType.ofType(type), "{}", Tags.none(), null);
+		return new EventToStore(stream, EventType.named(type), "{}", Tags.none(), null);
 	}
 
 	private List<StoredEvent> read ( EventStreamId scope ) {

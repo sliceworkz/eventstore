@@ -51,7 +51,7 @@ public class AppendPayloadTest extends AbstractEventStoreTest {
 	private final EventStreamId stream = EventStreamId.forContext("app").withPurpose("default");
 
 	private EventToStore event ( String payload ) {
-		return new EventToStore(stream, EventType.ofType("Something"), payload, Tags.of("kind", "something"), null);
+		return new EventToStore(stream, EventType.named("Something"), payload, Tags.of("kind", "something"), null);
 	}
 
 	private List<StoredEvent> append ( EventToStore... events ) {

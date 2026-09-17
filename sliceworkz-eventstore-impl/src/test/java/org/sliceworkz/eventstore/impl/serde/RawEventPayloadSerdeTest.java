@@ -42,10 +42,10 @@ class RawEventPayloadSerdeTest {
 	void theStoredDocumentComesBackAsItIsUnderItsStoredType ( ) {
 		EventPayloadSerializerDeserializer raw = EventPayloadSerializerDeserializer.raw();
 
-		List<TypeAndPayload> read = raw.deserialize(new TypeAndSerializedPayload(EventType.ofType("CustomerRegistered"), DOCUMENT));
+		List<TypeAndPayload> read = raw.deserialize(new TypeAndSerializedPayload(EventType.named("CustomerRegistered"), DOCUMENT));
 
 		assertEquals(1, read.size(), "one stored event is one raw event: nothing splits or drops it");
-		assertEquals(EventType.ofType("CustomerRegistered"), read.getFirst().type());
+		assertEquals(EventType.named("CustomerRegistered"), read.getFirst().type());
 		// the very string storage answered, not a copy, a tree, or a re-rendering of it
 		assertSame(DOCUMENT, read.getFirst().eventData());
 	}
@@ -56,7 +56,7 @@ class RawEventPayloadSerdeTest {
 		// is what it answers, and nothing on this path can throw EventDeserializationException
 		EventPayloadSerializerDeserializer raw = EventPayloadSerializerDeserializer.raw();
 
-		assertEquals("not json", raw.deserialize(new TypeAndSerializedPayload(EventType.ofType("X"), "not json")).getFirst().eventData());
+		assertEquals("not json", raw.deserialize(new TypeAndSerializedPayload(EventType.named("X"), "not json")).getFirst().eventData());
 	}
 
 	@Test

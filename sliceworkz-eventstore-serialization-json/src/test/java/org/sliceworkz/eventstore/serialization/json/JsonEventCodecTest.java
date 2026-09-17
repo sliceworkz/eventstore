@@ -41,7 +41,7 @@ class JsonEventCodecTest {
 	void roundTripsAnEvent ( ) {
 		StoredEvent event = new StoredEvent(
 				EventStreamId.forContext("customer").withPurpose("123"),
-				EventType.ofType("CustomerRegistered"),
+				EventType.named("CustomerRegistered"),
 				EventReference.of(EventId.of("id-1"), 1L, 1L, 0),
 				"{\"name\":\"John\"}",
 				new Tags(Set.of(Tag.of("customer", "123"))),
@@ -57,7 +57,7 @@ class JsonEventCodecTest {
 	void writesHumanReadableShape ( ) {
 		StoredEvent event = new StoredEvent(
 				EventStreamId.forContext("ctx").withPurpose("p"),
-				EventType.ofType("CustomerRegistered"),
+				EventType.named("CustomerRegistered"),
 				EventReference.of(EventId.of("id-1"), 1L, 1L, 0),
 				"{\"name\":\"John Doe\"}",
 				new Tags(Set.of(Tag.of("customer", "42"))),
@@ -75,7 +75,7 @@ class JsonEventCodecTest {
 	void roundTripsTheIdempotencyKey ( ) {
 		StoredEvent event = new StoredEvent(
 				EventStreamId.forContext("customer").withPurpose("123"),
-				EventType.ofType("CustomerRegistered"),
+				EventType.named("CustomerRegistered"),
 				EventReference.of(EventId.of("id-1"), 1L, 1L, 0),
 				"{\"name\":\"John\"}",
 				new Tags(Set.of(Tag.of("customer", "123"))),
@@ -93,7 +93,7 @@ class JsonEventCodecTest {
 	void writesTheTimestampAsAnInstantAtUtc ( ) {
 		StoredEvent event = new StoredEvent(
 				EventStreamId.forContext("ctx").withPurpose("p"),
-				EventType.ofType("Stamped"),
+				EventType.named("Stamped"),
 				EventReference.of(EventId.of("id-4"), 4L, 4L, 0),
 				"{}",
 				new Tags(Set.of()),
@@ -106,7 +106,7 @@ class JsonEventCodecTest {
 	void readsATimestampWithoutOffsetAsUtc ( ) {
 		StoredEvent event = new StoredEvent(
 				EventStreamId.forContext("ctx").withPurpose("p"),
-				EventType.ofType("Stamped"),
+				EventType.named("Stamped"),
 				EventReference.of(EventId.of("id-5"), 5L, 5L, 0),
 				"{}",
 				new Tags(Set.of()),
@@ -122,7 +122,7 @@ class JsonEventCodecTest {
 	void preservesNullIdempotencyKey ( ) {
 		StoredEvent event = new StoredEvent(
 				EventStreamId.forContext("ctx").withPurpose("p"),
-				EventType.ofType("NoKey"),
+				EventType.named("NoKey"),
 				EventReference.of(EventId.of("id-3"), 3L, 3L, 0),
 				"{}",
 				new Tags(Set.of()),
@@ -137,7 +137,7 @@ class JsonEventCodecTest {
 	void preservesNullImmutableData ( ) {
 		StoredEvent event = new StoredEvent(
 				EventStreamId.forContext("ctx").withPurpose("p"),
-				EventType.ofType("NoData"),
+				EventType.named("NoData"),
 				EventReference.of(EventId.of("id-2"), 2L, 2L, 0),
 				null,
 				new Tags(Set.of()),

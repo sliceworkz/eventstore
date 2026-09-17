@@ -180,12 +180,12 @@ public class EventNameTest extends AbstractEventStoreTest {
 
 		// by name: the declared name is the stored name
 		List<Event<CustomerEvent>> byName = stream.query(
-				EventQuery.forEvents(EventTypesFilter.of(Set.of(EventType.ofType("CustomerRegistered"))), Tags.none()));
+				EventQuery.forEvents(EventTypesFilter.of(Set.of(EventType.named("CustomerRegistered"))), Tags.none()));
 		assertEquals(1, byName.size());
 
 		// the class's simple name is not a stored name of anything
 		List<Event<CustomerEvent>> bySimpleName = stream.query(
-				EventQuery.forEvents(EventTypesFilter.of(Set.of(EventType.ofType("CustomerSignedUp"))), Tags.none()));
+				EventQuery.forEvents(EventTypesFilter.of(Set.of(EventType.named("CustomerSignedUp"))), Tags.none()));
 		assertTrue(bySimpleName.isEmpty());
 
 		// and the filter is honoured by the lock check as well as by the read

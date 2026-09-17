@@ -112,7 +112,7 @@ class PostgresLockTimeoutTest {
 	}
 
 	private static List<EventToStore> oneEvent ( ) {
-		return List.of(new EventToStore(STREAM, EventType.ofType("SomethingHappened"), "{}", Tags.none(), null));
+		return List.of(new EventToStore(STREAM, EventType.named("SomethingHappened"), "{}", Tags.none(), null));
 	}
 
 	/** a real consistency boundary with an empty expected reference: "I decided on an empty stream", which takes the lock */

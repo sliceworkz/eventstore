@@ -255,6 +255,15 @@ mvn clean install -DskipTests
   annotated `@EventName("...")`, in which case it is the annotation's value. That method is the one place
   a class becomes a stored name, so the annotation is honoured on append, in a stream's type mappings, in
   `EventTypesFilter.of(Class...)` and on a `@LegacyEvent`
+- **`of(Class)` and `named(String)` are the two factories, and there is deliberately no `of(Object)`
+  deriving the type from an event instance.** The alternative — an `of(Object)` overload beside
+  `of(Class)`, calling `getClass()` itself — loses because an overload on `Object` accepts every
+  argument the `Class` one does not: a stored name passed by mistake, `EventType.of("CustomerRegistered")`,
+  compiles and is the type named `String`, which matches no stored event and fails nothing. With `Class`
+  the only parameter type that call is a compile error, and the code holding an instance
+  (`EphemeralEvent.of`, the serde, a filter matched in memory) writes `EventType.of(data.getClass())`
+  itself. `named` is called that so the string factory reads as what it is; `ofType` is its deprecated
+  name. `EventStoreTypeParameterTest` pins the rejection by running javac against a probe
 - **The plain class name is the intended setup; `@EventName` is for the class whose stored name cannot
   be its own name** (a renamed class, a simple name another context already stores). Annotating every
   event up front is not a best practice and buys nothing: a string literal is as permanent a commitment

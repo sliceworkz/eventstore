@@ -37,7 +37,7 @@ import org.sliceworkz.eventstore.events.Tags;
  */
 public class EventFilterTest {
 
-	private static final EventType TYPE = EventType.ofType("Something");
+	private static final EventType TYPE = EventType.named("Something");
 
 	private static EventReference row ( String id, long position, long tx, int index ) {
 		return EventReference.of(EventId.of(id), position, tx, index);
@@ -49,7 +49,7 @@ public class EventFilterTest {
 		assertEquals(EventFilter.forEvents(EventTypesFilter.any(), Tags.of("customer", "123")), filter);
 
 		assertTrue(filter.matches(TYPE, Tags.of("customer", "123"), row("a", 1, 1, 0)));
-		assertTrue(filter.matches(EventType.ofType("SomethingElse"), Tags.of("customer", "123", "region", "EU"), row("b", 2, 2, 0)));
+		assertTrue(filter.matches(EventType.named("SomethingElse"), Tags.of("customer", "123", "region", "EU"), row("b", 2, 2, 0)));
 		assertFalse(filter.matches(TYPE, Tags.of("customer", "124"), row("c", 3, 3, 0)));
 		assertFalse(filter.matches(TYPE, Tags.none(), row("d", 4, 4, 0)));
 	}

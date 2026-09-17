@@ -121,14 +121,14 @@ public class UpcastChainTest extends AbstractEventStoreTest {
 		// over CustomerEvent is what a caller writes, and it must not meet a legacy class
 		for ( Event<CustomerEvent> event : events ) {
 			assertEquals(CustomerRegisteredV3.class, event.data().getClass());
-			assertEquals(EventType.ofType("CustomerRegisteredV3"), event.type());
+			assertEquals(EventType.named("CustomerRegisteredV3"), event.type());
 		}
 		assertEquals(new CustomerRegisteredV3("John", "unknown", "legacy"), events.get(0).data());
-		assertEquals(EventType.ofType("CustomerRegistered"), events.get(0).storedType());
+		assertEquals(EventType.named("CustomerRegistered"), events.get(0).storedType());
 		assertEquals(new CustomerRegisteredV3("Jane", "jane@example.org", "legacy"), events.get(1).data());
-		assertEquals(EventType.ofType("CustomerRegisteredV2"), events.get(1).storedType());
+		assertEquals(EventType.named("CustomerRegisteredV2"), events.get(1).storedType());
 		assertEquals(new CustomerRegisteredV3("Joe", "joe@example.org", "web"), events.get(2).data());
-		assertEquals(EventType.ofType("CustomerRegisteredV3"), events.get(2).storedType());
+		assertEquals(EventType.named("CustomerRegisteredV3"), events.get(2).storedType());
 	}
 
 	@ForEachBackend
@@ -273,7 +273,7 @@ public class UpcastChainTest extends AbstractEventStoreTest {
 		EventDeserializationException e = assertThrows(EventDeserializationException.class,
 				() -> current.query(EventQuery.matchAll()));
 
-		assertEquals(EventType.ofType("CustomerNoteAdded"), e.getEventType());
+		assertEquals(EventType.named("CustomerNoteAdded"), e.getEventType());
 		assertTrue(e.getReference().isPresent(), "the stored event that failed should be named");
 		assertTrue(e.getMessage().contains(DeclaresNothingProducesSomething.class.getName()), e.getMessage());
 		assertTrue(e.getMessage().contains(CustomerEvent.CustomerChurned.class.getName()), e.getMessage());

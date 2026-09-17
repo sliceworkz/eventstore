@@ -164,7 +164,7 @@ public class SerdeFailureTest extends AbstractEventStoreTest {
 		EventSerializationException e = assertThrows(EventSerializationException.class,
 				() -> stream.append(AppendCriteria.none(), Event.of(new UnwritableEvent.Unwritable("v"), Tags.none())));
 
-		assertEquals(EventType.ofType("Unwritable"), e.getEventType());
+		assertEquals(EventType.named("Unwritable"), e.getEventType());
 		assertTrue(e.getMessage().contains("Unwritable"), e.getMessage());
 		assertTrue(e.getCause() != null, "Jackson's own failure should be preserved as the cause");
 
@@ -184,7 +184,7 @@ public class SerdeFailureTest extends AbstractEventStoreTest {
 		EventDeserializationException e = assertThrows(EventDeserializationException.class,
 				() -> orderStream.query(EventQuery.matchAll()));
 
-		assertEquals(EventType.ofType("ParcelShipped"), e.getEventType());
+		assertEquals(EventType.named("ParcelShipped"), e.getEventType());
 		assertTrue(e.getMessage().contains("No mapping found for event type 'ParcelShipped'"), e.getMessage());
 		// the known mappings are listed, so the reader can see what this stream *can* read
 		assertTrue(e.getMessage().contains("OrderPlaced"), e.getMessage());
@@ -201,7 +201,7 @@ public class SerdeFailureTest extends AbstractEventStoreTest {
 		EventDeserializationException e = assertThrows(EventDeserializationException.class,
 				() -> eventStore().getEventStream(streamId, Object.class).query(EventQuery.matchAll()));
 
-		assertEquals(EventType.ofType("OrderPlaced"), e.getEventType());
+		assertEquals(EventType.named("OrderPlaced"), e.getEventType());
 		assertTrue(e.getMessage().contains("Pass the Event root Class when creating the EventStream"), e.getMessage());
 	}
 
@@ -219,7 +219,7 @@ public class SerdeFailureTest extends AbstractEventStoreTest {
 		// and it is genuinely the offending event: raw mode has no mapping to fail on, so it reads back
 		List<Event<String>> raw = eventStore().getRawEventStream(EventStreamId.anyContext()).getEventById(reference.id());
 		assertEquals(1, raw.size(), "the reference should identify a real stored event");
-		assertEquals(EventType.ofType("Unreadable"), raw.getFirst().type());
+		assertEquals(EventType.named("Unreadable"), raw.getFirst().type());
 
 		// the same failure on the read path, carrying the same reference
 		EventDeserializationException onRead = assertThrows(EventDeserializationException.class,
@@ -265,7 +265,7 @@ public class SerdeFailureTest extends AbstractEventStoreTest {
 	void withReferenceKeepsMessageCauseAndStackTrace ( ) {
 		Throwable cause = new IllegalStateException("boom");
 		EventDeserializationException original =
-				new EventDeserializationException(EventType.ofType("X"), "some message", cause);
+				new EventDeserializationException(EventType.named("X"), "some message", cause);
 
 		EventDeserializationException withRef = original.withReference(EventReference.create(1, 1));
 
@@ -295,7 +295,7 @@ public class SerdeFailureTest extends AbstractEventStoreTest {
 		// A Projector wraps everything it catches, so the type of the cause is the only thing that
 		// separates "this event will never be readable" from "the database was briefly unavailable".
 		EventDeserializationException poison = assertInstanceOf(EventDeserializationException.class, e.getCause());
-		assertEquals(EventType.ofType("ParcelShipped"), poison.getEventType());
+		assertEquals(EventType.named("ParcelShipped"), poison.getEventType());
 
 		// ProjectorException's own reference is the last event *handled* -- never the offending one,
 		// which never reached the projection. getReference() is what names the poison event.

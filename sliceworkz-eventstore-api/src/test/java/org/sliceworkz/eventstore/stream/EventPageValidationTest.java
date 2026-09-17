@@ -46,7 +46,7 @@ public class EventPageValidationTest {
 	private static final EventStreamId STREAM = EventStreamId.forContext("app");
 
 	private static Event<String> event ( long position ) {
-		return new Event<>(STREAM, EventType.ofType("Text"), EventType.ofType("Text"), EventReference.create(position, position), "text " + position, Tags.none(), Instant.EPOCH);
+		return new Event<>(STREAM, EventType.named("Text"), EventType.named("Text"), EventReference.create(position, position), "text " + position, Tags.none(), Instant.EPOCH);
 	}
 
 	@Test

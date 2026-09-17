@@ -130,7 +130,7 @@ public record EphemeralEvent<DOMAIN_EVENT_TYPE> ( EventType type, DOMAIN_EVENT_T
 	 * @return a new EphemeralEvent instance ready to be appended
 	 */
 	public static final <DOMAIN_EVENT_TYPE> EphemeralEvent<DOMAIN_EVENT_TYPE> of ( DOMAIN_EVENT_TYPE data, Tags tags) {
-		return new EphemeralEvent<DOMAIN_EVENT_TYPE>(EventType.of(data), data, tags, null);
+		return new EphemeralEvent<DOMAIN_EVENT_TYPE>(EventType.of(data.getClass()), data, tags, null);
 	}
 
 }

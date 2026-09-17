@@ -77,7 +77,7 @@ class CodecLessShreddableSerdeTest {
 		assertTrue(thrown.getMessage().contains("ShreddingCodec"), thrown.getMessage());
 		assertTrue(thrown.getMessage().contains(ALICE.toString()), thrown.getMessage());
 		assertFalse(thrown.getMessage().contains(SECRET), "the refusal must not carry the personal data itself: " + thrown.getMessage());
-		assertEquals(EventType.ofType("Paid"), thrown.getEventType());
+		assertEquals(EventType.named("Paid"), thrown.getEventType());
 	}
 
 	@Test

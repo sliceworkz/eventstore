@@ -117,7 +117,7 @@ public class EventTypesFilterTest {
 		// which no record under that interface is
 		EventTypesFilter filter = EventTypesFilter.of(Set.of(EventType.of(OrderEvent.class)));
 
-		assertEquals(Set.of(EventType.ofType("OrderEvent")), filter.eventTypes());
+		assertEquals(Set.of(EventType.named("OrderEvent")), filter.eventTypes());
 		assertFalse(filter.matches(EventType.of(OrderPlaced.class)));
 	}
 

@@ -215,8 +215,8 @@ public class EventTypesFilterHierarchyTest extends AbstractEventStoreTest {
 
 		List<Event<ShopEvent>> orders = asRead.query(EventQuery.forEvents(EventTypesFilter.of(OrderEvent.class), Tags.none()));
 		assertEquals(types(OrderPlaced.class, OrderPlaced.class), typesOf(orders));
-		assertEquals(EventType.ofType("OrderBooked"), orders.get(0).storedType());
-		assertEquals(EventType.ofType("OrderPlaced"), orders.get(1).storedType());
+		assertEquals(EventType.named("OrderBooked"), orders.get(0).storedType());
+		assertEquals(EventType.named("OrderPlaced"), orders.get(1).storedType());
 
 		List<Event<ShopEvent>> everything = asRead.query(EventQuery.forEvents(EventTypesFilter.of(ShopEvent.class), Tags.none()));
 		assertEquals(types(OrderPlaced.class, OrderPlaced.class, PaymentReceived.class), typesOf(everything));

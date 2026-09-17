@@ -35,7 +35,7 @@ public class EventTypeTest {
 	@Test
 	void testDeclaredNameOverridesTheSimpleName ( ) {
 		assertEquals("CustomerRegistered", EventType.of(MockDomainObject.CustomerSignedUp.class).name());
-		assertEquals("CustomerRegistered", EventType.of(new MockDomainObject.CustomerSignedUp("x")).name());
+		assertEquals("CustomerRegistered", EventType.of(new MockDomainObject.CustomerSignedUp("x").getClass()).name());
 		// the annotation names one class: a sibling without it keeps its simple name
 		assertEquals("SomeMockDomainOject", EventType.of(SomeMockDomainOject.class).name());
 	}
@@ -55,6 +55,19 @@ public class EventTypeTest {
 		assertThrows(IllegalArgumentException.class, () -> EventType.of(BadNames.Padded.class));
 		// and it fails the same way every time: a rejected name is not remembered as anything
 		assertThrows(IllegalArgumentException.class, () -> EventType.of(BadNames.Blank.class));
+	}
+
+	@Test
+	void testNamedUsesTheNameAsGiven ( ) {
+		// a stored name, or a legacy name no current class carries: nothing resolves it
+		assertEquals("CustomerRegistered", EventType.named("CustomerRegistered").name());
+		assertEquals(EventType.of(MockDomainObject.CustomerSignedUp.class), EventType.named("CustomerRegistered"));
+	}
+
+	@Test
+	@SuppressWarnings("removal")
+	void ofTypeIsTheDeprecatedNameOfNamed ( ) {
+		assertEquals(EventType.named("CustomerRegistered"), EventType.ofType("CustomerRegistered"));
 	}
 
 	public sealed interface MockDomainObject {

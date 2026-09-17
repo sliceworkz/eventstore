@@ -91,7 +91,7 @@ public record EventFilterItem ( EventTypesFilter eventTypes, Tags tags ) {
 	 * @return true if the event matches this filter item, false otherwise
 	 */
 	public boolean matches ( Event<?> event ) {
-		return eventTypes.matches(EventType.of(event.data())) && event.tags().containsAll(tags);
+		return eventTypes.matches(EventType.of(event.data().getClass())) && event.tags().containsAll(tags);
 	}
 
 	/**

@@ -147,7 +147,7 @@ public final class JsonEventCodec {
 			EventStreamId stream = EventStreamId.forContext(streamNode.get("context").asText())
 					.withPurpose(streamNode.get("purpose").asText());
 
-			EventType type = EventType.ofType(node.get("type").asText());
+			EventType type = EventType.named(node.get("type").asText());
 
 			JsonNode refNode = node.get("reference");
 			EventReference reference = EventReference.of(

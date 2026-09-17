@@ -2767,7 +2767,7 @@ public class PostgresEventStorageImpl implements EventStorage {
 		// Create Tags from tag array
 		Tags tags = Tags.parse(tagsArray);
 
-		return new StoredEvent(streamId, EventType.ofType(eventTypeName), eventReference, eventDataJson, tags, timestamp, idempotencyKey);
+		return new StoredEvent(streamId, EventType.named(eventTypeName), eventReference, eventDataJson, tags, timestamp, idempotencyKey);
 	}
 
 	

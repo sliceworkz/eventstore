@@ -32,21 +32,25 @@ package org.sliceworkz.eventstore.events;
  *
  * <h2>Example Usage:</h2>
  * <pre>{@code
- * // Event type is automatically determined when creating events
- * EventType type = EventType.of(new CustomerRegistered("John"));
- * // type.name() returns "CustomerRegistered"
- *
- * // Or create from class
+ * // From the event class: the name the class is stored under
  * EventType type = EventType.of(CustomerRegistered.class);
+ * // type.name() returns "CustomerRegistered"
  *
  * // A class declaring its stored name is named by the annotation, not the class
  * @EventName("CustomerRegistered")
  * record CustomerSignedUp ( String name ) implements CustomerEvent { }
  * EventType.of(CustomerSignedUp.class).name();   // "CustomerRegistered"
  *
- * // Or from a string (useful for querying)
- * EventType type = EventType.ofType("CustomerRegistered");
+ * // From a stored name, for a query or a raw read
+ * EventType type = EventType.named("CustomerRegistered");
  * }</pre>
+ * <p>
+ * Those are the two factories, and there is deliberately no {@code of(Object)} deriving the type from an
+ * event instance beside {@code of(Class)}. The alternative loses because an overload on {@code Object}
+ * accepts every argument the {@code Class} one does not: a stored name passed by mistake —
+ * {@code EventType.of("CustomerRegistered")} — compiles and is the type named {@code String}, which
+ * matches no stored event and fails nothing. With {@code Class} the only parameter type, that call is a
+ * compile error, and a caller holding an event instance writes {@code EventType.of(event.getClass())}.
  *
  * @param name the name identifying this event type
  * @see Event
@@ -89,27 +93,29 @@ public record EventType ( String name ) implements java.io.Serializable {
 	};
 
 	/**
-	 * Creates an EventType from a domain event object.
+	 * Creates an EventType from a stored name.
 	 * <p>
-	 * The type name is derived from the object's class, as {@link #of(Class)} does.
+	 * Use this method when constructing queries or working with event types as strings: the name is used
+	 * as given, which is what a query over a stored name, or over a legacy name no current class carries,
+	 * needs. To name the type of an event class, use {@link #of(Class)}, which honours its {@link EventName}.
 	 *
-	 * @param object the domain event object
-	 * @return an EventType based on the object's class
+	 * @param name the event type name
+	 * @return an EventType with the specified name
 	 */
-	public static final EventType of ( Object object ) {
-		return of(object.getClass());
+	public static final EventType named ( String name ) {
+		return new EventType(name);
 	}
 
 	/**
-	 * Creates an EventType from a string name.
-	 * <p>
-	 * Use this method when constructing queries or working with event types as strings.
+	 * Creates an EventType from a stored name.
 	 *
 	 * @param type the event type name
 	 * @return an EventType with the specified name
+	 * @deprecated the type is named by the string, and the method is called that: use {@link #named(String)}
 	 */
+	@Deprecated(since = "0.11.0", forRemoval = true)
 	public static final EventType ofType ( String type ) {
-		return new EventType(type);
+		return named(type);
 	}
 
 	/**

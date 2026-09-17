@@ -100,7 +100,7 @@ public class EventImportTest extends AbstractEventStoreTest {
 	// --- helpers ---
 
 	private EventToStore event ( EventStreamId stream, String type, String payload, String idempotencyKey ) {
-		return new EventToStore(stream, EventType.ofType(type), payload, Tags.of("kind", type), idempotencyKey);
+		return new EventToStore(stream, EventType.named(type), payload, Tags.of("kind", type), idempotencyKey);
 	}
 
 	private List<StoredEvent> appendTo ( EventStorage storage, EventToStore... events ) {
@@ -475,7 +475,7 @@ public class EventImportTest extends AbstractEventStoreTest {
 		List<StoredEvent> wanted = sourceEvents.stream().filter(e -> !"Second".equals(e.type().name())).toList();
 
 		ImportReport report = EventStoreImporter.from(source).to(target)
-				.matching(EventFilter.forEvents(EventTypesFilter.of(Set.of(EventType.ofType("First"), EventType.ofType("Third"))), Tags.none()))
+				.matching(EventFilter.forEvents(EventTypesFilter.of(Set.of(EventType.named("First"), EventType.named("Third"))), Tags.none()))
 				.run();
 
 		assertEquals(2, report.read());
@@ -520,7 +520,7 @@ public class EventImportTest extends AbstractEventStoreTest {
 	@ForEachBackend(requires = Capability.IMPORT)
 	void testImporterSelectionCatchesUpAfterAnEarlierRun ( ) {
 		seedSource();
-		EventFilter onStreamFirstOrFourth = EventFilter.forEvents(EventTypesFilter.of(Set.of(EventType.ofType("First"), EventType.ofType("Fourth"))), Tags.none());
+		EventFilter onStreamFirstOrFourth = EventFilter.forEvents(EventTypesFilter.of(Set.of(EventType.named("First"), EventType.named("Fourth"))), Tags.none());
 
 		ImportReport first = EventStoreImporter.from(source).to(target).matching(onStreamFirstOrFourth).run();
 		assertEquals(1, first.imported());

@@ -544,11 +544,11 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 		List<Event<CurrentEvent>> events = stream.query(EventQuery.matchAll());
 
 		// Split events: stored type is the original, type is the upcasted
-		assertEquals(EventType.ofType("CustomerRegisteredWithAddress"), events.get(0).storedType());
-		assertEquals(EventType.ofType("CustomerRegistered"), events.get(0).type());
+		assertEquals(EventType.named("CustomerRegisteredWithAddress"), events.get(0).storedType());
+		assertEquals(EventType.named("CustomerRegistered"), events.get(0).type());
 
-		assertEquals(EventType.ofType("CustomerRegisteredWithAddress"), events.get(1).storedType());
-		assertEquals(EventType.ofType("AddressRecorded"), events.get(1).type());
+		assertEquals(EventType.named("CustomerRegisteredWithAddress"), events.get(1).storedType());
+		assertEquals(EventType.named("AddressRecorded"), events.get(1).type());
 	}
 
 	@ForEachBackend
@@ -559,8 +559,8 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 			.filter(e -> e.data() instanceof CurrentEvent.CustomerRenamed)
 			.findFirst().orElseThrow();
 
-		assertEquals(EventType.ofType("CustomerNameChanged"), renamed.storedType());
-		assertEquals(EventType.ofType("CustomerRenamed"), renamed.type());
+		assertEquals(EventType.named("CustomerNameChanged"), renamed.storedType());
+		assertEquals(EventType.named("CustomerRenamed"), renamed.type());
 	}
 
 	// =========================================================================

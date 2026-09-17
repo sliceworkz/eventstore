@@ -72,7 +72,7 @@ package org.sliceworkz.eventstore.events;
  * convenience bought was one {@code .data()} call per handler. A payload-only convenience, if one is
  * ever wanted, belongs under a distinct method name, never under an overload of this one.
  * <p>
- * <b>There is no batch method either.</b> A {@link Projector} calls this method per event and
+ * <b>There is no batch method either.</b> A {@link org.sliceworkz.eventstore.projection.Projector} calls this method per event and
  * commits a batch through {@link org.sliceworkz.eventstore.projection.BatchAwareProjection}, which
  * is the seam for batch-level work — a transaction, a bulk write. A {@code when(List)} or
  * {@code when(Stream)} default beside this method would be a second entry point the projector never

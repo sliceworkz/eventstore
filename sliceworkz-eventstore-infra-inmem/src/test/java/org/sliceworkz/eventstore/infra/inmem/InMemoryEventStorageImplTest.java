@@ -37,10 +37,10 @@ import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorageImplTest.ProblematicParsing.ProblematicParsingRecord;
 import org.sliceworkz.eventstore.query.EventFilter;
+import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
-import org.sliceworkz.eventstore.spi.EventStorage.QueryDirection;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.spi.EventToImport;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -146,15 +146,15 @@ public class InMemoryEventStorageImplTest {
 		StoredEvent second = storedAt(1, 2);  // committed second: position 1, transaction 2
 		EventStorage storage = new InMemoryEventStorageImpl("tuple", Limit.none(), List.of(second, first), Map.of());
 
-		assertEquals(List.of(2L, 1L), positions(storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), QueryDirection.FORWARD)),
+		assertEquals(List.of(2L, 1L), positions(storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), Direction.FORWARD)),
 				"the log is read in (tx, position) order, whatever order it was preloaded in");
-		assertEquals(List.of(1L), positions(storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), first.reference(), Limit.none(), QueryDirection.FORWARD)),
+		assertEquals(List.of(1L), positions(storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), first.reference(), Limit.none(), Direction.FORWARD)),
 				"the event after (tx 1, position 2) is (tx 2, position 1)");
-		assertEquals(List.of(), positions(storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), second.reference(), Limit.none(), QueryDirection.FORWARD)),
+		assertEquals(List.of(), positions(storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), second.reference(), Limit.none(), Direction.FORWARD)),
 				"nothing is after the newest event");
-		assertEquals(List.of(2L), positions(storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), second.reference(), Limit.none(), QueryDirection.BACKWARD)),
+		assertEquals(List.of(2L), positions(storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), second.reference(), Limit.none(), Direction.BACKWARD)),
 				"going backward from (tx 2, position 1) reaches (tx 1, position 2)");
-		assertEquals(List.of(), positions(storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), first.reference(), Limit.none(), QueryDirection.BACKWARD)),
+		assertEquals(List.of(), positions(storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), first.reference(), Limit.none(), Direction.BACKWARD)),
 				"nothing is before the oldest event");
 	}
 
@@ -170,8 +170,8 @@ public class InMemoryEventStorageImplTest {
 		EventStorage storage = new InMemoryEventStorageImpl("index", Limit.none(), List.of(first, second), Map.of());
 
 		EventReference intoFirst = EventReference.of(first.reference().id(), 1, 1, 3);
-		assertEquals(List.of(2L), positions(storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), intoFirst, Limit.none(), QueryDirection.FORWARD)));
-		assertEquals(List.of(), positions(storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), intoFirst, Limit.none(), QueryDirection.BACKWARD)));
+		assertEquals(List.of(2L), positions(storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), intoFirst, Limit.none(), Direction.FORWARD)));
+		assertEquals(List.of(), positions(storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), intoFirst, Limit.none(), Direction.BACKWARD)));
 	}
 
 	/**
@@ -184,8 +184,8 @@ public class InMemoryEventStorageImplTest {
 		EventStorage storage = new InMemoryEventStorageImpl("beyond", Limit.none(), List.of(storedAt(1, 1), storedAt(2, 1)), Map.of());
 		EventReference beyond = EventReference.create(10, 1);
 
-		assertEquals(List.of(2L, 1L), positions(storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), beyond, Limit.none(), QueryDirection.BACKWARD)));
-		assertEquals(List.of(), positions(storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), beyond, Limit.none(), QueryDirection.FORWARD)));
+		assertEquals(List.of(2L, 1L), positions(storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), beyond, Limit.none(), Direction.BACKWARD)));
+		assertEquals(List.of(), positions(storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), beyond, Limit.none(), Direction.FORWARD)));
 	}
 
 	/**
@@ -209,9 +209,9 @@ public class InMemoryEventStorageImplTest {
 				EventStorage.ImportMode.FAIL_ON_EXISTING_ID);
 		assertEquals(6L, imported.get(0).reference().position());
 
-		assertEquals(List.of(4L, 5L, 6L), positions(storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), EventReference.create(2, 1), Limit.none(), QueryDirection.FORWARD)),
+		assertEquals(List.of(4L, 5L, 6L), positions(storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), EventReference.create(2, 1), Limit.none(), Direction.FORWARD)),
 				"a cursor before the gap reads everything after it");
-		assertEquals(List.of(5L, 6L), positions(storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), afterTheGap.reference(), Limit.none(), QueryDirection.FORWARD)),
+		assertEquals(List.of(5L, 6L), positions(storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), afterTheGap.reference(), Limit.none(), Direction.FORWARD)),
 				"a cursor at the event after the gap reads only what was appended since");
 	}
 

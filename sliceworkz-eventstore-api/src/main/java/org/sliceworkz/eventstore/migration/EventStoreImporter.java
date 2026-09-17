@@ -26,10 +26,10 @@ import java.util.function.Function;
 
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.query.EventFilter;
+import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorage.ImportMode;
-import org.sliceworkz.eventstore.spi.EventStorage.QueryDirection;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.spi.EventToImport;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -338,7 +338,7 @@ public final class EventStoreImporter {
 			EventFilter pageFilter = filter.until(boundary);
 
 			while ( true ) {
-				List<StoredEvent> page = source.query(pageFilter, scope, cursor, Limit.to(batchSize), QueryDirection.FORWARD);
+				List<StoredEvent> page = source.query(pageFilter, scope, cursor, Limit.to(batchSize), Direction.FORWARD);
 				if ( page.isEmpty() ) {
 					break;
 				}

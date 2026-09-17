@@ -63,6 +63,7 @@ import org.sliceworkz.eventstore.impl.serde.EventPayloadSerializerDeserializer;
 import org.sliceworkz.eventstore.impl.serde.EventPayloadSerializerDeserializer.TypeAndPayload;
 import org.sliceworkz.eventstore.impl.serde.EventPayloadSerializerDeserializer.TypeAndSerializedPayload;
 import org.sliceworkz.eventstore.query.EventFilter;
+import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventFilterItem;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
@@ -72,7 +73,6 @@ import org.sliceworkz.eventstore.spi.EventStorage.AppendsToEventStoreNotificatio
 import org.sliceworkz.eventstore.spi.EventStorage.BookmarkPlacedNotification;
 import org.sliceworkz.eventstore.spi.EventStorage.EventStoreListener;
 import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
-import org.sliceworkz.eventstore.spi.EventStorage.QueryDirection;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventPage;
@@ -731,8 +731,7 @@ public class EventStoreImpl implements EventStore {
 
 		@Override
 		public List<Event<EVENT_TYPE>> query ( EventQuery query, EventReference cursor ) {
-			QueryDirection direction = directionOf(query);
-			return enrichAfterQuery(fetch(query, cursor, direction), query.filter(), direction);
+			return enrichAfterQuery(fetch(query, cursor), query.filter(), query.direction());
 		}
 
 		/**
@@ -743,30 +742,25 @@ public class EventStoreImpl implements EventStore {
 		 */
 		@Override
 		public EventPage<EVENT_TYPE> page ( EventQuery query, EventReference cursor ) {
-			QueryDirection direction = directionOf(query);
-			List<StoredEvent> storedEvents = fetch(query, cursor, direction);
-			List<Event<EVENT_TYPE>> events = enrichAfterQuery(storedEvents, query.filter(), direction);
+			List<StoredEvent> storedEvents = fetch(query, cursor);
+			List<Event<EVENT_TYPE>> events = enrichAfterQuery(storedEvents, query.filter(), query.direction());
 			Optional<EventReference> lastStored = storedEvents.isEmpty() ? Optional.empty() : Optional.of(storedEvents.getLast().reference());
 			return new EventPage<>(events, storedEvents.size(), lastStored);
 		}
 
-		private QueryDirection directionOf ( EventQuery query ) {
-			return query.isBackwards() ? QueryDirection.BACKWARD : QueryDirection.FORWARD;
-		}
-
 		/**
 		 * The storage read behind both {@link #query(EventQuery, EventReference)} and
-		 * {@link #page(EventQuery, EventReference)}: one query counted, the fetch timed, the limit the
-		 * query's own.
+		 * {@link #page(EventQuery, EventReference)}: one query counted, the fetch timed, the limit and
+		 * the direction the query's own.
 		 */
-		private List<StoredEvent> fetch ( EventQuery query, EventReference cursor, QueryDirection direction ) {
+		private List<StoredEvent> fetch ( EventQuery query, EventReference cursor ) {
 			checkStoreNotClosed();
 			meterQuery.increment(); // one query done
 
 			// Time the storage fetch itself, and nothing else: the query timer is the cost of the store,
 			// and deserialisation and upcasting are the cost of the mappings, counted separately per
 			// event type by sliceworkz.eventstore.query.event.
-			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query.filter()), eventStreamId, cursor, query.limit(), direction));
+			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query.filter()), eventStreamId, cursor, query.limit(), query.direction()));
 		}
 
 		/**
@@ -776,7 +770,7 @@ public class EventStoreImpl implements EventStore {
 		 * query or the page itself rather than whichever terminal operation a caller happens to write
 		 * over the result.
 		 */
-		private List<Event<EVENT_TYPE>> enrichAfterQuery ( List<StoredEvent> storedEvents, EventFilter originalFilter, QueryDirection direction ) {
+		private List<Event<EVENT_TYPE>> enrichAfterQuery ( List<StoredEvent> storedEvents, EventFilter originalFilter, Direction direction ) {
 			List<Event<EVENT_TYPE>> events = new ArrayList<>(storedEvents.size());
 			for ( StoredEvent storedEvent : storedEvents ) {
 				for ( Event<EVENT_TYPE> event : enrichAfterQuery(storedEvent, direction) ) {
@@ -788,13 +782,13 @@ public class EventStoreImpl implements EventStore {
 			return Collections.unmodifiableList(events);
 		}
 
-		private List<Event<EVENT_TYPE>> enrichAfterQuery ( StoredEvent storedEvent, QueryDirection direction ) {
+		private List<Event<EVENT_TYPE>> enrichAfterQuery ( StoredEvent storedEvent, Direction direction ) {
 			meterRegistry.counter("sliceworkz.eventstore.query.event", baseTags.and("eventtype", storedEvent.type().name())).increment();
 			return enrich(storedEvent, direction);
 		}
 
 		@SuppressWarnings("unchecked")
-		private List<Event<EVENT_TYPE>> enrich ( StoredEvent storedEvent, QueryDirection direction ) {
+		private List<Event<EVENT_TYPE>> enrich ( StoredEvent storedEvent, Direction direction ) {
 			List<TypeAndPayload> results;
 			try {
 				results = serde.deserialize(new TypeAndSerializedPayload(storedEvent.type(), storedEvent.immutableData()));
@@ -806,7 +800,7 @@ public class EventStoreImpl implements EventStore {
 			}
 			// For backward queries, reverse the upcasted sub-events so they appear in descending order,
 			// consistent with the overall backward traversal of stored events.
-			if ( direction == QueryDirection.BACKWARD ) {
+			if ( direction == Direction.BACKWARD ) {
 				results = results.reversed();
 			}
 			EventReference baseRef = storedEvent.reference();
@@ -816,7 +810,7 @@ public class EventStoreImpl implements EventStore {
 				EVENT_TYPE data = (EVENT_TYPE)typeAndPayload.eventData();
 				// Each sub-event gets a unique reference via the index, distinguishing upcasted events
 				// that originate from the same stored event. For single-event results, index is 0.
-				EventReference ref = baseRef.withIndex(direction == QueryDirection.BACKWARD ? finalResults.size() - 1 - i : i);
+				EventReference ref = baseRef.withIndex(direction == Direction.BACKWARD ? finalResults.size() - 1 - i : i);
 				return new Event<>(storedEvent.stream(), typeAndPayload.type(), storedEvent.type(), ref, data, storedEvent.tags(), storedEvent.timestamp());
 			}).toList();
 		}
@@ -889,7 +883,7 @@ public class EventStoreImpl implements EventStore {
 			try {
 				List<EventToStore> eventsToStore = reduce(events);
 				List<StoredEvent> storedEvents = timerAppend.record(()->eventStorage.append(storageCriteria, eventStreamId, eventsToStore));
-				appendedEvents = storedEvents.stream().flatMap(se->enrich(se, QueryDirection.FORWARD).stream()).toList();
+				appendedEvents = storedEvents.stream().flatMap(se->enrich(se, Direction.FORWARD).stream()).toList();
 				meterAppend.increment();
 
 				// A duplicate idempotency key is swallowed by storage -- the event is not written and the
@@ -1166,7 +1160,7 @@ public class EventStoreImpl implements EventStore {
 			// filters out events that can not be read by this stream, then upcasts via enrich
 			return eventStorage.getEventById(eventId)
 				.filter(e->eventStreamId.canRead(e.stream()))
-				.map(e->enrich(e, QueryDirection.FORWARD))
+				.map(e->enrich(e, Direction.FORWARD))
 				.orElse(List.of());
 		}
 

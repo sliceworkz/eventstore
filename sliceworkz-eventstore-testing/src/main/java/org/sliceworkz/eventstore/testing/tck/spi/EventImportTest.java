@@ -40,6 +40,7 @@ import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.migration.EventStoreImporter;
 import org.sliceworkz.eventstore.migration.ImportReport;
 import org.sliceworkz.eventstore.query.EventFilter;
+import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage.AppendsToEventStoreNotification;
@@ -47,7 +48,6 @@ import org.sliceworkz.eventstore.spi.EventStorage.BookmarkPlacedNotification;
 import org.sliceworkz.eventstore.spi.EventStorage.EventStoreListener;
 import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
 import org.sliceworkz.eventstore.spi.EventStorage.ImportMode;
-import org.sliceworkz.eventstore.spi.EventStorage.QueryDirection;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -108,7 +108,7 @@ public class EventImportTest extends AbstractEventStoreTest {
 	}
 
 	private List<StoredEvent> allEventsIn ( EventStorage storage ) {
-		return storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), QueryDirection.FORWARD);
+		return storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), Direction.FORWARD);
 	}
 
 	private List<EventToImport> toImport ( List<StoredEvent> storedEvents ) {
@@ -181,8 +181,8 @@ public class EventImportTest extends AbstractEventStoreTest {
 
 		target.importEvents(toImport(sourceEvents), ImportMode.FAIL_ON_EXISTING_ID);
 
-		List<StoredEvent> inApp = target.query(EventFilter.matchAll(), stream, null, Limit.none(), QueryDirection.FORWARD);
-		List<StoredEvent> inOther = target.query(EventFilter.matchAll(), otherStream, null, Limit.none(), QueryDirection.FORWARD);
+		List<StoredEvent> inApp = target.query(EventFilter.matchAll(), stream, null, Limit.none(), Direction.FORWARD);
+		List<StoredEvent> inOther = target.query(EventFilter.matchAll(), otherStream, null, Limit.none(), Direction.FORWARD);
 		assertEquals(2, inApp.size());
 		assertEquals(1, inOther.size());
 	}
@@ -626,7 +626,7 @@ public class EventImportTest extends AbstractEventStoreTest {
 		assertEquals(3, report.imported());
 		assertEquals(6, allEventsIn(source).size());
 
-		List<StoredEvent> cloned = source.query(EventFilter.matchAll(), clone, null, Limit.none(), QueryDirection.FORWARD);
+		List<StoredEvent> cloned = source.query(EventFilter.matchAll(), clone, null, Limit.none(), Direction.FORWARD);
 		assertEquals(3, cloned.size());
 		assertFalse(idsOf(cloned).stream().anyMatch(idsOf(allEventsIn(source).subList(0, 3))::contains),
 				"the clone must carry fresh identifiers");

@@ -39,11 +39,11 @@ import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
 import org.sliceworkz.eventstore.query.EventFilter;
+import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
-import org.sliceworkz.eventstore.spi.EventStorage.QueryDirection;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -108,7 +108,7 @@ public class PostgresLockCheckOrderingTest {
 
 				// 3. Read the boundary the way a decider would, and take the reference it would use.
 				List<StoredEvent> seen = storage
-					.query(boundary, stream, null, Limit.none(), QueryDirection.FORWARD);
+					.query(boundary, stream, null, Limit.none(), Direction.FORWARD);
 				assertEquals(1, seen.size(), "expected the appended event to be readable");
 				EventReference reference = seen.get(0).reference();
 				assertTrue(reference.position() > reservedPosition,
@@ -121,7 +121,7 @@ public class PostgresLockCheckOrderingTest {
 				// 5. Every reader sorts that event AFTER the reference, despite the lower position —
 				//    the read path orders by (event_tx, event_position).
 				List<StoredEvent> replay = storage
-					.query(boundary, stream, null, Limit.none(), QueryDirection.FORWARD);
+					.query(boundary, stream, null, Limit.none(), Direction.FORWARD);
 				assertEquals(2, replay.size(), "expected both events to be readable");
 				EventReference inverted = replay.get(1).reference();
 				assertEquals(reservedPosition, inverted.position(),

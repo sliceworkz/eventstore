@@ -40,11 +40,11 @@ import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
 import org.sliceworkz.eventstore.query.EventFilter;
+import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageException;
 import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
-import org.sliceworkz.eventstore.spi.EventStorage.QueryDirection;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -115,7 +115,7 @@ public class PostgresGlobalOrderIndexTest {
 				seed(storage);
 				analyze(dataSource, prefix);
 
-				List<StoredEvent> all = storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), QueryDirection.FORWARD);
+				List<StoredEvent> all = storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), Direction.FORWARD);
 				String plan = explainPage(storage, dataSource, prefix, EventStreamId.anyContext(), all.get(all.size() / 2).reference());
 
 				assertTrue(plan.contains("Index Scan using " + prefix + "idx_events_tx_position"), () ->
@@ -157,7 +157,7 @@ public class PostgresGlobalOrderIndexTest {
 				analyze(dataSource, prefix);
 
 				EventStreamId context = EventStreamId.forContext(CONTEXT).anyPurpose();
-				List<StoredEvent> all = storage.query(EventFilter.matchAll(), context, null, Limit.none(), QueryDirection.FORWARD);
+				List<StoredEvent> all = storage.query(EventFilter.matchAll(), context, null, Limit.none(), Direction.FORWARD);
 				String plan = explainPage(storage, dataSource, prefix, context, all.get(all.size() / 2).reference());
 
 				assertTrue(plan.contains("Index Scan using " + prefix + "idx_events_context_tx_position"), () ->
@@ -280,7 +280,7 @@ public class PostgresGlobalOrderIndexTest {
 							.formatted(prefix)
 							+ " WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())");
 			List<Object> parameters = new ArrayList<>();
-			storage.addCursorBoundary(sql, parameters, cursor, QueryDirection.FORWARD);
+			storage.addCursorBoundary(sql, parameters, cursor, Direction.FORWARD);
 			if ( !stream.isAnyContext() ) {
 				sql.append(" AND stream_context = ?");
 				parameters.add(stream.context());

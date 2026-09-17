@@ -42,11 +42,11 @@ import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
 import org.sliceworkz.eventstore.query.EventFilter;
+import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
-import org.sliceworkz.eventstore.spi.EventStorage.QueryDirection;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -110,7 +110,7 @@ public class PostgresCursorBoundaryTest {
 				// lower position and a higher tx. Paging has to cross that without losing or repeating it.
 				invert(storage, dataSource, prefix, stream, tags);
 
-				List<StoredEvent> all = read(storage, stream, null, Limit.none(), QueryDirection.FORWARD, null);
+				List<StoredEvent> all = read(storage, stream, null, Limit.none(), Direction.FORWARD, null);
 				assertEquals(SEED_APPENDS * SEED_BATCH + 2, all.size(), "the seeded stream is not the size it should be");
 				assertTrue(all.getLast().reference().position() < all.get(all.size() - 2).reference().position(),
 						"the inversion did not happen, so paging across it proves nothing");
@@ -125,14 +125,14 @@ public class PostgresCursorBoundaryTest {
 				for ( int index : new int[] { 1, all.size() / 2, all.size() - 2 } ) {
 					EventReference cursor = all.get(index).reference();
 					assertEquals(ids(all.subList(index + 1, all.size())),
-							ids(read(storage, stream, cursor, Limit.none(), QueryDirection.FORWARD, null)),
+							ids(read(storage, stream, cursor, Limit.none(), Direction.FORWARD, null)),
 							"forward from index %d must be everything after it".formatted(index));
 					// until is the same predicate with <=, and is direction-independent by contract.
 					assertEquals(ids(all.subList(0, index + 1)),
-							ids(read(storage, stream, null, Limit.none(), QueryDirection.FORWARD, cursor)),
+							ids(read(storage, stream, null, Limit.none(), Direction.FORWARD, cursor)),
 							"until index %d must be everything up to and including it".formatted(index));
 					assertEquals(ids(all.subList(0, index)).reversed(),
-							ids(read(storage, stream, cursor, Limit.none(), QueryDirection.BACKWARD, null)),
+							ids(read(storage, stream, cursor, Limit.none(), Direction.BACKWARD, null)),
 							"backward from index %d must be everything before it, newest first".formatted(index));
 				}
 			} finally {
@@ -151,7 +151,7 @@ public class PostgresCursorBoundaryTest {
 				EventQuery boundary = EventQuery.forEvents(EventTypesFilter.any(), tags);
 
 				invert(storage, dataSource, prefix, stream, tags);
-				List<StoredEvent> replay = read(storage, stream, null, Limit.none(), QueryDirection.FORWARD, null);
+				List<StoredEvent> replay = read(storage, stream, null, Limit.none(), Direction.FORWARD, null);
 				assertEquals(2, replay.size(), "expected both events to be readable");
 
 				// The reference a decider would hold before the inverted event became visible, and the
@@ -188,7 +188,7 @@ public class PostgresCursorBoundaryTest {
 				seed(storage, stream, tags);
 				analyze(dataSource, prefix);
 
-				List<StoredEvent> all = read(storage, stream, null, Limit.none(), QueryDirection.FORWARD, null);
+				List<StoredEvent> all = read(storage, stream, null, Limit.none(), Direction.FORWARD, null);
 				String plan = explainPage(storage, dataSource, prefix, stream, all.get(all.size() / 2).reference());
 
 				// Asserted in the order the mechanism has to hold, so a failure says which step broke.
@@ -255,7 +255,7 @@ public class PostgresCursorBoundaryTest {
 
 		/** Reads through the store, with the given cursor, limit, direction and {@code until}. */
 		private List<StoredEvent> read ( PostgresEventStorageImpl storage, EventStreamId stream,
-				EventReference cursor, Limit limit, QueryDirection direction, EventReference until ) {
+				EventReference cursor, Limit limit, Direction direction, EventReference until ) {
 			EventFilter filter = until == null ? EventFilter.matchAll() : EventFilter.matchAll().until(until);
 			return storage.query(filter, stream, cursor, limit, direction);
 		}
@@ -265,7 +265,7 @@ public class PostgresCursorBoundaryTest {
 			List<String> visited = new ArrayList<>();
 			EventReference cursor = null;
 			while ( true ) {
-				List<StoredEvent> page = read(storage, stream, cursor, Limit.to(PAGE), QueryDirection.FORWARD, null);
+				List<StoredEvent> page = read(storage, stream, cursor, Limit.to(PAGE), Direction.FORWARD, null);
 				if ( page.isEmpty() ) {
 					return visited;
 				}
@@ -294,7 +294,7 @@ public class PostgresCursorBoundaryTest {
 							.formatted(prefix)
 							+ " WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())");
 			List<Object> parameters = new ArrayList<>();
-			storage.addCursorBoundary(sql, parameters, cursor, QueryDirection.FORWARD);
+			storage.addCursorBoundary(sql, parameters, cursor, Direction.FORWARD);
 			sql.append(" AND stream_context = ? AND stream_purpose = ?");
 			parameters.add(stream.context());
 			parameters.add(stream.purpose());

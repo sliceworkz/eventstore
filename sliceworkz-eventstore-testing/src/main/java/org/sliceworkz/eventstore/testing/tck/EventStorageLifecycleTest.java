@@ -36,11 +36,11 @@ import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventFilter;
+import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorage.ImportMode;
-import org.sliceworkz.eventstore.spi.EventStorage.QueryDirection;
 import org.sliceworkz.eventstore.spi.EventStorageClosedException;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
@@ -99,7 +99,7 @@ public class EventStorageLifecycleTest extends AbstractEventStoreTest {
 		storage.close();
 
 		assertThrows(EventStorageClosedException.class,
-			() -> storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), QueryDirection.FORWARD));
+			() -> storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), Direction.FORWARD));
 		assertThrows(EventStorageClosedException.class,
 			() -> storage.append(AppendCriteria.none(), EventStreamId.anyContext(), Collections.emptyList()));
 		assertThrows(EventStorageClosedException.class,
@@ -151,7 +151,7 @@ public class EventStorageLifecycleTest extends AbstractEventStoreTest {
 
 		// the storage was handed to the store, not created by it, so it stays open and usable
 		List<EventStorage.StoredEvent> stored = eventStorage()
-				.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), QueryDirection.FORWARD);
+				.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), Direction.FORWARD);
 		assertEquals(1, stored.size(), "closing an EventStore must not close a storage it was given");
 
 		// the closed store is done, though: its notifications have stopped, so it must not read on

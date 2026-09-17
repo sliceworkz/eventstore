@@ -400,10 +400,14 @@ mvn clean install -DskipTests
   the filter, the stream, the cursor, the limit and the direction as five parameters, so direction and
   limit reach a backend exactly once: the stream layer derives all three from the query it was given,
   the `Projector`'s page size included, since that is the limit of the query it pages with. The
-  alternative — an `EventQuery` parameter beside a `Limit` and a `QueryDirection` — loses because a
+  alternative — an `EventQuery` parameter beside a `Limit` and a `Direction` — loses because a
   backend is then handed two limits and two directions and nothing says which wins; the in-tree
   backends read the parameters and ignore the query's own, and a third-party one reading the query's
-  own would be right by the signature and wrong by the store. The stream scope is an `EventStreamId`
+  own would be right by the signature and wrong by the store. The limit and the direction arrive as
+  the query's own types, `Limit` and `EventQuery.Direction`: the SPI declares no direction enum of
+  its own, since one with the same two values says one thing in two types and puts a translation
+  between them on every path from a query to a backend, while the SPI already names `EventFilter`,
+  `Limit` and `EventStreamId` from the api. The stream scope is an `EventStreamId`
   and never absent: a wildcard component reads across it, so `EventStreamId.anyContext()` is the whole
   storage, and a null is refused with `IllegalArgumentException` on `query`, `append` and `head` alike
   (`StreamScopeTest` in the TCK pins it per backend, with what each wildcard reads).

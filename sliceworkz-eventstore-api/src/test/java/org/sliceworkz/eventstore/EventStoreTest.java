@@ -30,13 +30,13 @@ import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventFilter;
+import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageException;
 import org.sliceworkz.eventstore.spi.EventStorage.EventStoreListener;
 import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
-import org.sliceworkz.eventstore.spi.EventStorage.QueryDirection;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -105,7 +105,7 @@ public class EventStoreTest {
 		}
 
 		@Override
-		public List<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit, QueryDirection queryDirection ) {
+		public List<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit, Direction direction ) {
 			throw new UnsupportedOperationException();
 		}
 

@@ -26,6 +26,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.query.EventFilter;
+import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventToImport;
@@ -41,7 +42,7 @@ public class EventStoreImporterBuilderTest {
 	private static EventStorage aStorage ( ) {
 		return new EventStorage() {
 			@Override public String name ( ) { return "stub"; }
-			@Override public List<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit, QueryDirection queryDirection ) { return List.of(); }
+			@Override public List<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit, Direction direction ) { return List.of(); }
 			@Override public List<StoredEvent> append ( AppendCriteria appendCriteria, EventStreamId stream, List<EventToStore> events ) { return List.of(); }
 			@Override public Optional<StoredEvent> getEventById ( org.sliceworkz.eventstore.events.EventId id ) { return Optional.empty(); }
 			@Override public void bookmark ( String reader, EventReference reference, org.sliceworkz.eventstore.events.Tags tags ) { }

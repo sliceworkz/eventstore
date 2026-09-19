@@ -76,4 +76,23 @@ public class PostgresHeadStatementTest {
 		assertFalse(noStream.contains("stream_purpose"), noStream);
 	}
 
+	@Test
+	public void testEachScopeOrdersInTheSpellingOfItsOwnOrderIndex ( ) {
+		String stream = PostgresEventStorageImpl.headSql("pfx_", EventStreamId.forContext("account").withPurpose("42"));
+		assertTrue(stream.contains("ORDER BY event_tx::xid8 DESC, event_position DESC"),
+				"a stream head orders on the bare column, which only the stream indexes are keyed on: " + stream);
+
+		String context = PostgresEventStorageImpl.headSql("pfx_", EventStreamId.forContext("account").anyPurpose());
+		assertTrue(context.contains("ORDER BY event_tx::xid8 DESC, (event_position * 1) DESC"),
+				"a context head orders in the context order index's spelling: " + context);
+
+		String global = PostgresEventStorageImpl.headSql("pfx_", EventStreamId.anyContext());
+		assertTrue(global.contains("ORDER BY event_tx::xid8 DESC, (event_position + 0) DESC"),
+				"the store-wide head orders in the global order index's spelling: " + global);
+
+		String purposeOnly = PostgresEventStorageImpl.headSql("pfx_", EventStreamId.anyContext().withPurpose("42"));
+		assertTrue(purposeOnly.contains("(event_position + 0) DESC"),
+				"a read binding the purpose alone leads no index and walks the global order: " + purposeOnly);
+	}
+
 }

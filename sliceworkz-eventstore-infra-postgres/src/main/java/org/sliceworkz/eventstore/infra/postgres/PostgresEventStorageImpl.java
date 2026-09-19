@@ -652,15 +652,10 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 			checkTrigger(readConnection, prefix + "events", "table_insert_trigger", "STATEMENT");
 			checkTrigger(readConnection, prefix + "bookmarks", "table_insert_or_update_trigger", "ROW");
 
-			// Check indexes. Only the ones a statement the store issues can walk: idx_events_tx_position is
-			// the global (event_tx, event_position) order for reads that bind no stream column,
-			// idx_events_context_tx_position the same order within a context for reads that bind the
-			// context and leave the purpose open, and the stream indexes serve everything scoped to a
-			// stream. A database created before the two order indexes existed is reported here under
-			// VALIDATE and ENSURE -- ENSURE creates them on the next start, VALIDATE names them for the
-			// DBA -- see "Migrating a database created before the order indexes existed" in the README.
-			checkIndex(readConnection, prefix + "idx_events_tx_position");
-			checkIndex(readConnection, prefix + "idx_events_context_tx_position");
+			// Check indexes. Only the ones a statement the store issues can walk: the two order indexes
+			// for reads that do not bind both stream columns (checkOrderIndexes), and the stream indexes,
+			// which serve everything scoped to a stream.
+			checkOrderIndexes(readConnection);
 			checkIndex(readConnection, prefix + "idx_events_stream_type_position");
 			checkIndex(readConnection, prefix + "idx_events_tags");
 			checkIndex(readConnection, prefix + "idx_events_stream_tags");
@@ -987,7 +982,61 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 		}
 	}
 
+	/**
+	 * Requires the two order indexes as {@link OrderScope} keys them, and refuses the two they
+	 * replace.
+	 * <p>
+	 * {@code idx_events_global_order} is the {@code (event_tx, event_position)} order for reads that
+	 * bind no stream column, {@code idx_events_context_order} the same order within a context for reads
+	 * that bind the context and leave the purpose open. Each is keyed on its own spelling of the
+	 * position, which is what confines it to the reads of its scope. {@code idx_events_tx_position} and
+	 * {@code idx_events_context_tx_position} are the same two orders keyed on the bare column, as a
+	 * database created before that spelling carries them: present, they are what the planner walks for
+	 * a stream read that should have walked the stream's own index, a filtered walk over every event
+	 * other streams wrote since. So their presence is reported as the missing migration it is, under
+	 * {@code VALIDATE}; {@code ENSURE} has dropped them by the time this runs. Both failures name the
+	 * migration, since either one means it has not been applied.
+	 */
+	private void checkOrderIndexes ( Connection connection ) throws SQLException {
+		for ( String obsolete : List.of("idx_events_tx_position", "idx_events_context_tx_position") ) {
+			if ( indexExists(connection, prefix + obsolete) ) {
+				throw new EventStorageException(
+					("Index '%1$s%2$s' is the order index as it was first created, on the bare event_position column: "
+					+ "it lets the planner walk the whole table for a read of one stream. Migrate with: "
+					+ ORDER_INDEXES_MIGRATION).formatted(prefix, obsolete));
+			}
+		}
+		for ( String required : List.of("idx_events_global_order", "idx_events_context_order") ) {
+			if ( !indexExists(connection, prefix + required) ) {
+				throw new EventStorageException(
+					("Required index '%1$s%2$s' does not exist. Create it with: " + ORDER_INDEXES_MIGRATION)
+						.formatted(prefix, required));
+			}
+		}
+	}
+
+	/**
+	 * The hand-applied migration to the two order indexes {@link OrderScope} expects, from a database
+	 * without them or with the two they replace. {@code %1$s} is the prefix. {@code CONCURRENTLY}, so
+	 * appends are not blocked while the new ones build; each statement is its own transaction, which
+	 * {@code CONCURRENTLY} requires. The new indexes are created before the old ones are dropped, so a
+	 * wildcard read is never left without an order index to walk.
+	 */
+	static final String ORDER_INDEXES_MIGRATION =
+		"CREATE INDEX CONCURRENTLY IF NOT EXISTS %1$sidx_events_global_order ON %1$sevents (event_tx, (event_position + 0)); "
+		+ "CREATE INDEX CONCURRENTLY IF NOT EXISTS %1$sidx_events_context_order ON %1$sevents (stream_context, event_tx, (event_position * 1)); "
+		+ "DROP INDEX CONCURRENTLY IF EXISTS %1$sidx_events_tx_position; "
+		+ "DROP INDEX CONCURRENTLY IF EXISTS %1$sidx_events_context_tx_position;";
+
 	private void checkIndex(Connection connection, String indexName) throws SQLException {
+		if ( !indexExists(connection, indexName) ) {
+			throw new EventStorageException(
+				"Required index '%s' does not exist".formatted(indexName)
+			);
+		}
+	}
+
+	private boolean indexExists(Connection connection, String indexName) throws SQLException {
 		LOGGER.debug("Checking index: {}", indexName);
 
 		String sql = """
@@ -1001,11 +1050,7 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 		try (PreparedStatement stmt = connection.prepareStatement(sql)) {
 			stmt.setString(1, indexName);
 			try (ResultSet rs = stmt.executeQuery()) {
-				if (!rs.next() || !rs.getBoolean(1)) {
-					throw new EventStorageException(
-						"Required index '%s' does not exist".formatted(indexName)
-					);
-				}
+				return rs.next() && rs.getBoolean(1);
 			}
 		}
 	}
@@ -1113,7 +1158,7 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 	 * One row answers the question for the whole store. The head of a stream is its newest event in the
 	 * {@code (event_tx, event_position)} order and every event belongs to one stream, so the highest
 	 * {@code event_tx} among the stream heads is the highest {@code event_tx} in the table, and that is
-	 * the row {@code idx_events_tx_position} — the global order — hands over from its last leaf: one
+	 * the row {@code idx_events_global_order} — the global order — hands over from its last leaf: one
 	 * probe, whatever the store holds and however its streams are laid out. The
 	 * {@code event_tx::xid8} in the ORDER BY is load-bearing: the select list renders the column as
 	 * text, and a bare {@code event_tx} there would resolve to that output column and sort the text —
@@ -1126,7 +1171,7 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 	 * <em>position</em> instead would be a probe too and is wrong: the moment something is appended to
 	 * the restored store, that row is the new, low-tx event, and the restored history above the
 	 * counter is invisible to it — which is precisely the state to keep reporting. The one cost of
-	 * the global order is that a database created before {@code idx_events_tx_position} existed and
+	 * the global order is that a database created before {@code idx_events_global_order} existed and
 	 * not yet migrated answers this with a scan of the table; {@code ENSURE} creates the index on the
 	 * next start and {@code VALIDATE} reports it missing, so only a {@code NONE} deployment that has
 	 * skipped the migration pays that, on a database where every wildcard read already does.
@@ -1140,16 +1185,16 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 			       pg_snapshot_xmax(pg_current_snapshot())::text AS next_tx,
 			       event_tx >= pg_snapshot_xmax(pg_current_snapshot()) AS ahead
 			FROM %sevents
-			ORDER BY event_tx::xid8 DESC, event_position DESC
+			ORDER BY event_tx::xid8 DESC, %s DESC
 			LIMIT 1
-			""".formatted(prefix);
+			""".formatted(prefix, OrderScope.GLOBAL.position());
 	}
 
 	/**
 	 * The statement behind the error {@link #verifyClusterIsAheadOfHistory()} throws: how much of the
 	 * store sits at or above the transaction id it is given — the cluster's next id, as the probe
 	 * observed it, so that the two statements agree on the boundary. A range walk over
-	 * {@code idx_events_tx_position} from that id to the end, so it costs what the restored history
+	 * {@code idx_events_global_order} from that id to the end, so it costs what the restored history
 	 * costs, and it runs only on the failure path: a boot that is going to be refused can afford to
 	 * say how many events and streams are affected, and every ordinary boot pays nothing for it.
 	 * Package-private so the module's tests can pin its shape.
@@ -1386,10 +1431,14 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 
 		List<Object> parameters = new ArrayList<>();
 
-		// Seek past the reference if one is provided (exclusive)
-		addCursorBoundary(sqlBuilder, parameters, after, direction);
+		// the ORDER BY and both boundaries spell the position for this scope, so the statement walks
+		// the order index of its own scope and no wider one -- see OrderScope
+		OrderScope scope = OrderScope.of(stream);
 
-		addUntilBoundary(sqlBuilder, parameters, filter.until());
+		// Seek past the reference if one is provided (exclusive)
+		addCursorBoundary(sqlBuilder, parameters, after, direction, scope);
+
+		addUntilBoundary(sqlBuilder, parameters, filter.until(), scope);
 
 		// Add stream filtering: a wildcard component binds nothing, so the wildcard stream reads the whole table
 		addStreamScope(sqlBuilder, parameters, stream);
@@ -1401,10 +1450,10 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 		
 		// Order by position
 		if ( direction == Direction.BACKWARD ) {
-			sqlBuilder.append(" ORDER BY event_tx::xid8 DESC, event_position DESC");
+			sqlBuilder.append(" ORDER BY event_tx::xid8 DESC, ").append(scope.position()).append(" DESC");
 		} else {
-			sqlBuilder.append(" ORDER BY event_tx::xid8, event_position ");
-			
+			sqlBuilder.append(" ORDER BY event_tx::xid8, ").append(scope.position()).append(' ');
+
 		}
 		
 		Limit effectiveLimit = effectiveLimit(limit);
@@ -1474,15 +1523,18 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 	 * @param parameters the parameter list being built alongside it
 	 * @param after the reference to seek past, or null for no cursor (in which case nothing is appended)
 	 * @param direction which side of the reference to keep
+	 * @param scope the order scope of the statement, whose spelling of the position the comparison
+	 *        takes, so that it is a start condition on that scope's order index
 	 */
 	// package-private, not private: PostgresCursorBoundaryTest builds an EXPLAIN around the predicate
 	// this produces, so that the plan it asserts on is the store's own SQL and not a copy.
-	void addCursorBoundary(StringBuilder sqlBuilder, List<Object> parameters, EventReference after, Direction direction) {
+	void addCursorBoundary(StringBuilder sqlBuilder, List<Object> parameters, EventReference after, Direction direction,
+			OrderScope scope) {
 		if ( after == null ) {
 			return;
 		}
 		appendTupleBoundary(sqlBuilder, parameters, after,
-				direction == Direction.FORWARD ? ">" : "<");
+				direction == Direction.FORWARD ? ">" : "<", scope);
 	}
 
 	/**
@@ -1519,14 +1571,20 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 	 * cursor" rather than "cursor depth" rests on the row comparison being an index start condition
 	 * exactly as it does here.
 	 *
+	 * <p>The same property is why the tuple is written in the position spelling of the statement's
+	 * {@link OrderScope}: a row comparison is a start condition only on an index whose keys it names,
+	 * and each scope's order index is keyed on its own spelling.
+	 *
 	 * @param sqlBuilder the statement being built
 	 * @param parameters the parameter list being built alongside it
 	 * @param boundary the reference the tuple is compared against
 	 * @param comparison the SQL operator, one of {@code >}, {@code <} or {@code <=}
+	 * @param scope the order scope of the statement being built
 	 */
 	private void appendTupleBoundary(StringBuilder sqlBuilder, List<Object> parameters,
-			EventReference boundary, String comparison) {
-		sqlBuilder.append(" AND (event_tx, event_position) ").append(comparison).append(" (?::xid8, ?)");
+			EventReference boundary, String comparison, OrderScope scope) {
+		sqlBuilder.append(" AND (event_tx, ").append(scope.position()).append(") ")
+				.append(comparison).append(" (?::xid8, ?)");
 		parameters.add(Long.toUnsignedString(boundary.tx()));
 		parameters.add(boundary.position());
 	}
@@ -1552,13 +1610,14 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 	 * @param sqlBuilder the statement being built
 	 * @param parameters the parameter list being built alongside it
 	 * @param until the boundary, or null for no boundary (in which case nothing is appended)
+	 * @param scope the order scope of the statement being built
 	 */
 	// package-private for the same reason as addCursorBoundary.
-	void addUntilBoundary(StringBuilder sqlBuilder, List<Object> parameters, EventReference until) {
+	void addUntilBoundary(StringBuilder sqlBuilder, List<Object> parameters, EventReference until, OrderScope scope) {
 		if ( until == null ) {
 			return;
 		}
-		appendTupleBoundary(sqlBuilder, parameters, until, "<=");
+		appendTupleBoundary(sqlBuilder, parameters, until, "<=", scope);
 	}
 
 	private void addEventFilterFiltering(StringBuilder sqlBuilder, List<Object> parameters, EventFilter filter) {
@@ -1908,6 +1967,73 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 	}
 
 	/**
+	 * Appends the consistency check of a conditional append to the statement being built: the
+	 * {@code WHERE} clause over {@code new_events} that admits the insert only when nothing matching the
+	 * criteria follows its expected reference, in the shape the criteria selects (see
+	 * {@link #scanFromCursor(AppendCriteria)}).
+	 *
+	 * @param sqlBuilder the statement being built, up to and including {@code AS new_events}
+	 * @param parameters the parameter list being built alongside it
+	 * @param appendCriteria the criteria to check; not {@link AppendCriteria#isNone() none}
+	 * @param streamId the stream appended to
+	 */
+	// package-private, not private: PostgresGlobalOrderIndexTest explains the generic plan of the
+	// check this produces, so that the plan it asserts on is the store's own check and not a copy.
+	void addConsistencyCheck ( StringBuilder sqlBuilder, List<Object> parameters, AppendCriteria appendCriteria,
+			EventStreamId streamId ) {
+		boolean scanFromCursor = scanFromCursor(appendCriteria);
+
+		// Now add the optimistic locking conditions
+		sqlBuilder.append(scanFromCursor
+				? """
+				WHERE (
+					SELECT event_position FROM %sevents
+					WHERE 1=1 """.formatted(prefix)
+				: """
+				WHERE NOT EXISTS (
+					SELECT 1 FROM %sevents
+					WHERE 1=1 """.formatted(prefix));
+
+
+		// Add stream filtering. An append names one stream, so this is the stream scope, whose
+		// order index is the stream's own; spelled through OrderScope all the same, like every
+		// statement that orders or bounds on the (tx, position) tuple
+		addStreamScope(sqlBuilder, parameters, streamId);
+		OrderScope scope = OrderScope.of(streamId);
+
+		if ( appendCriteria.expectedLastEventReference().isPresent() ) {
+
+			// Look for events after the expected last one, over the same (tx, position) order
+			// readers see and EventReference.happenedAfter defines. See addCursorBoundary: on a
+			// position-only comparison a committed event that every reader sorts after the
+			// reference can carry a lower position, and the check would not see it.
+			addCursorBoundary(sqlBuilder, parameters, appendCriteria.expectedLastEventReference().get(), Direction.FORWARD, scope);
+		}
+
+
+		// Add EventFilter filtering for the consistency boundary
+		EventFilter lockingFilter = appendCriteria.eventFilter();
+
+		// A consistency boundary is whatever its EventFilter matches, and a filter carrying an
+		// "until" does not match past it -- so an event beyond the boundary is not a new relevant
+		// fact and must not raise a conflict. Leaving this out made this backend lock where the
+		// in-memory one, which runs the criteria through query(), did not.
+		addUntilBoundary(sqlBuilder, parameters, lockingFilter.until(), scope);
+
+		if (!lockingFilter.isMatchAll()) {
+			addEventFilterFiltering(sqlBuilder, parameters, lockingFilter);
+		}
+
+		// The ORDER BY is the (event_tx, event_position) tuple order every read and the cursor
+		// comparison already use -- see scanFromCursor(AppendCriteria). A bare event_tx
+		// resolves to the xid8 column here: unlike the read path, this select list carries no
+		// text output column shadowing the name.
+		sqlBuilder.append(scanFromCursor
+				? " ORDER BY event_tx, " + scope.position() + " LIMIT 1) IS NULL "
+				: ") ");
+	}
+
+	/**
 	 * Appends events, pairing each {@code RETURNING} row with the input event at the same index.
 	 * <p>
 	 * Nothing promises that order — {@code RETURNING} is not in the SQL standard, and PostgreSQL
@@ -1984,52 +2110,7 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 			boolean scanFromCursor = scanFromCursor(appendCriteria);
 
 			if ( ! appendCriteria.isNone() ) {
-
-				// Now add the optimistic locking conditions
-				sqlBuilder.append(scanFromCursor
-						? """
-						WHERE (
-							SELECT event_position FROM %sevents
-							WHERE 1=1 """.formatted(prefix)
-						: """
-						WHERE NOT EXISTS (
-							SELECT 1 FROM %sevents
-							WHERE 1=1 """.formatted(prefix));
-
-
-				// Add stream filtering
-				addStreamScope(sqlBuilder, parameters, streamId);
-
-				if ( appendCriteria.expectedLastEventReference().isPresent() ) {
-
-					// Look for events after the expected last one, over the same (tx, position) order
-					// readers see and EventReference.happenedAfter defines. See addCursorBoundary: on a
-					// position-only comparison a committed event that every reader sorts after the
-					// reference can carry a lower position, and the check would not see it.
-					addCursorBoundary(sqlBuilder, parameters, appendCriteria.expectedLastEventReference().get(), Direction.FORWARD);
-				}
-
-
-				// Add EventFilter filtering for the consistency boundary
-				EventFilter lockingFilter = appendCriteria.eventFilter();
-
-				// A consistency boundary is whatever its EventFilter matches, and a filter carrying an
-				// "until" does not match past it -- so an event beyond the boundary is not a new relevant
-				// fact and must not raise a conflict. Leaving this out made this backend lock where the
-				// in-memory one, which runs the criteria through query(), did not.
-				addUntilBoundary(sqlBuilder, parameters, lockingFilter.until());
-
-				if (!lockingFilter.isMatchAll()) {
-					addEventFilterFiltering(sqlBuilder, parameters, lockingFilter);
-				}
-
-				// The ORDER BY is the (event_tx, event_position) tuple order every read and the cursor
-				// comparison already use -- see scanFromCursor(AppendCriteria). A bare event_tx
-				// resolves to the xid8 column here: unlike the read path, this select list carries no
-				// text output column shadowing the name.
-				sqlBuilder.append(scanFromCursor
-						? " ORDER BY event_tx, event_position LIMIT 1) IS NULL "
-						: ") ");
+				addConsistencyCheck(sqlBuilder, parameters, appendCriteria, streamId);
 			}
 
 			sqlBuilder.append("RETURNING event_position, event_timestamp, event_tx::text, event_id::text");
@@ -2522,12 +2603,12 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 
 	/**
 	 * The statement behind {@link #head(EventStreamId)}: the reference columns only, off
-	 * {@code idx_events_stream_position} walked backwards — off {@code idx_events_context_tx_position}
-	 * when only the context is bound, off {@code idx_events_tx_position}, the global
-	 * {@code (event_tx, event_position)} order, for a wildcard stream — behind the same
-	 * {@code pg_snapshot_xmin} barrier as {@link #query}. Package-private so the postgres module's tests
-	 * can pin its shape — that it reads no payload and sits behind the barrier are properties nothing
-	 * else would notice.
+	 * {@code idx_events_stream_position} walked backwards — off {@code idx_events_context_order}
+	 * when only the context is bound, off {@code idx_events_global_order}, the global
+	 * {@code (event_tx, event_position)} order, for a wildcard stream, and off no other index for any
+	 * of them ({@link OrderScope}) — behind the same {@code pg_snapshot_xmin} barrier as
+	 * {@link #query}. Package-private so the postgres module's tests can pin its shape — that it reads
+	 * no payload and sits behind the barrier are properties nothing else would notice.
 	 */
 	static String headSql ( String prefix, EventStreamId stream ) {
 		StringBuilder sql = new StringBuilder();
@@ -2539,7 +2620,7 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 			""".formatted(prefix)
 			);
 		addStreamScope(sql, new ArrayList<>(), stream);
-		sql.append(" ORDER BY event_tx::xid8 DESC, event_position DESC LIMIT 1");
+		sql.append(" ORDER BY event_tx::xid8 DESC, ").append(OrderScope.of(stream).position()).append(" DESC LIMIT 1");
 		return sql.toString();
 	}
 
@@ -2558,6 +2639,64 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 		if ( !stream.isAnyPurpose() ) {
 			sql.append(" AND stream_purpose = ?");
 			parameters.add(stream.purpose());
+		}
+	}
+
+	/**
+	 * Which of the three order indexes a statement may walk, decided by the stream columns it binds,
+	 * and the spelling of the position that confines it to that index.
+	 *
+	 * <p>Every read is in the {@code (event_tx, event_position)} order, and three B-trees carry that
+	 * order behind different leading columns: {@code idx_events_stream_position} behind both stream
+	 * columns, {@code idx_events_context_order} behind the context, {@code idx_events_global_order}
+	 * behind nothing. A statement binding more columns than an index leads with can still be answered
+	 * off that index, by walking it in order and filtering on the columns it does not lead with -- and
+	 * the planner does exactly that, whenever the stream is a large share of the table: the wider index
+	 * is the smaller one, and the filter is priced as though the stream's events were spread evenly
+	 * through the order. They are not. A stream that has been quiet while other streams wrote sits
+	 * behind everything written since, so a backward walk for its head, or its newest page, filters
+	 * out all of that before it reaches the first row it wants — measured ~50 ms for {@code head()}
+	 * behind 300.000 events of other streams, against ~0.1 ms off the stream's own index, and growing
+	 * with every event written elsewhere.
+	 *
+	 * <p>So each order index is built on its own spelling of the position — the bare column for the
+	 * stream index, {@code (event_position * 1)} for the context index, {@code (event_position + 0)}
+	 * for the global one — and each statement writes its {@code ORDER BY}, its cursor and its
+	 * {@code until} boundary in the spelling of its scope. The planner matches an index key to an
+	 * expression by its form, so a statement can walk its own order index and no other: the choice
+	 * is made here, from what the statement binds, and not by a cost estimate that cannot see where a
+	 * stream's events sit. Values and order are the column's own, so nothing a statement returns or
+	 * compares changes. The natural alternative — one index per scope on the bare column, left to the
+	 * planner — is what the measurement above is of. A statement binding the purpose alone
+	 * ({@code anyContext().withPurpose(...)}) leads no index and walks the global one, filtered.
+	 */
+	enum OrderScope {
+
+		/** Both stream columns bound: {@code idx_events_stream_position}. */
+		STREAM("event_position"),
+
+		/** The context bound, the purpose open: {@code idx_events_context_order}. */
+		CONTEXT("(event_position * 1)"),
+
+		/** No context bound: {@code idx_events_global_order}. */
+		GLOBAL("(event_position + 0)");
+
+		private final String position;
+
+		OrderScope ( String position ) {
+			this.position = position;
+		}
+
+		/** The position as the statements of this scope spell it, and as its order index is keyed. */
+		String position ( ) {
+			return position;
+		}
+
+		static OrderScope of ( EventStreamId stream ) {
+			if ( stream.isAnyContext() ) {
+				return GLOBAL;
+			}
+			return stream.isAnyPurpose() ? CONTEXT : STREAM;
 		}
 	}
 

@@ -62,17 +62,28 @@ CREATE TABLE IF NOT EXISTS events (
   ) WITH (FILLFACTOR = 100);
 
 
-	-- The global read order. Every ORDER BY the store issues is (event_tx, event_position), and a
-	-- read that binds no stream column -- a wildcard stream (EventStreamId.anyContext()), the head of
-	-- the whole store, an unscoped import or export -- has only this index to walk it: the stream
-	-- indexes below all lead with (stream_context, stream_purpose), so for such a read they offer no
-	-- start condition and no order, and a page costs a scan of the table plus a top-N sort, whatever
-	-- its LIMIT. Walked forward from a cursor for a store-wide projection, backward for head().
-	-- Cheap to maintain: event_tx and event_position only ever grow, so every insert lands on the
-	-- rightmost leaf.
-	CREATE INDEX IF NOT EXISTS idx_events_tx_position ON events (
+	-- The global read order. Every ORDER BY the store issues is the (event_tx, event_position) order,
+	-- and a read that binds no stream column -- a wildcard stream (EventStreamId.anyContext()), the
+	-- head of the whole store, an unscoped import or export -- has only this index to walk it: the
+	-- stream indexes below all lead with (stream_context, stream_purpose), so for such a read they
+	-- offer no start condition and no order, and a page costs a scan of the table plus a top-N sort,
+	-- whatever its LIMIT. Walked forward from a cursor for a store-wide projection, backward for
+	-- head(). Cheap to maintain: event_tx and event_position only ever grow, so every insert lands on
+	-- the rightmost leaf.
+	--
+	-- The position is indexed as the expression (event_position + 0), and only a read that binds no
+	-- stream column spells its ORDER BY and its boundaries that way (OrderScope in
+	-- PostgresEventStorageImpl). That is what keeps this index away from every other read. Indexed on
+	-- the bare column, it serves the ORDER BY of a stream or a context read as well as the index
+	-- built for that read, and the planner takes it whenever the stream is a large share of the
+	-- table -- it is the smaller index, and the planner prices the filter on the stream columns as
+	-- though the stream's events were spread evenly through the table. They are not: a stream that
+	-- has been quiet while others wrote sits behind everything written since, so its head() walks
+	-- all of that backwards and filters it out, one row at a time -- ~50 ms behind 300.000 events of
+	-- other streams, against ~0.1 ms off the stream's own index, with nothing failing to say so.
+	CREATE INDEX IF NOT EXISTS idx_events_global_order ON events (
 	    event_tx,
-	    event_position
+	    (event_position + 0)
 	);
 
 	-- The same order within one context. A read that binds the context and leaves the purpose
@@ -81,11 +92,21 @@ CREATE TABLE IF NOT EXISTS events (
 	-- indexes (purpose is their second column) nor, usefully, the global index above (every other
 	-- context's events would be walked and filtered out). Entered at the context, walked from the
 	-- cursor: a whole-context replay, a Projector over a context, a per-context export.
-	CREATE INDEX IF NOT EXISTS idx_events_context_tx_position ON events (
+	--
+	-- Indexed as (event_position * 1), a spelling of its own, for the reason given above one level
+	-- down: a read of one stream must not walk its context's other streams, and a context read must
+	-- not walk the global index.
+	CREATE INDEX IF NOT EXISTS idx_events_context_order ON events (
 	    stream_context,
 	    event_tx,
-	    event_position
+	    (event_position * 1)
 	);
+
+	-- The two order indexes as they were first created, on the bare column. Present, they are what the
+	-- planner walks for a stream or context read that should have used its own index (see above), so
+	-- they are dropped rather than left beside their replacements.
+	DROP INDEX IF EXISTS idx_events_tx_position;
+	DROP INDEX IF EXISTS idx_events_context_tx_position;
 
 	-- Allows efficient filtering on multiple dimensions
 	-- Primary index for your most common query pattern

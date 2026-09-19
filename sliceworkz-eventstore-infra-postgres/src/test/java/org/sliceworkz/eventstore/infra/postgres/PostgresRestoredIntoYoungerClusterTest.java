@@ -167,7 +167,7 @@ public class PostgresRestoredIntoYoungerClusterTest {
 
 		/**
 		 * The check runs on every start, so it has to cost the same whatever the store holds: one probe
-		 * off {@code idx_events_tx_position}, the global {@code (event_tx, event_position)} order, walked
+		 * off {@code idx_events_global_order}, the global {@code (event_tx, event_position)} order, walked
 		 * backwards from its last leaf — never a scan of the table, never a sort, and never a walk of the
 		 * streams, which on a per-entity layout is a probe per entity. With sequential scans disabled
 		 * the planner shows whether the index <em>can</em> serve it, which is the property that keeps
@@ -188,7 +188,7 @@ public class PostgresRestoredIntoYoungerClusterTest {
 			assertFalse(plan.contains("Sort"), "the newest row must come off the index in order:\n" + plan);
 			assertFalse(plan.contains("Recursive") || plan.contains("Nested Loop"),
 				"the check must not enumerate the streams -- that is a probe per entity on every start:\n" + plan);
-			assertTrue(plan.contains("Backward using " + prefix + "idx_events_tx_position"),
+			assertTrue(plan.contains("Backward using " + prefix + "idx_events_global_order"),
 				"the check is the global order index walked backwards from its end:\n" + plan);
 			assertEquals(1, plan.lines().filter(line -> line.contains("using ")).count(),
 				"one index probe, not one per stream:\n" + plan);
@@ -197,7 +197,7 @@ public class PostgresRestoredIntoYoungerClusterTest {
 				.replace("?::xid8", "pg_snapshot_xmax(pg_current_snapshot())"));
 
 			assertFalse(detailPlan.contains("Seq Scan"), "the detail must not scan the events table:\n" + detailPlan);
-			assertTrue(detailPlan.contains("using " + prefix + "idx_events_tx_position"),
+			assertTrue(detailPlan.contains("using " + prefix + "idx_events_global_order"),
 				"the detail is a range walk over the global order index from the cluster's next id:\n" + detailPlan);
 		}
 

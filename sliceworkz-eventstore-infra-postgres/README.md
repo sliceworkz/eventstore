@@ -176,13 +176,26 @@ stream columns — the stream indexes all lead with `(stream_context, stream_pur
 read neither a start condition nor an order, so without them each page is a scan feeding a sort,
 whatever its limit:
 
-- `idx_events_tx_position` on `(event_tx, event_position)`: a wildcard stream
+- `idx_events_global_order` on `(event_tx, (event_position + 0))`: a wildcard stream
   (`EventStreamId.anyContext()`) paged by a store-wide projection or an export, `head()` of the
   whole store, an unscoped `EventStoreImporter` run — and the restored-history check every start
   runs (see "Backup and restore"), which without it is a scan of the table on every boot.
-- `idx_events_context_tx_position` on `(stream_context, event_tx, event_position)`: a read that
+- `idx_events_context_order` on `(stream_context, event_tx, (event_position * 1))`: a read that
   binds the context and leaves the purpose open — a whole-context replay or export over a
   per-entity layout, where every entity is its own purpose.
+
+**Each is keyed on its own spelling of the position, and that is what keeps it to its own reads.**
+The store writes the `ORDER BY` and the cursor of a read in the spelling of its scope — the bare
+column for a stream, `* 1` for a context, `+ 0` for the whole store — and the planner matches an
+index to an expression by its form, so a read of one stream can only walk the stream's own index.
+On the bare column, the global and context indexes would serve every stream read's order as well,
+and the planner takes them whenever the stream is a large share of the table, filtering on the
+stream columns as it walks. For a stream that has been quiet while other streams wrote, that walk
+covers everything written since: measured at ~50 ms for `head()` behind 300.000 events of other
+streams, against ~0.1 ms off the stream's own index, growing with every event written elsewhere.
+The optimistic-locking check of a conditional append is hit hardest, since its plan is cached: once
+PostgreSQL adopts the generic plan, every append walks the global order from its expected reference —
+measured at ~40–54 ms per append on the same data, against ~0.9 ms.
 
 Schema validation requires both. `ENSURE` creates them on the next start of an existing database;
 that is a plain `CREATE INDEX`, which blocks appends for the duration of the build, so on a large
@@ -190,11 +203,25 @@ table a `VALIDATE` or `NONE` deployment — or an `ENSURE` one that would rather
 during a rolling start — applies them by hand first, without the lock:
 
 ```sql
-CREATE INDEX CONCURRENTLY IF NOT EXISTS <prefix>idx_events_tx_position ON <prefix>events (event_tx, event_position);
-CREATE INDEX CONCURRENTLY IF NOT EXISTS <prefix>idx_events_context_tx_position ON <prefix>events (stream_context, event_tx, event_position);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS <prefix>idx_events_global_order ON <prefix>events (event_tx, (event_position + 0));
+CREATE INDEX CONCURRENTLY IF NOT EXISTS <prefix>idx_events_context_order ON <prefix>events (stream_context, event_tx, (event_position * 1));
+DROP INDEX CONCURRENTLY IF EXISTS <prefix>idx_events_tx_position;
+DROP INDEX CONCURRENTLY IF EXISTS <prefix>idx_events_context_tx_position;
 ```
 
-`checkDatabase()` reports a missing one under `VALIDATE`, by name, until it exists.
+The two `DROP`s are for a database created by 0.11, which carries the same two orders on the bare
+column as `idx_events_tx_position` and `idx_events_context_tx_position`. Left beside their
+replacements they are exactly the indexes a stream read must not walk, so `ENSURE` drops them, and
+`checkDatabase()` refuses to start under `VALIDATE` while either exists, naming the migration above.
+It reports a missing new index the same way. `CONCURRENTLY` cannot run inside a transaction block,
+so run the statements one at a time, as `psql` does. The new indexes are created before the old ones
+are dropped, so a wildcard read always has an order index to walk.
+
+Two things to know when rolling an upgrade across instances. A 0.11 instance that starts under
+`ENSURE` or `VALIDATE` after the migration requires the old index names, so it recreates them or
+refuses to start — upgrade every instance before migrating a `VALIDATE` deployment by hand. And
+reads from a 0.11 instance still running do not use the new indexes: a wildcard or whole-context
+read there is a scan and a sort until the instance is replaced.
 
 ### Migrating a database created before shredding existed
 
@@ -307,7 +334,7 @@ the kind of writing transaction the visibility notes warn about). No append can 
 so a hit is unambiguous, and it is fatal: the storage is closed and `build()` throws an
 `EventStorageException` naming the highest stored id, the cluster's next id, how many events and
 streams are affected and the three remedies below. The check is one probe off
-`idx_events_tx_position`, the global order, walked backwards from its last leaf — no scan of the
+`idx_events_global_order`, the global order, walked backwards from its last leaf — no scan of the
 events table, no sort, and no walk of the streams, which on a per-entity layout would be a probe per
 entity on every start — so it costs well under a millisecond whatever the store holds; the count of
 affected events and streams is a second statement, a range walk over the same index, run only once

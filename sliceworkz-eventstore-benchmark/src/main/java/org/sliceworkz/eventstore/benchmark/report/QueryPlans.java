@@ -169,6 +169,11 @@ public final class QueryPlans {
 		// index scan and looks like an answer.
 		boolean perEntity = spec.streamDesign() == CorpusSpec.StreamDesign.PER_ENTITY;
 		String purposeClause = perEntity ? "" : " AND stream_purpose = ?";
+		// and the store spells the position of a statement by what it binds, so that each scope walks
+		// its own order index (PostgresEventStorageImpl.OrderScope): the bare column for a stream, the
+		// context order's spelling for a read that leaves the purpose open. Copied with the scope, or
+		// the plan shown is of a statement the store never issues
+		String scopePosition = perEntity ? "(event_position * 1)" : "event_position";
 
 		plans.add(capture(dataSource, "stream page (unfiltered, limit 500)",
 				"""
@@ -176,8 +181,8 @@ public final class QueryPlans {
 				FROM %sevents
 				WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 				  AND stream_context = ?%s
-				ORDER BY event_tx::xid8, event_position
-				LIMIT 500""".formatted(prefix, purposeClause),
+				ORDER BY event_tx::xid8, %s
+				LIMIT 500""".formatted(prefix, purposeClause, scopePosition),
 				scoped(perEntity, "inventory", null)));
 
 		plans.add(capture(dataSource, "tag needle (~10 matches)",
@@ -187,7 +192,7 @@ public final class QueryPlans {
 				WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 				  AND stream_context = ?%s
 				  AND ((event_tags @> ARRAY[?]::text[]))
-				ORDER BY event_tx::xid8, event_position""".formatted(prefix, purposeClause),
+				ORDER BY event_tx::xid8, %s""".formatted(prefix, purposeClause, scopePosition),
 				scoped(perEntity, "inventory", null,
 						CorpusGenerator.MARKER_TAG_KEY + ":" + facts.needleTagValue())));
 
@@ -198,8 +203,8 @@ public final class QueryPlans {
 				WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 				  AND stream_context = ?%s
 				  AND ((event_tags @> ARRAY[?]::text[]))
-				ORDER BY event_tx::xid8, event_position
-				LIMIT 500""".formatted(prefix, purposeClause),
+				ORDER BY event_tx::xid8, %s
+				LIMIT 500""".formatted(prefix, purposeClause, scopePosition),
 				scoped(perEntity, "inventory", null,
 						CorpusGenerator.MARKER_TAG_KEY + ":" + facts.swatheTagValue())));
 
@@ -239,8 +244,8 @@ public final class QueryPlans {
 				WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())
 				  AND %s
 				  AND stream_context = ?%s
-				ORDER BY event_tx::xid8, event_position
-				LIMIT 500""".formatted(prefix, tupleBoundary(">"), purposeClause),
+				ORDER BY event_tx::xid8, %s
+				LIMIT 500""".formatted(prefix, tupleBoundary(">", scopePosition), purposeClause, scopePosition),
 				withScope(perEntity, tupleParameters(cursor.tx(), cursor.position())))));
 
 		// Only where the profile appends. A read-only profile used to carry six DCB-check plans for
@@ -409,7 +414,7 @@ public final class QueryPlans {
 				WHERE stream_context = ? AND stream_purpose = ?
 				  AND ( %s )
 				  AND %s
-				LIMIT 1""".formatted(prefix, filter, tupleBoundary(">")),
+				LIMIT 1""".formatted(prefix, filter, tupleBoundary(">", "event_position")),
 				parameters.toArray(new String[0]));
 	}
 
@@ -422,9 +427,12 @@ public final class QueryPlans {
 	 * statement in this class is a copy of a read path rather than the read path. What that costs is
 	 * that the two can drift; what it buys is a plan for a statement {@code EXPLAIN ANALYZE} may
 	 * execute without appending anything.
+	 *
+	 * <p>{@code position} is the scope's spelling of the column, as the store writes it for the
+	 * statement being copied: a row comparison is a start condition only on an index keyed on it.
 	 */
-	private static String tupleBoundary ( String comparison ) {
-		return "(event_tx, event_position) %s (?::xid8, ?::bigint)".formatted(comparison);
+	private static String tupleBoundary ( String comparison, String position ) {
+		return "(event_tx, %s) %s (?::xid8, ?::bigint)".formatted(position, comparison);
 	}
 
 	private static String[] tupleParameters ( String tx, long position ) {

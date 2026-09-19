@@ -206,9 +206,9 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   - **One probe, whatever the store holds.** The head of a stream is its newest event in the
     `(event_tx, event_position)` order and every event belongs to one stream, so the highest
     `event_tx` among the stream heads is the highest in the table: the last leaf of
-    `idx_events_tx_position`, read backwards with `ORDER BY event_tx::xid8 DESC, event_position DESC
-    LIMIT 1` — the `::xid8` cast is load-bearing there as on the read path, since the select list
-    renders the column as text. The alternative — enumerating the streams with a recursive
+    `idx_events_global_order`, read backwards with `ORDER BY event_tx::xid8 DESC, (event_position + 0)
+    DESC LIMIT 1` — the `::xid8` cast is load-bearing there as on the read path, since the select list
+    renders the column as text, and the `+ 0` is the global order's spelling (see `OrderScope` below). The alternative — enumerating the streams with a recursive
     loose-index walk over `idx_events_stream_position` and probing each head — is exact too, but it
     is a probe per stream on every start, and on the per-entity layout the benchmarks recommend
     that is a probe per entity: 200.000 streams measure ~2.6s against ~0.4ms for the single probe.
@@ -330,7 +330,7 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     per bounded context puts an idle entity's reference millions of rows back. Pinning at
     `EventSource.head()` *before* the read, and bounding the read with it, hands the probe a cursor
     at the stream head whatever the boundary; the head statement (`headSql`) reads the three
-    reference columns off `idx_events_stream_position` (off `idx_events_tx_position` for a wildcard
+    reference columns off `idx_events_stream_position` (off `idx_events_global_order` for a wildcard
     stream) behind the same `pg_snapshot_xmin` barrier as every read, so it can never run ahead of the
     reads it bounds (`PostgresVisibilityStallTest`, `PostgresHeadStatementTest`). Re-reading the boundary before appending — what a conflict retry
     does anyway — remains the fix for a reference held long.
@@ -365,27 +365,81 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   Two B-trees on the `(event_tx, event_position)` order serve the reads that do not bind both stream
   columns, which the stream indexes offer neither a start condition nor an order, so that without
   them a page is a scan feeding a top-N sort whatever its `LIMIT`:
-  - **`idx_events_tx_position`**, the global order, for a read that binds no stream column: a
+  - **`idx_events_global_order`**, the global order, for a read that binds no stream column: a
     wildcard stream (`EventStreamId.anyContext()`) paged by a store-wide projection or an export,
     `head()` of the whole store, an unscoped `EventStoreImporter` run. Measured at 300.000 events:
     ~7.500 buffers and 120–220 ms per page without it, ~20 buffers and under 1 ms walking it; the
     store-wide head the same.
-  - **`idx_events_context_tx_position`**, the same order within a context, for a read that binds
+  - **`idx_events_context_order`**, the same order within a context, for a read that binds
     the context and leaves the purpose open — a whole-context replay or export over a per-entity
-    layout, where every entity is its own purpose. The global index can serve that shape only with
-    the context as a `Filter`, walking every other context's events to discard them, which is fine
-    while the context is most of the table and linear in the rest of it otherwise: measured on a
-    context holding 2% of 300.000 events, 24.500 rows removed by the filter against none, 3.9 ms
-    against 0.9 ms for a page. The planner picks between the two by share — the smaller global index
-    with a filter when the context dominates, this one when it does not — and both are index walks.
+    layout, where every entity is its own purpose. Walking the global order instead would filter
+    out every other context's events: measured on a context holding 2% of 300.000 events, 24.500
+    rows removed by the filter against none, 3.9 ms against 0.9 ms for a page.
   - Both are cheap to maintain: their trailing columns only ever grow, so every insert lands on the
     rightmost leaf of its context, or of the table.
-  - `PostgresGlobalOrderIndexTest` pins the plans (a plain `Index Scan`, no `Sort`, the cursor in the
-    `Index Cond`; the heads an `Index Scan Backward`), on a corpus where the context under test is a
-    minority of the table so the choice is unambiguous, and the migration: a database from before the
-    indexes is reported by `VALIDATE` naming the missing one and repaired by `ENSURE`, see "Migrating
-    a database created before the order indexes existed" in the README.
-- **`ENSURE` brings functions and triggers up to date; tables, columns and indexes are only ever created.**
+- **Each order index is keyed on its own spelling of the position, so a read can walk only the
+  index of its own scope (`OrderScope`).** The stream index is on the bare `event_position`, the
+  context index on `(event_position * 1)`, the global index on `(event_position + 0)`, and every
+  statement that orders or bounds on the tuple — a query's `ORDER BY`, its cursor and its `until`
+  boundary, `head()`, the DCB check's ordered probe, the restored-history probe — writes the
+  position in the spelling of the scope its stream columns make it: both bound is the stream,
+  the context alone is the context, anything else (the wildcard, or the purpose alone) the global
+  order. PostgreSQL matches an index key to an expression by its form, so the choice of index is
+  made by the statement, from what it binds, and never left to a cost estimate. Values and order
+  are the column's own; nothing returned or compared changes.
+  - **Why the estimate cannot be left to choose.** A wider order index serves a narrower read's
+    `ORDER BY` just as well, by walking and filtering on the stream columns it does not lead with,
+    and it is the smaller index. The planner prices that filter as though the stream's events were
+    spread evenly through the order and its leading column followed the heap, and takes the wider
+    index whenever the stream is a large share of the table — the ordinary layout of a stream per
+    context, several contexts to a table. For a stream that has been quiet while others wrote, the
+    walk covers everything written since: `head()` measured ~50 ms behind 300.000 events of other
+    streams (~96 ms behind 422.000) against ~0.1 ms off the stream's own index, a context head the
+    same against the context index, with every answer correct and nothing logged. A corpus whose
+    contexts were written one after another in alphabetical order hides it, since the leading
+    column then follows the heap and the stream index looks as cheap as it is; interleaved, as a
+    table written by several contexts is, it flips at a few thousand rows.
+  - **The DCB check is where it costs most, because the plan cache makes it permanent.** The
+    cursor-bearing probe is server-prepared, and its generic plan on the bare-column indexes is the
+    global order walked forward from the expected reference, filtering on the stream. Measured on
+    PG18 under the default `plan_cache_mode = auto`, one stream per context, 200.000 events in the
+    checked stream and 300.000 of two other contexts written after it: the first five appends run
+    a custom plan off the tag index (~1.3 ms), and from the sixth every append runs the cached walk
+    — **~40–54 ms with the stream's `head()` as the reference**, 300.000 rows filtered, and 65–90 ms
+    with a reference 100.000 stream events back once the stream is busy again. The `head()` pin
+    does not help: a quiet stream's head is far back in the global order. With the per-scope
+    spellings the same appends measure ~0.9 ms and ~0.1 ms. The layout of the *neighbours*
+    decides whether the generic plan flips — one stream per context (purpose `default`) makes the
+    checked stream look like a large share and flips it at a few thousand rows; neighbours with a
+    purpose per entity make it look small and keep it on the stream index — which is why the test
+    corpus is laid out that way.
+  - **The alternative — the same indexes on the bare column, left to the planner — is that
+    measurement.** Extended statistics on `(stream_context, stream_purpose)` do not reach it:
+    measured on PG18, they correct the stream's row estimate (35.713 to 59.803, against 60.000) and
+    the plan stays on the global index, because the misestimate is where a stream's events sit in
+    the order, which no statistic describes. Ordering by the stream columns as well changes nothing
+    either — PostgreSQL drops a sort key the query binds to a constant, and the plan is the same.
+  - `PostgresGlobalOrderIndexTest` pins the plans in both directions: each wider-scope read walks
+    its own order index (a plain `Index Scan`, no `Sort`, the cursor in the `Index Cond`; the heads
+    an `Index Scan Backward`) on a corpus where the context under test is a minority, and a stream's
+    head, a stream's newest-first page, a context's head and the *generic* plan of the store's own
+    consistency check (`addConsistencyCheck`, prepared and explained under `force_generic_plan`)
+    walk their own index on a corpus built to invite the wider one — one stream holding most of
+    the table, then two other single-stream contexts' events interleaved after it — with the
+    stream columns (and for the check, the expected reference) in the `Index Cond`. With the three
+    spellings made the same, those four fail on 16, 17 and 18.
+  - **Migration.** A database created by 0.11 carries the same two orders on the bare column as
+    `idx_events_tx_position` and `idx_events_context_tx_position`. `ENSURE` creates the new
+    indexes and drops those two — their presence is the hazard, so they are not left beside their
+    replacements, and this is the one place `ENSURE` drops an index. `checkDatabase()` refuses the
+    old names under `VALIDATE`, and a missing new one, with `ORDER_INDEXES_MIGRATION` (the
+    `CONCURRENTLY` statements) in the message; see "Migrating a database created before the order
+    indexes existed" in the README, including the rolling-upgrade caveats. The scenarios
+    migrating by `ENSURE`, by `VALIDATE`'s report and by running the named SQL live in the same
+    test.
+- **`ENSURE` brings functions and triggers up to date; tables, columns and indexes are only ever created**
+  — with one exception, the two bare-column order indexes of 0.11, which it drops because their
+  presence is what sends a stream read down the wrong index (see `OrderScope` above).
   The functions are `CREATE OR REPLACE`d and each trigger is compared against the shape this release wants
   (`tgtype` plus target function, in a `DO $$` block) and recreated only when it differs — so wrong timing,
   wrong orientation or a trigger pointing at the wrong function self-heal, while the ordinary startup, where

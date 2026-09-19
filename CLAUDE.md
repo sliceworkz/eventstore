@@ -241,8 +241,9 @@ mvn clean install -DskipTests
     fails every command, an upcast-to-nothing head reads as an empty stream, and a sealed value costs a
     key-store round trip. That is why it is a method on `EventSource` and an SPI method on
     `EventStorage`, whose `default` is that query for a backend written before it; Postgres reads the
-    three reference columns off `idx_events_stream_position` — off `idx_events_context_tx_position`
-    for a context, off `idx_events_tx_position` for a wildcard stream — and no payload
+    three reference columns off `idx_events_stream_position` — off `idx_events_context_order`
+    for a context, off `idx_events_global_order` for a wildcard stream, and off no wider index than
+    its own scope's, however quiet the stream (see the PostgreSQL notes) — and no payload
     (`PostgresHeadStatementTest`, `PostgresGlobalOrderIndexTest`)
   - **It names a stored event, whole**: `index` 0, and a boundary at it includes every event the stored
     event upcasts into — see the `until` note under EventFilter
@@ -1995,7 +1996,7 @@ each figure as Testcontainers-on-a-developer-machine unless the module file says
   them points backwards.
 - **Stream design** (`stream-design-*` pair): **`PER_ENTITY` wins or ties everything except reading a
   context in order** (13–15× worse in the committed run, which was measured without
-  `idx_events_context_tx_position`, the index that serves exactly that read). The canonical DCB
+  a context order index — `idx_events_context_order` now, the index that serves exactly that read). The canonical DCB
   check is 4.2× better single-threaded and 16.8× at eight writers, because distinct purposes take
   distinct advisory locks. **But read an entity through its own stream, or the design buys nothing**:
   addressing a per-entity corpus by tag through a wildcard purpose costs 23–29× over its own stream.
@@ -2257,15 +2258,25 @@ that bind everywhere:
   the empty boundary). The measurements behind that rejection are recorded in the benchmark
   module's `CLAUDE.md`.
 - **A read that does not bind both stream columns walks an index on the `(event_tx, event_position)`
-  order**: `idx_events_tx_position`, the global order, for a read that binds no stream column (a
+  order**: `idx_events_global_order`, the global order, for a read that binds no stream column (a
   wildcard stream paged by a store-wide projection or an export, `head()` of the whole store, an
-  unscoped `EventStoreImporter` run), and `idx_events_context_tx_position` for one that binds the
+  unscoped `EventStoreImporter` run), and `idx_events_context_order` for one that binds the
   context and leaves the purpose open (a whole-context replay over a per-entity layout). The stream
   indexes all lead with `(stream_context, stream_purpose)` and offer such reads neither a start
   condition nor an order, so without these every page is a scan plus a sort, whatever its limit.
-  A database created before they existed needs them applied — `ENSURE` does that on the next
-  start, a `VALIDATE`/`NONE` deployment by hand with `CREATE INDEX CONCURRENTLY` — see "Migrating a
-  database created before the order indexes existed" in the postgres module README.
+- **And a read never walks a wider order index than its own scope's.** Each order index is keyed on
+  its own spelling of the position — the stream index on the bare column, the context index on
+  `(event_position * 1)`, the global one on `(event_position + 0)` — and each statement orders and
+  bounds in its scope's spelling (`OrderScope`), so the index is chosen by what the statement binds.
+  Left to the planner, a stream that is a large share of the table is read off the smaller global
+  index with a filter, which for a stream quiet while others wrote is a walk over everything written
+  since: `head()` measured ~50 ms behind 300.000 other events against ~0.1 ms off its own index,
+  and the DCB check's cached generic plan the same walk from its expected reference — ~40–54 ms on
+  every conditional append from the sixth on, the `head()` pin included, against ~0.9 ms.
+  Do not "simplify" the `+ 0` and `* 1` away; `PostgresGlobalOrderIndexTest` fails on it. A database
+  from 0.11 carries the two orders on the bare column under older names — `ENSURE` replaces them,
+  `VALIDATE` names the `CONCURRENTLY` migration — see "Migrating a database created before the order
+  indexes existed" in the postgres module README.
 - **Oldest supported PostgreSQL is 16**, and the `btree_gin` extension is required — creating it
   needs `CREATE` on the *database*, not the schema; a DBA installing it once is the recommended
   split, and an unprivileged role then starts against it silently.

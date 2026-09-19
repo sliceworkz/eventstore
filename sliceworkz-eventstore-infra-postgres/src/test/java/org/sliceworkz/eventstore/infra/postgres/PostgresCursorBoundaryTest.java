@@ -294,7 +294,7 @@ public class PostgresCursorBoundaryTest {
 							.formatted(prefix)
 							+ " WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())");
 			List<Object> parameters = new ArrayList<>();
-			storage.addCursorBoundary(sql, parameters, cursor, Direction.FORWARD);
+			storage.addCursorBoundary(sql, parameters, cursor, Direction.FORWARD, PostgresEventStorageImpl.OrderScope.of(stream));
 			sql.append(" AND stream_context = ? AND stream_purpose = ?");
 			parameters.add(stream.context());
 			parameters.add(stream.purpose());

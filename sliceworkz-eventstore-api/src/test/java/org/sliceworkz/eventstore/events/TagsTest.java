@@ -250,6 +250,42 @@ public class TagsTest {
 	}
 
 	// ---------------------------------------------------------------------------------------------
+	// The canonical constructor normalises, so every route into a Tags value -- the factories, merge,
+	// a codec rebuilding tags off a stored row, a caller constructing one directly -- holds the same
+	// immutable set. containsAll is the per-event check of every tag filter matched in memory, so the
+	// set a Tags carries is a scan's inner loop and not an implementation detail.
+	// ---------------------------------------------------------------------------------------------
+
+	@Test
+	void testTheConstructorCopiesTheSetItIsGiven ( ) {
+		Set<Tag> mutable = new HashSet<>(Set.of(Tag.of("a", "b")));
+		Tags tags = new Tags(mutable);
+
+		mutable.add(Tag.of("c", "d"));
+
+		assertEquals(Tags.of(Tag.of("a", "b")), tags, "the value must not follow the set it was built from");
+		assertThrows(UnsupportedOperationException.class, () -> tags.tags().add(Tag.of("e", "f")));
+	}
+
+	@Test
+	void testTheConstructorRejectsANullTag ( ) {
+		Set<Tag> withNull = new HashSet<>();
+		withNull.add(Tag.of("a", "b"));
+		withNull.add(null);
+
+		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> new Tags(withNull));
+		assertTrue(e.getMessage().contains("null tag"), e.getMessage());
+	}
+
+	@Test
+	void testMergeAnswersAnImmutableValue ( ) {
+		Tags merged = Tags.of("customer", "123").merge(Tags.of("region", "EU"));
+
+		assertEquals(Tags.of("customer", "123", "region", "EU"), merged);
+		assertThrows(UnsupportedOperationException.class, () -> merged.tags().add(Tag.of("x", "y")));
+	}
+
+	// ---------------------------------------------------------------------------------------------
 	// tag(key) answers a single tag; several tags under one key are an ordinary shape (a transfer
 	// tagged with both customers), and tag(key) refuses to pick one of them at random.
 	// ---------------------------------------------------------------------------------------------

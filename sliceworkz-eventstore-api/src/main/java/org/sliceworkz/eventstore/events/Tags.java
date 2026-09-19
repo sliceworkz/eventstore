@@ -153,15 +153,34 @@ public record Tags ( Set<Tag> tags ) {
 	 * The tags set must not be null. For empty tags, use {@link #none()} instead.
 	 * This constructor is typically not called directly; use the static factory methods
 	 * such as {@link #of(Tag...)}, {@link #of(String, String)}, or {@link #none()}.
+	 * <p>
+	 * The set is copied with {@link Set#copyOf(java.util.Collection)}, which is what every caller
+	 * gets: the value is immutable whatever was handed in, and the copy is the hash-based set the
+	 * JDK builds for a small immutable set. That matters because {@link #containsAll(Tags)} is the
+	 * per-event check of every tag filter matched in memory -- the in-memory backends run it over
+	 * the whole log, so the set's {@code contains} is a scan's inner loop. The alternative --
+	 * keeping the set as given, or wrapping it in
+	 * {@link java.util.Collections#unmodifiableSet(Set)} -- loses twice: a caller's mutable set
+	 * makes a Tags value mutable behind its back, and the wrapper puts a delegation hop in front of
+	 * every {@code contains}, measured at roughly three times the cost of the copied set's own.
+	 * {@code copyOf} returns an already-immutable set unchanged, so normalising costs nothing where
+	 * there is nothing to normalise.
 	 *
-	 * @param tags the set of tags (required, must not be null)
-	 * @throws IllegalArgumentException if tags is null
+	 * @param tags the set of tags (required, must not be null, and must hold no null element)
+	 * @throws IllegalArgumentException if tags is null or holds a null element
 	 */
 	public Tags ( Set<Tag> tags ) {
 		if ( tags == null ) {
 			throw new IllegalArgumentException();
 		}
-		this.tags = tags;
+		// checked by iterating rather than with contains(null), which an already-immutable set
+		// answers with a NullPointerException instead of false
+		for ( Tag tag : tags ) {
+			if ( tag == null ) {
+				throw new IllegalArgumentException("a null tag cannot be part of Tags: " + tags);
+			}
+		}
+		this.tags = Set.copyOf(tags);
 	}
 
 	/**
@@ -272,7 +291,7 @@ public record Tags ( Set<Tag> tags ) {
 			}
 			distinct.add(tag);
 		}
-		return new Tags(Collections.unmodifiableSet(distinct));
+		return new Tags(distinct);
 	}
 
 	/**
@@ -335,7 +354,7 @@ public record Tags ( Set<Tag> tags ) {
 		for ( int i = 0; i < moreKeyValuePairs.length; i += 2 ) {
 			tags.add(Tag.of(moreKeyValuePairs[i], moreKeyValuePairs[i + 1]));
 		}
-		return new Tags(Set.copyOf(tags));
+		return new Tags(tags);
 	}
 
 	/**

@@ -241,9 +241,10 @@ mvn clean install -DskipTests
     fails every command, an upcast-to-nothing head reads as an empty stream, and a sealed value costs a
     key-store round trip. That is why it is a method on `EventSource` and an SPI method on
     `EventStorage`, whose `default` is that query for a backend written before it; Postgres reads the
-    three reference columns off `idx_events_stream_position` — off `idx_events_context_tx_position`
-    for a context, off `idx_events_tx_position` for a wildcard stream — and no payload
-    (`PostgresHeadStatementTest`, `PostgresGlobalOrderIndexTest`)
+    three reference columns off `idx_events_stream_position` — off `idx_events_context_order`
+    for a context, off `idx_events_global_order` for a wildcard stream, decided by the scope and never
+    by an estimate — and no payload (`PostgresHeadStatementTest`, `PostgresGlobalOrderIndexTest`,
+    `PostgresOrderIndexAdmissionTest`)
   - **It names a stored event, whole**: `index` 0, and a boundary at it includes every event the stored
     event upcasts into — see the `until` note under EventFilter
   - The event at the head need not match the boundary's filter: the reference is a cursor for the check,
@@ -1995,7 +1996,7 @@ each figure as Testcontainers-on-a-developer-machine unless the module file says
   them points backwards.
 - **Stream design** (`stream-design-*` pair): **`PER_ENTITY` wins or ties everything except reading a
   context in order** (13–15× worse in the committed run, which was measured without
-  `idx_events_context_tx_position`, the index that serves exactly that read). The canonical DCB
+  `idx_events_context_order`, the index that serves exactly that read). The canonical DCB
   check is 4.2× better single-threaded and 16.8× at eight writers, because distinct purposes take
   distinct advisory locks. **But read an entity through its own stream, or the design buys nothing**:
   addressing a per-entity corpus by tag through a wildcard purpose costs 23–29× over its own stream.
@@ -2257,15 +2258,30 @@ that bind everywhere:
   the empty boundary). The measurements behind that rejection are recorded in the benchmark
   module's `CLAUDE.md`.
 - **A read that does not bind both stream columns walks an index on the `(event_tx, event_position)`
-  order**: `idx_events_tx_position`, the global order, for a read that binds no stream column (a
+  order**: `idx_events_global_order`, the global order, for a read that binds no stream column (a
   wildcard stream paged by a store-wide projection or an export, `head()` of the whole store, an
-  unscoped `EventStoreImporter` run), and `idx_events_context_tx_position` for one that binds the
+  unscoped `EventStoreImporter` run), and `idx_events_context_order` for one that binds the
   context and leaves the purpose open (a whole-context replay over a per-entity layout). The stream
   indexes all lead with `(stream_context, stream_purpose)` and offer such reads neither a start
   condition nor an order, so without these every page is a scan plus a sort, whatever its limit.
-  A database created before they existed needs them applied — `ENSURE` does that on the next
-  start, a `VALIDATE`/`NONE` deployment by hand with `CREATE INDEX CONCURRENTLY` — see "Migrating a
-  database created before the order indexes existed" in the postgres module README.
+- **And a read that *does* bind them must never be served by one of those two.** A wider order index
+  supplies the same `ORDER BY`, so the planner will walk it and filter on the stream columns it does
+  not lead with whenever the stream is a large share of the table — pricing the filter as though the
+  stream's events were spread evenly through the order, which for a stream that has been quiet while
+  its neighbours wrote they are not. Correct, unlogged, and linear in everything written since: a
+  quiet stream's `head()` 24 ms against 0.08 ms with 300.000 foreign events behind it, and its DCB
+  check 56 ms against 0.02 ms, that one worst because the probe is server-prepared and the cached
+  generic plan *is* the walk. So each of the two is **partial on an admission predicate** — a
+  tautology (`event_position > 0`, `event_tx > '0'::xid8`) the planner cannot prove, spelled out by
+  exactly the statements whose scope binds no more than that index leads with, and by no others. A
+  partial index is closed to a statement that does not imply its predicate whatever the estimate, so
+  this holds for a cached generic plan too, which is what a cost-based fix cannot promise. The
+  rejected alternative — expression-keyed order indexes — and the two dead ends before it are in the
+  postgres module file. Migration: `ENSURE` creates the two and drops the ones they replaced on the
+  next start; a `VALIDATE`/`NONE` deployment applies it by hand with `CREATE INDEX CONCURRENTLY`, and
+  `checkDatabase()` reports a missing replacement, one created without its predicate, and a superseded
+  index still present — see "Migrating a database created before the order indexes carried their
+  admission predicates" in the postgres module README.
 - **Oldest supported PostgreSQL is 16**, and the `btree_gin` extension is required — creating it
   needs `CREATE` on the *database*, not the schema; a DBA installing it once is the recommended
   split, and an unprivileged role then starts against it silently.

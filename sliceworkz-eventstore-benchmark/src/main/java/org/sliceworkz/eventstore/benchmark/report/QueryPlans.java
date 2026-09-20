@@ -48,7 +48,8 @@ import org.sliceworkz.eventstore.benchmark.workload.WorkloadContext;
  * <p><b>These are representative statements, not the ones the store issued.</b> The store builds its
  * SQL internally and does not expose it, so these are written here to match the documented shape:
  * the {@code pg_snapshot_xmin} barrier, the stream scoping, the {@code event_tags @> ARRAY[...]}
- * containment and the {@code (event_tx, event_position)} ordering. That is enough to answer the
+ * containment, the admission predicate that decides which order index the scope may be served by, and
+ * the {@code (event_tx, event_position)} ordering. That is enough to answer the
  * index-or-scan question and to show the row counts and buffer reads, and it is <em>not</em> a
  * substitute for the real statement: if the backend's query builder changes, these will silently go
  * on describing the old shape. Every captured plan is labelled accordingly in the report.
@@ -168,7 +169,14 @@ public final class QueryPlans {
 		// -- and an EXPLAIN over an empty result is worse than no plan at all: it reports a sub-millisecond
 		// index scan and looks like an answer.
 		boolean perEntity = spec.streamDesign() == CorpusSpec.StreamDesign.PER_ENTITY;
-		String purposeClause = perEntity ? "" : " AND stream_purpose = ?";
+		// A statement that binds the context and leaves the purpose open is a context read, and the store
+		// admits one of those to idx_events_context_order by spelling that index's admission predicate --
+		// a tautology over event_tx that the planner cannot prove, which is how a narrower read is kept
+		// out of a wider order index (PostgresEventStorageImpl.CONTEXT_ORDER_ADMISSION). Copied here like
+		// every other predicate in this class: left out, these plans would describe a statement the store
+		// never issues, answered by an index the real one is not admitted to. A statement binding both
+		// stream columns carries no admission at all -- its own index is the only order index open to it.
+		String purposeClause = perEntity ? " AND event_tx > '0'::xid8" : " AND stream_purpose = ?";
 
 		plans.add(capture(dataSource, "stream page (unfiltered, limit 500)",
 				"""

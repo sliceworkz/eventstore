@@ -169,32 +169,65 @@ the event up for the notification payload. `checkDatabase()` reports an un-migra
 than failing on a bare not-null violation (`PostgresSchemaDriftTest` pins both). The grants are
 unchanged: the role already needs `SELECT` on the events table.
 
-### Migrating a database created before the order indexes existed
+### Migrating a database created before the order indexes carried their admission predicates
 
 Two B-tree indexes on the `(event_tx, event_position)` order serve the reads that do not bind both
 stream columns — the stream indexes all lead with `(stream_context, stream_purpose)` and offer such a
 read neither a start condition nor an order, so without them each page is a scan feeding a sort,
 whatever its limit:
 
-- `idx_events_tx_position` on `(event_tx, event_position)`: a wildcard stream
-  (`EventStreamId.anyContext()`) paged by a store-wide projection or an export, `head()` of the
-  whole store, an unscoped `EventStoreImporter` run — and the restored-history check every start
+- `idx_events_global_order` on `(event_tx, event_position)` `WHERE event_position > 0`: a wildcard
+  stream (`EventStreamId.anyContext()`) paged by a store-wide projection or an export, `head()` of
+  the whole store, an unscoped `EventStoreImporter` run — and the restored-history check every start
   runs (see "Backup and restore"), which without it is a scan of the table on every boot.
-- `idx_events_context_tx_position` on `(stream_context, event_tx, event_position)`: a read that
-  binds the context and leaves the purpose open — a whole-context replay or export over a
-  per-entity layout, where every entity is its own purpose.
+- `idx_events_context_order` on `(stream_context, event_tx, event_position)` `WHERE event_tx >
+  '0'::xid8`: a read that binds the context and leaves the purpose open — a whole-context replay or
+  export over a per-entity layout, where every entity is its own purpose.
 
-Schema validation requires both. `ENSURE` creates them on the next start of an existing database;
-that is a plain `CREATE INDEX`, which blocks appends for the duration of the build, so on a large
-table a `VALIDATE` or `NONE` deployment — or an `ENSURE` one that would rather not build indexes
-during a rolling start — applies them by hand first, without the lock:
+**Both predicates are tautologies, and they are the point.** `event_position` is a `bigserial` the
+store never writes itself, so 1 is the lowest value there is; `event_tx` comes from
+`pg_current_xact_id()`, which never returns 0. Each index therefore covers every row and is the index
+it would be without its predicate. What the predicate decides is who may *enter* it: PostgreSQL
+admits a partial index only to a statement whose own predicates imply the index's, and a tautology
+over a column with no `CHECK` constraint is one the planner cannot prove for itself — so only a
+statement that spells the same predicate out is admitted, and the store spells each one out for
+exactly the reads whose scope binds no more than that index leads with.
+
+Without that, a read of one stream or one context can be served by a wider order index: walk it in
+order and filter on the stream columns it does not lead with. The planner takes that whenever the
+stream is a large share of the table, because the wider index is smaller and it prices the filter as
+though the stream's events were spread evenly through the order. They are not — a stream that has
+been quiet while other streams wrote sits behind everything written since, so the walk covers all of
+it one row at a time and grows with everything those streams write. Every answer stays correct and
+nothing is logged. Measured on a 500.000-event table whose quiet stream sits 300.000 events back:
+`head()` of that stream 24ms against 0.08ms off its own index, and the consistency check of a
+conditional append 56ms against 0.02ms — the check worst of all, because it is server-prepared and
+the cached generic plan *is* that walk. `PostgresOrderIndexAdmissionTest` pins it on 16, 17 and 18.
+
+Schema validation requires both indexes, with their predicates, and requires the two they replaced —
+`idx_events_tx_position` and `idx_events_context_tx_position`, which indexed every row — to be gone:
+left in place, those are exactly what a stream or context read walks instead of its own index.
+`ENSURE` does all four on the next start of an existing database; the creates are plain `CREATE
+INDEX`, which blocks appends for the duration of the build, and the drops take a brief `ACCESS
+EXCLUSIVE` on the events table. So on a large table a `VALIDATE` or `NONE` deployment — or an
+`ENSURE` one that would rather not build indexes during a rolling start — applies the migration by
+hand first, without either lock (each statement on its own, outside a transaction block, which
+`CONCURRENTLY` requires):
 
 ```sql
-CREATE INDEX CONCURRENTLY IF NOT EXISTS <prefix>idx_events_tx_position ON <prefix>events (event_tx, event_position);
-CREATE INDEX CONCURRENTLY IF NOT EXISTS <prefix>idx_events_context_tx_position ON <prefix>events (stream_context, event_tx, event_position);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS <prefix>idx_events_global_order ON <prefix>events (event_tx, event_position) WHERE event_position > 0;
+CREATE INDEX CONCURRENTLY IF NOT EXISTS <prefix>idx_events_context_order ON <prefix>events (stream_context, event_tx, event_position) WHERE event_tx > '0'::xid8;
+DROP INDEX CONCURRENTLY IF EXISTS <prefix>idx_events_tx_position;
+DROP INDEX CONCURRENTLY IF EXISTS <prefix>idx_events_context_tx_position;
 ```
 
-`checkDatabase()` reports a missing one under `VALIDATE`, by name, until it exists.
+Run the creates before the drops, so no start between the two is left without an order index at all.
+`checkDatabase()` reports each of the four under `VALIDATE` — a replacement missing, a replacement
+created without its predicate, a superseded index still present — and carries this migration in the
+message.
+
+A database that has no order indexes at all, from before either existed, needs the same statements:
+the creates apply and the drops find nothing.
 
 ### Migrating a database created before shredding existed
 
@@ -307,12 +340,12 @@ the kind of writing transaction the visibility notes warn about). No append can 
 so a hit is unambiguous, and it is fatal: the storage is closed and `build()` throws an
 `EventStorageException` naming the highest stored id, the cluster's next id, how many events and
 streams are affected and the three remedies below. The check is one probe off
-`idx_events_tx_position`, the global order, walked backwards from its last leaf — no scan of the
+`idx_events_global_order`, the global order, walked backwards from its last leaf — no scan of the
 events table, no sort, and no walk of the streams, which on a per-entity layout would be a probe per
 entity on every start — so it costs well under a millisecond whatever the store holds; the count of
 affected events and streams is a second statement, a range walk over the same index, run only once
-the probe has found the store ahead of the cluster. A database created before that index existed
-and not yet migrated (see "Migrating a database created before the order indexes existed") answers
+the probe has found the store ahead of the cluster. A database not yet carrying that index (see
+"Migrating a database created before the order indexes carried their admission predicates") answers
 the check with a scan of the table under `NONE`. `PostgresRestoredIntoYoungerClusterTest` pins the
 refusal, the closed storage, and the plan shape.
 What the check cannot catch is a store already appended to after such a restore *and* since had its

@@ -62,30 +62,71 @@ CREATE TABLE IF NOT EXISTS PREFIX_events (
   ) WITH (FILLFACTOR = 100);
 
 
-	-- The global read order. Every ORDER BY the store issues is (event_tx, event_position), and a
-	-- read that binds no stream column -- a wildcard stream (EventStreamId.anyContext()), the head of
-	-- the whole store, an unscoped import or export -- has only this index to walk it: the stream
-	-- indexes below all lead with (stream_context, stream_purpose), so for such a read they offer no
-	-- start condition and no order, and a page costs a scan of the table plus a top-N sort, whatever
-	-- its LIMIT. Walked forward from a cursor for a store-wide projection, backward for head().
-	-- Cheap to maintain: event_tx and event_position only ever grow, so every insert lands on the
-	-- rightmost leaf.
-	CREATE INDEX IF NOT EXISTS PREFIX_idx_events_tx_position ON PREFIX_events (
+	-- The global read order, for a read that binds no stream column: a wildcard stream
+	-- (EventStreamId.anyContext()), the head of the whole store, an unscoped import or export, the
+	-- restored-history probe at startup. Every ORDER BY the store issues is (event_tx, event_position),
+	-- and the stream indexes below all lead with (stream_context, stream_purpose): unbound, they offer
+	-- such a read neither a start condition nor an order, and a page costs a scan of the table plus a
+	-- top-N sort, whatever its LIMIT. Walked forward from a cursor for a store-wide projection,
+	-- backward for head(). Cheap to maintain: event_tx and event_position only ever grow, so every
+	-- insert lands on the rightmost leaf.
+	--
+	-- WHERE event_position > 0 is a tautology -- event_position is a bigserial and the store never
+	-- writes one itself, so the sequence's first value, 1, is the lowest there is -- and it therefore
+	-- indexes every row: this is the same index it would be without it. What it changes is who may
+	-- *enter* it. PostgreSQL admits a partial index only to a statement whose own predicates imply the
+	-- index predicate, and a tautology over a column carrying no CHECK constraint is one the planner
+	-- cannot prove for itself, so only a statement that spells the same predicate out is admitted --
+	-- which PostgresEventStorageImpl does for exactly the reads whose scope binds no stream column.
+	--
+	-- Without that, a read of one stream or one context may walk this index and filter on the stream
+	-- columns it does not lead with: it is the smaller index and it supplies the same order, and the
+	-- planner prices the filter as though the stream's events were spread evenly through the order.
+	-- They are not -- a stream that has been quiet while other streams wrote sits behind everything
+	-- written since, so the walk covers all of it one row at a time. Measured on a 500.000-event table
+	-- whose quiet stream sits 300.000 events back: head() of that stream 24ms against 0.08ms off its
+	-- own index, and the DCB check of a conditional append 56ms against 0.02ms -- the check worst of
+	-- all, because it is server-prepared and the cached generic plan is that walk. Every answer stays
+	-- correct and nothing is logged.
+	--
+	-- The alternative -- keying each order index on its own no-op expression of the position, so that
+	-- the statement picks the index and the cost estimate cannot -- fixes those reads and loses a
+	-- stream-scoped cursor walk: the wider index still supplies event_tx as a presorted prefix, so the
+	-- cached plan takes it with an Incremental Sort and demotes the cursor from an index start
+	-- condition to a filter (5.8ms against 0.15ms at 500.000 rows). An admission predicate removes the
+	-- index from the choice altogether rather than making it look dearer, so a scoped read gets the
+	-- plan it would have had if this index did not exist.
+	CREATE INDEX IF NOT EXISTS PREFIX_idx_events_global_order ON PREFIX_events (
 	    event_tx,
 	    event_position
-	);
+	) WHERE event_position > 0;
 
-	-- The same order within one context. A read that binds the context and leaves the purpose
-	-- open -- EventStreamId.forContext("x") over a per-entity layout, where every entity is its
-	-- own purpose and reading the context is a cross-entity read -- can enter neither the stream
-	-- indexes (purpose is their second column) nor, usefully, the global index above (every other
-	-- context's events would be walked and filtered out). Entered at the context, walked from the
-	-- cursor: a whole-context replay, a Projector over a context, a per-context export.
-	CREATE INDEX IF NOT EXISTS PREFIX_idx_events_context_tx_position ON PREFIX_events (
+	-- The same order within one context, for a read that binds the context and leaves the purpose
+	-- open -- EventStreamId.forContext("x") over a per-entity layout, where every entity is its own
+	-- purpose and reading the context is a cross-entity read. Such a read can enter neither the stream
+	-- indexes (purpose is their second column) nor the global index above, which its admission
+	-- predicate closes to it -- and which would in any case walk every other context's events only to
+	-- filter them out. Entered at the context, walked from the cursor: a whole-context replay, a
+	-- Projector over a context, a per-context export.
+	--
+	-- Its admission predicate is a tautology of its own, on the other order column: event_tx comes
+	-- from pg_current_xact_id(), which never returns 0 (InvalidTransactionId), and the store never
+	-- writes the column itself. It has to be a *different* tautology from the global index's -- a
+	-- context read carrying that one would admit the global index too, and be back where it started.
+	-- Neither implies the other, because they are about different columns.
+	CREATE INDEX IF NOT EXISTS PREFIX_idx_events_context_order ON PREFIX_events (
 	    stream_context,
 	    event_tx,
 	    event_position
-	);
+	) WHERE event_tx > '0'::xid8;
+
+	-- The two order indexes as v0.11 created them, indexing every row unconditionally. Left in place
+	-- they are exactly what a stream or context read walks instead of its own index -- the thing the
+	-- predicates above exist to prevent -- so ENSURE drops them rather than leaving them beside their
+	-- replacements. A VALIDATE or NONE deployment drops them by hand; checkDatabase() reports one that
+	-- is still there, as it reports a replacement that is missing.
+	DROP INDEX IF EXISTS PREFIX_idx_events_tx_position;
+	DROP INDEX IF EXISTS PREFIX_idx_events_context_tx_position;
 
 	-- Allows efficient filtering on multiple dimensions
 	-- Primary index for your most common query pattern

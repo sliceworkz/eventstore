@@ -86,7 +86,6 @@ jobs:
 
           gh release create ${{ github.ref_name }} \
             --title "Release ${{ steps.get_version.outputs.VERSION }}" \
-            --notes "Release version ${{ steps.get_version.outputs.VERSION }}" \
             --generate-notes \
             "${BASELINE[@]}"
         env:

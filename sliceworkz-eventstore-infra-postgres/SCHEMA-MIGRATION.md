@@ -9,6 +9,11 @@ Review briefing 13 — *No schema migration path; `ENSURE` cannot update an exis
 >
 > `PostgresSchemaDriftTest` was inverted along with the fix and now asserts, per backend, both what
 > `ENSURE` repairs and what it still does not.
+>
+> One narrow exception to §1.5's "only the name is checked" has since been made: the two order
+> indexes are validated on their admission predicates as well, because an order index created without
+> one is an index no statement the store issues can enter — maintained on every append and used by
+> nothing — and the name alone cannot tell the two apart. Every other index is still name-only.
 
 The findings in §1 and §2 were measured on PostgreSQL 17 and 18 in Testcontainers *before* the fix, and
 the scenario names quoted there are the pre-inversion ones. The behaviour now is verified on PostgreSQL
@@ -267,7 +272,13 @@ half of that.
 created and, on the default `ENSURE`, it upgrades in place: existing events are untouched, the notify
 functions are replaced with this release's bodies, the triggers are verified and recreated only if
 their shape differs, and objects a newer release added (`idx_events_stream_tags`,
-`idx_events_stream_idempotency`) are created.
+`idx_events_stream_idempotency`) are created. It also **drops** two indexes — `idx_events_tx_position`
+and `idx_events_context_tx_position`, replaced by `idx_events_global_order` and
+`idx_events_context_order`, which are partial on an admission predicate that keeps a stream or context
+read out of them. That is the one non-additive index change `ENSURE` makes, and it is deliberate: left
+in place the superseded indexes are what those reads walk instead of their own, so keeping them as a
+harmless superset would keep the problem. See "Migrating a database created before the order indexes
+carried their admission predicates" in the README for the `CONCURRENTLY` form.
 
 **What it does not do** is anything needing `ALTER TABLE` — still the manual list in `CLAUDE.md`. Three
 of those survive an upgrade: the pre-alignment `stream_purpose DEFAULT ''`, the old table-wide

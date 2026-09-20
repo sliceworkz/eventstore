@@ -18,6 +18,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          # the release notes baseline is derived from the tag list, which a
+          # shallow checkout does not fetch
+          fetch-depth: 0
       
       - name: Set up JDK 21
         uses: actions/setup-java@v5
@@ -50,11 +54,40 @@ jobs:
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
       
+      # Without this, gh lets GitHub infer the baseline for the generated notes,
+      # and GitHub infers it as the newest tag reachable from the tagged commit.
+      # Release tags are created on release/<major>.<minor>, which is cut from
+      # develop and never merged back, so for the first release of every minor
+      # line that walk reaches past the whole branch into develop and finds
+      # whichever tag was last merged there -- not the previous release. The
+      # previous release is a question about version order, so ask it directly.
+      - name: Determine previous release tag
+        id: previous_tag
+        run: |
+          PREVIOUS_TAG=$( git tag --list 'v*.*.*' --sort=-v:refname \
+                          | grep -Ex 'v[0-9]+\.[0-9]+\.[0-9]+' \
+                          | awk -v current="${{ github.ref_name }}" \
+                                'found { print; exit } $0 == current { found = 1 }' )
+
+          if [ -n "$PREVIOUS_TAG" ]; then
+            echo "Release notes baseline: $PREVIOUS_TAG"
+          else
+            echo "No earlier release tag found; leaving the baseline to GitHub"
+          fi
+
+          echo "PREVIOUS_TAG=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
+
       - name: Create GitHub Release
         run: |
+          BASELINE=()
+          if [ -n "${{ steps.previous_tag.outputs.PREVIOUS_TAG }}" ]; then
+            BASELINE=( --notes-start-tag "${{ steps.previous_tag.outputs.PREVIOUS_TAG }}" )
+          fi
+
           gh release create ${{ github.ref_name }} \
             --title "Release ${{ steps.get_version.outputs.VERSION }}" \
             --notes "Release version ${{ steps.get_version.outputs.VERSION }}" \
-            --generate-notes
+            --generate-notes \
+            "${BASELINE[@]}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

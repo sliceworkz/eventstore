@@ -366,26 +366,23 @@ kind, so its cost is **how far into the log the scan must walk**, and not how ma
 
 That makes the obvious sanity check — *"in-memory must beat PostgreSQL on every read, or the harness
 is measuring itself"* — wrong, and it was written into the original plan for this suite. At 10⁵ events
-inmem loses more than half the read shapes, and loses them by two orders of magnitude. From
-`read-shapes` (PG18, Testcontainers, one thread, ops/ms):
+inmem loses five of the twelve read shapes, and loses them by up to two orders of magnitude. From the
+committed `results/0.12.0-SNAPSHOT/read-shapes` run (PG18, Testcontainers, one thread, ops/ms):
 
 | workload | limit? | inmem | postgres:18 | inmem ÷ pg |
 |---|---|---|---|---|
-| `query-by-entity-cold` | none | 0.104 | 8.064 | **0.013** |
-| `query-by-tag-needle` | none | 0.155 | 4.886 | **0.032** |
-| `query-last-event` | 1, backwards | 1.394 | 14.665 | 0.095 |
-| `query-by-tag-swathe` | 500 | 0.124 | 0.591 | 0.21 |
-| `query-by-multi-tag` | 500 | 0.098 | 0.370 | 0.26 |
-| `query-by-entity-hot` | none | 0.054 | 0.046 | 1.17 |
-| `query-cursor-walk` | 500 | 0.471 | 0.179 | 2.6 |
-| `query-by-type` | 500 | 2.850 | 0.892 | 3.2 |
-| `query-stream-page` | 500 | 3.321 | 0.873 | 3.8 |
-| `query-by-or-groups` | 500 | 1.460 | 0.354 | 4.1 |
-| `query-by-id` | map lookup | 1928 | 47.1 | 41 |
-| `query-wildcard` | 500 | 5.013 | 0.054 | 93 |
-
-(The `query-wildcard` row is from a run whose schema had no `idx_events_tx_position`; on the current
-schema that read is a walk of that index, and the row is due for a re-run.)
+| `query-by-entity-cold` | none | 0.146 | 8.674 | **0.017** |
+| `query-by-tag-needle` | none | 0.154 | 3.679 | **0.042** |
+| `query-last-event` | 1, backwards | 1.680 | 14.857 | 0.11 |
+| `query-by-multi-tag` | 500 | 0.155 | 0.392 | 0.40 |
+| `query-by-tag-swathe` | 500 | 0.415 | 0.485 | 0.86 |
+| `query-by-entity-hot` | none | 0.068 | 0.048 | 1.4 |
+| `query-cursor-walk` | 500 | 0.495 | 0.177 | 2.8 |
+| `query-by-type` | 500 | 2.775 | 0.970 | 2.9 |
+| `query-stream-page` | 500 | 3.159 | 0.936 | 3.4 |
+| `query-by-or-groups` | 500 | 1.471 | 0.377 | 3.9 |
+| `query-wildcard` | 500 | 22.07 | 1.081 | 20 |
+| `query-by-id` | map lookup | 2005 | 44.8 | 45 |
 
 The rule that fits every row: **inmem wins exactly where a limit fills before the scan gets far.**
 `query-by-tag-needle` carries no limit and matches ten events, so it walks all 100.000 at ~64ns each;
@@ -399,10 +396,11 @@ So the real check, and what a broken harness would look like:
 - **inmem beating PostgreSQL on limited reads over dense matches, and losing on selective unlimited
   ones, is correct.** Both directions are expected.
 - **inmem losing on `query-stream-page`, `query-by-id` or `query-wildcard` would be a fault** — those
-  are a bounded walk from the head and a map lookup, with nothing for an index to improve.
+  are a bounded walk from a cursor and a map lookup. PostgreSQL answers all three off an index, so
+  what is left between them is JDBC and the serde, not a scan.
 - **The two backends landing within ~20% of each other on a read returning thousands of events is also
   correct**, and it is the clearest thing in the table: `query-by-entity-hot` returns 6.876 events and
-  comes out 0.054 against 0.046, because at that size both are paying the same per-event
+  comes out 0.068 against 0.048, because at that size both are paying the same per-event
   deserialisation and the storage difference washes out. That per-event cost is ~2µs — see below.
 
 **The practical consequence for anyone using the library**: prototyping tag-query cost against the

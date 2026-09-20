@@ -71,21 +71,64 @@ bounded is mostly per-event and downstream of the query; and tuning the database
 move for a read that returns thousands of events, because the database is not where the time is going.
 (Testcontainers on a developer machine — the magnitude, not the third digit.)
 
-**Three read shapes are worth reading the captured plans for.**
+**Four read shapes are worth reading the captured plans for.**
 
-- **A wildcard read is an index walk only because of `idx_events_tx_position`, and the committed
-  `query-wildcard` rows were measured without it.** `EventStreamId.anyContext()` binds no stream
-  column, so `ORDER BY event_tx, event_position` has nothing to walk in the stream indexes, which all
-  lead with `(stream_context, stream_purpose)`; the B-tree on the global `(event_tx, event_position)`
-  order is what supplies the order, entered at the cursor, so a page costs the page. The runs under
-  `results/0.11.0-SNAPSHOT` predate that index in the schema, and their `query-wildcard` rows show
-  what the read costs without it: PG18 answers the `limit(500)` with a **parallel sequential scan over
-  all 100.000 rows** feeding a top-N heapsort — 4.428 buffers and ~20ms for 500 events, the size of
-  the store and not the size of the page. Quote those rows as the cost of a store whose schema is
-  missing the index (a `VALIDATE` deployment reports one), not as the cost of a wildcard read; a
-  re-run of `read-shapes` on the current schema is what replaces them. The paths that legitimately
-  use a wildcard stream — the raw import check, an export, a store-wide projection — are what the
-  index is for.
+- **A wildcard read is an index walk only because of `idx_events_global_order`, and that is what stops
+  it scaling with the table.** `EventStreamId.anyContext()` binds no stream column, so
+  `ORDER BY event_tx, event_position` has nothing to walk in the stream indexes, which all lead with
+  `(stream_context, stream_purpose)`; the B-tree on the global `(event_tx, event_position)` order is
+  what supplies the order, entered at the cursor, so a page costs the page. The two 0.12 runs measure
+  exactly that, and the 0.11 runs — whose schema predates the index — are the control:
+
+  | `query-wildcard`, `limit(500)` | 0.11 (no order index) | 0.12 |
+  |---|---|---|
+  | `read-shapes`, 100.000 events | 0.053 ops/ms, parallel seq scan, 4.428 buffers | **1.081 ops/ms**, index scan, **24 buffers** |
+  | `crowded-store`, 600.000 events | 0.013 ops/ms, parallel seq scan, 23.731 buffers | **1.246 ops/ms**, index scan, **24 buffers** |
+
+  Without the index a 6× bigger table costs 4× more (19.6 → 76.9 ms/op) and the read is the size of
+  the store; with it the two tables measure the same and both pages cost 24 buffers, which is the
+  whole claim "a page costs the page" stated as a measurement. Quote the 0.11 rows only as the cost of
+  a store whose schema is missing the index — a `VALIDATE` deployment reports one. The paths that
+  legitimately use a wildcard stream — the raw import check, an export, a store-wide projection — are
+  what the index is for.
+- **The order indexes' admission predicates are worth reading the plans for, and nothing else.** Both
+  wider order indexes are partial on a tautology only a read of their own scope carries, which is what
+  keeps a stream or context read out of them (the postgres module file has the mechanism). Two
+  profiles capture what that changes, and in both it is the captured plan that says it — **no measured
+  median moves**, because the workloads that were on the wrong plan happened to be the ones where the
+  wrong plan was free.
+  - **`crowded-store`, `most recent event, backwards limit 1`** — the tag-only backwards read a
+    decider takes its boundary with. It walked `idx_events_tx_position` backwards, discarding
+    **545.020** rows of five other bounded contexts to find one: **113.059 ms**, 4.921 buffers hit and
+    20.264 read. Off `idx_events_stream_position` it is **0.052 ms**, 20 rows discarded, 5 buffers.
+    `MULTI_DOMAIN` is why this profile catches it and the single-domain ones do not: neighbours in the
+    same table are what puts a stream's newest matching event far back in the global order.
+  - **`dcb-boundary-staleness`, the DCB check itself** — `decide-then-append-fresh`, custom plan,
+    entered `idx_events_tx_position` on the row comparison **alone**, with both stream columns as a
+    `Filter`; the generic plan entered `idx_events_context_tx_position` with `stream_purpose` as a
+    `Filter`. Both now enter `idx_events_stream_position` with `stream_context`, `stream_purpose` and
+    the row comparison all in the `Index Cond`. **The append rates do not move** (five workloads,
+    every one within 3%), because this corpus is one stream per context and a fresh cursor, so
+    entering at the context and filtering the purpose is the same walk over the same rows. That is
+    the point worth keeping: the bad plan sat in these reports all along, costing nothing because the
+    corpus kept the cursor at the end of the log, and it is a stale cursor or a second purpose that
+    turns it into the whole table.
+  - **The stale-cursor cost is unchanged, and should be.** `append-stale-boundary` still walks its
+    **2.750.026** rows at ~500 ms on both plans — that is the documented O(events since the cursor)
+    price of a boundary held long, not something an index choice can fix.
+  - **Nothing else moved**, and the pair that says so carries its own control. These five profiles
+    were also run on the same machine against the previous schema — a scratch run, not published,
+    since its only value is the diff — and every delta against it is run-to-run noise. The `inmem`
+    target is what turns that from an assertion into a measurement: it cannot be affected by a
+    PostgreSQL index at all, and it drifts by the same amounts (median |Δ| 1.1%, max 17.5%, 3 of 48
+    over 10%) as `postgres:18` does (1.6%, 19.8%, 3 of 48). The one PostgreSQL move outside that band
+    that sits on a read this touches is `read-shapes/query-wildcard`, and its plan is byte-identical
+    on both sides — same node, same `cost=0.42..1383.03`, same `Buffers: shared hit=24`, only the
+    index name differs. Read a pair like that for its control, never for its absolute deltas. A
+    profile whose *throughput* moved would need a corpus none of these have: a stream that is a large
+    share of the table, quiet while its neighbours wrote, with those neighbours interleaved in the
+    heap. `PostgresOrderIndexAdmissionTest` builds exactly that, which is where the per-version
+    evidence lives.
 - **An OR-of-facts read does not use the tag index at all.** `query-by-or-groups` (five items, each a
   type set plus a `sku:` tag) plans as an ordered index scan on `idx_events_stream_position` with the
   whole disjunction as a `Filter` — 2.196 rows discarded to return 500. The tag index serves a single
@@ -101,10 +144,12 @@ move for a read that returns thousands of events, because the database is not wh
 **The in-memory backends are an unindexed linear scan, so they are not a "fast store" the database
 should beat.** `InMemoryEventStorageImpl` holds a `List` and matches in Java, with `Stream.limit` on
 top: its cost is *how far into the log the scan walks*, not how many events come back. At 100.000
-events that makes it **31× slower than PostgreSQL on a needle tag query** (0.155 against 4.886 ops/ms)
-and **78× slower reading one long-tail entity's history** (0.104 against 8.064), while still being
-3–90× *faster* on the shapes where a limit fills immediately — a page, `getEventById`, and in the
-committed run the wildcard read, measured there without `idx_events_tx_position`.
+events that makes it **24× slower than PostgreSQL on a needle tag query** (0.154 against 3.679 ops/ms)
+and **59× slower reading one long-tail entity's history** (0.146 against 8.674), while still being
+1.4–45× *faster* on the shapes where a limit fills immediately — `getEventById` (45×), the wildcard
+read (20×) and a stream page (3.4×). Figures from the committed 0.12 `read-shapes` run; the wildcard
+row was 86× before the order index existed, and PostgreSQL closed most of that gap by answering it
+from the index rather than by scanning.
 The rule that fits every row is that a limit only helps when the matches are dense enough to fill it
 early.
 
@@ -153,11 +198,12 @@ those same 40.227 rows through the bare tag index: 239 buffers and 4.43ms, again
 **30× to 153×** — so crowding a table does not slow the most common DCB read down, it enlarges the
 blast radius of a statistics change that would.
 
-**The `query-wildcard` rows, measured without `idx_events_tx_position`, scale with the table.**
-0.051 → 0.013 ops/ms (19.6 → 76.9 ms/op) for a 6× bigger table: parallel sequential scan over all
-600.000 rows, 23.731 buffers, and JIT compilation on top. Sub-linear only because two parallel
-workers absorb some of it. That is what the read costs on a schema missing the index; on the current
-schema it is a walk of that index and the row is due for a re-run.
+**The `query-wildcard` row is the one the order index changed, and it no longer scales with the
+table.** Measured without `idx_events_global_order` it went 0.051 → 0.013 ops/ms (19.6 → 76.9 ms/op)
+for a 6× bigger table — a parallel sequential scan over all 600.000 rows, 23.731 buffers, with JIT
+compilation on top, sub-linear only because two parallel workers absorbed some of it. On the current
+schema the same read is 1.246 ops/ms off a 24-buffer index walk, against 1.081 on the 6× smaller
+`read-shapes` table: the two are the same number, which is what "a page costs the page" means.
 
 **The caveat that keeps this honest: the noise is written as contiguous blocks after the context
 under test** (`CorpusGenerator` generates inventory, then sales, then each noise context in turn),
@@ -178,8 +224,9 @@ queue, `pg_snapshot_xmin`.
 **The answer is nothing measurable.** All twelve read shapes land inside the run-to-run band against
 the `read-shapes` control (0.94–1.18×, and the two ends of that are the needle tag query and
 `query-by-id`, both of which move that much between two runs of the *same* profile). The wildcard
-read — in this run a scan of the store's own table, measured without `idx_events_tx_position` — is
-0.051 against 0.051, which is the row
+read — a scan of the store's own table in this 0.11 run, whose schema had no
+`idx_events_global_order`; the current schema answers it from that index, and there is no 0.12
+`crowded-database` run — is 0.051 against 0.051, which is the row
 that says the neighbours really are in different tables: it scans the store under test and never
 touches them.
 
@@ -432,7 +479,7 @@ tagged, PG18, 0.00% store drift on both sides, with `append-none` as the control
   4.2× single-threaded and grows with writers, which is the signature of contention rather than of a
   cheaper plan.
 - **The one cost in this run is paging a context in order: 13–15× slower — and the run was measured
-  without `idx_events_context_tx_position`, the index that serves exactly that read.** Under
+  without `idx_events_context_order`, the index that serves exactly that read.** Under
   `per-entity`, reading a whole context *is* a cross-entity read, so `stream_purpose` is unbound, and
   it is the second column of both `idx_events_stream_position` and `idx_events_stream_tags`: on that
   schema an ordered read lost its start condition and the `LIMIT` could not be pushed into the scan.

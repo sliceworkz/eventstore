@@ -1990,7 +1990,7 @@ each figure as Testcontainers-on-a-developer-machine unless the module file says
   with `EventQuery.limit(n)` is worth more than it looks, and tuning the database is the wrong first
   move for a read returning thousands of events.
 - **The in-memory backends are unindexed linear scans** — a correctness substitute, never a
-  performance one. They lose selective tag queries by 30–90× (exactly the case the GIN index exists
+  performance one. They lose selective tag queries by 24–59× (exactly the case the GIN index exists
   for) and win only where a limit fills before the scan gets far; prototyping tag-query cost against
   them points backwards.
 - **Stream design** (`stream-design-*` pair): **`PER_ENTITY` wins or ties everything except reading a

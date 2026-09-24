@@ -52,7 +52,6 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
 
 import com.zaxxer.hikari.HikariDataSource;
 
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 /**
  * The wait for an advisory lock is bounded by {@code lockTimeout}, scoped to the transaction that set it,
@@ -106,7 +105,6 @@ class PostgresLockTimeoutTest {
 				.dataSource(main)
 				.monitoringDataSource(monitoring)
 				.databaseInitMode(DatabaseInitMode.RECREATE)
-				.meterRegistry(new SimpleMeterRegistry())
 				.lockTimeout(lockTimeout)
 				.build();
 	}
@@ -264,7 +262,6 @@ class PostgresLockTimeoutTest {
 				.prefix("lt_default_")
 				.dataSource(main)
 				.databaseInitMode(DatabaseInitMode.RECREATE)
-				.meterRegistry(new SimpleMeterRegistry())
 				.build() ) {
 			PostgresEventStorageImpl impl = assertInstanceOf(PostgresEventStorageImpl.class, storage);
 			assertEquals(PostgresEventStorage.Builder.DEFAULT_LOCK_TIMEOUT, impl.lockTimeout());

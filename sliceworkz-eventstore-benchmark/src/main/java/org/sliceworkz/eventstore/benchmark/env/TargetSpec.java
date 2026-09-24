@@ -24,13 +24,15 @@ import java.time.Duration;
  *
  * <p>Everything here is a property of the <em>store</em> rather than of its contents; what the store
  * holds is a {@code CorpusSpec}. The split matters because one corpus is measured through several
- * targets -- the same ten million events read once with metrics off and once with an unlimited
- * purpose cap -- and because a corpus is expensive to build while a target is free to open.
+ * targets -- the same ten million events read in memory and on PostgreSQL, or with and without a
+ * result limit -- and because a corpus is expensive to build while a target is free to open.
+ *
+ * <p>A target is measured unobserved: the store reports to {@code EventStoreObserver.NOOP}. What an
+ * observer costs is the observer's own, and is measured with it, outside this suite.
  *
  * @param backend which storage implementation
  * @param server where PostgreSQL comes from; ignored for {@link Backend#INMEM}
  * @param image the container image for {@link PostgresServer#TESTCONTAINERS}, e.g. {@code postgres:18}
- * @param metrics how much instrumentation the store carries
  * @param shredding whether a shredding codec is configured, which the {@code crm} context requires
  * @param resultLimit the storage-wide absolute result limit, or {@code null} for none
  * @param schemaMode what the store is allowed to do to the schema when it opens
@@ -40,7 +42,6 @@ public record TargetSpec (
 		Backend backend,
 		PostgresServer server,
 		String image,
-		MetricsMode metrics,
 		boolean shredding,
 		Integer resultLimit,
 		SchemaMode schemaMode,
@@ -76,31 +77,6 @@ public record TargetSpec (
 	}
 
 	/**
-	 * How much instrumentation the store carries. A dimension rather than a setting: the suite is
-	 * expected to answer what the library's own meters cost, and that question needs the same
-	 * workload run with and without them.
-	 */
-	public enum MetricsMode {
-		/**
-		 * No instrumentation. A store still needs a registry -- the constructor rejects null -- so this
-		 * uses a composite with no children attached, whose meters are no-ops. As close to "off" as the
-		 * API allows.
-		 */
-		OFF,
-		/**
-		 * A real registry with the default cap of 1000 distinct {@code purpose} tag values. What a
-		 * sensible deployment looks like.
-		 */
-		CAPPED,
-		/**
-		 * A real registry with no cap. Interesting only against a {@code per-entity} stream design,
-		 * where it is the configuration that registers a meter per entity -- the behaviour the cap
-		 * exists to prevent, measured rather than asserted.
-		 */
-		UNLIMITED
-	}
-
-	/**
 	 * What a store may do to the schema as it opens.
 	 *
 	 * <p>Deliberately narrower than {@code DatabaseInitMode}: there is no mode here that drops
@@ -124,9 +100,6 @@ public record TargetSpec (
 		if ( backend == null ) {
 			throw new IllegalArgumentException("a target needs a backend");
 		}
-		if ( metrics == null ) {
-			metrics = MetricsMode.OFF;
-		}
 		if ( schemaMode == null ) {
 			schemaMode = SchemaMode.ENSURE;
 		}
@@ -146,16 +119,15 @@ public record TargetSpec (
 		}
 	}
 
-	/** The in-memory baseline, with no instrumentation and no shredding. */
+	/** The in-memory baseline, with no shredding. */
 	public static TargetSpec inmem ( ) {
-		return new TargetSpec(Backend.INMEM, null, null, MetricsMode.OFF, false, null, SchemaMode.ENSURE,
-				null);
+		return new TargetSpec(Backend.INMEM, null, null, false, null, SchemaMode.ENSURE, null);
 	}
 
-	/** A containerised PostgreSQL of the given image, with no instrumentation and no shredding. */
+	/** A containerised PostgreSQL of the given image, with no shredding. */
 	public static TargetSpec postgres ( String image ) {
 		return new TargetSpec(Backend.POSTGRES, PostgresServer.TESTCONTAINERS, image,
-				MetricsMode.OFF, false, null, SchemaMode.ENSURE, null);
+				false, null, SchemaMode.ENSURE, null);
 	}
 
 	/** Whether measuring this target needs a Docker daemon. */
@@ -170,7 +142,6 @@ public record TargetSpec (
 			case INMEM -> "inmem";
 			case POSTGRES -> server == PostgresServer.EXTERNAL ? "postgres:external" : image;
 		});
-		description.append("/metrics=").append(metrics.name().toLowerCase());
 		if ( shredding ) {
 			description.append("/shredding");
 		}

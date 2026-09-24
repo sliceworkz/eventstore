@@ -79,7 +79,6 @@ the rejected uniform-`NOT EXISTS` alternative keeps its committed baselines unde
 | `write-contention-spread` / `-one-stream` / `-one-boundary` | where throughput saturates, and how much is the advisory lock versus conflict-retry | ~20 min each |
 | `read-shapes` ⇄ `crowded-store` ⇄ `crowded-database` | what a store holding other domains costs, and separately what sharing a database costs | ~20 min each |
 | `stream-design-tagged` ⇄ `stream-design-per-entity` | which stream design to pick | ~40 min each |
-| `metrics-cost` | what the library's own meters cost — three targets in one run, no `compare` needed | ~10 min |
 | `shredding-cost` | what crypto-shredding costs per event and per new data subject | ~8 min |
 | `upcasting-cost` ⇄ `read-shapes` | what reading history through upcasters costs | ~10 min |
 | `replay-throughput` | what a read-model rebuild costs | ~10 min |
@@ -153,7 +152,6 @@ corpus:
 targets:                        # several targets over one corpus; each measured separately
   - backend: POSTGRES           # INMEM | POSTGRES
     server: EXTERNAL            # TESTCONTAINERS | EXTERNAL
-    metrics: OFF                # OFF | CAPPED | UNLIMITED
     schemaMode: VALIDATE        # ENSURE | VALIDATE | NONE
     shredding: false
     resultLimit: null

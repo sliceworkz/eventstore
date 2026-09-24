@@ -26,7 +26,7 @@ import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.query.Limit;
 
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.sliceworkz.eventstore.observability.EventStoreObserver;
 
 /**
  * The two timeouts that bound a wait nothing else bounds — the advisory lock wait and the silence on a
@@ -47,7 +47,7 @@ class PostgresTimeoutOptionsTest {
 
 	@Test
 	void aStorageNobodyConfiguredCarriesTheDefaults ( ) {
-		try ( PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl("opts", null, null, Limit.none(), "", false, new SimpleMeterRegistry()) ) {
+		try ( PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl("opts", null, null, Limit.none(), "", false, EventStoreObserver.NOOP, null) ) {
 			assertEquals(PostgresEventStorage.Builder.DEFAULT_LOCK_TIMEOUT, storage.lockTimeout());
 			assertEquals(PostgresEventStorage.Builder.DEFAULT_NOTIFICATION_PROBE_INTERVAL, storage.notificationProbeInterval());
 		}
@@ -55,7 +55,7 @@ class PostgresTimeoutOptionsTest {
 
 	@Test
 	void theStorageSettersValidateAndNullRestoresTheDefault ( ) {
-		try ( PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl("opts", null, null, Limit.none(), "", false, new SimpleMeterRegistry()) ) {
+		try ( PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl("opts", null, null, Limit.none(), "", false, EventStoreObserver.NOOP, null) ) {
 			assertEquals(Duration.ofSeconds(3), storage.lockTimeout(Duration.ofSeconds(3)).lockTimeout());
 			assertEquals(Duration.ZERO, storage.lockTimeout(Duration.ZERO).lockTimeout(), "zero is PostgreSQL's 'no lock_timeout' and is allowed");
 			assertEquals(PostgresEventStorage.Builder.DEFAULT_LOCK_TIMEOUT, storage.lockTimeout(null).lockTimeout());

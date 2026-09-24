@@ -64,8 +64,7 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 
-import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.sliceworkz.eventstore.observability.EventStoreObserver;
 
 /**
  * What happens at startup when the database the LISTEN/NOTIFY monitors need is not there.
@@ -145,8 +144,8 @@ class PostgresNotificationStartupTest {
 		return new HikariDataSource(config);
 	}
 
-	private static double gauge ( MeterRegistry registry, String channel ) {
-		return registry.get("sliceworkz.eventstore.notifications.up").tag("channel", channel).gauge().value();
+	private static double gauge ( NotificationChannels registry, String channel ) {
+		return registry.state(channel);
 	}
 
 	/**
@@ -202,7 +201,7 @@ class PostgresNotificationStartupTest {
 			try ( HikariDataSource unreachable = unreachablePool("unreachable-leak") ) {
 
 				PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl(
-					"startup-leak", unreachable, unreachable, Limit.none(), "", false, new SimpleMeterRegistry());
+					"startup-leak", unreachable, unreachable, Limit.none(), "", false, EventStoreObserver.NOOP, null);
 
 				assertThrows(EventStorageException.class, () -> storage.start(Duration.ofSeconds(1)));
 
@@ -216,10 +215,10 @@ class PostgresNotificationStartupTest {
 		@Test
 		void testTheGaugeSaysNotificationsAreDown ( ) throws Exception {
 			try ( HikariDataSource unreachable = unreachablePool("unreachable-gauge") ) {
-				MeterRegistry registry = new SimpleMeterRegistry();
+				NotificationChannels registry = new NotificationChannels();
 
 				PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl(
-					"startup-gauge", unreachable, unreachable, Limit.none(), "", false, registry);
+					"startup-gauge", unreachable, unreachable, Limit.none(), "", false, registry, null);
 
 				// registered by the constructor, before anything has been started: a gauge that only appears
 				// once notifications work cannot be alerted on
@@ -287,7 +286,7 @@ class PostgresNotificationStartupTest {
 			try ( HikariDataSource unreachable = unreachablePool("unreachable-close") ) {
 
 				PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl(
-					"startup-close", main, unreachable, Limit.none(), "close_", false, new SimpleMeterRegistry());
+					"startup-close", main, unreachable, Limit.none(), "close_", false, EventStoreObserver.NOOP, null);
 				storage.recreateDatabase();
 
 				// a deliberately long deadline: this is the case where only close() can release the caller
@@ -324,7 +323,7 @@ class PostgresNotificationStartupTest {
 			try ( HikariDataSource unreachable = unreachablePool("unreachable-interrupt") ) {
 
 				PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl(
-					"startup-interrupt", main, unreachable, Limit.none(), "interrupt_", false, new SimpleMeterRegistry());
+					"startup-interrupt", main, unreachable, Limit.none(), "interrupt_", false, EventStoreObserver.NOOP, null);
 				storage.recreateDatabase();
 
 				AtomicBoolean returnedNormally = new AtomicBoolean();
@@ -360,10 +359,10 @@ class PostgresNotificationStartupTest {
 		void testStartupWaitsOutADatabaseThatIsSlowToArrive ( ) throws Exception {
 			DataSource main = PostgresContainer.dataSource(PostgresContainer.IMAGE_PG18);
 			SwitchableDataSource monitoring = new SwitchableDataSource(main, true);
-			MeterRegistry registry = new SimpleMeterRegistry();
+			NotificationChannels registry = new NotificationChannels();
 			try {
 				PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl(
-					"slow-arrival", main, monitoring, Limit.none(), "slow_", false, registry);
+					"slow-arrival", main, monitoring, Limit.none(), "slow_", false, registry, null);
 				storage.recreateDatabase();
 
 				CompletableFuture<Void> starting = CompletableFuture.runAsync(
@@ -390,10 +389,10 @@ class PostgresNotificationStartupTest {
 		void testARunningStoreThatLosesItsNotificationsSaysSoAndGetsThemBack ( ) throws Exception {
 			DataSource main = PostgresContainer.dataSource(PostgresContainer.IMAGE_PG18);
 			SwitchableDataSource monitoring = new SwitchableDataSource(main, false);
-			MeterRegistry registry = new SimpleMeterRegistry();
+			NotificationChannels registry = new NotificationChannels();
 			try {
 				PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl(
-					"losing-notifications", main, monitoring, Limit.none(), "losing_", false, registry);
+					"losing-notifications", main, monitoring, Limit.none(), "losing_", false, registry, null);
 				storage.recreateDatabase();
 				storage.start(MUST_RETURN_WITHIN);
 				assertTrue(storage.isNotificationsAvailable());
@@ -427,10 +426,10 @@ class PostgresNotificationStartupTest {
 		@Test
 		void testWhatArrivesOnTheChannelCannotKillAMonitor ( ) throws Exception {
 			DataSource main = PostgresContainer.dataSource(PostgresContainer.IMAGE_PG18);
-			MeterRegistry registry = new SimpleMeterRegistry();
+			NotificationChannels registry = new NotificationChannels();
 			try {
 				PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl(
-					"junk-on-the-channel", main, main, Limit.none(), "junk_", false, registry);
+					"junk-on-the-channel", main, main, Limit.none(), "junk_", false, registry, null);
 				storage.recreateDatabase();
 				storage.start(MUST_RETURN_WITHIN);
 				RecordingListener listener = new RecordingListener();
@@ -473,7 +472,7 @@ class PostgresNotificationStartupTest {
 			SwitchableDataSource monitoring = new SwitchableDataSource(main, false);
 			try {
 				PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl(
-					"closing-in-outage", main, monitoring, Limit.none(), "outage_", false, new SimpleMeterRegistry());
+					"closing-in-outage", main, monitoring, Limit.none(), "outage_", false, EventStoreObserver.NOOP, null);
 				storage.recreateDatabase();
 				storage.start(MUST_RETURN_WITHIN);
 

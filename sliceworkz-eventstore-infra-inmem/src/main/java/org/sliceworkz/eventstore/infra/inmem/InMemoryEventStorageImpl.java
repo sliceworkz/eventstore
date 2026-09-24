@@ -45,6 +45,7 @@ import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.Limit;
+import org.sliceworkz.eventstore.observability.EventStoreObserver;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.spi.EventImportConflictException;
 import org.sliceworkz.eventstore.spi.EventStorage;
@@ -154,6 +155,9 @@ class InMemoryEventStorageImpl implements EventStorage {
 	// Never used here: the storage stores sealed envelopes as opaque JSON. Held so that a store built on
 	// this storage through the factory finds the codec the builder was given (EventStorage.shreddingCodec()).
 	private final ShreddingCodec shreddingCodec;
+	// Reported to for this storage's own lifecycle, and answered from observer() so a store built on it
+	// reports its operations to the same observer. This backend notifies in-process: it has no channels.
+	private final EventStoreObserver observer;
 
 	/**
 	 * Constructs a new in-memory event storage instance without shredding, preloaded with the given
@@ -167,7 +171,7 @@ class InMemoryEventStorageImpl implements EventStorage {
 	 * @see InMemoryEventStorage.Builder#build()
 	 */
 	InMemoryEventStorageImpl ( String name, Limit absoluteLimit, List<StoredEvent> initialEvents, Map<String, Bookmark> initialBookmarks ) {
-		this(name, absoluteLimit, initialEvents, initialBookmarks, null);
+		this(name, absoluteLimit, initialEvents, initialBookmarks, null, EventStoreObserver.NOOP);
 	}
 
 	/**
@@ -184,10 +188,11 @@ class InMemoryEventStorageImpl implements EventStorage {
 	 * @param initialEvents events to preload, in order
 	 * @param initialBookmarks bookmarks to preload, by reader
 	 * @param shreddingCodec seals and unseals protected values, or null for a storage without shredding
+	 * @param observer what this storage, and a store built on it, report to
 	 * @throws IllegalArgumentException if name is null or blank
 	 * @see InMemoryEventStorage.Builder#build()
 	 */
-	InMemoryEventStorageImpl ( String name, Limit absoluteLimit, List<StoredEvent> initialEvents, Map<String, Bookmark> initialBookmarks, ShreddingCodec shreddingCodec ) {
+	InMemoryEventStorageImpl ( String name, Limit absoluteLimit, List<StoredEvent> initialEvents, Map<String, Bookmark> initialBookmarks, ShreddingCodec shreddingCodec, EventStoreObserver observer ) {
 		if ( name == null || "".equals(name.strip())) {
 			throw new IllegalArgumentException("name must not be empty");
 		}
@@ -197,6 +202,7 @@ class InMemoryEventStorageImpl implements EventStorage {
 		this.jsonMapper = JsonMapper.builder().build();
 		this.absoluteLimit = absoluteLimit;
 		this.shreddingCodec = shreddingCodec;
+		this.observer = EventStoreObserver.contained(observer);
 		// The log is kept in (tx, position) order -- the order every read walks, the cursor is found in,
 		// and the until short-circuits and head() rely on. Appends produce it by construction, since both
 		// counters advance under the same lock; a preloaded log is put in it here rather than trusted
@@ -243,6 +249,9 @@ class InMemoryEventStorageImpl implements EventStorage {
 				idempotencyKeys.add(new IdempotencyScope(event.stream(), event.idempotencyKey()));
 			}
 		}
+
+		// nothing further to start: an in-memory storage is ready once it is constructed
+		this.observer.storageStarted(name);
 	}
 
 	/**
@@ -855,8 +864,15 @@ class InMemoryEventStorageImpl implements EventStorage {
 	 */
 	@Override
 	public void close ( ) {
-		closed.set(true);
-		listeners.clear();
+		if ( closed.compareAndSet(false, true) ) {
+			listeners.clear();
+			observer.storageClosed(name);
+		}
+	}
+
+	@Override
+	public EventStoreObserver observer ( ) {
+		return observer;
 	}
 
 	private void checkNotClosed ( ) {

@@ -34,7 +34,6 @@ targets:
   - backend: POSTGRES
     server: TESTCONTAINERS
     image: "postgres:18"
-    metrics: OFF
 
 load:
   - scenario: notify-latency

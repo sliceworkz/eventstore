@@ -75,7 +75,7 @@ final class RefusingShreddableModule extends SimpleModule {
 		@Override
 		public void serialize ( Shreddable<?> value, JsonGenerator generator, SerializationContext context ) {
 			throw new IllegalStateException(
-					"cannot store a Shreddable value (subject %s): this store has no ShreddingCodec configured, so personal data would be written in the clear and could never be erased. The component holding it is declared as an interface or a non-record class, which is why registering the event type did not refuse it. Configure shredding on the storage builder, or via EventStoreFactory.eventStore(storage, registry, meterOptions, codec)."
+					"cannot store a Shreddable value (subject %s): this store has no ShreddingCodec configured, so personal data would be written in the clear and could never be erased. The component holding it is declared as an interface or a non-record class, which is why registering the event type did not refuse it. Configure shredding on the storage builder, or via EventStore.on(storage).shredding(codec)."
 							.formatted(value.subject()));
 		}
 

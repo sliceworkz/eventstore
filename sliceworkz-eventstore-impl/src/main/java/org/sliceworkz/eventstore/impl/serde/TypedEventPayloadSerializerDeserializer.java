@@ -180,7 +180,7 @@ public class TypedEventPayloadSerializerDeserializer extends AbstractEventPayloa
 			// no key to seal with, so it would write personal data in the clear and leave nothing to
 			// destroy when an erasure is asked for.
 			throw new IllegalArgumentException(
-					"event type %s declares a Shreddable component but this store has no ShreddingCodec configured; personal data would be stored in the clear and could never be erased. Configure shredding on the storage builder, or via EventStoreFactory.eventStore(storage, registry, meterOptions, codec)."
+					"event type %s declares a Shreddable component but this store has no ShreddingCodec configured; personal data would be stored in the clear and could never be erased. Configure shredding on the storage builder, or via EventStore.on(storage).shredding(codec)."
 							.formatted(clazz.getName()));
 		}
 

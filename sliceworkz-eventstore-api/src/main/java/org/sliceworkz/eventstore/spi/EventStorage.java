@@ -29,6 +29,7 @@ import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.observability.EventStoreObserver;
 import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.Limit;
@@ -460,6 +461,28 @@ public interface EventStorage extends AutoCloseable {
 	 */
 	default Optional<ShreddingCodec> shreddingCodec ( ) {
 		return Optional.empty();
+	}
+
+	/**
+	 * The observer this storage reports to, and that a store built on it reports to unless it is given
+	 * one of its own.
+	 * <p>
+	 * A storage reports its own lifecycle — {@link EventStoreObserver#storageStarted(String) started} at the
+	 * end of its builder's {@code build()}, {@link EventStoreObserver#storageClosed(String) closed} by
+	 * {@link #close()} — and, where its notifications travel over a channel, that channel's health
+	 * ({@link EventStoreObserver#notificationChannelChanged}). The operations a caller performs are
+	 * reported by the {@link org.sliceworkz.eventstore.EventStore} built on it, which finds the observer
+	 * here the same way it finds the {@link #shreddingCodec() codec}: so a builder's {@code .observer(...)}
+	 * is honoured whether the caller ends with {@code build()} and {@code EventStore.on(storage)} or with
+	 * {@code buildStore()}.
+	 * <p>
+	 * The default answers {@link EventStoreObserver#NOOP}, so a storage written before this method existed
+	 * keeps working, observed by nothing.
+	 *
+	 * @return the observer this storage was configured with, {@link EventStoreObserver#NOOP} for none
+	 */
+	default EventStoreObserver observer ( ) {
+		return EventStoreObserver.NOOP;
 	}
 
 	/**

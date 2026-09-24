@@ -59,8 +59,6 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 
-import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 /**
  * A monitor whose socket dies without saying so notices, and replaces it.
@@ -201,8 +199,8 @@ class PostgresMonitorLivenessTest {
 		return new HikariDataSource(config);
 	}
 
-	private static double gauge ( MeterRegistry registry, String channel ) {
-		return registry.get("sliceworkz.eventstore.notifications.up").tag("channel", channel).gauge().value();
+	private static double gauge ( NotificationChannels registry, String channel ) {
+		return registry.state(channel);
 	}
 
 	private static StoredEvent append ( PostgresEventStorage storage ) {
@@ -218,7 +216,7 @@ class PostgresMonitorLivenessTest {
 	void aMonitorWhoseSocketDiesSilentlyDropsItAndListensAgain ( ) throws Exception {
 		URI database = databaseAddress();
 		DataSource main = PostgresContainer.dataSource(PostgresContainer.IMAGE_PG18);
-		MeterRegistry registry = new SimpleMeterRegistry();
+		NotificationChannels registry = new NotificationChannels();
 		try ( BlackholingProxy proxy = new BlackholingProxy(database.getHost(), database.getPort());
 			  HikariDataSource monitoring = monitoringPoolThrough(proxy);
 			  PostgresEventStorage storage = PostgresEventStorage.newBuilder()
@@ -227,7 +225,7 @@ class PostgresMonitorLivenessTest {
 					.dataSource(main)
 					.monitoringDataSource(monitoring)
 					.databaseInitMode(DatabaseInitMode.RECREATE)
-					.meterRegistry(registry)
+					.observer(registry)
 					.notificationProbeInterval(Duration.ofSeconds(1))
 					.build() ) {
 
@@ -278,13 +276,13 @@ class PostgresMonitorLivenessTest {
 	@Test
 	void probingDoesNotDisturbALiveChannel ( ) throws Exception {
 		DataSource main = PostgresContainer.dataSource(PostgresContainer.IMAGE_PG18);
-		MeterRegistry registry = new SimpleMeterRegistry();
+		NotificationChannels registry = new NotificationChannels();
 		try ( PostgresEventStorage storage = PostgresEventStorage.newBuilder()
 					.name("liveness-quiet")
 					.prefix("liveness_quiet_")
 					.dataSource(main)
 					.databaseInitMode(DatabaseInitMode.RECREATE)
-					.meterRegistry(registry)
+					.observer(registry)
 					// far more often than anyone would configure, so that probes interleave with traffic
 					.notificationProbeInterval(Duration.ofMillis(200))
 					.build() ) {

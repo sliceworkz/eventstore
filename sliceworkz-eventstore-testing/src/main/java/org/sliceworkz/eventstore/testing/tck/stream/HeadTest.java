@@ -18,7 +18,6 @@
 package org.sliceworkz.eventstore.testing.tck.stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -47,7 +46,10 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
+import org.sliceworkz.eventstore.observability.Observation;
+import org.sliceworkz.eventstore.observability.Outcome;
 import org.sliceworkz.eventstore.testing.AbstractEventStoreTest;
+import org.sliceworkz.eventstore.testing.RecordingObserver;
 import org.sliceworkz.eventstore.testing.ForEachBackend;
 import org.sliceworkz.eventstore.testing.tck.mock.MockDomainEvent;
 import org.sliceworkz.eventstore.testing.tck.mock.MockDomainEvent.FirstDomainEvent;
@@ -56,8 +58,6 @@ import org.sliceworkz.eventstore.testing.tck.stream.UpcastMultiTest.CurrentEvent
 import org.sliceworkz.eventstore.testing.tck.stream.UpcastMultiTest.LegacyEvents;
 import org.sliceworkz.eventstore.testing.tck.stream.UpcastMultiTest.OriginalEvent;
 
-import io.micrometer.core.instrument.Counter;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 /**
  * {@link org.sliceworkz.eventstore.stream.EventSource#head()}: the reference of the newest stored
@@ -310,22 +310,21 @@ public class HeadTest extends AbstractEventStoreTest {
 	// --- observability ----------------------------------------------------------------------------
 
 	@ForEachBackend
-	void headLookupsAreCountedOnTheirOwnMeter ( ) {
-		SimpleMeterRegistry registry = new SimpleMeterRegistry();
-		try ( EventStore meteredStore = EventStore.on(eventStorage()).meterRegistry(registry).build() ) {
-			EventStream<MockDomainEvent> meteredStream = meteredStore.getEventStream(streamId, MockDomainEvent.class);
+	void headLookupsAreReportedAsTheirOwnObservation ( ) {
+		RecordingObserver observer = new RecordingObserver();
+		try ( EventStore observedStore = EventStore.on(eventStorage()).observer(observer).build() ) {
+			EventStream<MockDomainEvent> observedStream = observedStore.getEventStream(streamId, MockDomainEvent.class);
+			Event<MockDomainEvent> appended = append(observedStream, new FirstDomainEvent("a"));
+			observer.clear();
 
-			Counter head = registry.find("sliceworkz.eventstore.head").counter();
-			assertNotNull(head, "no sliceworkz.eventstore.head counter was registered");
-			assertEquals(0.0, head.count(), "the counter exists from the moment the stream does, reading 0");
+			observedStream.head();
+			assertEquals(Optional.of(appended.reference()),
+					observer.last(Observation.Head.class).outcome(Outcome.HeadRead.class).head());
+			assertTrue(observer.recordings(Observation.Query.class).isEmpty(), "a head lookup is not a query");
 
-			meteredStream.head();
-			assertEquals(1.0, head.count());
-
-			meteredStream.query(EventQuery.matchAll().backwards().limit(1));
-			assertEquals(1.0, head.count(), "a query is not a head lookup");
-			assertEquals(1.0, registry.find("sliceworkz.eventstore.query").counter().count(),
-					"and a head lookup is not a query");
+			observedStream.query(EventQuery.matchAll().backwards().limit(1));
+			assertEquals(1, observer.recordings(Observation.Head.class).size(), "and a query is not a head lookup");
+			assertEquals(1, observer.recordings(Observation.Query.class).size());
 		}
 	}
 

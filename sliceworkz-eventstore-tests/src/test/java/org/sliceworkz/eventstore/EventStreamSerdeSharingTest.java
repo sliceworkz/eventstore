@@ -39,7 +39,6 @@ import org.sliceworkz.eventstore.stream.EventSource;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 /**
  * Pins that {@code getEventStream} shares the payload serializer between streams opened with the same
@@ -80,7 +79,7 @@ class EventStreamSerdeSharingTest {
 	interface BrokenEvent { }
 
 	private static EventStore storeOn ( EventStorage storage ) {
-		return EventStoreFactory.get().eventStore(storage, new SimpleMeterRegistry());
+		return EventStoreFactory.get().eventStore(storage);
 	}
 
 	/**

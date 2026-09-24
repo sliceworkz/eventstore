@@ -29,6 +29,7 @@ import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.observability.EventStoreObserver;
 import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.Limit;
@@ -40,8 +41,6 @@ import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
-
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 /**
  * What the api module can say about building a store with no implementation on the classpath: the
@@ -61,8 +60,7 @@ public class EventStoreTest {
 	void theBuilderFailsAtBuildWithNoImplOnClasspath ( ) {
 		// the lookup is build()'s, not on(): a builder is configured before anything is resolved
 		EventStore.Builder builder = EventStore.on(new StubStorage())
-				.meterRegistry(new SimpleMeterRegistry())
-				.meterOptions(MeterOptions.withoutPurposeBreakdown())
+				.observer(EventStoreObserver.NOOP)
 				.shredding(ShreddingCodec.withholdingAll());
 		EventStorageException e = assertThrows(EventStorageException.class, builder::build);
 		assertEquals("no EventStore implementation found on classpath", e.getMessage());
@@ -78,11 +76,8 @@ public class EventStoreTest {
 	void everySetterRefusesNullAndNamesTheDefaultItWouldOtherwiseKeep ( ) {
 		EventStore.Builder builder = EventStore.on(new StubStorage());
 
-		IllegalArgumentException registry = assertThrows(IllegalArgumentException.class, () -> builder.meterRegistry(null));
-		assertEquals("meterRegistry cannot be null.  Leave it unset for Metrics.globalRegistry", registry.getMessage());
-
-		IllegalArgumentException options = assertThrows(IllegalArgumentException.class, () -> builder.meterOptions(null));
-		assertEquals("meterOptions cannot be null.  Leave it unset for MeterOptions.defaults()", options.getMessage());
+		IllegalArgumentException observer = assertThrows(IllegalArgumentException.class, () -> builder.observer(null));
+		assertEquals("observer cannot be null.  Leave it unset for the storage's own observer", observer.getMessage());
 
 		IllegalArgumentException codec = assertThrows(IllegalArgumentException.class, () -> builder.shredding(null));
 		assertEquals("shreddingCodec cannot be null.  Leave it unset for the storage's own codec", codec.getMessage());
@@ -91,8 +86,7 @@ public class EventStoreTest {
 	@Test
 	void theSettersChain ( ) {
 		EventStore.Builder builder = EventStore.on(new StubStorage());
-		assertSame(builder, builder.meterRegistry(new SimpleMeterRegistry()));
-		assertSame(builder, builder.meterOptions(MeterOptions.defaults()));
+		assertSame(builder, builder.observer(EventStoreObserver.NOOP));
 		assertSame(builder, builder.shredding(ShreddingCodec.withholdingAll()));
 	}
 

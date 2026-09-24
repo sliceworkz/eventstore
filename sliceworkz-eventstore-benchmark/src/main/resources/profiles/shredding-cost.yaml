@@ -27,12 +27,10 @@ corpus:
 targets:
   - backend: INMEM
     shredding: true
-    metrics: OFF
   - backend: POSTGRES
     server: TESTCONTAINERS
     image: "postgres:18"
     shredding: true
-    metrics: OFF
 
 jmh:
   workloads:

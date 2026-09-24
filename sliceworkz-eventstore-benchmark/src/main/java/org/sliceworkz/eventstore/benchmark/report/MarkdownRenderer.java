@@ -174,11 +174,10 @@ final class MarkdownRenderer {
 	/**
 	 * Every workload against every target, with the first target as the reference.
 	 *
-	 * <p>A profile whose targets differ in one setting -- metrics-cost is the type specimen -- exists to
-	 * ask what that setting costs, and the per-target tables below cannot answer it: each describes
-	 * one target, so the reader is left doing the division by hand off the "every measurement" table.
-	 * Both profiles' descriptions promise the comparison needs no second report, and until this
-	 * section they were promising something the report did not render.
+	 * <p>A profile whose targets differ in one setting -- in memory against PostgreSQL, a result limit
+	 * against none -- exists to ask what that setting costs, and the per-target tables below cannot
+	 * answer it: each describes one target, so the reader would be left doing the division by hand off
+	 * the "every measurement" table. This section is the comparison, so it needs no second report.
 	 *
 	 * <p><b>The reference is the first target, and target order is itself a confound.</b> The corpus
 	 * is generated inside the first fork of the first target, so on a fresh container that target is

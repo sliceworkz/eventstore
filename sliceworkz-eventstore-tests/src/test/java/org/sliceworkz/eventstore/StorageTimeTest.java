@@ -23,36 +23,35 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
+import org.sliceworkz.eventstore.observability.Observation;
+import org.sliceworkz.eventstore.observability.Outcome;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
+import org.sliceworkz.eventstore.testing.RecordingObserver;
 
-import io.micrometer.core.instrument.Timer;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 /**
- * Pins what {@code sliceworkz.eventstore.query.duration} measures: the storage fetch, recorded when
- * the query is issued.
+ * Pins what the {@code storageTime} of a read's {@link Outcome.Read} measures: the storage fetch, and
+ * nothing the store does around it.
  * <p>
- * The timer covers the {@link EventStorage#query} call and nothing else. Deserialising and upcasting
- * the result happen inside the same {@code query} call, since it returns a list, but they are the
- * cost of the stream's mappings rather than of the store, and are counted separately per event type
- * by {@code sliceworkz.eventstore.query.event}. The alternative — timing the whole of the stream's
- * {@code query}, fetch and conversion together — loses because a store that is slow and a mapping
- * that is slow then read identically on the dashboard.
+ * The observation of a read spans the whole call — fetching, deserializing, upcasting, unsealing — so
+ * a trace shows what the caller waited for. Its outcome carries the storage's share separately, so an
+ * observer can still tell a store that is slow from a mapping that is slow; the alternative — timing
+ * only the storage call, as the whole observation — loses because the rest of the wait, which on an
+ * ordinary page is most of it, is then attributed to nothing.
  * <p>
- * This test asks a storage whose {@code query} is slow and checks that the timer saw the whole of
- * that delay: a timer that wrapped anything but the storage call would record less.
+ * This test asks a storage whose {@code query} is slow and checks that the storage time saw the whole
+ * of that delay: a stopwatch that wrapped anything but the storage call would record less.
  */
-class QueryTimerTest {
+class StorageTimeTest {
 
 	private static final long STORAGE_QUERY_DELAY_MS = 250;
 
@@ -61,13 +60,13 @@ class QueryTimerTest {
 	}
 
 	@Test
-	void queryTimerMeasuresTheStorageFetchAndNotThePipelineConstruction ( ) {
+	void theStorageTimeOfAReadIsTheStorageFetch ( ) {
 
-		SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+		RecordingObserver observer = new RecordingObserver();
 
-		try ( EventStorage storage = slowQuerying(InMemoryEventStorage.newBuilder().build()) ) {
+		try ( EventStorage storage = slowQuerying(InMemoryEventStorage.newBuilder().build());
+			  EventStore eventStore = EventStore.on(storage).observer(observer).build() ) {
 
-			EventStore eventStore = EventStoreFactory.get().eventStore(storage, meterRegistry);
 			EventStream<TestEvent> stream =
 					eventStore.getEventStream(EventStreamId.forContext("timer"), TestEvent.class);
 
@@ -76,12 +75,12 @@ class QueryTimerTest {
 			List<Event<TestEvent>> events = stream.query(EventQuery.matchAll());
 			assertTrue(events.size() == 1, "expected the one appended event, got " + events.size());
 
-			Timer timer = meterRegistry.find("sliceworkz.eventstore.query.duration").timer();
-			assertTrue(timer != null, "no sliceworkz.eventstore.query.duration timer was registered");
-			assertTrue(timer.count() == 1, "expected exactly one recorded query, got " + timer.count());
-			assertTrue(timer.totalTime(TimeUnit.MILLISECONDS) >= STORAGE_QUERY_DELAY_MS,
-					"query.duration recorded %.1f ms for a storage query that took at least %d ms — the timer is not measuring the storage fetch"
-						.formatted(timer.totalTime(TimeUnit.MILLISECONDS), STORAGE_QUERY_DELAY_MS));
+			List<RecordingObserver.Recording> reads = observer.recordings(Observation.Query.class);
+			assertTrue(reads.size() == 1, "expected exactly one observed read, got " + reads.size());
+			long storageMillis = reads.getFirst().outcome(Outcome.Read.class).storageTime().toMillis();
+			assertTrue(storageMillis >= STORAGE_QUERY_DELAY_MS,
+					"storageTime was %d ms for a storage query that took at least %d ms — it is not measuring the storage fetch"
+						.formatted(storageMillis, STORAGE_QUERY_DELAY_MS));
 		}
 	}
 

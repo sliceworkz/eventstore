@@ -67,7 +67,7 @@ import com.zaxxer.hikari.HikariDataSource;
  * them to {@link PostgresEventStorage.Builder#dataSource(javax.sql.DataSource)}.
  * <p>
  * This factory returns {@link HikariDataSource} rather than a generic DataSource so that the storage can
- * register Micrometer metrics on the pool.
+ * hand the pool a metrics tracker ({@link PostgresEventStorage.Builder#poolMetrics}).
  */
 public class DataSourceFactory {
 

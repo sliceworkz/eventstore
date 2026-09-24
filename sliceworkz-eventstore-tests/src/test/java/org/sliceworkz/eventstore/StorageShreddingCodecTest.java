@@ -44,7 +44,6 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 /**
  * A builder's {@code .shredding(...)} travels with the storage, so it is honoured whether the caller
@@ -105,7 +104,7 @@ public class StorageShreddingCodecTest {
 		// a writer on the storage's own codec, a reader given a codec of its own: the reader must not
 		// silently get the storage's keys instead
 		try ( EventStore writer = EventStoreFactory.get().eventStore(storage);
-			  EventStore reader = EventStoreFactory.get().eventStore(storage, new SimpleMeterRegistry(), MeterOptions.defaults(), ShreddingCodec.withholdingAll()) ) {
+			  EventStore reader = EventStoreFactory.get().eventStore(storage, null, ShreddingCodec.withholdingAll()) ) {
 			writer.getEventStream(STREAM, ContactEvent.class)
 					.append(AppendCriteria.none(), Event.of(new ContactRecorded("c-1", Shreddable.of("Alice Martin", ALICE)), Tags.none()));
 

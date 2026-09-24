@@ -73,7 +73,7 @@ follows the connection back into the pool; the schema scripts' own lock is not u
 before its monitor asks the server whether it is still there. While waiting for notifications the
 driver sends nothing, so a socket whose peer has vanished without closing it — a NAT or firewall that
 dropped its state, a network partition, a crashed host — looks exactly like a quiet channel, and would
-otherwise be read forever with `sliceworkz.eventstore.notifications.up` reading 1. After the interval
+otherwise be read forever with its channel reported up to the observer. After the interval
 without traffic the monitor sends one round trip (bounded at 5 seconds, which is also the network
 timeout every monitoring connection runs under) and replaces a connection that does not answer. A busy
 channel is never probed.

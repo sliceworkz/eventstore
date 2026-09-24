@@ -133,7 +133,7 @@ public final class CorpusProvisioner {
 		long started = System.nanoTime();
 
 		TargetSpec provisioning = new TargetSpec(targetSpec.backend(), targetSpec.server(), targetSpec.image(),
-				targetSpec.metrics(), spec.requiresShredding() || targetSpec.shredding(), targetSpec.resultLimit(),
+				spec.requiresShredding() || targetSpec.shredding(), targetSpec.resultLimit(),
 				TargetSpec.SchemaMode.ENSURE, targetSpec.notificationStartupTimeout());
 
 		BenchmarkTarget target = TargetFactory.open(provisioning, prefix);
@@ -237,7 +237,7 @@ public final class CorpusProvisioner {
 	private void buildNeighbour ( TargetSpec targetSpec, String neighbourPrefix, CorpusSpec neighbourSpec,
 			LongConsumer progress ) {
 		TargetSpec provisioning = new TargetSpec(targetSpec.backend(), targetSpec.server(), targetSpec.image(),
-				TargetSpec.MetricsMode.OFF, neighbourSpec.requiresShredding(), targetSpec.resultLimit(),
+				neighbourSpec.requiresShredding(), targetSpec.resultLimit(),
 				TargetSpec.SchemaMode.ENSURE, targetSpec.notificationStartupTimeout());
 
 		try ( BenchmarkTarget neighbour = TargetFactory.open(provisioning, neighbourPrefix) ) {

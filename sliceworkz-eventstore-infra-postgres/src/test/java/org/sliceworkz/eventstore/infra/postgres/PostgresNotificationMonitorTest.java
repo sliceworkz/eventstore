@@ -42,7 +42,7 @@ import org.sliceworkz.eventstore.spi.EventStorage.BookmarkPlacedNotification;
 import org.sliceworkz.eventstore.spi.EventStorage.EventStoreListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.sliceworkz.eventstore.observability.EventStoreObserver;
 
 /**
  * What a LISTEN/NOTIFY monitor does with what arrives on its channel, without a database.
@@ -92,7 +92,7 @@ class PostgresNotificationMonitorTest {
 	private final List<EventStoreListener> listeners = new CopyOnWriteArrayList<>();
 	private final RecordingListener recording = new RecordingListener();
 	private final PostgresEventStorageImpl storage = new PostgresLegacyEventStorageImpl(
-		"monitor-under-test", NEVER_CONNECTS, NEVER_CONNECTS, Limit.none(), "mon_", false, new SimpleMeterRegistry());
+		"monitor-under-test", NEVER_CONNECTS, NEVER_CONNECTS, Limit.none(), "mon_", false, EventStoreObserver.NOOP, null);
 	private final PostgresEventStorageImpl.NewEventsAppendedMonitor appendMonitor =
 		storage.new NewEventsAppendedMonitor("append-monitor", listeners, NEVER_CONNECTS, new CountDownLatch(1));
 	private final PostgresEventStorageImpl.BookmarkPlacedMonitor bookmarkMonitor =

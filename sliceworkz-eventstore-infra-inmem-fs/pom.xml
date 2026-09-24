@@ -66,10 +66,6 @@
 			<groupId>tools.jackson.core</groupId>
 			<artifactId>jackson-databind</artifactId>
 		</dependency>
-		<dependency>
-			<groupId>io.micrometer</groupId>
-			<artifactId>micrometer-core</artifactId>
-		</dependency>
 	</dependencies>
 
 </project>

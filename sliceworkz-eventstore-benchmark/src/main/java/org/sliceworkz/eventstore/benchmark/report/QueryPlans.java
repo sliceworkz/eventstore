@@ -94,7 +94,7 @@ public final class QueryPlans {
 	 */
 	public static final String SHAPE_TARGET_SEPARATOR = " @ ";
 
-	/** A captured plan's shape, minus the prefix: {@code append-types @ postgres:18/metrics=off}. */
+	/** A captured plan's shape, minus the prefix: {@code append-types @ postgres:18}. */
 	public static String shapeFor ( String workload, String targetLabel ) {
 		return targetLabel == null || targetLabel.isBlank()
 				? workload

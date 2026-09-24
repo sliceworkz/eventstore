@@ -41,7 +41,6 @@
 		<postgresql.jdbc.version>42.7.13</postgresql.jdbc.version>
 		<uuid-creator.version>6.1.1</uuid-creator.version>
 		<hikari.version>7.1.0</hikari.version>
-		<micrometer.version>1.17.1</micrometer.version>
 		<junit-jupiter.version>6.1.3</junit-jupiter.version>
 		<testcontainers.postgresql.version>2.0.5</testcontainers.postgresql.version>
 	    <awaitility.version>4.3.0</awaitility.version>
@@ -158,13 +157,6 @@
 			    <groupId>com.zaxxer</groupId>
 			    <artifactId>HikariCP</artifactId>
 			    <version>${hikari.version}</version>
-			</dependency>
-			
-			<!-- micrometer -->
-			<dependency>
-			    <groupId>io.micrometer</groupId>
-			    <artifactId>micrometer-core</artifactId>
-			    <version>${micrometer.version}</version>
 			</dependency>
 			
 		</dependencies>
@@ -292,6 +284,30 @@
 											<message>Every jar module must set automatic.module.name to its root package name (see sliceworkz-eventstore-parent-pom/pom.xml).</message>
 											<regexMessage>automatic.module.name must be a package-style name under org.sliceworkz.eventstore.</regexMessage>
 										</requireProperty>
+									</rules>
+								</configuration>
+							</execution>
+							<!--
+								The library reports what it does through its own observability SPI
+								(org.sliceworkz.eventstore.observability) and names no metrics library: a
+								binding to one is an application's choice, shipped outside these artifacts.
+								Micrometer reaching any module, in any scope, would be the start of that
+								coupling coming back, so it fails the build.
+							-->
+							<execution>
+								<id>no-micrometer</id>
+								<goals>
+									<goal>enforce</goal>
+								</goals>
+								<configuration>
+									<rules>
+										<bannedDependencies>
+											<message>The eventstore modules must not depend on Micrometer: they report through EventStoreObserver, and a Micrometer binding lives outside this repository.</message>
+											<searchTransitive>true</searchTransitive>
+											<excludes>
+												<exclude>io.micrometer:*</exclude>
+											</excludes>
+										</bannedDependencies>
 									</rules>
 								</configuration>
 							</execution>

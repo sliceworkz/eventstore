@@ -57,8 +57,6 @@ import java.util.stream.Stream;
 
 import javax.sql.DataSource;
 
-import io.micrometer.core.instrument.Metrics;
-import io.micrometer.core.instrument.MeterRegistry;
 
 import org.postgresql.PGConnection;
 import org.postgresql.PGNotification;
@@ -67,6 +65,8 @@ import org.postgresql.util.ServerErrorMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.sliceworkz.eventstore.events.Bookmark;
+import org.sliceworkz.eventstore.observability.EventStoreObserver;
+import org.sliceworkz.eventstore.observability.NotificationChannel;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
@@ -172,8 +172,51 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 	 * notification delivery over the whole life of the storage and not just at startup — a database that
 	 * goes away an hour after boot leaves exactly the same silence as one that was never there.
 	 */
-	private final AtomicBoolean eventMonitorListening = new AtomicBoolean();
-	private final AtomicBoolean bookmarkMonitorListening = new AtomicBoolean();
+	private final ChannelState eventMonitorListening = new ChannelState(NotificationChannel.EVENT_APPENDED);
+	private final ChannelState bookmarkMonitorListening = new ChannelState(NotificationChannel.BOOKMARK_PLACED);
+
+	/**
+	 * Whether one monitor holds a live {@code LISTEN}, reporting every change of that to the observer.
+	 * <p>
+	 * The monitors flip it with the same calls an {@link AtomicBoolean} takes, and every call that changes
+	 * the value reports the new one, so the observer hears each transition exactly once whichever path —
+	 * a registration, a lost connection, a stop, a {@code finally} — made it. A call that leaves the value
+	 * as it was reports nothing.
+	 */
+	private final class ChannelState {
+
+		private final NotificationChannel channel;
+		private final AtomicBoolean up = new AtomicBoolean();
+
+		private ChannelState ( NotificationChannel channel ) {
+			this.channel = channel;
+		}
+
+		boolean get ( ) {
+			return up.get();
+		}
+
+		boolean compareAndSet ( boolean expected, boolean value ) {
+			boolean changed = up.compareAndSet(expected, value);
+			if ( changed && expected != value ) {
+				observer.notificationChannelChanged(name, channel, value);
+			}
+			return changed;
+		}
+
+		boolean getAndSet ( boolean value ) {
+			boolean previous = up.getAndSet(value);
+			if ( previous != value ) {
+				observer.notificationChannelChanged(name, channel, value);
+			}
+			return previous;
+		}
+
+		void set ( boolean value ) {
+			getAndSet(value);
+		}
+
+	}
 
 	/**
 	 * The latches {@link #start()} is waiting on, so that {@link #close()} can release a caller blocked in
@@ -184,7 +227,11 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 	private volatile CountDownLatch eventMonitorReady;
 	private volatile CountDownLatch bookmarkMonitorReady;
 
-	private final MeterRegistry meterRegistry;
+	/**
+	 * What this storage reports its lifecycle and its channels' health to, and what a store built on it
+	 * reports its operations to ({@link #observer()}).
+	 */
+	private final EventStoreObserver observer;
 	// Never used here: the storage stores sealed envelopes as opaque JSON. Held so that a store built on
 	// this storage through the factory finds the codec the builder was given (EventStorage.shreddingCodec()).
 	private final ShreddingCodec shreddingCodec;
@@ -263,7 +310,7 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 
 	/**
 	 * Constructs a new PostgreSQL-backed event storage instance without shredding, stating who owns the
-	 * DataSources and where the notification-availability meters go.
+	 * DataSources, observed by nothing.
 	 * <p>
 	 * The storage is not started: {@link PostgresEventStorage.Builder#build()} runs the schema mode and
 	 * then {@link #start(Duration)}, and a test constructing one directly does the same. The owner flag
@@ -277,11 +324,10 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 	 * @param prefix the table name prefix (validated, or empty string for no prefix)
 	 * @param ownsDataSources {@code true} if the DataSources were created for this storage and should
 	 *                        be closed by {@link #close()}; {@code false} if they belong to the caller
-	 * @param meterRegistry where to register the {@code sliceworkz.eventstore.notifications.*} meters
 	 * @see PostgresEventStorage.Builder#build()
 	 */
-	PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources, MeterRegistry meterRegistry ) {
-		this(name, dataSource, monitoringDataSource, absoluteLimit, prefix, ownsDataSources, meterRegistry, null);
+	PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources ) {
+		this(name, dataSource, monitoringDataSource, absoluteLimit, prefix, ownsDataSources, EventStoreObserver.NOOP, null);
 	}
 
 	/**
@@ -302,39 +348,38 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 	 * @param prefix the table name prefix (validated, or empty string for no prefix)
 	 * @param ownsDataSources {@code true} if the DataSources were created for this storage and should
 	 *                        be closed by {@link #close()}; {@code false} if they belong to the caller
-	 * @param meterRegistry where to register the {@code sliceworkz.eventstore.notifications.*} meters
+	 * @param observer what this storage reports its lifecycle and channels to, and a store built on it its operations
 	 * @param shreddingCodec seals and unseals protected values, or null for a storage without shredding
 	 * @see PostgresEventStorage.Builder#build()
 	 */
-	PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources, MeterRegistry meterRegistry, ShreddingCodec shreddingCodec ) {
+	PostgresEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources, EventStoreObserver observer, ShreddingCodec shreddingCodec ) {
 		this.prefix = validatePrefix(prefix);
 		this.name = name;
 		this.dataSource = dataSource;
 		this.monitoringDataSource = monitoringDataSource;
 		this.absoluteLimit = absoluteLimit;
 		this.ownsDataSources = ownsDataSources;
-		this.meterRegistry = meterRegistry == null ? Metrics.globalRegistry : meterRegistry;
+		this.observer = EventStoreObserver.contained(observer == null ? EventStoreObserver.NOOP : observer);
 		this.shreddingCodec = shreddingCodec;
 
 		this.executorService = Executors.newVirtualThreadPerTaskExecutor();
 
-		registerNotificationMeters();
+		reportChannelsDown();
 	}
 
 	/**
-	 * Publishes notification availability as a gauge, one series per channel, so that a storage whose
-	 * monitors are down is visible without holding a reference to it and downcasting.
-	 * <p>
-	 * Registered in the constructor rather than in {@link #start()}, so the series exists — reading 0 —
-	 * from the moment the storage does. A gauge that only appears once notifications work is no use for
-	 * alerting on notifications not working.
+	 * Reports both notification channels down, from the constructor rather than from {@link #start()}, so
+	 * that an observer knows of the channels from the moment the storage exists. A health signal that only
+	 * appears once notifications work is no use for alerting on notifications not working.
 	 */
-	private void registerNotificationMeters ( ) {
-		io.micrometer.core.instrument.Tags baseTags = io.micrometer.core.instrument.Tags.of("storage", name == null ? "" : name);
-		meterRegistry.gauge("sliceworkz.eventstore.notifications.up", baseTags.and("channel", "event_appended"),
-			eventMonitorListening, up -> up.get() ? 1d : 0d);
-		meterRegistry.gauge("sliceworkz.eventstore.notifications.up", baseTags.and("channel", "bookmark_placed"),
-			bookmarkMonitorListening, up -> up.get() ? 1d : 0d);
+	private void reportChannelsDown ( ) {
+		observer.notificationChannelChanged(name, NotificationChannel.EVENT_APPENDED, false);
+		observer.notificationChannelChanged(name, NotificationChannel.BOOKMARK_PLACED, false);
+	}
+
+	@Override
+	public EventStoreObserver observer ( ) {
+		return observer;
 	}
 
 	@Override
@@ -1170,6 +1215,7 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 		}
 
 		if ( ready ) {
+			observer.storageStarted(name);
 			return;
 		}
 
@@ -1383,6 +1429,10 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 			if ( monitoringDataSource != dataSource ) {
 				closeDataSource(monitoringDataSource);
 			}
+		}
+		if ( wasRunning ) {
+			// after the monitors have stopped, so both channels have been reported down before this
+			observer.storageClosed(name);
 		}
 	}
 
@@ -2999,7 +3049,7 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 		private DataSource monitoringDataSource;
 		private CountDownLatch readyLatch;
 		/** the outer storage's flag for this channel: true exactly while this monitor holds a live LISTEN */
-		private final AtomicBoolean listening = eventMonitorListening;
+		private final ChannelState listening = eventMonitorListening;
 		/**
 		 * Notifications whose events are not readable yet, the latest reference per stream, in the
 		 * order the streams were first parked — so the first entry is the one parked longest, since a
@@ -3213,7 +3263,7 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 		private DataSource monitoringDataSource;
 		private CountDownLatch readyLatch;
 		/** the outer storage's flag for this channel: true exactly while this monitor holds a live LISTEN */
-		private final AtomicBoolean listening = bookmarkMonitorListening;
+		private final ChannelState listening = bookmarkMonitorListening;
 		private final JsonMapper jsonMapper = JsonMapper.builder().build();
 
 		public BookmarkPlacedMonitor ( String name, List<EventStoreListener> listeners, DataSource monitoringDataSource, CountDownLatch readyLatch ) {

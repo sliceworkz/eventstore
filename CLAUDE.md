@@ -8,7 +8,7 @@ This is a Java-based EventStore library implementing the Dynamic Consistency Bou
 
 **Core Modules:**
 - `sliceworkz-eventstore-api`: Core API interfaces and contracts, plus the SPI (`EventStorage`) a backend implements
-- `sliceworkz-eventstore-impl`: Implementation of the EventStore (streams, serde, upcasting, shredding, meters)
+- `sliceworkz-eventstore-impl`: Implementation of the EventStore (streams, serde, upcasting, shredding, observations)
 - `sliceworkz-eventstore-serialization-json`: JSON codecs for stored events and bookmarks, used by the file-backed store
 - `sliceworkz-eventstore-infra-inmem`: In-memory storage backend (for development/testing)
 - `sliceworkz-eventstore-infra-inmem-fs`: The in-memory backend persisted to JSON files, for local development that must survive a restart
@@ -39,13 +39,12 @@ compile-scoped dependency: one there is inherited by every module and ships in e
 whether the module uses it or not. Each module declares what it imports, so the transitive set of an
 artifact is what its code needs and nothing more:
 
-- **`sliceworkz-eventstore-api` carries Micrometer and SLF4J, and no Jackson proper.** `MeterRegistry`
-  is in the signature of `EventStoreFactory.eventStore` and `Metrics.globalRegistry` is the default of
-  every builder, so Micrometer is a compile dependency and deliberately never `<optional>`: marking it
-  optional would not make a metrics-free consumer possible, only move the failure from dependency
-  resolution to a `NoClassDefFoundError` on the first store built. The alternative — an internal meter
-  facade with a no-op binding, Micrometer loaded only when present — is what a metrics-free api would
-  take, and is not on offer. `Projector` logs through SLF4J. The one Jackson artifact the api names is
+- **`sliceworkz-eventstore-api` carries SLF4J, and no metrics library and no Jackson proper.** The
+  store reports what it does through its own SPI, `EventStoreObserver` (see "Observability" below), so
+  no Micrometer, OpenTelemetry or other type appears in any signature, and a consumer binds the one it
+  uses through an observer of its own. An enforcer rule in the parent pom fails the build if Micrometer
+  reaches any module, in any scope.
+- `Projector` logs through SLF4J. The one Jackson artifact the api names is
   `jackson-annotations`, optional: `EventQuery` and `EventFilter` mark their derived getters
   `@JsonIgnore` so a mapper renders a query by its components only, and that is the 2.x annotations
   artifact Jackson 2 and Jackson 3 share (Jackson 3's databind depends on it). A consumer serializing
@@ -56,14 +55,12 @@ artifact is what its code needs and nothing more:
   file codecs, the in-memory store's payload validation, the Postgres notification payloads. It is
   `tools.jackson.*`, a different groupId and package from Jackson 2, so an application on Jackson 2
   runs both side by side: two Jacksons on the classpath, no conflict, and its own mapper untouched. That is the cost of building the serde on Jackson 3 and it is not hidden.
-- **`Metrics.globalRegistry` is the default wherever a registry is not given** — `EventStore.on(storage)`
-  without `.meterRegistry(...)`, the one-argument `EventStoreFactory.eventStore(storage)` and every
-  storage builder's `buildStore()`. Micrometer's
-  global registry is a composite with no children until something adds one, so meters registered
-  there cost a map entry and record nothing; an application that binds its real registry to it
-  gets the store's meters in its own series without configuring anything. The testing module never registers there: `AbstractEventStoreTest` and
-  `EventStoreFixture` give every store a `SimpleMeterRegistry` of its own, so a fixture in an
-  application's test suite leaves nothing behind in the application's registry.
+- **Observation is opt-in: `EventStoreObserver.NOOP` is the default wherever no observer is given** —
+  `EventStore.on(storage)` without `.observer(...)` on a storage built without one, the one-argument
+  `EventStoreFactory.eventStore(storage)` and every storage builder's `build()` and `buildStore()`. The
+  no-op observer allocates nothing and records nothing. The testing module observes nothing unless a
+  test asks: `AbstractEventStoreTest` and `EventStoreFixture` build unobserved stores, so a fixture in an
+  application's test suite leaves nothing behind in the application's metrics or traces.
 
 ## Build Commands
 
@@ -103,18 +100,17 @@ mvn clean install -DskipTests
   `buildStore()`, which does the same and hands back one handle owning both
 - **`EventStore.on(storage)` is the one entry point, and `EventStoreFactory` is the SPI behind it.**
   Everything a store can be given beyond its storage is a call on the builder, each defaulting to what
-  the storage builders use: `.meterRegistry(r)` (default `Metrics.globalRegistry`), `.meterOptions(o)`
-  (default `MeterOptions.defaults()`) and `.shredding(codec)` (default the storage's own codec, which a
-  storage builder's `.shredding(...)` put there). Every setter refuses `null`, since each has a default
+  the storage builders use: `.observer(o)` (default the storage's own observer, which a storage builder's
+  `.observer(...)` put there and which is `EventStoreObserver.NOOP` otherwise) and `.shredding(codec)`
+  (default the storage's own codec, which a storage builder's `.shredding(...)` put there). Every setter refuses `null`, since each has a default
   and a null could only be a mistake, and `build()` is where the `ServiceLoader` lookup happens, so a
   builder is configured before anything is resolved and fails at `build()` with the same
   `EventStorageException` the factory throws when no implementation is on the classpath. The built
   store does not own the storage (see "Lifecycle: closing a store"); `EventStore.owning` composes the
   two. The alternative — calling the factory, as
-  `EventStoreFactory.get().eventStore(storage, registry, options, codec)` — loses because it puts a
-  `ServiceLoader` chain and four positional arguments, one of them a `null` meaning "the storage's own
-  codec", at every call site that wants anything but the defaults. The factory stays public and
-  unchanged: it is what an implementation of this library provides through the `ServiceLoader`, what
+  `EventStoreFactory.get().eventStore(storage, observer, codec)` — loses because it puts a
+  `ServiceLoader` chain and positional arguments, where a `null` means "the storage's own", at every
+  call site that wants anything but the defaults. The factory stays public: it is what an implementation of this library provides through the `ServiceLoader`, what
   the builder and the storage builders' `buildStore()` call, and nothing application code needs to
   name. `EventStoreTest` in the api module pins the builder's argument checks and its failure with no
   implementation on the classpath; `EventStoreBuilderTest` in the tests module pins that each setting
@@ -180,10 +176,10 @@ mvn clean install -DskipTests
   the alternative name — `canRead` — loses because it invites a `canWrite` beside it, the very
   relation this design refuses. The alternative — an `append(criteria, events,
   target)` through a wildcard stream bound to the target's context — loses because a stream is then
-  a sink for some targets and not others, decided per call; because every append is metered under
-  the tags of the stream it went through, so a write landing in `customer#123` would be counted
-  under the wildcard's purpose and never under its own, and the `purpose` cap below would never see
-  the writes; and because it buys nothing the shared serde does not already give. The refusal is at
+  a sink for some targets and not others, decided per call; because every append is observed as an
+  append through the stream it went through, so a write landing in `customer#123` would be reported
+  under the wildcard's id and never under its own; and because it buys nothing the shared serde does
+  not already give. The refusal is at
   runtime, not at compile time, because whether an id is a wildcard is a property of its value: the
   same `EventStream` type reads a context or one of its streams depending only on the id it was
   opened with (the raw stream, whose read-only nature *is* static, is a separate case).
@@ -250,7 +246,7 @@ mvn clean install -DskipTests
   - The event at the head need not match the boundary's filter: the reference is a cursor for the check,
     and only matching events after it count. An absent head is an empty stream and must stay an absent
     reference — "I decided on an empty boundary" — never be substituted with some other reference.
-    Counted on `sliceworkz.eventstore.head`, not on the query meters. `EventStoreImporter` bounds its
+    Reported as its own observation (`Observation.Head`), never as a read. `EventStoreImporter` bounds its
     reads at the source head through the same method
 
 **Event:**
@@ -716,7 +712,7 @@ EventStorage storage = PostgresEventStorage.newBuilder()
   store down when its connection drops. That includes a connection that drops *silently*: the monitors
   wait for notifications with a bare socket read and send nothing meanwhile, so a peer that vanished
   without closing (a dropped NAT or firewall state, a partition, a crashed host) would otherwise be read
-  forever as a quiet channel with the gauge reading 1. Every monitoring connection runs under a 5s
+  forever as a quiet channel reported up. Every monitoring connection runs under a 5s
   network timeout, and a monitor silent for `notificationProbeInterval` (30s by default) sends one
   round trip and replaces a connection that does not answer. `PostgresMonitorLivenessTest` pins it
   through a TCP proxy that swallows bytes without closing either side.
@@ -731,26 +727,28 @@ EventStorage storage = PostgresEventStorage.newBuilder()
   Note that version detection (`detectsNativeUuidv7Support`) does *not* fail the build — it logs a WARN
   and falls back to the legacy implementation — so it is the schema work, not the version probe, that
   provides the fail-fast.
-- **Observability.** `sliceworkz.eventstore.notifications.up` is a gauge, 1/0, tagged `storage` and
-  `channel` (`event_appended` / `bookmark_placed`). It is registered by the constructor, so the series
-  exists reading 0 from the moment the storage does — a gauge that only appears once notifications work
-  is no use for alerting on notifications not working. It also drops back to 0 when a *running* store
-  loses its monitoring connection, which is the same silence as never having had one.
+- **Observability.** The health of each channel (`EVENT_APPENDED` / `BOOKMARK_PLACED`) is reported to
+  the storage's observer through `EventStoreObserver.notificationChannelChanged`: down from the
+  constructor, so an observer knows of the channel from the moment the storage exists — a signal that
+  only appears once notifications work is no use for alerting on notifications not working — up once
+  the monitor listens, down again when a *running* store loses its monitoring connection, which is the
+  same silence as never having had one, and down on close, before `storageClosed`. Every transition is
+  reported exactly once, whichever path in the monitor made it.
   `PostgresEventStorage.isNotificationsAvailable()` is the same state for a health endpoint, on the
   type the builder's `build()` returns, so no downcast: keep that handle rather than widening it to
   `EventStorage` where a health check needs it.
 - **What arrives on the channel cannot take a monitor down, and a monitor that does go down cannot
-  leave the gauge reading 1.** A `NOTIFY` channel is a database-wide name: any session in the database
+  leave the channel reported up.** A `NOTIFY` channel is a database-wide name: any session in the database
   can publish on it, and a trigger left behind by another release may not agree with this one on the
   payload. A payload that does not parse, or parses into something `EventReference` refuses (a null
   id, a position of 0), is logged at ERROR and dropped, and the monitor reads on — the catch is on
   `RuntimeException`, not on the parser's own exception type, because the conversion into a reference
   throws `IllegalArgumentException`. Anything a listener throws, an `Error` included, is contained the
-  same way. And the `listening` flag behind the gauge is cleared in a `finally`, so no exit from the
-  monitor's loop, an uncaught one included, leaves `notifications.up` claiming a channel that nobody is
+  same way. And the `listening` flag behind the channel's state is cleared in a `finally`, so no exit from the
+  monitor's loop, an uncaught one included, leaves the channel reported up while nobody is
   listening on. The alternative — catching only the parser's exception — loses because a single
   malformed payload then ends the monitor's virtual thread silently, and nothing wakes a subscriber
-  again for the life of the storage while the gauge and `isNotificationsAvailable()` both say
+  again for the life of the storage while the channel's reported state and `isNotificationsAvailable()` both say
   otherwise. `PostgresNotificationMonitorTest` pins the delivery step without a database;
   `PostgresNotificationStartupTest` pushes junk down both channels of a live store and checks a real
   append and bookmark still get through behind it.
@@ -892,8 +890,7 @@ stream owns is its subscriptions.
   would distinguish it from nothing. To react to your own append on the appending thread, nothing is
   subscribed: the typed events, with their assigned references, are the return value of `append()`.
 - **What makes it cheap is that the expensive part is shared, not rebuilt.** `getEventStream` allocates a
-  stream object and resolves ~10 Micrometer meters (a map lookup each, since Micrometer dedups by name +
-  tags) — about **2µs and 1KB**. The payload serde is *not* rebuilt: `EventStoreImpl` caches one per
+  stream object and reports it to the observer — about **2µs and 1KB**. The payload serde is *not* rebuilt: `EventStoreImpl` caches one per
   distinct pair of event root class sets and hands the same instance to every stream opened with that
   mapping. Building one costs ~20µs and ~40KB, but the construction is the smaller half of the story —
   Jackson caches its per-type serializers **inside the mapper**, so a serde per call gives every stream a
@@ -911,16 +908,6 @@ stream owns is its subscriptions.
     above survives the optimisation: you still get your own stream.
   - The cache lives on the store, not statically: its key holds `Class` objects, and a static cache would
     pin their class loader for the life of the JVM. `EventStreamSerdeSharingTest` pins all of this down.
-- **`sliceworkz.eventstore.append.position`** is a gauge of the highest position appended, tagged like
-  the other stream meters (`context`, `purpose`, `typed`, `storage`), and reads `NaN` until something is
-  appended. Its state is held **per tag set on the store**, not per stream, and registered once — because
-  a gauge cannot be re-registered (Micrometer keeps the first registration and ignores the rest) and
-  because Micrometer holds gauge state *weakly*. Held per stream instead, only the first stream ever
-  created for a tag set would be wired to the series, and the series would go permanently `NaN` as soon
-  as that stream was collected — which, in the per-operation usage recommended above, is almost
-  immediately, with nothing failing to say so. `AppendPositionGaugeTest` covers it. The tag set it is
-  held per is bounded — see the metrics section below for why that matters and what it costs when it is
-  not.
 
 For backends: `EventStorage.unsubscribe(EventStoreListener)` is the SPI counterpart, and `subscribe` must
 hold listeners **strongly** and be idempotent per listener. `unsubscribe` has a no-op `default` so a
@@ -1030,8 +1017,8 @@ later reference, which is after this one and so still delivered.
 ### Idempotent appends: a key per event, and the batch as the unit of de-duplication
 
 An `EphemeralEvent.withIdempotencyKey(key)` makes an append safe to retry: a key already stored on
-the same stream is swallowed — nothing written, an empty list returned, counted on
-`sliceworkz.eventstore.append.deduplicated`. The key is scoped to the stream (context and purpose),
+the same stream is swallowed — nothing written, an empty list returned, and the append observed as
+completed `Outcome.Duplicated` (see "Observability"). The key is scoped to the stream (context and purpose),
 persisted on the row and surfaced on `StoredEvent`, never on the public `Event`.
 
 - **A command producing several events gets a key per event, derived from the command's id**
@@ -1120,85 +1107,71 @@ whose SPI methods default to throwing cannot be claimed by accident):
   releases, independence of distinct leases, post-close behaviour — and, load-bearing above all,
   that exactly one of N concurrent contenders wins an acquirable lease
 
-### Metrics: what the stream meters cost, and the cap on `purpose`
+### Observability: an SPI of the library's own, and no metrics library
 
-Every meter the store registers is tagged `context`, `purpose`, `typed`, `storage`, and two of them
-(`query.event`, `append.event`) add `eventtype` on top. `context` is a code-level concept, so its
-cardinality is a property of the application. **`purpose` is not**: it is documented as "an optional
-secondary identifier … (e.g. customer ID, order number)", and half the examples in this repository are
-`forContext("customer").withPurpose("123")`. Used that way it takes one value per entity.
+**The store reports what it does to an `EventStoreObserver`, in its own terms, and names no metrics or
+tracing library.** An application that wants meters, spans or anything else provides an observer that
+turns observations into them; a Micrometer binding lives outside this repository, in the Sliceworkz
+plugins. The alternative — a meter facade naming counters, timers and gauges — loses because it
+rebuilds a weaker version of the library it binds to and can express only meters: a tracer needs to
+know where an operation starts and ends and what it answered, which is what an observation is. Micrometer's
+own Observation API would carry that too, and loses only because the api would still depend on
+Micrometer.
 
-- **Nothing evicts a meter.** A Micrometer registry keeps every meter it has ever registered, so the cost
-  follows the number of distinct purposes the process has *ever seen*, not how many streams are alive.
-  Dropping the stream handle — the per-operation usage this document recommends — releases none of it.
-- **Measured, per distinct purpose** (in-memory store, two event types, `SimpleMeterRegistry`):
-  **15 meters** (+2 per further event type), **~5.5 KB of heap**, **18 Prometheus series** and ~2.4 KB
-  of scrape body. Uncapped, 10.000 purposes is 150.000 meters, 53 MB and a 23 MB scrape; 100.000
-  extrapolates to ~550 MB and 1.8M series. Nothing fails — the numbers stay correct and the process just
-  gets heavier for as long as it runs, so the growth looks like an ordinary leak rather than a metrics
-  problem.
-- **So the `purpose` tag is capped.** A store tags the first `MeterOptions.maxPurposeTagValues()`
-  distinct purposes it sees (**default 1000**) and reports every purpose after that as `_other`, logging
-  one WARN naming the purpose that tripped it. Below the cap nothing changes — that is exactly the case
-  where a per-purpose breakdown is worth having — and above it the meters stay flat while the events are
-  still counted, pooled under `_other`. Measured at 10.000 purposes: 15.015 meters instead of 150.000,
-  and a 2.3 MB scrape instead of 23 MB.
-- **The cost is heap and scrape size, not speed — and that half is measured.** The
-  `metrics-cost` profile runs one corpus (100.000 events, `PER_ENTITY`, 2000 entities, so twice the
-  default cap) against three stores that differ only in this setting: no meters, capped, uncapped.
-  On PG18 all three land within about 1% of each other on unconditional appends, the canonical DCB
-  check, an entity read and the savepoint probe — and capped against unlimited flips sign between
-  runs, which is what no effect looks like. So a store past the cap is not paying for it in
-  throughput, and neither is an instrumented store against an uninstrumented one; what an uncapped
-  store spends is the memory and the series above, for as long as the process runs. (One caveat on
-  reading that profile: the corpus is generated inside the first fork of the first target, so whichever
-  target runs first is measured against a colder server. The figures above are the ones that survive
-  running the targets in both orders; a cross-target percentage that does not is measuring the harness.
-  A second caveat on the committed run: its append workloads wrote through the context's wildcard
-  stream, which metered every append under one `purpose` tag, so its append rows exercised the meters
-  but never the cap — only the reads, addressed per entity, did. The workloads now append through the
-  entity's own stream, as an application would, and a re-run meters the writes per purpose too.)
-- **Admission is first-come-first-served and permanent.** A purpose that got its own tag value keeps it
-  for the life of the store, so a dashboard built on that series does not lose it when traffic widens.
-  The flip side is that *which* purposes get through is arrival order and not stable across restarts —
-  the accepted cost of a bound that needs no configuration. Past the cap a per-purpose breakdown was not
-  going to be readable anyway.
-- **Configuring it** — a store built without naming options, through the builder or the factory's
-  two-argument overloads, gets the default cap:
-  ```java
-  // purpose is an entity id here: never break down by it
-  EventStore.on(storage).meterRegistry(registry).meterOptions(MeterOptions.withoutPurposeBreakdown()).build();
-
-  // a broad but genuinely bounded set of purposes
-  EventStore.on(storage).meterRegistry(registry).meterOptions(MeterOptions.withMaxPurposeTagValues(5000)).build();
-
-  // same thing through the storage builders' buildStore()
-  InMemoryEventStorage.newBuilder().meterOptions(MeterOptions.withoutPurposeBreakdown()).buildStore();
-  ```
-  `MeterOptions.withUnlimitedPurposeTagValues()` removes the cap, which is only safe where purpose is
-  low-cardinality by construction.
-- **A Micrometer `MeterFilter` is not a substitute**, which is why this lives in the library. A filter
-  runs at registration, and the store keys its `append.position` gauge state on the tags it *asked* for —
-  so with `MeterFilter.denyNameStartsWith("sliceworkz")`, a registry holding **zero** meters still leaves
-  the store growing by ~730 bytes per distinct purpose. The cap is applied where the tag value is chosen,
-  so it bounds the meters, the `eventtype` cross product and that map in one place.
-- **`context` is deliberately not capped.** It names a bounded context and comes from the code, not from
-  the traffic. A store whose *context* is per-entity has the same problem with none of the protection —
-  don't do that.
-- **`sliceworkz.eventstore.append.deduplicated`** counts events an append submitted and storage silently
-  swallowed as idempotency-key duplicates (`submitted − stored`, incremented in `EventStreamImpl.append`).
-  It exists because the de-duplication is otherwise invisible in the meters: `append` counts calls,
-  `append.event` counts submitted events, and one call can carry several events, so no subtraction
-  recovers it. A clean run reads 0. Tagged like the other stream meters, and pinned per backend by
-  `EventStreamIdempotencyTest.aSwallowedDuplicateIsCountedOnTheDeduplicatedMeter`.
-- **`sliceworkz.eventstore.head`** (and `head.duration`) counts head lookups, tagged like the other
-  stream meters and deliberately not folded into `sliceworkz.eventstore.query`: a head lookup is the pin
-  of a consistency boundary, and a dashboard should tell pins from reads — once a framework pins every
-  command at the head, this series is its command rate. Pinned per backend by
-  `HeadTest.headLookupsAreCountedOnTheirOwnMeter`.
-- `MeterPurposeCardinalityTest` pins the cap, the pooling, the permanence of an admitted purpose, that
-  the default applies to a store nobody configured, and that the cap holds exactly under concurrent first
-  use of distinct purposes.
+- **An operation is a scope.** `start(Observation)` is called on the caller's thread before the
+  operation does anything, and returns an `Observation.Scope` the store completes or fails exactly once
+  and closes in a `finally`, all on that thread — so an observer may make a span current between
+  `start` and `close`, and the JDBC calls, key-store lookups and a projector batch's page query nest
+  beneath it with nothing propagated. The operations: `Append`, `Query` (a query and a page alike, a
+  projector's pages among them), `GetEvent`, `Head`, `PlaceBookmark`, `GetBookmark`, `ListBookmarks`,
+  `ProjectorBatch` (phase `INIT` for the savepoint read, `BATCH` for every page) and `Erase`. The
+  records carry the caller's own arguments and the stream as `StreamInfo` — the purpose uncapped.
+  `Observation` is sealed: an observer switching with a `default` branch keeps compiling when an
+  operation is added.
+- **The outcome is typed by the observation**: a scope started for an `Append` completes with an
+  `Outcome.AppendResult`. The outcomes of stream operations carry `storageTime`, the share spent inside
+  the `EventStorage`; the scope spans the whole call, so the rest is serde, upcasting and unsealing — on
+  an ordinary page most of the wait (`StorageTimeTest`).
+- **A completion is an answer, not only a success.** An admitted append answers `Appended`,
+  `Conflicted` (a DCB conflict: nothing stored, the caller receives the `OptimisticLockingException` and
+  re-decides) or `Duplicated` (every idempotency key stored before: a retry, swallowed whole). A batch
+  is stored whole or not at all, so there is no partly de-duplicated answer, and the lock check runs
+  first, so a stale retry answers `Conflicted`. `failed` is for an operation that could not answer: a
+  storage error, a poison event, a key store that is down, an `IdempotencyKeyConflictException`, a
+  projection that threw — the throwable the caller receives. Argument refusals (a wildcard append, a
+  legacy type in a filter, a repeated key) happen before an observation starts and are not reported.
+- **Lifecycle, reported for what is held.** `storageStarted`/`storageClosed` (a backend reports them at
+  the end of `build()` and on close, its channels reported down first), `subscriptionOpened`/
+  `subscriptionClosed` (once per subscription, so opened minus closed is the live count and one that only
+  rises is a subscribed stream nobody closes), `notificationChannelChanged` (see the Postgres lifecycle
+  notes) and `streamOpened`. There is deliberately no `streamClosed`: a handle used only to query and
+  append holds nothing and is never closed, so a counterpart would climb forever; what a stream holds is
+  a subscription. Nor is there a store opened/closed: a store has no identity an observation is keyed by
+  — several stores share a storage and its name — and closing one releases nothing an observer tracks
+  that the subscription and storage signals do not already report.
+- **The observer travels with the storage**, as the shredding codec does: a storage builder's
+  `.observer(o)` is answered by `EventStorage.observer()`, and a store built on the storage reports to it
+  unless `EventStore.on(storage).observer(...)` gives it its own. A `Projector` finds it through
+  `EventSource.observation()`, so a projector is observed exactly when its source is, with nothing to
+  configure on the projector.
+- **An observer never fails an operation.** The library wraps every observer with
+  `EventStoreObserver.contained(...)`: what it throws is caught (a `RuntimeException` or a
+  `LinkageError`, the second being a binding whose library is missing) and logged, at ERROR the first
+  time and at DEBUG after, so a broken observer is reported without a stack trace per operation. The
+  observer is still on the caller's thread, so a slow one is a slow store.
+- **Cardinality is the observer's concern.** Every observation carries the stream id as it is, and
+  `purpose` is often an entity id. An observer turning it into a metrics tag must bound the values it
+  admits — a registry never evicts a meter, so an uncapped per-entity tag is a leak that fails nothing —
+  while a tracer or a log line wants the purpose uncapped. That is why the cap lives in the Micrometer
+  binding, where the tag value is chosen, and not in the store.
+- **Pool metrics are HikariCP's.** `PostgresEventStorage.Builder.poolMetrics(MetricsTrackerFactory)`
+  hands the pools the builder uses a tracker factory — HikariCP's own seam, which ships one for
+  Micrometer — so the Postgres module names no metrics library either.
+- `ObservationTest` in the TCK pins every operation's observation per backend — what each reports, the
+  conflict and the retry as answers, the nesting of a projector's reads under its batch, the
+  subscription count, the erasure — and, through `RecordingObserver`'s contract checks, that every scope
+  is completed or failed exactly once and closed in order. `RecordingObserver` is published in the
+  testing module for application tests too; `ContainedObserverTest` in the api module pins containment.
 
 ### Typical Usage Pattern
 
@@ -1650,8 +1623,7 @@ PostgresEventStorage.newBuilder().shredding(myKmsCodec).buildStore(); // take ov
   no-arg `shredding()` stands for at all: it needs the `DataSource` the builder resolves, and one
   loaded from `db.properties` is never handed out. `StorageShreddingCodecTest` pins the two in-memory
   backends and the precedence rule; `PostgresShreddingBuilderTest` pins the no-arg case per Postgres
-  version. `MeterOptions` remains the one builder setting `build()` ignores, since it is a property of
-  the store's meters and nothing about the storage.
+  version. The observer travels with the storage the same way (`EventStorage.observer()`).
 
 - **`ShreddingKeyStore`** is the narrow seam: keep the shipped encryption, hold keys in Vault/KMS/an HSM.
 - **`ShreddingCodec`** is the outer seam: take over encryption too, so key material never enters the JVM.
@@ -1956,9 +1928,8 @@ dedicated class (the image tag becomes the backend name, so the version still sh
 `sliceworkz-eventstore-tests` runs the TCK against every in-tree backend — via surefire's
 `dependenciesToScan`, which is the same one line a third-party `EventStorage` adds — plus the few
 tests that are repo-internal rather than part of the storage contract: `TckBackendCoverageTest`,
-`EventImportRoundTripTest`, and the store-level tests of the impl module's meters and serde sharing
-(`MeterPurposeCardinalityTest`, `AppendPositionGaugeTest`, `QueryTimerTest`,
-`EventStreamSerdeSharingTest`). Postgres containers are managed by `PostgresContainer`, started once
+`EventImportRoundTripTest`, and the store-level tests of the impl module's observations, builder and
+serde sharing (`StorageTimeTest`, `EventStoreBuilderTest`, `EventStreamSerdeSharingTest`). Postgres containers are managed by `PostgresContainer`, started once
 per JVM per image; per-test isolation comes from `recreateDatabase()` dropping and recreating the
 schema, not from a fresh container.
 
@@ -2009,8 +1980,8 @@ each figure as Testcontainers-on-a-developer-machine unless the module file says
   which flips OR-of-facts reads to full materialisation (5.4×). Sharing only a *database* with idle
   neighbour stores costs nothing measurable; a busy neighbour is the `pg_snapshot_xmin` hazard in
   the postgres notes.
-- **The library's own meters cost nothing measurable in throughput** — capped, uncapped and absent
-  land within ~1% — so their cost is the heap and scrape size described in the metrics section above.
+- **Every target is measured unobserved** (`EventStoreObserver.NOOP`). What an observer costs is the
+  observer's own, measured with it, outside this suite.
 - The DCB check's criteria-derived shape — the probe for cursor-bearing criteria, the
   custom-planned tag path for cursorless ones — is summarised under PostgreSQL below;
   `large-tier-writes` and `dcb-boundary-staleness` are the profiles that characterise it. The

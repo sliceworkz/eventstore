@@ -42,6 +42,7 @@ import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.serialization.json.JsonBookmark;
 import org.sliceworkz.eventstore.serialization.json.JsonBookmarkCodec;
 import org.sliceworkz.eventstore.serialization.json.JsonEventCodec;
+import org.sliceworkz.eventstore.observability.EventStoreObserver;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageException;
@@ -66,7 +67,7 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 	private final JsonEventCodec eventCodec;
 	private final JsonBookmarkCodec bookmarkCodec;
 
-	InMemoryFsEventStorageImpl ( Path baseDirectory, String name, Limit limit, ShreddingCodec shreddingCodec ) {
+	InMemoryFsEventStorageImpl ( Path baseDirectory, String name, Limit limit, ShreddingCodec shreddingCodec, EventStoreObserver observer ) {
 		this.eventsDir = baseDirectory.resolve("events");
 		this.bookmarksDir = baseDirectory.resolve("bookmarks");
 		this.eventCodec = new JsonEventCodec();
@@ -80,7 +81,9 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 		InMemoryEventStorage.Builder builder = InMemoryEventStorage.newBuilder()
 				.name(name)
 				.initialEvents(initialEvents)
-				.initialBookmarks(initialBookmarks);
+				.initialBookmarks(initialBookmarks)
+				// the delegate reports the lifecycle, under this storage's name, and answers observer()
+				.observer(observer);
 		if ( limit != null && limit.isSet() ) {
 			builder.resultLimit(limit.value().intValue());
 		}
@@ -111,6 +114,11 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 	@Override
 	public Optional<ShreddingCodec> shreddingCodec ( ) {
 		return delegate.shreddingCodec();
+	}
+
+	@Override
+	public EventStoreObserver observer ( ) {
+		return delegate.observer();
 	}
 
 	@Override

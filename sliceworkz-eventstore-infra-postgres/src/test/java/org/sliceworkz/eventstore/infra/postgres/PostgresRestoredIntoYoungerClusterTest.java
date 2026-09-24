@@ -44,7 +44,7 @@ import org.sliceworkz.eventstore.spi.EventStorageException;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.sliceworkz.eventstore.observability.EventStoreObserver;
 
 /**
  * A store restored <em>logically</em> into a cluster whose transaction counter is younger than the
@@ -138,7 +138,7 @@ public class PostgresRestoredIntoYoungerClusterTest {
 			plantRestoredEvent(dataSource, prefix, "order", "7");
 
 			PostgresEventStorageImpl storage = new PostgresEventStorageImpl(
-				"restored-closed", dataSource, dataSource, Limit.none(), prefix, false, new SimpleMeterRegistry());
+				"restored-closed", dataSource, dataSource, Limit.none(), prefix, false, EventStoreObserver.NOOP, null);
 			assertThrows(EventStorageException.class, storage::start);
 			assertThrows(IllegalStateException.class, storage::start,
 				"a storage whose startup failed must be closed, and a closed storage is terminal");

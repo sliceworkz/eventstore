@@ -19,11 +19,9 @@ package org.sliceworkz.eventstore.impl;
 
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.EventStoreFactory;
-import org.sliceworkz.eventstore.MeterOptions;
+import org.sliceworkz.eventstore.observability.EventStoreObserver;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.spi.EventStorage;
-
-import io.micrometer.core.instrument.MeterRegistry;
 
 /**
  * ServiceLoader-discoverable implementation of {@link EventStoreFactory}.
@@ -49,50 +47,17 @@ import io.micrometer.core.instrument.MeterRegistry;
 public class EventStoreFactoryImpl implements EventStoreFactory {
 
 	/**
-	 * Creates a new EventStore instance backed by the specified storage implementation with observability support.
-	 * <p>
-	 * This method instantiates an {@link EventStoreImpl} with the provided storage backend,
-	 * which can be any implementation of {@link EventStorage} (in-memory, PostgreSQL, etc.).
-	 * The meter registry enables collection of metrics for monitoring event store operations.
+	 * Creates an {@link EventStoreImpl} on the given storage.
 	 *
 	 * @param eventStorage the storage backend for persisting and retrieving events
-	 * @param meterRegistry the Micrometer meter registry for collecting metrics and observability data
-	 * @return a new EventStore instance using the provided storage
-	 * @see EventStoreImpl
-	 * @see io.micrometer.core.instrument.MeterRegistry
-	 */
-	@Override
-	public EventStore eventStore(EventStorage eventStorage, MeterRegistry meterRegistry) {
-		return new EventStoreImpl(eventStorage, meterRegistry);
-	}
-
-	/**
-	 * Creates a new EventStore instance with explicit control over how much detail its meters carry.
-	 *
-	 * @param eventStorage the storage backend for persisting and retrieving events
-	 * @param meterRegistry the Micrometer meter registry for collecting metrics and observability data
-	 * @param meterOptions how much detail the store's meters may carry
-	 * @return a new EventStore instance using the provided storage
-	 * @see MeterOptions
-	 */
-	@Override
-	public EventStore eventStore(EventStorage eventStorage, MeterRegistry meterRegistry, MeterOptions meterOptions) {
-		return new EventStoreImpl(eventStorage, meterRegistry, meterOptions);
-	}
-
-	/**
-	 * Creates an {@link EventStoreImpl} that can protect and erase personal data.
-	 *
-	 * @param eventStorage the storage backend for persisting and retrieving events
-	 * @param meterRegistry the Micrometer meter registry for collecting metrics
-	 * @param meterOptions how much detail the store's meters may carry
+	 * @param observer what the store reports to, or null for the storage's own
 	 * @param shreddingCodec seals and unseals {@link org.sliceworkz.eventstore.shredding.Shreddable}
-	 *                       values, or null for a store without shredding
+	 *                       values, or null for the storage's own, if any
 	 * @return a new EventStore instance
 	 */
 	@Override
-	public EventStore eventStore(EventStorage eventStorage, MeterRegistry meterRegistry, MeterOptions meterOptions, ShreddingCodec shreddingCodec) {
-		return new EventStoreImpl(eventStorage, meterRegistry, meterOptions, shreddingCodec);
+	public EventStore eventStore ( EventStorage eventStorage, EventStoreObserver observer, ShreddingCodec shreddingCodec ) {
+		return new EventStoreImpl(eventStorage, observer, shreddingCodec);
 	}
 
 }

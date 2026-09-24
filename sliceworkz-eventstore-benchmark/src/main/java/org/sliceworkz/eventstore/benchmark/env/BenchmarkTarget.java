@@ -21,8 +21,6 @@ import java.util.Optional;
 
 import javax.sql.DataSource;
 
-import io.micrometer.core.instrument.MeterRegistry;
-
 import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.spi.EventStorage;
 
@@ -30,16 +28,14 @@ import org.sliceworkz.eventstore.spi.EventStorage;
  * An opened store, together with the handles a benchmark needs that an {@link EventStore} does not
  * expose.
  *
- * <p>Three of them, each earning its place:
+ * <p>Two of them, each earning its place:
  *
  * <ul>
  *   <li>the {@link EventStorage}, because {@code importEvents} is on the SPI and is the only way to
  *       write a corpus at speed -- and the only way at all to write a legacy event;</li>
  *   <li>the {@link DataSource}, because restoring a corpus between iterations, capturing
  *       {@code EXPLAIN (ANALYZE, BUFFERS)} for a read workload and reading the server's settings all
- *       happen below the store;</li>
- *   <li>the {@link MeterRegistry}, because the library's own meters are the cheapest available
- *       account of where a measured millisecond went.</li>
+ *       happen below the store.</li>
  * </ul>
  *
  * <p><b>Closing order is the whole reason this is a class rather than a record of three fields.</b>
@@ -56,19 +52,17 @@ public final class BenchmarkTarget implements AutoCloseable {
 	private final EventStorage storage;
 	private final DataSource dataSource;
 	private final boolean ownsDataSource;
-	private final MeterRegistry meterRegistry;
 
 	private boolean closed;
 
 	BenchmarkTarget ( TargetSpec spec, String prefix, EventStore store, EventStorage storage,
-			DataSource dataSource, boolean ownsDataSource, MeterRegistry meterRegistry ) {
+			DataSource dataSource, boolean ownsDataSource ) {
 		this.spec = spec;
 		this.prefix = prefix;
 		this.store = store;
 		this.storage = storage;
 		this.dataSource = dataSource;
 		this.ownsDataSource = ownsDataSource;
-		this.meterRegistry = meterRegistry;
 	}
 
 	/** How this target is configured. */
@@ -95,10 +89,6 @@ public final class BenchmarkTarget implements AutoCloseable {
 	/** The database beneath the store, absent for the in-memory backend. */
 	public Optional<DataSource> dataSource ( ) {
 		return Optional.ofNullable(dataSource);
-	}
-
-	public MeterRegistry meterRegistry ( ) {
-		return meterRegistry;
 	}
 
 	/** Whether this target can answer SQL -- and so whether plan capture and restore are available. */

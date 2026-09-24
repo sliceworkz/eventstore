@@ -25,6 +25,7 @@ import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.observability.StreamObservation;
 import org.sliceworkz.eventstore.query.EventQuery;
 
 /**
@@ -376,12 +377,32 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 *       includes every event the stored event at the head upcasts into — {@code until} bounds stored
 	 *       events, never a fragment of one.</li>
 	 * </ul>
-	 * Counted on {@code sliceworkz.eventstore.head}, not on the query meters.
+	 * Observed as its own operation ({@link org.sliceworkz.eventstore.observability.Observation.Head}),
+	 * never as a read.
 	 *
 	 * @return the reference of the newest stored event of this stream, or empty for an empty stream
 	 * @throws org.sliceworkz.eventstore.spi.EventStorageClosedException if the store this stream came from is closed
 	 */
 	Optional<EventReference> head ( );
+
+	/**
+	 * How this source is observed: the observer its store reports to, and the stream it reads — or empty
+	 * for a source that is not observed.
+	 * <p>
+	 * This is how a {@link org.sliceworkz.eventstore.projection.Projector} reports its batches to the same
+	 * observer as the reads it makes through this source, so a projector is observed exactly when its
+	 * source is and there is no second place to configure it. The alternative — an observer setting on the
+	 * projector's builder — loses because the same observer then has to be passed twice, and a projector
+	 * over an observed stream could go unobserved.
+	 * <p>
+	 * The default answers empty, so a source written outside this library keeps compiling, observed by
+	 * nothing.
+	 *
+	 * @return the observation of this source, or empty when it is not observed
+	 */
+	default Optional<StreamObservation> observation ( ) {
+		return Optional.empty();
+	}
 
 
 	/**

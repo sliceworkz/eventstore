@@ -68,7 +68,7 @@ add `org.postgresql:postgresql` yourself, at the version your platform ships.
 | artifact | module name | what it is | when you need it |
 |---|---|---|---|
 | `sliceworkz-eventstore-api` | `org.sliceworkz.eventstore` | The interfaces you code against (`EventStore`, `EventStream`, `Event`, `Tags`, `AppendCriteria`, `Projector`, …) and the `EventStorage` SPI a backend implements | always |
-| `sliceworkz-eventstore-impl` | `org.sliceworkz.eventstore.impl` | The `EventStore` implementation: streams, serialization, upcasting, crypto-shredding, meters | pulled in at runtime by every backend |
+| `sliceworkz-eventstore-impl` | `org.sliceworkz.eventstore.impl` | The `EventStore` implementation: streams, serialization, upcasting, crypto-shredding, observations | pulled in at runtime by every backend |
 | `sliceworkz-eventstore-infra-inmem` | `org.sliceworkz.eventstore.infra.inmem` | In-memory storage | development, demos and tests |
 | `sliceworkz-eventstore-infra-inmem-fs` | `org.sliceworkz.eventstore.infra.inmem.fs` | The in-memory storage persisted to JSON files | local development that must survive a restart |
 | `sliceworkz-eventstore-infra-postgres` | `org.sliceworkz.eventstore.infra.postgres` | PostgreSQL storage | production |
@@ -196,8 +196,9 @@ database privileges per init mode, and the backup and migration notes.
 - [`CLAUDE.md`](CLAUDE.md) is the design record: why each contract is what it is, which alternatives
   were rejected and what was measured. Read it when the javadoc says *what* and you want *why*.
 
-What lands on your classpath: `sliceworkz-eventstore-api` brings Micrometer (the store's meters, with
-`Metrics.globalRegistry` as the default registry) and SLF4J, and no Jackson beyond the optional
+What lands on your classpath: `sliceworkz-eventstore-api` brings SLF4J, no metrics library — the store
+reports what it does through its own `EventStoreObserver` SPI, and you bind the metrics or tracing
+library you use by providing an observer — and no Jackson beyond the optional
 `jackson-annotations` artifact that Jackson 2 and 3 share. Jackson 3 (`tools.jackson.*`) comes with the
 impl and the backends; it is a different groupId and package from Jackson 2, so an application on
 Jackson 2 runs both side by side with no conflict.

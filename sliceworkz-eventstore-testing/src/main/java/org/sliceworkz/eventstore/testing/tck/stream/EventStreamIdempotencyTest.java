@@ -19,8 +19,9 @@ package org.sliceworkz.eventstore.testing.tck.stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Connection;
 import java.sql.Statement;
@@ -40,15 +41,16 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.stream.IdempotencyKeyConflictException;
+import org.sliceworkz.eventstore.observability.Observation;
+import org.sliceworkz.eventstore.observability.Outcome;
 import org.sliceworkz.eventstore.testing.AbstractEventStoreTest;
+import org.sliceworkz.eventstore.testing.RecordingObserver;
 import org.sliceworkz.eventstore.testing.EventStoreBackend.Capability;
 import org.sliceworkz.eventstore.testing.ForEachBackend;
 import org.sliceworkz.eventstore.testing.StorageOptions;
 import org.sliceworkz.eventstore.testing.tck.mockdomain.MockDomainEvent;
 import org.sliceworkz.eventstore.testing.tck.mockdomain.MockDomainEvent.FirstDomainEvent;
 
-import io.micrometer.core.instrument.Counter;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 /**
  * What an idempotency key does, and — just as important — what it must not do.
@@ -124,44 +126,40 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 	}
 
 	/**
-	 * A swallowed duplicate is visible on {@code sliceworkz.eventstore.append.deduplicated}, and
-	 * nowhere else.
+	 * A swallowed duplicate is reported as what it is: an append that completed as
+	 * {@link Outcome.Duplicated}, not as one that stored nothing for no reason, and not as a failure.
 	 * <p>
-	 * The de-duplication is otherwise silent by design: the call succeeds and returns an empty list.
-	 * The surrounding meters cannot recover it — {@code sliceworkz.eventstore.append} counts calls and
-	 * {@code append.event} counts submitted events, and one call can carry several events, so their
-	 * difference means nothing in general. A caller wanting to tell "n events ingested" from "n calls,
-	 * some de-duplicated" reads this counter; a clean run reads 0.
+	 * The de-duplication is otherwise silent by design: the call succeeds and returns an empty list. The
+	 * observation is where a caller wanting to tell "n events ingested" from "n calls, some retried" finds
+	 * the difference.
 	 */
 	@ForEachBackend
-	void aSwallowedDuplicateIsCountedOnTheDeduplicatedMeter ( ) {
+	void aSwallowedDuplicateIsReportedAsDuplicated ( ) {
 
-		SimpleMeterRegistry registry = new SimpleMeterRegistry();
-		try ( EventStore meteredStore = EventStore.on(eventStorage()).meterRegistry(registry).build() ) {
-			EventStream<MockDomainEvent> meteredStream = meteredStore
+		RecordingObserver observer = new RecordingObserver();
+		try ( EventStore observedStore = EventStore.on(eventStorage()).observer(observer).build() ) {
+			EventStream<MockDomainEvent> observedStream = observedStore
 					.getEventStream(EventStreamId.forContext("app").withPurpose("default"), MockDomainEvent.class);
 
-			// the counter exists from the moment the stream does, reading 0 -- a series that only
-			// appears once something is de-duplicated cannot be told apart from a broken scrape
-			Counter deduplicated = registry.find("sliceworkz.eventstore.append.deduplicated").counter();
-			assertNotNull(deduplicated, "no sliceworkz.eventstore.append.deduplicated counter was registered");
-			assertEquals(0.0, deduplicated.count());
-
-			meteredStream.append(AppendCriteria.none(),
+			observedStream.append(AppendCriteria.none(),
 					Event.of(new FirstDomainEvent("1"), Tags.none()).withIdempotencyKey("order-4711"));
-			assertEquals(0.0, deduplicated.count(), "a clean append must not count as de-duplicated");
+			Outcome.Appended appended = observer.last(Observation.Append.class).outcome(Outcome.Appended.class);
+			assertEquals(1, appended.stored(), "a clean append is reported as stored");
+			assertEquals(1, observer.last(Observation.Append.class).observation(Observation.Append.class).idempotencyKeys());
 
-			meteredStream.append(AppendCriteria.none(),
+			observedStream.append(AppendCriteria.none(),
 					Event.of(new FirstDomainEvent("2"), Tags.none()).withIdempotencyKey("order-4711"));
-			assertEquals(1.0, deduplicated.count(), "a swallowed duplicate did not reach the deduplicated meter");
+			Outcome.Duplicated duplicated = observer.last(Observation.Append.class).outcome(Outcome.Duplicated.class);
+			assertEquals(1, duplicated.events(), "the swallowed event is reported");
+			assertTrue(observer.last(Observation.Append.class).failure().isEmpty(), "a retry is an answer, not a failure");
 
-			// an ordinary un-keyed append leaves the counter where it was
-			meteredStream.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("3"), Tags.none()));
-			assertEquals(1.0, deduplicated.count());
+			// an ordinary un-keyed append is an ordinary append
+			observedStream.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("3"), Tags.none()));
+			observer.last(Observation.Append.class).outcome(Outcome.Appended.class);
 
-			// and the meter only reports, it does not change what the caller sees: one event was
-			// de-duplicated, two were stored
-			assertEquals(2, meteredStream.query(EventQuery.matchAll()).size());
+			// and the observation only reports, it does not change what the caller sees
+			assertEquals(2, observedStream.query(EventQuery.matchAll()).size());
+			assertEquals(List.of(), observer.violations());
 		}
 	}
 
@@ -273,30 +271,39 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 	}
 
 	/**
-	 * A swallowed batch counts every event it carried on the deduplicated meter — submitted minus
-	 * stored, which for a batch swallowed whole is the whole batch.
+	 * A swallowed batch is reported as duplicated whole: every event it carried, the unkeyed one riding
+	 * along included, since a batch is stored whole or not at all. A batch mixing stored and new keys is
+	 * no retry, and is reported as the failure the caller receives.
 	 */
 	@ForEachBackend
-	void aSwallowedBatchCountsEveryEventOnTheDeduplicatedMeter ( ) {
+	void aSwallowedBatchIsReportedAsDuplicatedWhole ( ) {
 
-		SimpleMeterRegistry registry = new SimpleMeterRegistry();
-		try ( EventStore meteredStore = EventStore.on(eventStorage()).meterRegistry(registry).build() ) {
-			EventStream<MockDomainEvent> meteredStream = meteredStore
+		RecordingObserver observer = new RecordingObserver();
+		try ( EventStore observedStore = EventStore.on(eventStorage()).observer(observer).build() ) {
+			EventStream<MockDomainEvent> observedStream = observedStore
 					.getEventStream(EventStreamId.forContext("app").withPurpose("default"), MockDomainEvent.class);
-			Counter deduplicated = registry.find("sliceworkz.eventstore.append.deduplicated").counter();
-			assertNotNull(deduplicated);
 
 			List<EphemeralEvent<? extends MockDomainEvent>> batch = List.of(
 					Event.<MockDomainEvent>of(new FirstDomainEvent("1"), Tags.none()).withIdempotencyKey("cmd-4711/1"),
 					Event.<MockDomainEvent>of(new FirstDomainEvent("2"), Tags.none()).withIdempotencyKey("cmd-4711/2"),
 					Event.<MockDomainEvent>of(new FirstDomainEvent("3"), Tags.none()));
 
-			meteredStream.append(AppendCriteria.none(), batch);
-			assertEquals(0.0, deduplicated.count());
+			observedStream.append(AppendCriteria.none(), batch);
+			assertEquals(3, observer.last(Observation.Append.class).outcome(Outcome.Appended.class).stored());
 
-			meteredStream.append(AppendCriteria.none(), batch);
-			assertEquals(3.0, deduplicated.count(), "every event of a swallowed batch is de-duplicated");
-			assertEquals(3, meteredStream.query(EventQuery.matchAll()).size());
+			observedStream.append(AppendCriteria.none(), batch);
+			assertEquals(3, observer.last(Observation.Append.class).outcome(Outcome.Duplicated.class).events(),
+					"every event of a swallowed batch is de-duplicated");
+			assertEquals(3, observedStream.query(EventQuery.matchAll()).size());
+
+			List<EphemeralEvent<? extends MockDomainEvent>> mixed = List.of(
+					Event.<MockDomainEvent>of(new FirstDomainEvent("1"), Tags.none()).withIdempotencyKey("cmd-4711/1"),
+					Event.<MockDomainEvent>of(new FirstDomainEvent("4"), Tags.none()).withIdempotencyKey("cmd-4712/1"));
+			IdempotencyKeyConflictException conflict = assertThrows(IdempotencyKeyConflictException.class,
+					() -> observedStream.append(AppendCriteria.none(), mixed));
+			assertSame(conflict, observer.last(Observation.Append.class).failure().orElseThrow(),
+					"a mixed batch is reported as the failure the caller receives");
+			assertEquals(List.of(), observer.violations());
 		}
 	}
 

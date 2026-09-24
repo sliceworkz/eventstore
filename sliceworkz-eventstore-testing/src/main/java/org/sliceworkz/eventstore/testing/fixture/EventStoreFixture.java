@@ -25,7 +25,6 @@ import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 /**
  * A one-line event store for testing application code, and the entry point to the
@@ -58,11 +57,8 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
  * A fixture is single-use per test: build a new one per test method (a field initialiser is enough,
  * JUnit creates a fresh instance per test) so history never leaks between them.
  * <p>
- * Its store meters into a {@link SimpleMeterRegistry} of its own, never into
- * {@code Metrics.globalRegistry}. The global registry is where an application's test configuration
- * binds its real registry, and a fixture that
- * registered there would leave every test run's meters, tagged {@code storage=fixture}, in the
- * application's own series.
+ * Its store is observed by nothing: an application's observer is configured on the stores it builds,
+ * so a fixture leaves nothing behind in the application's metrics or traces.
  *
  * @param <DOMAIN_EVENT_TYPE> the stream's domain event type, normally a sealed interface
  */
@@ -74,7 +70,7 @@ public final class EventStoreFixture<DOMAIN_EVENT_TYPE> {
 
 	private EventStoreFixture ( EventStorage eventStorage, EventStreamId streamId, Class<DOMAIN_EVENT_TYPE> eventRootClass ) {
 		this.eventStorage = eventStorage;
-		this.eventStore = EventStore.on(eventStorage).meterRegistry(new SimpleMeterRegistry()).build();
+		this.eventStore = EventStore.on(eventStorage).build();
 		this.stream = eventStore.getEventStream(streamId, eventRootClass);
 	}
 

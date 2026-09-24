@@ -29,7 +29,7 @@ import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.sliceworkz.eventstore.EventStore;
-import org.sliceworkz.eventstore.MeterOptions;
+import org.sliceworkz.eventstore.observability.EventStoreObserver;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.infra.postgres.shredding.PostgresShreddingKeyStore;
 import org.sliceworkz.eventstore.shredding.AesGcmShreddingCodec;
@@ -39,9 +39,8 @@ import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageException;
 
 import com.zaxxer.hikari.HikariDataSource;
+import com.zaxxer.hikari.metrics.MetricsTrackerFactory;
 
-import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.Metrics;
 
 /**
  * The PostgreSQL-backed {@link EventStorage}: the type {@link Builder#build()} returns, and the
@@ -179,9 +178,9 @@ public interface PostgresEventStorage extends EventStorage {
 	 * hands back answers {@code true}, since the build waits for the monitors and fails when they do not
 	 * register in time; a {@link #close() closed} one answers {@code false} for good.
 	 * <p>
-	 * Intended for health endpoints. The same state is published as the
-	 * {@code sliceworkz.eventstore.notifications.up} gauge, one series per channel, which needs no
-	 * reference to the storage at all.
+	 * Intended for health endpoints. The same state is reported, per channel, to the storage's observer
+	 * ({@link org.sliceworkz.eventstore.observability.EventStoreObserver#notificationChannelChanged}),
+	 * which needs no reference to the storage at all.
 	 *
 	 * @return {@code true} if both monitors are listening
 	 * @see Builder#notificationStartupTimeout(Duration)
@@ -286,8 +285,8 @@ public interface PostgresEventStorage extends EventStorage {
 		private Duration lockTimeout = DEFAULT_LOCK_TIMEOUT;
 		private Duration notificationProbeInterval = DEFAULT_NOTIFICATION_PROBE_INTERVAL;
 		private Limit limit = Limit.none();
-		private MeterRegistry meterRegistry = Metrics.globalRegistry;
-		private MeterOptions meterOptions = MeterOptions.defaults();
+		private EventStoreObserver observer = EventStoreObserver.NOOP;
+		private MetricsTrackerFactory poolMetrics;
 		private ShreddingCodec shreddingCodec;
 		private boolean shreddingOnOwnDataSource;
 
@@ -645,41 +644,49 @@ public interface PostgresEventStorage extends EventStorage {
 		}
 
 		/**
-		 * Configures the Micrometer meter registry for collecting observability metrics.
+		 * Configures the observer this storage, and a store built on it, report to.
 		 * <p>
-		 * The meter registry is used to track event store operations including event stream creation,
-		 * append operations, and query performance. Additionally, if HikariCP datasources are used,
-		 * they will be configured to publish connection pool metrics to this registry.
-		 * <p>
-		 * If not specified, defaults to {@code Metrics.globalRegistry}.
+		 * The storage reports its own lifecycle and the health of its two LISTEN/NOTIFY channels
+		 * ({@link EventStoreObserver#notificationChannelChanged}: down from construction, up once listening,
+		 * down again whenever a monitor loses its connection); the store built on it reports every operation.
+		 * Honoured by {@link #build()} as much as by {@link #buildStore()}: the observer travels with the
+		 * storage ({@link EventStorage#observer()}). Defaults to {@link EventStoreObserver#NOOP}: observation
+		 * is opt-in.
 		 *
-		 * @param meterRegistry the Micrometer meter registry to use for metrics collection
+		 * @param observer the observer; must not be null
 		 * @return this Builder instance for method chaining
-		 * @see io.micrometer.core.instrument.MeterRegistry
-		 * @see io.micrometer.core.instrument.Metrics#globalRegistry
+		 * @throws IllegalArgumentException if the observer is null
+		 * @see EventStoreObserver
 		 */
-		public Builder meterRegistry ( MeterRegistry meterRegistry ) {
-			this.meterRegistry = meterRegistry;
+		public Builder observer ( EventStoreObserver observer ) {
+			if ( observer == null ) {
+				throw new IllegalArgumentException("observer cannot be null.  Leave it unset for EventStoreObserver.NOOP");
+			}
+			this.observer = observer;
 			return this;
 		}
 
 		/**
-		 * Configures how much detail the meters of the store returned by {@link #buildStore()} may carry.
+		 * Publishes the connection-pool metrics of the HikariCP pools this storage uses through the given
+		 * tracker factory — HikariCP's own seam, so the pools can report to whatever the application measures
+		 * with (HikariCP ships one for Micrometer, {@code MicrometerMetricsTrackerFactory}, and one for the
+		 * Prometheus client) without this library naming any of them.
 		 * <p>
-		 * Defaults to {@link MeterOptions#defaults()}, which caps the {@code purpose} tag at
-		 * {@link MeterOptions#DEFAULT_MAX_PURPOSE_TAG_VALUES} distinct values. Ignored by {@link #build()},
-		 * which returns a storage rather than a store — give them to the store's own builder,
-		 * {@code EventStore.on(storage).meterOptions(...)}, instead.
+		 * Applied to both the main and the monitoring pool, when each is a {@link HikariDataSource}, whether
+		 * the builder created it or it was supplied; a pool that already has a tracker keeps it. Not set by
+		 * default: the pools then report nothing.
 		 *
-		 * @param meterOptions how much detail the store's meters may carry
+		 * @param poolMetrics the tracker factory; must not be null
 		 * @return this Builder instance for method chaining
-		 * @see MeterOptions
+		 * @throws IllegalArgumentException if the factory is null
 		 */
-		public Builder meterOptions ( MeterOptions meterOptions ) {
-			this.meterOptions = meterOptions;
+		public Builder poolMetrics ( MetricsTrackerFactory poolMetrics ) {
+			if ( poolMetrics == null ) {
+				throw new IllegalArgumentException("poolMetrics cannot be null.  Leave it unset for pools that report nothing");
+			}
+			this.poolMetrics = poolMetrics;
 			return this;
 		}
-
 
 		/**
 		 * Protects the {@link org.sliceworkz.eventstore.shredding.Shreddable} values in this store's
@@ -778,9 +785,8 @@ public interface PostgresEventStorage extends EventStorage {
 		 * instance. It is returned as a {@link PostgresEventStorage} rather than as the {@link EventStorage}
 		 * it also is, so that {@link PostgresEventStorage#isNotificationsAvailable()} is reachable on the
 		 * handle a caller keeps, without a cast. Shredding configured on this builder travels with the storage
-		 * ({@link EventStorage#shreddingCodec()}), so a store built that way protects and erases personal
-		 * data exactly as one from {@link #buildStore()} does; only {@link #meterOptions(MeterOptions)} is
-		 * a store-level setting that has to be passed to the factory again.
+		 * ({@link EventStorage#shreddingCodec()}), and so does the observer ({@link EventStorage#observer()}),
+		 * so a store built that way protects, erases and reports exactly as one from {@link #buildStore()} does.
 		 * <p>
 		 * The returned storage is already started: its LISTEN/NOTIFY monitor threads are running and
 		 * holding connections. Close it with {@link EventStorage#close()} when done — and note that if no
@@ -826,18 +832,10 @@ public interface PostgresEventStorage extends EventStorage {
 			DataSource monitoringDataSource = dataSources.monitoring();
 			boolean createdDataSources = dataSources.created();
 
-			if ( dataSource instanceof HikariDataSource hds ) {
-				try {
-					hds.setMetricRegistry(meterRegistry);
-				} catch (IllegalStateException e) {
-					// already set
-				}
-			}
-			if ( monitoringDataSource instanceof HikariDataSource hds ) {
-				try {
-					hds.setMetricRegistry(meterRegistry);
-				} catch (IllegalStateException e) {
-					// already set
+			if ( poolMetrics != null ) {
+				trackPoolMetrics(dataSource);
+				if ( monitoringDataSource != dataSource ) {
+					trackPoolMetrics(monitoringDataSource);
 				}
 			}
 
@@ -858,8 +856,8 @@ public interface PostgresEventStorage extends EventStorage {
 						: shreddingCodec;
 
 				PostgresEventStorageImpl result = nativeUuidv7
-					? new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, createdDataSources, meterRegistry, codec)
-					: new PostgresLegacyEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, createdDataSources, meterRegistry, codec);
+					? new PostgresEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, createdDataSources, observer, codec)
+					: new PostgresLegacyEventStorageImpl(name, dataSource, monitoringDataSource, limit, prefix, createdDataSources, observer, codec);
 
 
 				result.lockTimeout(lockTimeout).notificationProbeInterval(notificationProbeInterval);
@@ -887,6 +885,16 @@ public interface PostgresEventStorage extends EventStorage {
 				throw e;
 			}
 
+		}
+
+		private void trackPoolMetrics ( DataSource pool ) {
+			if ( pool instanceof HikariDataSource hds ) {
+				try {
+					hds.setMetricsTrackerFactory(poolMetrics);
+				} catch (IllegalStateException e) {
+					// the pool already has a tracker, or is sealed: it keeps what it has
+				}
+			}
 		}
 
 		private static void closeQuietly ( DataSource dataSource ) {
@@ -926,9 +934,9 @@ public interface PostgresEventStorage extends EventStorage {
 			// the storage is created here and never handed to the caller, so the returned store owns it:
 			// closing that store is the only way this storage will ever be closed
 			EventStorage eventStorage = build();
-			// the codec travels with the storage (EventStorage.shreddingCodec()), so the store picks it up
-			// here exactly as a store built by the caller on build()'s result would
-			return EventStore.owning(EventStore.on(eventStorage).meterRegistry(meterRegistry).meterOptions(meterOptions).build(), eventStorage);
+			// the codec and the observer travel with the storage (EventStorage.shreddingCodec(), observer()),
+			// so the store picks them up here exactly as a store built by the caller on build()'s result would
+			return EventStore.owning(EventStore.on(eventStorage).build(), eventStorage);
 		}
 
 		/**

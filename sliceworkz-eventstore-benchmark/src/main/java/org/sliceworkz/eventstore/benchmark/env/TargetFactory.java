@@ -19,12 +19,8 @@ package org.sliceworkz.eventstore.benchmark.env;
 
 import javax.sql.DataSource;
 
-import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.composite.CompositeMeterRegistry;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 import org.sliceworkz.eventstore.EventStore;
-import org.sliceworkz.eventstore.MeterOptions;
 import org.sliceworkz.eventstore.benchmark.env.TargetSpec.SchemaMode;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.infra.inmem.shredding.InMemoryShreddingKeyStore;
@@ -96,13 +92,12 @@ public final class TargetFactory {
 		}
 
 		EventStorage storage = builder.build();
-		MeterRegistry registry = registryFor(spec);
-		EventStore.Builder storeBuilder = EventStore.on(storage).meterRegistry(registry).meterOptions(meterOptionsFor(spec));
+		EventStore.Builder storeBuilder = EventStore.on(storage);
 		if ( spec.shredding() ) {
 			storeBuilder.shredding(AesGcmShreddingCodec.over(new InMemoryShreddingKeyStore()));
 		}
 
-		return new BenchmarkTarget(spec, prefix, storeBuilder.build(), storage, null, false, registry);
+		return new BenchmarkTarget(spec, prefix, storeBuilder.build(), storage, null, false);
 	}
 
 	private static BenchmarkTarget openPostgres ( TargetSpec spec, String prefix ) {
@@ -156,13 +151,12 @@ public final class TargetFactory {
 			// ensure-schema.sql creates <prefix>shredding_keys unconditionally, so a key store on this
 			// store's own database needs no extra builder call -- only a schema that has been ensured
 			// at least once, which provisioning guarantees
-			MeterRegistry registry = registryFor(spec);
-			EventStore.Builder storeBuilder = EventStore.on(storage).meterRegistry(registry).meterOptions(meterOptionsFor(spec));
+			EventStore.Builder storeBuilder = EventStore.on(storage);
 			if ( spec.shredding() ) {
 				storeBuilder.shredding(AesGcmShreddingCodec.over(PostgresShreddingKeyStore.on(dataSource, prefix)));
 			}
 
-			return new BenchmarkTarget(spec, prefix, storeBuilder.build(), storage, dataSource, ownsDataSource, registry);
+			return new BenchmarkTarget(spec, prefix, storeBuilder.build(), storage, dataSource, ownsDataSource);
 		} catch ( RuntimeException e ) {
 			// the storage never reached the caller, so nothing else will close what this created
 			if ( ownsDataSource ) {
@@ -191,26 +185,4 @@ public final class TargetFactory {
 		};
 	}
 
-	/**
-	 * A store cannot be built without a registry -- the constructor rejects null -- so "metrics off" is
-	 * a {@link CompositeMeterRegistry} with no children, whose meters are no-ops. That is the closest
-	 * the API allows to not instrumenting at all, and it is what the metrics-cost comparison measures
-	 * against.
-	 */
-	private static MeterRegistry registryFor ( TargetSpec spec ) {
-		return switch ( spec.metrics() ) {
-			case OFF -> new CompositeMeterRegistry();
-			case CAPPED, UNLIMITED -> new SimpleMeterRegistry();
-		};
-	}
-
-	private static MeterOptions meterOptionsFor ( TargetSpec spec ) {
-		return switch ( spec.metrics() ) {
-			// with a no-op registry the cap changes nothing measurable, but the store keeps its own
-			// per-purpose state keyed on the tags it asks for, so the bound still has to be applied
-			case OFF -> MeterOptions.withoutPurposeBreakdown();
-			case CAPPED -> MeterOptions.defaults();
-			case UNLIMITED -> MeterOptions.withUnlimitedPurposeTagValues();
-		};
-	}
 }

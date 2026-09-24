@@ -17,9 +17,11 @@
  */
 package org.sliceworkz.eventstore.impl;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -34,15 +36,13 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.sliceworkz.Banner;
 import org.sliceworkz.eventstore.EventStore;
-import org.sliceworkz.eventstore.MeterOptions;
 import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
@@ -52,6 +52,11 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.observability.EventStoreObserver;
+import org.sliceworkz.eventstore.observability.Observation;
+import org.sliceworkz.eventstore.observability.Outcome;
+import org.sliceworkz.eventstore.observability.StreamInfo;
+import org.sliceworkz.eventstore.observability.StreamObservation;
 import org.sliceworkz.eventstore.shredding.DataSubject;
 import org.sliceworkz.eventstore.shredding.ErasureReason;
 import org.sliceworkz.eventstore.shredding.ErasureReport;
@@ -82,11 +87,6 @@ import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 import org.sliceworkz.eventstore.stream.Subscription;
-
-import io.micrometer.core.instrument.Counter;
-import io.micrometer.core.instrument.Gauge;
-import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.Timer;
 
 /**
  * Concrete implementation of {@link EventStore} providing event storage with pluggable backend support.
@@ -156,16 +156,11 @@ public class EventStoreImpl implements EventStore {
 	private final ExecutorService executorServiceForBookmarkUpdates;
 
 	/**
-	 * The Micrometer meter registry for collecting metrics and observability data.
-	 * Used to track event store operations such as event stream creation, appends, and queries.
+	 * What this store reports its operations to: the observer it was given, or the storage's own, wrapped
+	 * so that nothing it throws reaches an operation. {@link EventStoreObserver#NOOP} for a store nobody
+	 * observes, which is the default.
 	 */
-	private final MeterRegistry meterRegistry;
-
-	/**
-	 * How much detail this store's meters may carry — in practice, how many distinct {@code purpose}
-	 * tag values it will report before pooling the rest. See {@link #purposeTagValueFor}.
-	 */
-	private final MeterOptions meterOptions;
+	private final EventStoreObserver observer;
 
 	/**
 	 * Seals and unseals the {@link org.sliceworkz.eventstore.shredding.Shreddable} values in this store's
@@ -179,27 +174,6 @@ public class EventStoreImpl implements EventStore {
 	 * they create themselves.
 	 */
 	private final ShreddingCodec shreddingCodec;
-
-	/**
-	 * The {@code purpose} values this store has admitted as their own tag value, and how many there
-	 * are. Every purpose beyond {@link MeterOptions#maxPurposeTagValues()} is reported as
-	 * {@link MeterOptions#OVERFLOW_PURPOSE_TAG_VALUE} instead — see {@link #purposeTagValueFor}.
-	 * <p>
-	 * The count is held separately rather than read off the set because the admission decision has to
-	 * be made against a value that cannot be observed mid-update: {@code size()} on a
-	 * {@code ConcurrentHashMap}-backed set is an estimate under concurrent writes, and an estimate
-	 * that reads low is a cap that does not hold. Rejected purposes are deliberately not remembered —
-	 * memoising them would grow a map with exactly the cardinality this is here to bound.
-	 */
-	private final Set<String> admittedPurposeTagValues = ConcurrentHashMap.newKeySet();
-	private final AtomicInteger admittedPurposeTagValueCount = new AtomicInteger();
-
-	/**
-	 * Whether this store has already said that it hit the purpose cap. The warning is worth logging
-	 * once — it means a dimension of the metrics is now pooled — and worth logging only once, since
-	 * the store reaches this path on every stream it hands out afterwards.
-	 */
-	private final AtomicBoolean purposeCardinalityWarningLogged = new AtomicBoolean();
 
 	/**
 	 * Guards {@link #close()} so that it runs once, and marks this store as unusable afterwards.
@@ -246,26 +220,6 @@ public class EventStoreImpl implements EventStore {
 	private final ConcurrentHashMap<SerdeKey, EventPayloadSerializerDeserializer> serdes = new ConcurrentHashMap<>();
 
 	/**
-	 * The highest appended event position per meter tag set, one holder shared by every stream that
-	 * meters under those tags.
-	 * <p>
-	 * This exists because {@code sliceworkz.eventstore.append.position} is a gauge, and a gauge cannot
-	 * be re-registered: Micrometer keeps the first registration for a given name and tags and ignores
-	 * every later one. A per-stream holder therefore left only the very first stream's gauge live, and
-	 * — since Micrometer references gauge state weakly — the series went permanently {@code NaN} as
-	 * soon as that one stream was collected, which in the documented per-operation usage is almost
-	 * immediately. Keeping the holder here, and registering the gauge exactly once against it, makes
-	 * every stream sharing those tags report into the series that is actually being observed.
-	 * <p>
-	 * It is keyed on the tags <em>after</em> {@link #purposeTagValueFor} has bounded them, which is what
-	 * keeps this map bounded too. That matters beyond tidiness: a caller who filters these meters away
-	 * with a Micrometer {@code MeterFilter} cannot reach this map — a filter runs at registration, and
-	 * this is keyed on the tags the store asked for — so with an unbounded purpose it would go on
-	 * growing behind a registry holding no meters at all, at roughly 730 bytes per distinct purpose.
-	 */
-	private final ConcurrentHashMap<io.micrometer.core.instrument.Tags, AtomicLong> highestAppendedPositions = new ConcurrentHashMap<>();
-
-	/**
 	 * Identifies a payload serializer by the mappings it was built from, which is everything that
 	 * distinguishes one from another.
 	 * <p>
@@ -290,68 +244,29 @@ public class EventStoreImpl implements EventStore {
 
 
 	/**
-	 * Constructs a new EventStoreImpl instance backed by the specified storage with observability support.
+	 * Constructs a new EventStoreImpl on the given storage.
 	 * <p>
-	 * This constructor is invoked by {@link EventStoreFactoryImpl} and should not be called directly.
-	 * The constructor initializes a single-threaded executor using virtual threads for handling
-	 * eventually consistent event notifications without blocking append operations.
-	 * <p>
-	 * The meter registry is used to collect metrics about event store operations including:
-	 * <ul>
-	 *   <li>Event stream creation counts (tagged by context, purpose, and whether typed or raw)</li>
-	 *   <li>Event append operations</li>
-	 *   <li>Query performance</li>
-	 * </ul>
-	 * The {@code purpose} tag is capped at {@link MeterOptions#DEFAULT_MAX_PURPOSE_TAG_VALUES} distinct
-	 * values by this constructor; use the three-argument one to change that.
+	 * Invoked by {@link EventStoreFactoryImpl}; applications build a store with
+	 * {@link EventStore#on(EventStorage)}. The notification executors use virtual threads, so that
+	 * eventually consistent subscribers are told about appends without blocking them.
 	 *
 	 * @param eventStorage the storage backend implementation (in-memory, PostgreSQL, etc.)
-	 * @param meterRegistry the Micrometer meter registry for collecting metrics; use {@link io.micrometer.core.instrument.Metrics#globalRegistry} if unsure
-	 * @throws IllegalArgumentException if eventStorage or meterRegistry is null
-	 */
-	protected EventStoreImpl ( EventStorage eventStorage, MeterRegistry meterRegistry ) {
-		this(eventStorage, meterRegistry, MeterOptions.defaults());
-	}
-
-	/**
-	 * Constructs a new EventStoreImpl with explicit control over how much detail its meters carry.
-	 * <p>
-	 * See {@link MeterOptions} for what the meters cost per distinct {@code purpose} and why they are
-	 * capped by default. The two-argument constructor applies {@link MeterOptions#defaults()}.
-	 *
-	 * @param eventStorage the storage backend implementation (in-memory, PostgreSQL, etc.)
-	 * @param meterRegistry the Micrometer meter registry for collecting metrics; use {@link io.micrometer.core.instrument.Metrics#globalRegistry} if unsure
-	 * @param meterOptions how much detail this store's meters may carry
-	 * @throws IllegalArgumentException if eventStorage, meterRegistry or meterOptions is null
-	 */
-	protected EventStoreImpl ( EventStorage eventStorage, MeterRegistry meterRegistry, MeterOptions meterOptions ) {
-		this(eventStorage, meterRegistry, meterOptions, null);
-	}
-
-	/**
-	 * Constructs a new EventStoreImpl that can protect and erase personal data.
-	 *
-	 * @param eventStorage the storage backend implementation (in-memory, PostgreSQL, etc.)
-	 * @param meterRegistry the Micrometer meter registry for collecting metrics; use {@link io.micrometer.core.instrument.Metrics#globalRegistry} if unsure
-	 * @param meterOptions how much detail this store's meters may carry
+	 * @param observer what the store reports its operations to, or null for the storage's own
+	 *                 ({@link EventStorage#observer()}), which is {@link EventStoreObserver#NOOP} for a
+	 *                 storage configured without one
 	 * @param shreddingCodec seals and unseals protected values, or null to use the codec the storage was
 	 *                       configured with ({@link EventStorage#shreddingCodec()}), which is empty for a
 	 *                       store without shredding
-	 * @throws IllegalArgumentException if eventStorage, meterRegistry or meterOptions is null
+	 * @throws IllegalArgumentException if eventStorage is null
 	 */
-	protected EventStoreImpl ( EventStorage eventStorage, MeterRegistry meterRegistry, MeterOptions meterOptions, ShreddingCodec shreddingCodec ) {
+	protected EventStoreImpl ( EventStorage eventStorage, EventStoreObserver observer, ShreddingCodec shreddingCodec ) {
 		if ( eventStorage == null ) {
 			throw new IllegalArgumentException("eventStorage cannot be null");
 		}
-		if ( meterRegistry == null ) {
-			throw new IllegalArgumentException("meterRegistry cannot be null.  Consider using Metrics.globalRegistry as a no-op fallback");
-		}
-		if ( meterOptions == null ) {
-			throw new IllegalArgumentException("meterOptions cannot be null.  Use MeterOptions.defaults() for the default behaviour");
-		}
 		this.eventStorage = eventStorage;
-		this.meterRegistry = meterRegistry;
-		this.meterOptions = meterOptions;
+		// one given explicitly wins; otherwise the storage's own, so that a builder's .observer(...) reaches
+		// a store built on the storage through EventStore.on(storage), not only one from buildStore()
+		this.observer = EventStoreObserver.contained(observer != null ? observer : eventStorage.observer());
 		// a codec handed in explicitly wins; otherwise the storage's own, so that a builder's .shredding(...)
 		// reaches a store built on the storage through the factory, not only one from buildStore()
 		this.shreddingCodec = shreddingCodec != null ? shreddingCodec : eventStorage.shreddingCodec().orElse(null);
@@ -411,13 +326,19 @@ public class EventStoreImpl implements EventStore {
 		}
 		if ( shreddingCodec == null ) {
 			throw new UnsupportedOperationException(
-					"event store on storage '%s' has no ShreddingCodec configured, so it holds no keys to destroy; configure shredding on the storage builder or via EventStoreFactory.eventStore(storage, registry, meterOptions, codec)"
+					"event store on storage '%s' has no ShreddingCodec configured, so it holds no keys to destroy; configure shredding on the storage builder or via EventStore.on(storage).shredding(codec)"
 							.formatted(eventStorage.name()));
 		}
 		// Deliberately allowed on a closed store: erasure touches the key store, not the events, and
 		// refusing to honour an erasure request because a store handle was closed would be a poor reason
 		// to leave personal data readable.
-		ErasureReport report = shreddingCodec.shred(subject, reason);
+		ErasureReport report = observed(
+				new Observation.Erase(eventStorage.name(), subject.type(), subject.id(), Optional.of(subject.category()), reason),
+				reporter -> {
+					ErasureReport erased = shreddingCodec.shred(subject, reason);
+					reporter.completed(new Outcome.Erased(erased.keysShredded(), erased.isNoop() ? List.of() : List.of(subject.category())));
+					return erased;
+				});
 
 		// Logged at INFO because this is the one operation here that is irreversible, and because the
 		// events record nothing about it -- the key store row and this line are the whole trail.
@@ -440,11 +361,17 @@ public class EventStoreImpl implements EventStore {
 		}
 		if ( shreddingCodec == null ) {
 			throw new UnsupportedOperationException(
-					"event store on storage '%s' has no ShreddingCodec configured, so it holds no keys to destroy; configure shredding on the storage builder or via EventStoreFactory.eventStore(storage, registry, meterOptions, codec)"
+					"event store on storage '%s' has no ShreddingCodec configured, so it holds no keys to destroy; configure shredding on the storage builder or via EventStore.on(storage).shredding(codec)"
 							.formatted(eventStorage.name()));
 		}
 		// Allowed on a closed store for the same reason eraseCategory is.
-		SubjectErasureReport report = shreddingCodec.shredAllCategories(subjectType, subjectId, reason);
+		SubjectErasureReport report = observed(
+				new Observation.Erase(eventStorage.name(), subjectType, subjectId, Optional.empty(), reason),
+				reporter -> {
+					SubjectErasureReport erased = shreddingCodec.shredAllCategories(subjectType, subjectId, reason);
+					reporter.completed(new Outcome.Erased(erased.keysShredded(), erased.categoriesErased()));
+					return erased;
+				});
 
 		STORE_LOGGER.info("erased data subject {}/{} across categories {} on storage '{}': {} key(s) shredded ({})",
 				subjectType, subjectId, report.categoriesErased(), eventStorage.name(), report.keysShredded(), reason);
@@ -495,84 +422,70 @@ public class EventStoreImpl implements EventStore {
 	}
 
 	/**
-	 * Returns the holder backing {@code sliceworkz.eventstore.append.position} for the given tags,
-	 * registering the gauge against it the first time those tags are seen.
+	 * Runs one operation as an observation: started before it, reported as completed or failed, closed
+	 * after it, all on the calling thread — the contract {@link EventStoreObserver} states.
 	 * <p>
-	 * See {@link #highestAppendedPositions} for why the holder outlives the stream that asks for it.
-	 * The gauge is registered with a strong reference so that it survives even if this map is ever
-	 * given a weaker retention policy, and reads {@code NaN} until something is actually appended,
-	 * which is what {@link Long#MIN_VALUE} stands in for.
+	 * The operation reports its own completion, since only it knows what it answered; this reports a
+	 * failure for it when it throws without having completed. That is what lets an operation answer and
+	 * still throw — an append at a moved boundary completes as {@link Outcome.Conflicted} and then throws
+	 * the {@link OptimisticLockingException} the caller re-decides on — without that answer being reported
+	 * a second time, as a failure.
+	 * <p>
+	 * Argument checks belong before this call, not inside it: a refused argument is not an operation that
+	 * ran and failed, and reporting one would put caller bugs among the storage errors.
 	 */
-	private AtomicLong highestAppendedPositionFor ( io.micrometer.core.instrument.Tags baseTags ) {
-		return highestAppendedPositions.computeIfAbsent(baseTags, tags -> {
-			AtomicLong holder = new AtomicLong(Long.MIN_VALUE);
-			Gauge.builder("sliceworkz.eventstore.append.position", holder,
-						h -> { long value = h.get(); return value == Long.MIN_VALUE ? Double.NaN : (double) value; })
-				.tags(tags)
-				.strongReference(true)
-				.register(meterRegistry);
-			return holder;
-		});
+	private <O extends Outcome, R> R observed ( Observation<O> observation, Function<Reporter<O>, R> operation ) {
+		Observation.Scope<O> scope = observer.start(observation);
+		Reporter<O> reporter = new Reporter<>(scope);
+		try {
+			return operation.apply(reporter);
+		} catch ( RuntimeException | Error e ) {
+			if ( !reporter.completed ) {
+				scope.failed(e);
+			}
+			throw e;
+		} finally {
+			scope.close();
+		}
 	}
 
 	/**
-	 * Returns the value to put in the {@code purpose} meter tag for a stream: the purpose itself while
-	 * this store is still under its cap of distinct purposes, and
-	 * {@link MeterOptions#OVERFLOW_PURPOSE_TAG_VALUE} once it is not.
-	 * <p>
-	 * This is the one place the cap is applied, and everything tagged downstream inherits it: the
-	 * per-stream counters and timers, the {@code eventtype} cross product on {@code query.event} and
-	 * {@code append.event}, and {@link #highestAppendedPositions}. See {@link MeterOptions} for what an
-	 * uncapped purpose costs and why the default is not "whatever the application produces".
-	 * <p>
-	 * Admission is first-come-first-served and permanent — a purpose that got a tag value keeps it for
-	 * the life of the store — so the series a dashboard is built on do not come and go. A purpose that
-	 * did not get one is <em>not</em> recorded anywhere, which is what makes this bounded: remembering
-	 * the rejections would cost exactly the cardinality being avoided. The price is that the check runs
-	 * per stream handle rather than once per purpose, but it is a set lookup on a path that already
-	 * resolves a dozen meters.
+	 * Whether anything is observing this store. The per-type counts an observation carries cost a map per
+	 * operation, which a store nobody observes has no reason to build.
 	 */
-	private String purposeTagValueFor ( String purpose ) {
-		int max = meterOptions.maxPurposeTagValues();
-		if ( max == 0 ) {
-			return MeterOptions.OVERFLOW_PURPOSE_TAG_VALUE;
-		}
-		if ( admittedPurposeTagValues.contains(purpose) ) {
-			return purpose;
-		}
-		// Claim a slot before adding, so that concurrent first-time purposes cannot both see room and
-		// push the store over its cap. Losing the race to add means another thread admitted the same
-		// purpose meanwhile, and the slot this thread claimed goes back.
-		while ( true ) {
-			int admitted = admittedPurposeTagValueCount.get();
-			if ( admitted >= max ) {
-				warnAboutPurposeCardinality(purpose, max);
-				return MeterOptions.OVERFLOW_PURPOSE_TAG_VALUE;
-			}
-			if ( admittedPurposeTagValueCount.compareAndSet(admitted, admitted + 1) ) {
-				break;
-			}
-		}
-		if ( !admittedPurposeTagValues.add(purpose) ) {
-			admittedPurposeTagValueCount.decrementAndGet();
-		}
-		return purpose;
+	private boolean observing ( ) {
+		return observer != EventStoreObserver.NOOP;
 	}
 
 	/**
-	 * Says once, on the first purpose that has to be pooled, that this store's meters are no longer
-	 * broken down by purpose. Names the purpose that tripped it, so the value itself shows whether this
-	 * is a purpose used as an entity id (the usual cause) or a cap set too low.
+	 * How an operation reports what it answered, remembering that it did.
 	 */
-	private void warnAboutPurposeCardinality ( String purpose, int max ) {
-		if ( purposeCardinalityWarningLogged.compareAndSet(false, true) ) {
-			STORE_LOGGER.warn(
-				"event store on storage '{}' has now seen {} distinct stream purposes, its configured maximum; "
-				+ "meters for further purposes -- starting with '{}' -- are tagged purpose='{}' instead. "
-				+ "This keeps the number of meters bounded: every distinct purpose costs ~15 meters and ~5.5KB of heap that no registry ever reclaims. "
-				+ "If purpose is an entity id here, pass MeterOptions.withoutPurposeBreakdown(); if this is a genuinely broad but bounded set, raise MeterOptions.withMaxPurposeTagValues(int)",
-				eventStorage.name(), max, purpose, MeterOptions.OVERFLOW_PURPOSE_TAG_VALUE);
+	private static final class Reporter<O extends Outcome> {
+
+		private final Observation.Scope<O> scope;
+		private boolean completed;
+
+		private Reporter ( Observation.Scope<O> scope ) {
+			this.scope = scope;
 		}
+
+		void completed ( O outcome ) {
+			completed = true;
+			scope.completed(outcome);
+		}
+
+	}
+
+	private static Duration since ( long startNanos ) {
+		return Duration.ofNanos(System.nanoTime() - startNanos);
+	}
+
+	private static <T> Map<EventType, Integer> countPerType ( List<T> items, Function<T, EventType> type ) {
+		Map<EventType, Integer> counts = new HashMap<>();
+		for ( T item : items ) {
+			counts.merge(type.apply(item), 1, Integer::sum);
+		}
+		return counts;
 	}
 
 	class EventStreamImpl<EVENT_TYPE> implements EventStream<EVENT_TYPE>, EventStoreListener {
@@ -583,26 +496,11 @@ public class EventStoreImpl implements EventStore {
 		private final EventStreamId eventStreamId;
 		private final EventPayloadSerializerDeserializer serde;
 
-		private Counter meterAppend;
-		private Counter meterAppendDeduplicated;
-		private Counter meterAppendOptimisticLock;
-		private Counter meterQuery;
-		private Counter meterGetEvent;
-		private Counter meterBookmarkPlace;
-		private Counter meterBookmarkGet;
-		private Counter meterBookmarkList;
-		private Counter meterHead;
-		private Timer timerQuery;
-		private Timer timerAppend;
-		private Timer timerHead;
-
-		private final io.micrometer.core.instrument.Tags baseTags;
-
 		/**
-		 * Backs {@code sliceworkz.eventstore.append.position}. Owned by the store and shared with every
-		 * other stream metering under the same tags — see {@link EventStoreImpl#highestAppendedPositions}.
+		 * This stream as every observation of it names it. The purpose is the real one: bounding it is the
+		 * concern of an observer turning it into a metrics tag, not of the store.
 		 */
-		private final AtomicLong gaugeHighestEventPosition;
+		private final StreamInfo info;
 
 		/**
 		 * The live subscriptions of this stream, one per {@code subscribe} call, each holding the listener it
@@ -633,38 +531,8 @@ public class EventStoreImpl implements EventStore {
 			this.eventStreamId = eventStreamId;
 			this.serde = serde;
 
-			String tagContextValue = Optional.ofNullable(eventStreamId.context()).orElse(""); // null is not allowed
-			// bounded rather than taken verbatim: purpose is documented as an entity id in half the
-			// examples, and every distinct value here is a permanent set of meters -- see purposeTagValueFor
-			String tagPurposeValue = purposeTagValueFor(Optional.ofNullable(eventStreamId.purpose()).orElse("")); // null is not allowed
-			String tagTypedValue = String.valueOf(serde.isTyped());
-			
-			this.baseTags = io.micrometer.core.instrument.Tags
-					.of("context", tagContextValue, "purpose", tagPurposeValue, "typed", tagTypedValue, "storage", eventStorage.name());
-
-			// prepare counters for metering
-			this.meterAppend = meterRegistry.counter("sliceworkz.eventstore.append", baseTags);
-			this.meterAppendDeduplicated = meterRegistry.counter("sliceworkz.eventstore.append.deduplicated", baseTags);
-			this.meterQuery = meterRegistry.counter("sliceworkz.eventstore.query", baseTags);
-			this.meterAppendOptimisticLock = meterRegistry.counter("sliceworkz.eventstore.append.optimisticlock", baseTags);
-			this.meterGetEvent = meterRegistry.counter("sliceworkz.eventstore.get.event", baseTags);
-			this.meterBookmarkPlace = meterRegistry.counter("sliceworkz.eventstore.bookmark.place", baseTags);
-			this.meterBookmarkGet= meterRegistry.counter("sliceworkz.eventstore.bookmark.get", baseTags);
-			this.meterBookmarkList = meterRegistry.counter("sliceworkz.eventstore.bookmark.list", baseTags);
-			// its own meter rather than a share of sliceworkz.eventstore.query: a head lookup is the pin
-			// of a consistency boundary, and a dashboard should tell pins from reads
-			this.meterHead = meterRegistry.counter("sliceworkz.eventstore.head", baseTags);
-
-			this.timerQuery = meterRegistry.timer("sliceworkz.eventstore.query.duration", baseTags);
-			this.timerAppend = meterRegistry.timer("sliceworkz.eventstore.append.duration", baseTags);
-			this.timerHead = meterRegistry.timer("sliceworkz.eventstore.head.duration", baseTags);
-
-			// pick up the shared holder for the highest event position, registering its gauge if this is
-			// the first stream to meter under these tags
-			this.gaugeHighestEventPosition = highestAppendedPositionFor(baseTags);
-
-			// increment number of stream objects created
-			meterRegistry.counter("sliceworkz.eventstore.stream.create", baseTags).increment();
+			this.info = new StreamInfo(eventStorage.name(), eventStreamId, serde.isTyped());
+			observer.streamOpened(info);
 		}
 		
 		/**
@@ -772,6 +640,9 @@ public class EventStoreImpl implements EventStore {
 			StreamSubscription<LISTENER> subscription = new StreamSubscription<>(subscriptions, listener);
 			synchronized ( subscriptionLock ) {
 				subscriptions.add(subscription);
+				// reported under the lock, before the registration, so that a store closing in between --
+				// which ends this subscription at once -- reports it closed after it was reported opened
+				observer.subscriptionOpened(info);
 				subscribeToStorage();
 			}
 			return subscription;
@@ -804,6 +675,7 @@ public class EventStoreImpl implements EventStore {
 					}
 					active = false;
 					subscriptions.remove(this);
+					observer.subscriptionClosed(info);
 					if ( appendSubscriptions.isEmpty() && bookmarkSubscriptions.isEmpty() ) {
 						unsubscribeFromStorage();
 					}
@@ -819,36 +691,43 @@ public class EventStoreImpl implements EventStore {
 
 		@Override
 		public List<Event<EVENT_TYPE>> query ( EventQuery query, EventReference cursor ) {
-			return enrichAfterQuery(fetch(query, cursor), query.filter(), query.direction());
+			return read(query, cursor).events();
+		}
+
+		@Override
+		public EventPage<EVENT_TYPE> page ( EventQuery query, EventReference cursor ) {
+			return read(query, cursor);
 		}
 
 		/**
+		 * The read behind both {@link #query(EventQuery, EventReference)} and
+		 * {@link #page(EventQuery, EventReference)}: one storage query, with the limit and the direction the
+		 * query's own, and its result enriched in full.
+		 * <p>
 		 * A page is the same read as a query, with the stored events counted and the last of them kept
 		 * before they are enriched: the stored list is what storage handed back, so its size and last
 		 * element are known before a single payload is converted, and they stay right when the
 		 * enrichment turns a stored event into several events or into none.
+		 * <p>
+		 * The observation spans the whole read, enrichment included, and its outcome carries the time
+		 * spent inside the storage separately: the rest is deserializing, upcasting and unsealing, which
+		 * on an ordinary page is most of the wait.
 		 */
-		@Override
-		public EventPage<EVENT_TYPE> page ( EventQuery query, EventReference cursor ) {
-			List<StoredEvent> storedEvents = fetch(query, cursor);
-			List<Event<EVENT_TYPE>> events = enrichAfterQuery(storedEvents, query.filter(), query.direction());
-			Optional<EventReference> lastStored = storedEvents.isEmpty() ? Optional.empty() : Optional.of(storedEvents.getLast().reference());
-			return new EventPage<>(events, storedEvents.size(), lastStored);
-		}
-
-		/**
-		 * The storage read behind both {@link #query(EventQuery, EventReference)} and
-		 * {@link #page(EventQuery, EventReference)}: one query counted, the fetch timed, the limit and
-		 * the direction the query's own.
-		 */
-		private List<StoredEvent> fetch ( EventQuery query, EventReference cursor ) {
+		private EventPage<EVENT_TYPE> read ( EventQuery query, EventReference cursor ) {
 			checkStoreNotClosed();
-			meterQuery.increment(); // one query done
-
-			// Time the storage fetch itself, and nothing else: the query timer is the cost of the store,
-			// and deserialisation and upcasting are the cost of the mappings, counted separately per
-			// event type by sliceworkz.eventstore.query.event.
-			return timerQuery.record(()->eventStorage.query(includeLegacyEventTypes(query.filter()), eventStreamId, cursor, query.limit(), query.direction()));
+			// widened before the observation starts: a filter naming a legacy type is refused here, as an
+			// argument, not reported as a read that failed
+			EventFilter storageFilter = includeLegacyEventTypes(query.filter());
+			return observed(new Observation.Query(info, query.filter(), query.limit(), query.direction(), Optional.ofNullable(cursor)), reporter -> {
+				long start = System.nanoTime();
+				List<StoredEvent> storedEvents = eventStorage.query(storageFilter, eventStreamId, cursor, query.limit(), query.direction());
+				Duration storageTime = since(start);
+				List<Event<EVENT_TYPE>> events = enrichAfterQuery(storedEvents, query.filter(), query.direction());
+				reporter.completed(new Outcome.Read(storageTime, storedEvents.size(),
+						observing() ? countPerType(storedEvents, StoredEvent::type) : Map.of(), events.size()));
+				Optional<EventReference> lastStored = storedEvents.isEmpty() ? Optional.empty() : Optional.of(storedEvents.getLast().reference());
+				return new EventPage<>(events, storedEvents.size(), lastStored);
+			});
 		}
 
 		/**
@@ -861,18 +740,13 @@ public class EventStoreImpl implements EventStore {
 		private List<Event<EVENT_TYPE>> enrichAfterQuery ( List<StoredEvent> storedEvents, EventFilter originalFilter, Direction direction ) {
 			List<Event<EVENT_TYPE>> events = new ArrayList<>(storedEvents.size());
 			for ( StoredEvent storedEvent : storedEvents ) {
-				for ( Event<EVENT_TYPE> event : enrichAfterQuery(storedEvent, direction) ) {
+				for ( Event<EVENT_TYPE> event : enrich(storedEvent, direction) ) {
 					if ( originalFilter.matches(event) ) {
 						events.add(event);
 					}
 				}
 			}
 			return Collections.unmodifiableList(events);
-		}
-
-		private List<Event<EVENT_TYPE>> enrichAfterQuery ( StoredEvent storedEvent, Direction direction ) {
-			meterRegistry.counter("sliceworkz.eventstore.query.event", baseTags.and("eventtype", storedEvent.type().name())).increment();
-			return enrich(storedEvent, direction);
 		}
 
 		@SuppressWarnings("unchecked")
@@ -904,7 +778,6 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		private EventToStore reduce ( EphemeralEvent<? extends EVENT_TYPE> event ) {
-			meterRegistry.counter("sliceworkz.eventstore.append.event", baseTags.and("eventtype", event.type().name())).increment();
 			TypeAndSerializedPayload data = serde.serialize(event.data());
 			Tags tags = withShreddingKeyTags(event.tags(), data.shreddingKeys());
 			return new EventToStore(eventStreamId, data.type(), data.immutablePayload(), tags, event.idempotencyKey());
@@ -966,36 +839,42 @@ public class EventStoreImpl implements EventStore {
 			// for the exception, which names the boundary the caller decided on.
 			AppendCriteria storageCriteria = includeLegacyEventTypes(appendCriteria);
 
-			// append events to the eventstore (with optimistic locking)
-			List<Event<EVENT_TYPE>> appendedEvents;
-			try {
-				List<EventToStore> eventsToStore = reduce(events);
-				List<StoredEvent> storedEvents = timerAppend.record(()->eventStorage.append(storageCriteria, eventStreamId, eventsToStore));
-				appendedEvents = storedEvents.stream().flatMap(se->enrich(se, Direction.FORWARD).stream()).toList();
-				meterAppend.increment();
+			int idempotencyKeys = (int) events.stream().filter(e -> e.idempotencyKey() != null).count();
+			Observation.Append observation = new Observation.Append(info,
+					observing() ? countPerType(events, EphemeralEvent::type) : Map.of(), !appendCriteria.isNone(), idempotencyKeys);
 
-				// A duplicate idempotency key is swallowed by storage -- the event is not written and the
-				// call reports success -- so submitted minus stored is the one place the de-duplication is
-				// observable: append counts calls and append.event counts submitted events, and one call
-				// can carry several, so no two meters can be subtracted to recover it. Counted on the
-				// stored events, not the enriched result, whose size upcasting can change. Splitting the
-				// storage call out of the pipeline also narrows timerAppend to the storage append alone,
-				// which is what timerQuery deliberately measures on the read side.
-				int deduplicatedEvents = events.size() - storedEvents.size();
-				if ( deduplicatedEvents > 0 ) {
-					meterAppendDeduplicated.increment(deduplicatedEvents);
+			// append events to the eventstore (with optimistic locking)
+			List<Event<EVENT_TYPE>> appendedEvents = observed(observation, reporter -> {
+				List<EventToStore> eventsToStore = reduce(events);
+				long start = System.nanoTime();
+				List<StoredEvent> storedEvents;
+				try {
+					storedEvents = eventStorage.append(storageCriteria, eventStreamId, eventsToStore);
+				} catch (OptimisticLockingException optimisticLockingException) {
+					// the DCB answer to a stale decision: reported as what the append answered, and then
+					// thrown, since the caller re-decides on it
+					reporter.completed(new Outcome.Conflicted(since(start), appendCriteria.eventFilter(), appendCriteria.expectedLastEventReference()));
+					throw namingTheCallersBoundary(optimisticLockingException, appendCriteria, storageCriteria);
+				}
+				Duration storageTime = since(start);
+
+				// A batch is stored whole or not at all, and storage swallows it whole only as a retry: when
+				// every idempotency key in it was stored before (a batch mixing stored and new keys is refused
+				// with IdempotencyKeyConflictException). So an empty result for a non-empty batch is a retry,
+				// and there is no partly de-duplicated answer to report.
+				if ( storedEvents.isEmpty() ) {
+					reporter.completed(new Outcome.Duplicated(storageTime, events.size()));
+					return List.<Event<EVENT_TYPE>>of();
 				}
 
-				// update highest event position gauge
-				appendedEvents.stream()
-					.map(Event::reference)
-					.mapToLong(EventReference::position)
-					.max()
-					.ifPresent(maxPosition -> gaugeHighestEventPosition.updateAndGet(current -> Math.max(current, maxPosition)));
-			} catch (OptimisticLockingException optimisticLockingException) {
-				meterAppendOptimisticLock.increment();
-				throw namingTheCallersBoundary(optimisticLockingException, appendCriteria, storageCriteria);
-			}
+				// Enriched before the completion is reported: an event that serializes but cannot be read back
+				// fails the append here, with the event already stored, and that failure is what the caller
+				// receives -- so it is what the observation reports.
+				List<Event<EVENT_TYPE>> enriched = storedEvents.stream().flatMap(se->enrich(se, Direction.FORWARD).stream()).toList();
+				reporter.completed(new Outcome.Appended(storageTime, storedEvents.size(),
+						observing() ? countPerType(storedEvents, StoredEvent::type) : Map.of(), storedEvents.getLast().reference()));
+				return enriched;
+			});
 
 			// The appended events -- typed, with their assigned references -- are handed straight back to
 			// the caller, which is the whole of this store's read-your-own-writes story: code reacting to
@@ -1194,8 +1073,12 @@ public class EventStoreImpl implements EventStore {
 		public void placeBookmark(String reader, EventReference reference, Tags tags) {
 			checkStoreNotClosed();
 			requireReader(reader);
-			meterBookmarkPlace.increment();
-			eventStorage.bookmark(reader, reference, tags);
+			observed(new Observation.PlaceBookmark(info, reader, reference), reporter -> {
+				long start = System.nanoTime();
+				eventStorage.bookmark(reader, reference, tags);
+				reporter.completed(new Outcome.Done(since(start)));
+				return null;
+			});
 		}
 
 		@Override
@@ -1212,8 +1095,12 @@ public class EventStoreImpl implements EventStore {
 		public Optional<EventReference> getBookmark(String reader) {
 			checkStoreNotClosed();
 			requireReader(reader);
-			meterBookmarkGet.increment();
-			return eventStorage.getBookmark(reader);
+			return observed(new Observation.GetBookmark(info, reader), reporter -> {
+				long start = System.nanoTime();
+				Optional<EventReference> bookmark = eventStorage.getBookmark(reader);
+				reporter.completed(new Outcome.Found(since(start), bookmark.isPresent()));
+				return bookmark;
+			});
 		}
 
 		/**
@@ -1239,30 +1126,54 @@ public class EventStoreImpl implements EventStore {
 		@Override
 		public List<Bookmark> getBookmarks() {
 			checkStoreNotClosed();
-			meterBookmarkList.increment();
-			return eventStorage.getBookmarks();
+			return observed(new Observation.ListBookmarks(info), reporter -> {
+				long start = System.nanoTime();
+				List<Bookmark> bookmarks = eventStorage.getBookmarks();
+				reporter.completed(new Outcome.Counted(since(start), bookmarks.size()));
+				return bookmarks;
+			});
 		}
 
 		@Override
 		public Optional<List<Event<EVENT_TYPE>>> getEventById(EventId eventId) {
 			checkStoreNotClosed();
-			meterGetEvent.increment();
-			// an event stored in a stream this one does not read across is absent here, as it is from a
-			// query; a stored event this stream holds is present whatever it upcasts into, an empty list
-			// included -- the two levels are the contract, so nothing collapses them
-			return eventStorage.getEventById(eventId)
-				.filter(e->eventStreamId.covers(e.stream()))
-				.map(e->enrich(e, Direction.FORWARD));
+			return observed(new Observation.GetEvent(info, eventId), reporter -> {
+				long start = System.nanoTime();
+				// an event stored in a stream this one does not read across is absent here, as it is from a
+				// query; a stored event this stream holds is present whatever it upcasts into, an empty list
+				// included -- the two levels are the contract, so nothing collapses them
+				Optional<StoredEvent> stored = eventStorage.getEventById(eventId).filter(e->eventStreamId.covers(e.stream()));
+				Duration storageTime = since(start);
+				Optional<List<Event<EVENT_TYPE>>> events = stored.map(e->enrich(e, Direction.FORWARD));
+				reporter.completed(new Outcome.Found(storageTime, stored.isPresent()));
+				return events;
+			});
 		}
 
 		@Override
 		public Optional<EventReference> head ( ) {
 			checkStoreNotClosed();
-			meterHead.increment();
 			// straight to the storage: the head is a stored event's reference and nothing about it goes
 			// through this stream's mappings -- no legacy-type widening, no upcasting, no decryption --
-			// which is what lets it be answered for a head this stream could not read
-			return timerHead.record(() -> eventStorage.head(eventStreamId));
+			// which is what lets it be answered for a head this stream could not read. Reported as its own
+			// observation rather than as a read: a head lookup is the pin of a consistency boundary, and a
+			// dashboard should tell pins from reads
+			return observed(new Observation.Head(info), reporter -> {
+				long start = System.nanoTime();
+				Optional<EventReference> head = eventStorage.head(eventStreamId);
+				reporter.completed(new Outcome.HeadRead(since(start), head));
+				return head;
+			});
+		}
+
+		/**
+		 * The store's observer and this stream: what a {@link org.sliceworkz.eventstore.projection.Projector}
+		 * reading from this stream reports its batches to. Answered for an unobserved store too, with
+		 * {@link EventStoreObserver#NOOP}, which costs a projector nothing.
+		 */
+		@Override
+		public Optional<StreamObservation> observation ( ) {
+			return Optional.of(new StreamObservation(observer, info));
 		}
 
 	}

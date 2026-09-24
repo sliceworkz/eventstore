@@ -20,12 +20,10 @@ package org.sliceworkz.eventstore;
 import java.util.NoSuchElementException;
 import java.util.ServiceLoader;
 
+import org.sliceworkz.eventstore.observability.EventStoreObserver;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageException;
-
-import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.Metrics;
 
 /**
  * The SPI through which an {@link EventStore} implementation is provided.
@@ -33,9 +31,9 @@ import io.micrometer.core.instrument.Metrics;
  * The implementation module (sliceworkz-eventstore-impl) registers its factory for Java's
  * {@link ServiceLoader}, and {@link #get()} finds it at runtime. Application code does not call this
  * factory: it builds a store with {@link EventStore#on(EventStorage)}, which resolves the factory and
- * hands it the storage, the registry, the options and the codec, or takes the store from a storage
- * builder's {@code buildStore()}. The overloads here are what those two paths call, and what an
- * implementation of this library provides.
+ * hands it the storage, the observer and the codec, or takes the store from a storage builder's
+ * {@code buildStore()}. The methods here are what those two paths call, and what an implementation of
+ * this library provides.
  *
  * <h2>Example Usage:</h2>
  * <pre>{@code
@@ -55,91 +53,37 @@ import io.micrometer.core.instrument.Metrics;
 public interface EventStoreFactory {
 
 	/**
-	 * Creates an EventStore instance backed by the provided storage implementation with observability support.
+	 * Creates an EventStore on the given storage.
 	 * <p>
-	 * The storage backend determines where and how events are persisted (in-memory, PostgreSQL, etc.).
-	 * The meter registry enables metrics collection for monitoring event store operations such as
-	 * event stream creation, append operations, and query performance.
+	 * The observer is what the store reports its operations to — see {@link EventStoreObserver} — and the
+	 * codec seals {@link org.sliceworkz.eventstore.shredding.Shreddable} values on append, unseals them on
+	 * read, and destroys the keys behind them on
+	 * {@link EventStore#erase(String, String, org.sliceworkz.eventstore.shredding.ErasureReason) erase}.
+	 * Either may be {@code null}, meaning the one the storage was configured with
+	 * ({@link EventStorage#observer()}, {@link EventStorage#shreddingCodec()}), so a storage builder's
+	 * {@code .observer(...)} and {@code .shredding(...)} reach a store built through this factory as much
+	 * as one from the builder's {@code buildStore()}. A store with no codec at all refuses to register an
+	 * event type declaring a {@code Shreddable} component, rather than storing it in the clear.
 	 *
 	 * @param eventStorage the storage backend implementation
-	 * @param meterRegistry the Micrometer meter registry for collecting metrics and observability data
+	 * @param observer what the store reports to, or null for the storage's own
+	 * @param shreddingCodec protects personal data in event payloads, or null for the storage's own, if any
 	 * @return a new EventStore instance using the provided storage
-	 * @see org.sliceworkz.eventstore.spi.EventStorage
-	 * @see io.micrometer.core.instrument.MeterRegistry
+	 * @see EventStore#on(EventStorage)
 	 */
-	EventStore eventStore ( EventStorage eventStorage, MeterRegistry meterRegistry );
+	EventStore eventStore ( EventStorage eventStorage, EventStoreObserver observer, ShreddingCodec shreddingCodec );
 
 	/**
-	 * Creates an EventStore instance with explicit control over how much detail its meters carry.
-	 * <p>
-	 * The store tags every meter with the stream's context and purpose, and a purpose used the way the
-	 * examples use it — {@code forContext("customer").withPurpose("123")} — takes one value per entity.
-	 * {@link MeterOptions} caps how many distinct purposes get their own series before the rest are
-	 * pooled; see that class for what the alternative costs. The two-argument overloads apply
-	 * {@link MeterOptions#defaults()}, so a store that is never told otherwise is still bounded.
-	 * <p>
-	 * The default implementation ignores the options and delegates to
-	 * {@link #eventStore(EventStorage, MeterRegistry)}, so that a factory written before this method
-	 * existed still compiles and runs. The factory shipped with this library overrides it.
-	 *
-	 * @param eventStorage the storage backend implementation
-	 * @param meterRegistry the Micrometer meter registry for collecting metrics and observability data
-	 * @param meterOptions how much detail the store's meters may carry
-	 * @return a new EventStore instance using the provided storage
-	 * @see MeterOptions
-	 */
-	default EventStore eventStore ( EventStorage eventStorage, MeterRegistry meterRegistry, MeterOptions meterOptions ) {
-		return eventStore ( eventStorage, meterRegistry );
-	}
-
-	/**
-	 * Creates an EventStore that can protect and erase personal data.
-	 * <p>
-	 * The codec seals {@link org.sliceworkz.eventstore.shredding.Shreddable} values on append and unseals
-	 * them on read, and {@link EventStore#erase(String, String, org.sliceworkz.eventstore.shredding.ErasureReason)}
-	 * destroys the keys behind them. Without one, an
-	 * event type declaring a {@code Shreddable} component cannot be registered at all, rather than being
-	 * stored in the clear.
-	 * <pre>{@code
-	 * ShreddingCodec codec = AesGcmShreddingCodec.over(new InMemoryShreddingKeyStore());
-	 * EventStore store = EventStore.on(storage).meterRegistry(registry).shredding(codec).build();
-	 * }</pre>
-	 * A codec given here takes precedence over the one the storage was configured with; {@code null}
-	 * means the storage's own ({@link org.sliceworkz.eventstore.spi.EventStorage#shreddingCodec()}),
-	 * which is also what the overloads without a codec parameter use — so a storage builder's
-	 * {@code .shredding(...)} is honoured by every overload of this factory, not only by the builder's
-	 * {@code buildStore()}.
-	 * <p>
-	 * The default implementation ignores the codec and delegates, so that a factory written before this
-	 * method existed still compiles and runs. The factory shipped with this library overrides it.
-	 *
-	 * @param eventStorage the storage backend implementation
-	 * @param meterRegistry the Micrometer meter registry for collecting metrics and observability data
-	 * @param meterOptions how much detail the store's meters may carry
-	 * @param shreddingCodec protects personal data in event payloads, or null to use the codec the
-	 *                       storage was configured with, if any
-	 * @return a new EventStore instance using the provided storage
-	 * @see org.sliceworkz.eventstore.shredding.Shreddable
-	 */
-	default EventStore eventStore ( EventStorage eventStorage, MeterRegistry meterRegistry, MeterOptions meterOptions, ShreddingCodec shreddingCodec ) {
-		return eventStore ( eventStorage, meterRegistry, meterOptions );
-	}
-
-	/**
-	 * Creates an EventStore instance backed by the provided storage implementation using the global meter registry.
-	 * <p>
-	 * This convenience method uses {@link Metrics#globalRegistry} for observability, which provides
-	 * a no-op fallback if no registry has been configured globally.
+	 * Creates an EventStore on the given storage, with the observer and codec the storage was configured with.
 	 *
 	 * @param eventStorage the storage backend implementation
 	 * @return a new EventStore instance using the provided storage
-	 * @see #eventStore(EventStorage, MeterRegistry)
-	 * @see io.micrometer.core.instrument.Metrics#globalRegistry
+	 * @see #eventStore(EventStorage, EventStoreObserver, ShreddingCodec)
 	 */
 	default EventStore eventStore ( EventStorage eventStorage ) {
-		return eventStore ( eventStorage, Metrics.globalRegistry );
+		return eventStore ( eventStorage, null, null );
 	}
-	
+
 	/**
 	 * Obtains the EventStoreFactory implementation using Java's ServiceLoader mechanism.
 	 * <p>

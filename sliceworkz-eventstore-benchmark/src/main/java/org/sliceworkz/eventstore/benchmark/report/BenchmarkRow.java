@@ -28,7 +28,7 @@ import java.util.Map;
  * counters beside it, so this is that projection and nothing more. The original JSON is kept
  * alongside, because it is the record and this is only a view of it.
  *
- * @param target which store this was measured against, e.g. {@code postgres:18/metrics=off}. Not in
+ * @param target which store this was measured against, e.g. {@code postgres:18/shredding}. Not in
  *        JMH's output at all -- it comes from the launcher, which knows which result file belongs to
  *        which target. It has to be here: a profile measuring one corpus through two stores produces
  *        two rows per workload, and without this they are indistinguishable, so every derived table
@@ -52,8 +52,19 @@ public record BenchmarkRow (
 		Map<String, Double> secondary ) {
 
 	public BenchmarkRow {
-		target = target == null || target.isBlank() ? "(unknown target)" : target;
+		target = target == null || target.isBlank() ? "(unknown target)" : canonicalTarget(target);
 		secondary = secondary == null ? Map.of() : Map.copyOf(secondary);
+	}
+
+	/**
+	 * A target's name as {@code TargetSpec.describe()} gives it. A result file naming its target with a
+	 * {@code /metrics=...} segment -- the instrumentation setting a target carried when the store
+	 * registered meters of its own -- reads under the same name without it, so that every committed
+	 * baseline still lines up with a run measured today: an unobserved store is what those targets
+	 * measured with metrics off, and a store no longer has any other setting.
+	 */
+	static String canonicalTarget ( String target ) {
+		return target.replaceAll("/metrics=[a-z]+", "");
 	}
 
 	public double conflicts ( ) {

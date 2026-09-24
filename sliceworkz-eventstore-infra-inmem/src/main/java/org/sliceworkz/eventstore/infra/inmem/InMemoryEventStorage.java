@@ -21,17 +21,14 @@ import java.util.List;
 import java.util.Map;
 
 import org.sliceworkz.eventstore.EventStore;
-import org.sliceworkz.eventstore.MeterOptions;
 import org.sliceworkz.eventstore.events.Bookmark;
+import org.sliceworkz.eventstore.observability.EventStoreObserver;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.shredding.AesGcmShreddingCodec;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
-
-import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.Metrics;
 
 /**
  * Factory interface for creating in-memory event storage instances for development and testing purposes.
@@ -149,8 +146,7 @@ public interface InMemoryEventStorage {
 	public static class Builder {
 		
 		private Limit limit = Limit.none();
-		private MeterRegistry meterRegistry = Metrics.globalRegistry;
-		private MeterOptions meterOptions = MeterOptions.defaults();
+		private EventStoreObserver observer = EventStoreObserver.NOOP;
 		private ShreddingCodec shreddingCodec;
 		private String name = "inmem-%s".formatted(System.identityHashCode(this)); // default unique name in case different objects are used
 		private List<StoredEvent> initialEvents = List.of();
@@ -192,7 +188,7 @@ public interface InMemoryEventStorage {
 		/**
 		 * Configures a custom name for this in-memory event storage instance.
 		 * <p>
-		 * The name is used for identification in logging, metrics tagging, and debugging purposes.
+		 * The name is used for identification in logging, observations, and debugging purposes.
 		 * If not specified, a default unique name is generated based on the builder's identity hash code
 		 * in the format "inmem-{hashcode}".
 		 *
@@ -206,33 +202,27 @@ public interface InMemoryEventStorage {
 		}
 
 		/**
-		 * Configures the Micrometer meter registry for collecting observability metrics.
+		 * Configures the observer this storage, and a store built on it, report to.
 		 * <p>
-		 * The meter registry is used to track event store operations including event stream creation,
-		 * append operations, and query performance. If not specified, defaults to {@link Metrics#globalRegistry}.
+		 * The storage reports its own lifecycle; the store built on it reports every operation. Honoured by
+		 * {@link #build()} as much as by {@link #buildStore()}: the observer travels with the storage
+		 * ({@link EventStorage#observer()}), so a store built on {@code build()}'s result with
+		 * {@code EventStore.on(storage)} reports to it too. Defaults to {@link EventStoreObserver#NOOP}:
+		 * observation is opt-in.
 		 *
-		 * @param meterRegistry the Micrometer meter registry to use for metrics collection
+		 * @param observer the observer; must not be null
 		 * @return this Builder instance for method chaining
-		 * @see io.micrometer.core.instrument.MeterRegistry
-		 * @see io.micrometer.core.instrument.Metrics#globalRegistry
+		 * @throws IllegalArgumentException if the observer is null
+		 * @see EventStoreObserver
 		 */
-		public Builder meterRegistry ( MeterRegistry meterRegistry ) {
-			this.meterRegistry = meterRegistry;
+		public Builder observer ( EventStoreObserver observer ) {
+			if ( observer == null ) {
+				throw new IllegalArgumentException("observer cannot be null.  Leave it unset for EventStoreObserver.NOOP");
+			}
+			this.observer = observer;
 			return this;
 		}
 
-		/**
-		 * Configures how much detail the meters of the store returned by {@link #buildStore()} may carry.
-		 * <p>
-		 * Defaults to {@link MeterOptions#defaults()}, which caps the {@code purpose} tag at
-		 * {@link MeterOptions#DEFAULT_MAX_PURPOSE_TAG_VALUES} distinct values. Ignored by {@link #build()},
-		 * which returns a storage rather than a store — give them to the store's own builder,
-		 * {@code EventStore.on(storage).meterOptions(...)}, instead.
-		 *
-		 * @param meterOptions how much detail the store's meters may carry
-		 * @return this Builder instance for method chaining
-		 * @see MeterOptions
-		 */
 		/**
 		 * Protects the {@link org.sliceworkz.eventstore.shredding.Shreddable} values in this store's
 		 * events with the shipped AES-256-GCM codec, holding keys in the given key store.
@@ -270,11 +260,6 @@ public interface InMemoryEventStorage {
 		 */
 		public Builder shredding ( ShreddingCodec shreddingCodec ) {
 			this.shreddingCodec = shreddingCodec;
-			return this;
-		}
-
-		public Builder meterOptions ( MeterOptions meterOptions ) {
-			this.meterOptions = meterOptions;
 			return this;
 		}
 
@@ -334,7 +319,7 @@ public interface InMemoryEventStorage {
 		 * @see EventStorage
 		 */
 		public EventStorage build ( ) {
-			return new InMemoryEventStorageImpl(name, limit, initialEvents, initialBookmarks, shreddingCodec);
+			return new InMemoryEventStorageImpl(name, limit, initialEvents, initialBookmarks, shreddingCodec, observer);
 		}
 
 		/**
@@ -366,9 +351,9 @@ public interface InMemoryEventStorage {
 			// the storage is created here and never handed to the caller, so the returned store owns it:
 			// closing that store is the only way this storage will ever be closed
 			EventStorage eventStorage = build();
-			// the codec travels with the storage (EventStorage.shreddingCodec()), so the store picks it up
-			// here exactly as a store built by the caller on build()'s result would
-			return EventStore.owning(EventStore.on(eventStorage).meterRegistry(meterRegistry).meterOptions(meterOptions).build(), eventStorage);
+			// the codec and the observer travel with the storage (EventStorage.shreddingCodec(), observer()),
+			// so the store picks them up here exactly as a store built by the caller on build()'s result would
+			return EventStore.owning(EventStore.on(eventStorage).build(), eventStorage);
 		}
 	}
 	

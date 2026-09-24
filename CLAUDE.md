@@ -1153,7 +1153,11 @@ Micrometer.
   `.observer(o)` is answered by `EventStorage.observer()`, and a store built on the storage reports to it
   unless `EventStore.on(storage).observer(...)` gives it its own. A `Projector` finds it through
   `EventSource.observation()`, so a projector is observed exactly when its source is, with nothing to
-  configure on the projector.
+  configure on the projector. What its batches are reported under (`ProjectorBatch.projection`) is the
+  projection's class simple name — the full class name for an anonymous one — unless the builder's
+  `.named(String)` says otherwise. That is for a caller wrapping its own components in one adapter
+  class, which would otherwise report every one of them under the adapter's name; the name takes no
+  part in bookmarking. `ObservationTest.aNamedProjectorReportsItsBatchesUnderItsName` pins it.
 - **An observer never fails an operation.** The library wraps every observer with
   `EventStoreObserver.contained(...)`: what it throws is caught (a `RuntimeException` or a
   `LinkageError`, the second being a binding whose library is missing) and logged, at ERROR the first

@@ -265,6 +265,26 @@ public class ObservationTest extends AbstractEventStoreTest {
 		assertNoViolations();
 	}
 
+	/**
+	 * A projector named on its builder reports its batches under that name — what a framework wrapping its
+	 * own components in one adapter class needs, or every one of them is reported under the adapter's name.
+	 * Unnamed, an anonymous projection falls back to its full class name, having no simple one.
+	 */
+	@ForEachBackend
+	void aNamedProjectorReportsItsBatchesUnderItsName ( ) {
+		EventStream<MockDomainEvent> stream = stream();
+		stream.append(Event.of(new FirstDomainEvent("a"), Tags.none()));
+		observer.clear();
+
+		Projector.from(stream).into(new CountingProjection(EventQuery.forTypes(FirstDomainEvent.class))).named("account-balances").build().run();
+		assertEquals("account-balances", observer.last(Observation.ProjectorBatch.class).observation(Observation.ProjectorBatch.class).projection());
+
+		CountingProjection anonymous = new CountingProjection(EventQuery.forTypes(FirstDomainEvent.class)) { };
+		Projector.from(stream).into(anonymous).build().run();
+		assertEquals(anonymous.getClass().getName(), observer.last(Observation.ProjectorBatch.class).observation(Observation.ProjectorBatch.class).projection());
+		assertNoViolations();
+	}
+
 	@ForEachBackend
 	void aSavepointReadIsReportedAsTheInitPhase ( ) {
 		EventStream<MockDomainEvent> stream = stream();

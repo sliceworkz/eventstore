@@ -146,6 +146,8 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 	
 	private EventSource<CONSUMED_EVENT_TYPE> es;
 	private Projection<CONSUMED_EVENT_TYPE> projection;
+	/** What this projector's batches are observed under: {@link Builder#named(String)}, or the projection's class name. */
+	private final String projectionName;
 	
 	private String bookmarkReader;
 	private Tags bookmarkTags;
@@ -164,9 +166,10 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 	// without waiting for the run in progress
 	private volatile ProjectorMetrics accumulatedMetrics;
 	
-	private Projector ( EventSource<CONSUMED_EVENT_TYPE> es, Projection<CONSUMED_EVENT_TYPE> projection, EventReference after, int maxEventsPerQuery, String bookmarkReader, Tags bookmarkTags, BookmarkRead bookmarkRead ) {
+	private Projector ( EventSource<CONSUMED_EVENT_TYPE> es, Projection<CONSUMED_EVENT_TYPE> projection, String projectionName, EventReference after, int maxEventsPerQuery, String bookmarkReader, Tags bookmarkTags, BookmarkRead bookmarkRead ) {
 		this.es = es;
 		this.projection = projection;
+		this.projectionName = projectionName;
 		this.accumulatedMetrics = ProjectorMetrics.skipUntil(after);
 		this.maxEventsPerQuery = maxEventsPerQuery;
 		this.bookmarkReader = bookmarkReader;
@@ -186,7 +189,6 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 		if ( observation.isEmpty() ) {
 			return EventStoreObserver.NOOP.start(null);
 		}
-		String projectionName = projection.getClass().getSimpleName().isEmpty() ? projection.getClass().getName() : projection.getClass().getSimpleName();
 		return observation.get().observer().start(new Observation.ProjectorBatch(observation.get().stream(), projectionName,
 				Optional.ofNullable(bookmarkReader), phase, batchSize, Optional.ofNullable(after)));
 	}
@@ -698,6 +700,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 
 		private String bookmarkReader = null; // by default, no bookmarking is done
 		private Tags bookmarkTags = Tags.none();
+		private String name;
 		private BookmarkRead bookmarkRead = BookmarkRead.BEFORE_EACH_RUN;
 		private boolean bookmarkReadChosen = false;
 
@@ -814,6 +817,28 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 		}
 
 		/**
+		 * Names this projector for its observations: the {@code projection} of every
+		 * {@link org.sliceworkz.eventstore.observability.Observation.ProjectorBatch} it reports.
+		 * <p>
+		 * Left unset, the name is the projection's class simple name, or its full class name for an
+		 * anonymous class. Set it when the projection is a wrapper — a framework adapting its own
+		 * components to a {@link Projection} — so that every projector wrapping one is not reported under
+		 * the wrapper's name. The name is for observation only: it takes no part in bookmarking, which is
+		 * keyed by the reader of {@link #bookmarkAs(String)}.
+		 *
+		 * @param name the name to observe this projector's batches under, not null and not blank
+		 * @return this builder for method chaining
+		 * @throws IllegalArgumentException if the name is null or blank
+		 */
+		public Builder<EVENT_TYPE> named ( String name ) {
+			if ( name == null || name.isBlank() ) {
+				throw new IllegalArgumentException("name cannot be null or blank.  Leave it unset for the projection's class name");
+			}
+			this.name = name;
+			return this;
+		}
+
+		/**
 		 * Records this projector's progress as the bookmark of the named reader, stored with tags.
 		 * <p>
 		 * The tags are metadata on the bookmark -- a tenant, an environment, a version of the projection's
@@ -897,12 +922,18 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 			if ( bookmarkReader != null && initQuery != null && !initQuery.filter().isMatchNone() ) {
 				LOGGER.warn("Projection has initQuery but bookmarking is enabled — initQuery will be ignored. Remove bookmarking for live-model use, or remove initQuery for full replay.");
 			}
-			Projector<EVENT_TYPE> projector = new Projector<>(eventSource, projection, after, maxEventsPerQuery, bookmarkReader, bookmarkTags, bookmarkRead);
+			Projector<EVENT_TYPE> projector = new Projector<>(eventSource, projection, name != null ? name : defaultNameOf(projection), after, maxEventsPerQuery, bookmarkReader, bookmarkTags, bookmarkRead);
 			if ( subscribe ) {
 				// subscribe for eventually consistent updates about event appends, so the projector will automatically trigger projection updates
 				eventSource.subscribe(projector);
 			}
 			return projector;
+		}
+
+		/** The projection's class simple name, or its full class name when it has none (an anonymous class). */
+		private static String defaultNameOf ( Projection<?> projection ) {
+			String simpleName = projection.getClass().getSimpleName();
+			return simpleName.isEmpty() ? projection.getClass().getName() : simpleName;
 		}
 
 	}

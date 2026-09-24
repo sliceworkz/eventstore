@@ -237,6 +237,15 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		assertThrows(IllegalArgumentException.class, ()->Projector.from(es).into(projection).bookmarkAs("someReader", null));
 	}
 
+	/** A projector named for its observations is named something: a null or blank name is refused. */
+	@ForEachBackend
+	void testProjectorWithABlankNameIsRefused ( ) {
+		TestProjection projection = new TestProjection();
+
+		assertThrows(IllegalArgumentException.class, ()->Projector.from(es).into(projection).named(null));
+		assertThrows(IllegalArgumentException.class, ()->Projector.from(es).into(projection).named("  "));
+	}
+
 	/**
 	 * The tags given with the reader name are stored on the bookmark the projector places, and take no
 	 * part in reading it back.

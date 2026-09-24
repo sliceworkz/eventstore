@@ -110,7 +110,8 @@ public interface EventSink<DOMAIN_EVENT_TYPE> {
 	 * batch must be distinct — a batch repeating a key is rejected with {@link IllegalArgumentException}
 	 * before anything is stored. A batch is stored atomically, so a retry of it finds every key
 	 * already stored, and that is the one shape that is swallowed: nothing is stored, an empty list is
-	 * returned, counted on {@code sliceworkz.eventstore.append.deduplicated}. A batch of which some
+	 * returned, and the append is observed as a retry
+	 * ({@link org.sliceworkz.eventstore.observability.Outcome.Duplicated}). A batch of which some
 	 * keys are stored and some are not is not a retry of anything the store holds — one of its events
 	 * collides with a different event holding its key — and is refused with
 	 * {@link IdempotencyKeyConflictException}, nothing stored. So a command producing several events

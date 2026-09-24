@@ -6,9 +6,9 @@ description: >
 
   Here the btree (context, purpose, tx, position) prefix is highly selective and GIN is barely used,
   and conditional appends to different entities take different advisory locks. The costs are on the
-  other side: two thousand distinct purposes, which is past the default meter cap of one thousand --
-  metrics are off in these targets, and metrics-cost is where that bill is measured rather than
-  assumed.
+  other side: two thousand distinct purposes, each a distinct stream -- which an observer turning the
+  purpose into a metrics tag has to bound. The targets here are unobserved, so that cost is the
+  observer's, not measured by this profile.
 
   Read it together with the addressing pairs. query-by-entity-* and query-last-event address an
   entity by tag, which under this design means a wildcard purpose -- and stream_purpose is the second
@@ -31,11 +31,9 @@ corpus:
 
 targets:
   - backend: INMEM
-    metrics: OFF
   - backend: POSTGRES
     server: TESTCONTAINERS
     image: "postgres:18"
-    metrics: OFF
 
 jmh:
   workloads:

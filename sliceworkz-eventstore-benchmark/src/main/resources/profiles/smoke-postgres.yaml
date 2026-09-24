@@ -17,7 +17,6 @@ targets:
   - backend: POSTGRES
     server: TESTCONTAINERS
     image: "postgres:18"
-    metrics: OFF
     schemaMode: ENSURE
 
 jmh:

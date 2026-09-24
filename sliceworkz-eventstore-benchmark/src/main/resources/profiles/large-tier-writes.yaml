@@ -65,7 +65,6 @@ corpus:
 targets:
   - backend: POSTGRES
     server: EXTERNAL
-    metrics: OFF
     schemaMode: ENSURE
 
 jmh:

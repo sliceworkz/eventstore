@@ -19,20 +19,19 @@ package org.sliceworkz.eventstore;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Optional;
-import java.util.Set;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
+import org.sliceworkz.eventstore.infra.inmem.fs.InMemoryFsEventStorage;
+import org.sliceworkz.eventstore.observability.EventStoreObserver;
+import org.sliceworkz.eventstore.observability.Observation;
 import org.sliceworkz.eventstore.infra.inmem.shredding.InMemoryShreddingKeyStore;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.shredding.DataSubject;
@@ -42,10 +41,9 @@ import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageClosedException;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
+import org.sliceworkz.eventstore.testing.RecordingObserver;
+import org.sliceworkz.eventstore.testing.RecordingObserver.Signal;
 
-import io.micrometer.core.instrument.Meter;
-import io.micrometer.core.instrument.Metrics;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 /**
  * {@link EventStore#on(EventStorage)} is the one way application code turns a storage into a store,
@@ -60,53 +58,66 @@ public class EventStoreBuilderTest {
 	private static final EventStreamId STREAM = EventStreamId.forContext("contacts");
 
 	@Test
-	void theRegistryGivenIsWhereTheMetersLand ( ) {
-		SimpleMeterRegistry registry = new SimpleMeterRegistry();
+	void theObserverGivenIsWhatTheStoreReportsTo ( ) {
+		RecordingObserver observer = new RecordingObserver();
 		try ( EventStorage storage = InMemoryEventStorage.newBuilder().build();
-			  EventStore store = EventStore.on(storage).meterRegistry(registry).build() ) {
+			  EventStore store = EventStore.on(storage).observer(observer).build() ) {
 			appendOne(store, "c-1");
 
-			assertNotNull(registry.find("sliceworkz.eventstore.append").counter(), "the append was not metered in the registry the builder was given");
+			assertEquals(1, observer.recordings(Observation.Append.class).size(), "the append was not reported to the observer the builder was given");
 		}
 	}
 
 	@Test
-	void theRegistryDefaultsToTheGlobalOne ( ) {
-		// the global registry is a composite: a child added to it sees what is registered there
-		SimpleMeterRegistry child = new SimpleMeterRegistry();
-		Metrics.addRegistry(child);
-		try ( EventStorage storage = InMemoryEventStorage.newBuilder().build();
+	void theObserverDefaultsToTheStoragesOwn ( ) {
+		RecordingObserver observer = new RecordingObserver();
+		try ( EventStorage storage = InMemoryEventStorage.newBuilder().observer(observer).build();
 			  EventStore store = EventStore.on(storage).build() ) {
 			appendOne(store, "c-1");
 
-			assertNotNull(child.find("sliceworkz.eventstore.append").counter(), "a store built with no registry did not meter into Metrics.globalRegistry");
-		} finally {
-			Metrics.removeRegistry(child);
+			assertEquals(1, observer.recordings(Observation.Append.class).size(), "a store built with no observer did not report to the storage's own");
 		}
 	}
 
 	@Test
-	void theMeterOptionsGivenBoundTheMeters ( ) {
-		SimpleMeterRegistry registry = new SimpleMeterRegistry();
-		try ( EventStorage storage = InMemoryEventStorage.newBuilder().build();
-			  EventStore store = EventStore.on(storage).meterRegistry(registry).meterOptions(MeterOptions.withoutPurposeBreakdown()).build() ) {
-			IntStream.range(0, 20).forEach(i -> appendOne(store, "cust-" + i));
+	void anObserverGivenTakesPrecedenceOverTheStoragesOwn ( ) {
+		RecordingObserver storages = new RecordingObserver();
+		RecordingObserver stores = new RecordingObserver();
+		try ( EventStorage storage = InMemoryEventStorage.newBuilder().observer(storages).build();
+			  EventStore store = EventStore.on(storage).observer(stores).build() ) {
+			appendOne(store, "c-1");
 
-			assertEquals(Set.of(MeterOptions.OVERFLOW_PURPOSE_TAG_VALUE), purposeTagValues(registry), "withoutPurposeBreakdown() did not reach the built store");
+			assertEquals(1, stores.recordings(Observation.Append.class).size());
+			assertTrue(storages.recordings().isEmpty(), "the storage's observer was told about an operation of a store given its own");
 		}
 	}
 
 	@Test
-	void theMeterOptionsDefaultToTheCappedBreakdown ( ) {
-		SimpleMeterRegistry registry = new SimpleMeterRegistry();
-		try ( EventStorage storage = InMemoryEventStorage.newBuilder().build();
-			  EventStore store = EventStore.on(storage).meterRegistry(registry).build() ) {
-			IntStream.range(0, 20).forEach(i -> appendOne(store, "cust-" + i));
-
-			Set<String> purposes = purposeTagValues(registry);
-			assertTrue(purposes.contains("cust-0"), "below the cap, a purpose gets its own tag value: " + purposes);
-			assertTrue(purposes.stream().noneMatch(MeterOptions.OVERFLOW_PURPOSE_TAG_VALUE::equals), "twenty purposes tripped the default cap: " + purposes);
+	void aStorageBuiltWithoutAnObserverIsObservedByNothing ( ) {
+		try ( EventStorage storage = InMemoryEventStorage.newBuilder().build() ) {
+			assertTrue(storage.observer() == EventStoreObserver.NOOP, "observation is opt-in: the default is NOOP");
 		}
+	}
+
+	@Test
+	void theInMemoryStoragesReportTheirLifecycle ( @org.junit.jupiter.api.io.TempDir java.nio.file.Path directory ) {
+		RecordingObserver observer = new RecordingObserver();
+		EventStore store = InMemoryEventStorage.newBuilder().name("lifecycle").observer(observer).buildStore();
+		assertEquals(java.util.List.of(new Signal.StorageStarted("lifecycle")), observer.signals(Signal.StorageStarted.class));
+		appendOne(store, "c-1");
+		assertEquals(1, observer.recordings(Observation.Append.class).size(), "buildStore() hands the observer to the store");
+		store.close();
+		store.close();
+		assertEquals(java.util.List.of(new Signal.StorageClosed("lifecycle")), observer.signals(Signal.StorageClosed.class), "closed once, however often close() is called");
+		assertTrue(observer.signals(Signal.ChannelChanged.class).isEmpty(), "an in-memory storage has no channels");
+
+		RecordingObserver fsObserver = new RecordingObserver();
+		try ( EventStore fs = InMemoryFsEventStorage.newBuilder().name("fs-lifecycle").directory(directory).observer(fsObserver).buildStore() ) {
+			appendOne(fs, "c-1");
+			assertEquals(1, fsObserver.recordings(Observation.Append.class).size());
+		}
+		assertEquals(java.util.List.of(new Signal.StorageStarted("fs-lifecycle"), new Signal.StorageClosed("fs-lifecycle")),
+				fsObserver.signals().stream().filter(sig -> sig instanceof Signal.StorageStarted || sig instanceof Signal.StorageClosed).toList());
 	}
 
 	@Test
@@ -176,14 +187,6 @@ public class EventStoreBuilderTest {
 			assertNull(second.shreddingAudit().orElse(null));
 			second.close();
 		}
-	}
-
-	private static Set<String> purposeTagValues ( SimpleMeterRegistry registry ) {
-		return registry.getMeters().stream()
-				.map(Meter::getId)
-				.map(id -> id.getTag("purpose"))
-				.filter(java.util.Objects::nonNull)
-				.collect(Collectors.toSet());
 	}
 
 	private static EventStream<StockEvent> stock ( EventStore store, String purpose ) {

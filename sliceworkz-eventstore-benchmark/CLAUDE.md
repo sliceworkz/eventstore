@@ -30,7 +30,7 @@ provisioned once and reused. See that module's README for the full picture; what
   collision modes. Each pair differs in one property, which is what makes the difference between them
   attributable.
 
-**Four figures quoted in the root and postgres `CLAUDE.md` files are not produced by this suite.**
+**Three figures quoted in the root and postgres `CLAUDE.md` files are not produced by this suite.**
 They were measured ad hoc, outside it, with nothing that can reproduce them. Treat each as a recorded
 observation rather than a current measurement, and where one matters, run the profile that would
 replace it:
@@ -39,13 +39,12 @@ replace it:
 |---|---|
 | `~5%` for the append advisory lock | not covered — that is the lock's *uncontended* overhead, which needs a build without it. What the suite measures is the sentence after it, the hot-stream ceiling: see "What a shared append lock costs" below |
 | `~175µs / 139KB` vs `~36µs / 69KB` for a fresh vs shared serde | not covered — the suite always shares, since that is what the store does |
-| `15 meters / ~5.5 KB` per distinct purpose | the heap figure has no workload and stays a recorded observation; the *throughput* half is measured — see the metrics section in the root `CLAUDE.md`, and it is nil |
 | `1230ms → 460ms` for the statement-level append trigger | `ingest-saturation`, and only as a total — the trigger is not timed separately |
 
-Two of those four have no profile behind them, deliberately: a per-meter heap figure and a per-trigger
-time are properties of a snapshot rather than of a throughput, and inventing a workload to produce a
-number that shape would produce a worse one. They stay as recorded observations, and are marked as
-such rather than quietly dropped.
+One of those three has no profile behind it, deliberately: a per-trigger time is a property of a
+snapshot rather than of a throughput, and inventing a workload to produce a
+number that shape would produce a worse one. It stays a recorded observation, and is marked as such
+rather than quietly dropped.
 
 ### What a read costs, and how much of it is the library rather than the database
 
@@ -500,11 +499,10 @@ tagged, PG18, 0.00% store drift on both sides, with `append-none` as the control
   report the same number — a gap there is a harness fault, not a finding. They do agree (0.046/0.047,
   8.062/8.517, 13.915/14.387 at one thread), which is what licenses reading the per-entity gap as the
   cost of addressing.
-- **Not measured here, and it is the real bill for `per-entity`:** 2000 distinct purposes is past the
-  default `MeterOptions.maxPurposeTagValues()` cap of 1000, so a store with metrics on pools the tail
-  under `_other`. Both profiles run with metrics **off** deliberately, so this comparison says nothing
-  about that cost — `metrics-cost` is where it is measured rather than assumed. See the metrics
-  section above for what a distinct purpose costs.
+- **Not measured here, and it is the real bill for `per-entity`:** 2000 distinct purposes are 2000
+  distinct streams to an observer, and one turning the purpose into a metrics tag has to bound it (the
+  Micrometer binding caps it). Every target here is unobserved, so this comparison says nothing about
+  that cost; it is the observer's, measured with the observer.
 
 **Caveats, in the suite's own terms.** These are Testcontainers runs on a developer machine:
 direction and rough magnitude, deliberately not published under `results/` — the publisher refuses a
@@ -522,7 +520,7 @@ entities) driven three ways, so the difference between them is where the writers
 gives each thread its own entity, hence its own stream and its own advisory lock; `one-stream`
 draws the *same* rotation of entities and writes every append into the hot entity's stream, so the
 lock is shared and no two appends conflict; `one-boundary` puts every thread on the hot entity, so
-they share the lock and the boundary. PG18, metrics off, `append-none` as the control that must not
+they share the lock and the boundary. PG18, unobserved, `append-none` as the control that must not
 move (11.3 / 11.6 / 10.9 at one thread; 33.5 / 34.2 / 33.6 at eight — it does not).
 
 `append-type-and-tag`, the canonical DCB check, in ops/ms:

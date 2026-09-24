@@ -21,6 +21,7 @@ import java.util.Collections;
 import java.util.Optional;
 import java.util.Set;
 
+import org.sliceworkz.eventstore.observability.EventStoreObserver;
 import org.sliceworkz.eventstore.shredding.DataSubject;
 import org.sliceworkz.eventstore.shredding.ErasureReason;
 import org.sliceworkz.eventstore.shredding.ErasureReport;
@@ -32,8 +33,6 @@ import org.sliceworkz.eventstore.stream.EventSource;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
-import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.Metrics;
 
 /**
  * The main entry point for interacting with an event store.
@@ -50,8 +49,8 @@ import io.micrometer.core.instrument.Metrics;
  * // Create event store with in-memory storage
  * EventStore eventStore = InMemoryEventStorage.newBuilder().buildStore();
  *
- * // Or build one on a storage you hold, with a registry and options of your own
- * EventStore eventStore = EventStore.on(storage).meterRegistry(registry).build();
+ * // Or build one on a storage you hold, observed by an observer of your own
+ * EventStore eventStore = EventStore.on(storage).observer(observer).build();
  *
  * // Get an event stream for a specific context and purpose
  * EventStreamId streamId = EventStreamId.forContext("customer").withPurpose("123");
@@ -141,26 +140,24 @@ public interface EventStore extends AutoCloseable {
 	 * Starts building an EventStore on the given storage.
 	 * <p>
 	 * This is the one entry point for turning an {@link EventStorage} into a store. Everything else a
-	 * store can be given — the {@link MeterRegistry} its meters go to, the {@link MeterOptions} bounding
-	 * them, a {@link ShreddingCodec} of its own — is a call on the {@link Builder}, each with the default
-	 * the storage builders use, so the shortest form is a store with the same settings
-	 * {@code buildStore()} would have given it:
+	 * store can be given — the {@link EventStoreObserver} it reports to, a {@link ShreddingCodec} of its
+	 * own — is a call on the {@link Builder}, each defaulting to what the storage was configured with, so
+	 * the shortest form is a store with the same settings {@code buildStore()} would have given it:
 	 * <pre>{@code
 	 * EventStorage storage = PostgresEventStorage.newBuilder().build();
 	 *
 	 * EventStore eventStore = EventStore.on(storage).build();
 	 *
 	 * EventStore reporting = EventStore.on(storage)
-	 *     .meterRegistry(registry)
-	 *     .meterOptions(MeterOptions.withoutPurposeBreakdown())
+	 *     .observer(observer)
 	 *     .shredding(ShreddingCodec.withholdingAll())
 	 *     .build();
 	 * }</pre>
 	 * The store is created by the {@link EventStoreFactory} the {@link java.util.ServiceLoader} finds,
 	 * and that factory stays the SPI an implementation provides; the alternative — calling it directly,
-	 * as {@code EventStoreFactory.get().eventStore(storage, registry, options, codec)} — loses because
-	 * it puts the ServiceLoader lookup and four positional arguments, one of them a {@code null} meaning
-	 * "the storage's own codec", at every call site that wants anything but the defaults.
+	 * as {@code EventStoreFactory.get().eventStore(storage, observer, codec)} — loses because it puts the
+	 * ServiceLoader lookup and positional arguments, where a {@code null} means "the storage's own", at
+	 * every call site that wants anything but the defaults.
 	 * <p>
 	 * The built store does not own the storage: closing it closes the store alone, for the reasons on
 	 * {@link #close()}. Wrap it with {@link #owning(EventStore, EventStorage)} for one handle on both.
@@ -177,17 +174,17 @@ public interface EventStore extends AutoCloseable {
 	/**
 	 * Builds an {@link EventStore} on an {@link EventStorage}, obtained from {@link EventStore#on(EventStorage)}.
 	 * <p>
-	 * Mirrors the storage builders: the same setter names, the same defaults — {@link Metrics#globalRegistry},
-	 * {@link MeterOptions#defaults()} and the storage's own codec — so a store built here and one from
-	 * {@code buildStore()} differ only in who owns the storage. Every setter refuses {@code null}, since each
-	 * has a default and a null could only be a mistake. {@link #build()} may be called more than once; each
-	 * call is a further store on the same storage, independent of the others.
+	 * Mirrors the storage builders: the same setter names, the same defaults — the storage's own observer
+	 * ({@link EventStorage#observer()}) and the storage's own codec ({@link EventStorage#shreddingCodec()}) —
+	 * so a store built here and one from {@code buildStore()} differ only in who owns the storage. Every
+	 * setter refuses {@code null}, since each has a default and a null could only be a mistake.
+	 * {@link #build()} may be called more than once; each call is a further store on the same storage,
+	 * independent of the others.
 	 */
 	final class Builder {
 
 		private final EventStorage eventStorage;
-		private MeterRegistry meterRegistry = Metrics.globalRegistry;
-		private MeterOptions meterOptions = MeterOptions.defaults();
+		private EventStoreObserver observer;
 		private ShreddingCodec shreddingCodec;
 
 		private Builder ( EventStorage eventStorage ) {
@@ -198,40 +195,23 @@ public interface EventStore extends AutoCloseable {
 		}
 
 		/**
-		 * The registry the store's meters are registered in.
+		 * The observer the store reports its operations to, taking precedence over the one the storage was
+		 * configured with.
 		 * <p>
-		 * Defaults to {@link Metrics#globalRegistry}: a composite with no children until the application
-		 * adds one, so meters registered there cost a map entry and record nothing, and an application
-		 * that binds its real registry to it gets the store's series without configuring anything here.
+		 * Left unset, the store reports to the storage's own ({@link EventStorage#observer()}), which is what
+		 * a storage builder's {@code .observer(...)} put there and {@link EventStoreObserver#NOOP} for a
+		 * storage built without one — observation is opt-in. See {@link EventStoreObserver} for what is
+		 * reported and what an implementation must honour.
 		 *
-		 * @param meterRegistry the registry; must not be null
+		 * @param observer the observer; must not be null
 		 * @return this builder
-		 * @throws IllegalArgumentException if the registry is null
+		 * @throws IllegalArgumentException if the observer is null
 		 */
-		public Builder meterRegistry ( MeterRegistry meterRegistry ) {
-			if ( meterRegistry == null ) {
-				throw new IllegalArgumentException("meterRegistry cannot be null.  Leave it unset for Metrics.globalRegistry");
+		public Builder observer ( EventStoreObserver observer ) {
+			if ( observer == null ) {
+				throw new IllegalArgumentException("observer cannot be null.  Leave it unset for the storage's own observer");
 			}
-			this.meterRegistry = meterRegistry;
-			return this;
-		}
-
-		/**
-		 * How much detail the store's meters may carry.
-		 * <p>
-		 * Defaults to {@link MeterOptions#defaults()}, which caps the {@code purpose} tag at
-		 * {@link MeterOptions#DEFAULT_MAX_PURPOSE_TAG_VALUES} distinct values; see {@link MeterOptions}
-		 * for what an uncapped tag costs and when to turn the breakdown off altogether.
-		 *
-		 * @param meterOptions the options; must not be null
-		 * @return this builder
-		 * @throws IllegalArgumentException if the options are null
-		 */
-		public Builder meterOptions ( MeterOptions meterOptions ) {
-			if ( meterOptions == null ) {
-				throw new IllegalArgumentException("meterOptions cannot be null.  Leave it unset for MeterOptions.defaults()");
-			}
-			this.meterOptions = meterOptions;
+			this.observer = observer;
 			return this;
 		}
 
@@ -264,7 +244,7 @@ public interface EventStore extends AutoCloseable {
 		 * @throws org.sliceworkz.eventstore.spi.EventStorageException if no EventStore implementation is on the classpath
 		 */
 		public EventStore build ( ) {
-			return EventStoreFactory.get().eventStore(eventStorage, meterRegistry, meterOptions, shreddingCodec);
+			return EventStoreFactory.get().eventStore(eventStorage, observer, shreddingCodec);
 		}
 	}
 

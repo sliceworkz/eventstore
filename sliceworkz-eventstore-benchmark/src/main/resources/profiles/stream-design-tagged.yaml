@@ -24,11 +24,9 @@ corpus:
 
 targets:
   - backend: INMEM
-    metrics: OFF
   - backend: POSTGRES
     server: TESTCONTAINERS
     image: "postgres:18"
-    metrics: OFF
 
 jmh:
   workloads:

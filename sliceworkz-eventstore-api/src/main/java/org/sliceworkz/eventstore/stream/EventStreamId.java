@@ -31,11 +31,11 @@ package org.sliceworkz.eventstore.stream;
  * {@code "default"}, giving every context a single well-defined stream. Purpose only becomes relevant
  * when a context needs more than one stream (e.g. per-instance streams, or separating event kinds).
  * <p>
- * <strong>Purpose has a metrics cost when it is an entity id.</strong> The store tags every meter with
- * the stream's purpose, and a registry never evicts a meter, so one purpose per entity means one
- * permanent set of meters per entity. The store therefore caps how many distinct purposes get their own
- * series and pools the rest; see {@link org.sliceworkz.eventstore.MeterOptions} for the measurements and
- * for how to turn the breakdown off entirely where purpose is known to be an id.
+ * <strong>Purpose is unbounded when it is an entity id.</strong> Every observation the store reports
+ * carries the stream id as it is (see {@link org.sliceworkz.eventstore.observability.StreamInfo}), so an
+ * observer turning the purpose into a metrics tag takes one series per entity unless it bounds the
+ * values it admits — which is the observer's concern, since a tracer or a log line wants the purpose
+ * uncapped.
  * <p>
  * EventStreamId supports wildcards for querying multiple streams. Both context and purpose can be null,
  * which acts as a wildcard matching any value. This enables flexible stream queries:

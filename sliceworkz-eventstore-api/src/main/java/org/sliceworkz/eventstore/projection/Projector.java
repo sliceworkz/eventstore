@@ -24,6 +24,10 @@ import org.slf4j.LoggerFactory;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.observability.EventStoreObserver;
+import org.sliceworkz.eventstore.observability.Observation;
+import org.sliceworkz.eventstore.observability.Outcome;
+import org.sliceworkz.eventstore.observability.StreamObservation;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.stream.EventPage;
@@ -149,6 +153,13 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 	
 	private Optional<EventReference> lastEventReference = null;
 
+	/**
+	 * How this projector's batches are observed: the observer and stream its source reports to, found
+	 * through {@link EventSource#observation()} so a projector is observed exactly when its source is.
+	 * Empty for a source nobody observes.
+	 */
+	private final Optional<StreamObservation> observation;
+
 	// published by a run and read from any thread, so a subscribed projector's metrics can be read
 	// without waiting for the run in progress
 	private volatile ProjectorMetrics accumulatedMetrics;
@@ -162,6 +173,22 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 		this.bookmarkTags = bookmarkTags;
 		this.bookmarkRead = bookmarkRead;
 		this.lastEventReference =  ( after == null ) ? null : Optional.ofNullable(after); // keep it to null to detect first run if needed
+		// contained again, which is a no-op for the observer of a store of this library, so that a source
+		// written elsewhere cannot fail a batch through its observer
+		this.observation = es.observation().map(o -> new StreamObservation(EventStoreObserver.contained(o.observer()), o.stream()));
+	}
+
+	/**
+	 * Starts the observation of one batch, or returns the shared no-op scope when nothing observes this
+	 * projector's source.
+	 */
+	private Observation.Scope<Outcome.Projected> startBatch ( Observation.ProjectorBatch.Phase phase, Limit batchSize, EventReference after ) {
+		if ( observation.isEmpty() ) {
+			return EventStoreObserver.NOOP.start(null);
+		}
+		String projectionName = projection.getClass().getSimpleName().isEmpty() ? projection.getClass().getName() : projection.getClass().getSimpleName();
+		return observation.get().observer().start(new Observation.ProjectorBatch(observation.get().stream(), projectionName,
+				Optional.ofNullable(bookmarkReader), phase, batchSize, Optional.ofNullable(after)));
 	}
 
 	/**
@@ -307,24 +334,32 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 				// after the requested point in time -- and then start the main query beyond the boundary,
 				// reporting present-day state as a point-in-time projection.
 				queriesDone++;
-				try {
-					es.query(initQuery.untilIfEarlier(until)).forEach(e -> {
-						eventsStreamed++;
-						eventsHandled++;
-						if ( mostRecentEventReference == null || e.reference().happenedAfter(mostRecentEventReference) ) {
-							mostRecentEventReference = e.reference();
-						}
-						currentEventReference = e.reference();
-						projection.when(e);
-						lastEventReference = Optional.of(e.reference());
-					});
-				} catch ( Throwable t ) {
-					// A failing savepoint is reported like a failing batch: as a ProjectorException naming
-					// the event, with the cursor back where the run started. Left where it was, a cursor
-					// advanced by an earlier savepoint of the same query would make the next run skip the
-					// init query and start the main query from a read model that was never initialised.
-					lastEventReference = null;
-					return result(new ProjectorException(t, currentEventReference));
+				long handledBefore = eventsHandled;
+				try ( Observation.Scope<Outcome.Projected> scope = startBatch(Observation.ProjectorBatch.Phase.INIT, initQuery.limit(), null) ) {
+					try {
+						EventPage<CONSUMED_EVENT_TYPE> savepoints = es.page(initQuery.untilIfEarlier(until), null);
+						savepoints.events().forEach(e -> {
+							eventsStreamed++;
+							eventsHandled++;
+							if ( mostRecentEventReference == null || e.reference().happenedAfter(mostRecentEventReference) ) {
+								mostRecentEventReference = e.reference();
+							}
+							currentEventReference = e.reference();
+							projection.when(e);
+							lastEventReference = Optional.of(e.reference());
+						});
+						scope.completed(new Outcome.Projected((int) savepoints.storedEventCount(), (int) ( eventsHandled - handledBefore ),
+								lastEventReference == null ? Optional.empty() : lastEventReference, false));
+					} catch ( Throwable t ) {
+						// A failing savepoint is reported like a failing batch: as a ProjectorException naming
+						// the event, with the cursor back where the run started. Left where it was, a cursor
+						// advanced by an earlier savepoint of the same query would make the next run skip the
+						// init query and start the main query from a read model that was never initialised.
+						lastEventReference = null;
+						ProjectorException exception = new ProjectorException(t, currentEventReference);
+						scope.failed(exception);
+						return result(exception);
+					}
 				}
 			}
 
@@ -358,6 +393,11 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 
 				Batch batch = new Batch(projection);
 
+				// the batch is one observation, its page query and bookmark placement nested inside it
+				Observation.Scope<Outcome.Projected> scope = startBatch(Observation.ProjectorBatch.Phase.BATCH, limit, lastRead);
+				long handledBefore = eventsHandled;
+				long storedInBatch = 0;
+
 				// where this batch started. A batch that does not land takes the cursor back with it:
 				// the projection rolled its own work back, so a cursor left beyond it would skip those
 				// events for good on the next run
@@ -372,6 +412,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 					// here, before any event of it reaches the projection; the catch below takes the
 					// cursor back to where the batch started.
 					EventPage<CONSUMED_EVENT_TYPE> page = es.page(effectiveQuery, lastRead);
+					storedInBatch = page.storedEventCount();
 
 					for ( Event<CONSUMED_EVENT_TYPE> e : page.events() ) {
 						offerEventToProjection(e, eventQuery, until, batch);
@@ -411,13 +452,25 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 					lastEventReference = cursorBeforeBatch;
 					lastRead = lastReadBeforeBatch;
 					exception = new ProjectorException(t, currentEventReference);
+					scope.failed(exception);
+					scope.close();
 					break;
 				}
 
 				// The batch is durable now, so the bookmark may record it -- and does so per batch
 				// rather than per run, because everything committed before a crash and not bookmarked
 				// is projected a second time on restart.
-				bookmarked = placeBookmarkIfMoved(bookmarked);
+				try {
+					Optional<EventReference> bookmarkedBefore = bookmarked;
+					bookmarked = placeBookmarkIfMoved(bookmarked);
+					scope.completed(new Outcome.Projected((int) storedInBatch, (int) ( eventsHandled - handledBefore ),
+							lastEventReference == null ? Optional.empty() : lastEventReference, !java.util.Objects.equals(bookmarked, bookmarkedBefore)));
+				} catch ( RuntimeException | Error e ) {
+					scope.failed(e);
+					throw e;
+				} finally {
+					scope.close();
+				}
 
 				if ( queryTotalLimit.isSet() && eventsStreamed >= queryTotalLimit.value() ) {
 					break;

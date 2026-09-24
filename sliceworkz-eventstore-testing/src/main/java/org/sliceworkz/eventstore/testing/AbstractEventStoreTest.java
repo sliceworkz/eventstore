@@ -33,7 +33,6 @@ import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.shredding.ShreddingKeyStore;
 import org.sliceworkz.eventstore.spi.EventStorage;
 
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 /**
  * Base class for tests that need an {@link EventStore} over some {@link EventStorage}.
@@ -187,7 +186,7 @@ public abstract class AbstractEventStoreTest {
 	 * @return a store with shredding configured, over {@link #eventStorage()}
 	 */
 	protected EventStore eventStoreWithShredding ( ShreddingCodec shreddingCodec ) {
-		return EventStore.on(eventStorage()).meterRegistry(new SimpleMeterRegistry()).shredding(shreddingCodec).build();
+		return EventStore.on(eventStorage()).shredding(shreddingCodec).build();
 	}
 
 	/**

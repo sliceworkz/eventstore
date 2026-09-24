@@ -473,7 +473,7 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   `pg_notify` literal names, and the advisory-lock key. Left as given, a prefix of `Tenant_`
   creates `tenant_events` and then fails `ENSURE` looking for `Tenant_events`; under `NONE` it
   starts, the monitors listen on `tenant_event_appended`, the trigger notifies
-  `Tenant_event_appended`, `notifications.up` reads 1 and nothing ever arrives — the silent
+  `Tenant_event_appended`, the channel is reported up and nothing ever arrives — the silent
   failure the fail-fast startup exists to prevent. So `validatePrefix` folds it (`Locale.ROOT`,
   over the ASCII the pattern admits) and the builder passes the folded prefix to the key store as
   well, which makes the prefix the name the catalog holds in every use at once. The alternative —
@@ -549,7 +549,7 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   and dropped. The fan-out to listeners (`notifyEach`) contains `Throwable`, since a test double's
   `AssertionError` or a projection's `StackOverflowError` is not the monitor's to die of. The outer loop
   catches `RuntimeException` alongside `SQLException` and backs off the same way, and the `listening`
-  flag is cleared in a `finally`, so the `notifications.up` gauge cannot read 1 over a monitor that has
+  flag is cleared in a `finally`, so the channel cannot stay reported up over a monitor that has
   exited by any path. `PostgresNotificationMonitorTest` drives `parse` and `deliver` directly, without a database;
   `PostgresNotificationStartupTest.testWhatArrivesOnTheChannelCannotKillAMonitor` does it on a live
   store through `pg_notify`.
@@ -558,7 +558,7 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   driver sends no statement while it waits — so on a quiet channel the connection carries no traffic
   at all, and a peer that vanished without a FIN or RST (a NAT or firewall that dropped its state, a
   partition, a crashed host) is indistinguishable from a quiet channel: every poll slice returns
-  empty-handed, forever, with `notifications.up` reading 1 over a connection nothing can arrive on.
+  empty-handed, forever, with the channel reported up over a connection nothing can arrive on.
   Two things close that gap. Every monitoring connection gets a JDBC network timeout of
   `NOTIFICATION_PROBE_TIMEOUT` (5s), so no statement a monitor sends — the `LISTEN`, the barrier read —
   can wait forever on a dead socket (the notification wait is unaffected: the driver puts its own

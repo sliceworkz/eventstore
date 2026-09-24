@@ -23,9 +23,9 @@ import javax.sql.DataSource;
 
 import com.github.f4b6a3.uuid.UuidCreator;
 
-import io.micrometer.core.instrument.MeterRegistry;
 
 import org.sliceworkz.eventstore.events.EventId;
+import org.sliceworkz.eventstore.observability.EventStoreObserver;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 
@@ -43,12 +43,12 @@ import org.sliceworkz.eventstore.shredding.ShreddingCodec;
  */
 class PostgresLegacyEventStorageImpl extends PostgresEventStorageImpl {
 
-	PostgresLegacyEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources, MeterRegistry meterRegistry ) {
-		super(name, dataSource, monitoringDataSource, absoluteLimit, prefix, ownsDataSources, meterRegistry);
+	PostgresLegacyEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources ) {
+		super(name, dataSource, monitoringDataSource, absoluteLimit, prefix, ownsDataSources);
 	}
 
-	PostgresLegacyEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources, MeterRegistry meterRegistry, ShreddingCodec shreddingCodec ) {
-		super(name, dataSource, monitoringDataSource, absoluteLimit, prefix, ownsDataSources, meterRegistry, shreddingCodec);
+	PostgresLegacyEventStorageImpl ( String name, DataSource dataSource, DataSource monitoringDataSource, Limit absoluteLimit, String prefix, boolean ownsDataSources, EventStoreObserver observer, ShreddingCodec shreddingCodec ) {
+		super(name, dataSource, monitoringDataSource, absoluteLimit, prefix, ownsDataSources, observer, shreddingCodec);
 	}
 
 	@Override

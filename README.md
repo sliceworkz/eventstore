@@ -38,7 +38,7 @@ then add the modules you need without versions:
         <dependency>
             <groupId>org.sliceworkz</groupId>
             <artifactId>sliceworkz-eventstore-bom</artifactId>
-            <version>0.10.2</version>
+            <version>0.11.1</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>

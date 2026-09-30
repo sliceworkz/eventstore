@@ -223,9 +223,13 @@ class InMemoryEventStorageImpl implements EventStorage {
 		}
 		initialBookmarks.forEach(( reader, bookmark ) -> {
 			StoredEvent bookmarked = loadedById.get(bookmark.reference().id());
-			this.bookmarks.put(reader, bookmarked == null
-				? bookmark
-				: new Bookmark(bookmark.reader(), bookmarked.reference(), bookmark.tags(), bookmark.updatedAt()));
+			Optional<EventReference> readUpTo = bookmark.readUpTo().map(r -> {
+				StoredEvent read = loadedById.get(r.id());
+				return read == null ? r : read.reference();
+			});
+			this.bookmarks.put(reader, new Bookmark(bookmark.reader(),
+				bookmarked == null ? bookmark.reference() : bookmarked.reference(),
+				readUpTo, bookmark.tags(), bookmark.updatedAt()));
 		});
 		this.txCounter = initialEvents.stream()
 				.mapToLong(e -> e.reference().tx())
@@ -667,6 +671,12 @@ class InMemoryEventStorageImpl implements EventStorage {
 	}
 
 	@Override
+	public synchronized Optional<Bookmark> findBookmark(String reader) {
+		checkNotClosed();
+		return Optional.ofNullable(bookmarks.get(reader));
+	}
+
+	@Override
 	public synchronized List<Bookmark> getBookmarks() {
 		checkNotClosed();
 		return List.copyOf(bookmarks.values());
@@ -680,6 +690,11 @@ class InMemoryEventStorageImpl implements EventStorage {
 
 	@Override
 	public synchronized void bookmark(String reader, EventReference eventReference, Tags tags ) {
+		bookmark(reader, eventReference, null, tags);
+	}
+
+	@Override
+	public synchronized void bookmark(String reader, EventReference eventReference, EventReference readUpTo, Tags tags ) {
 		checkNotClosed();
 		// A bookmark is a position in this store's log, so a reference the store never stored --
 		// typically one from a different store -- is a caller error. The Postgres backend rejects it
@@ -693,14 +708,22 @@ class InMemoryEventStorageImpl implements EventStorage {
 				"Cannot place bookmark for reader '%s': %s does not reference an event stored in this event storage"
 					.formatted(reader, eventReference));
 		}
+		// the read position is held to the same rule, as its own foreign key holds it on Postgres
+		StoredEvent read = readUpTo == null ? null : eventsById.get(readUpTo.id());
+		if ( readUpTo != null && read == null ) {
+			throw new EventStorageException(
+				"Cannot place bookmark for reader '%s': read position %s does not reference an event stored in this event storage"
+					.formatted(reader, readUpTo));
+		}
 		// what is kept is the store's own reference for that event, never the caller's: a bookmark names
 		// an event by id, and its position and transaction are the event's to say. The Postgres backend
 		// gets the same by joining the events row on every read; here the log is immutable, so resolving
 		// once at placement is the same answer
 		EventReference resolved = bookmarked == null ? null : bookmarked.reference();
 		Tags effectiveTags = tags == null ? Tags.none() : tags;
-		bookmarks.put(reader, new Bookmark(reader, resolved, effectiveTags, Instant.now()));
-		BookmarkPlacedNotification notification = new BookmarkPlacedNotification(reader, resolved);
+		Optional<EventReference> resolvedReadUpTo = read == null ? Optional.empty() : Optional.of(read.reference());
+		bookmarks.put(reader, new Bookmark(reader, resolved, resolvedReadUpTo, effectiveTags, Instant.now()));
+		BookmarkPlacedNotification notification = new BookmarkPlacedNotification(reader, resolved, resolvedReadUpTo);
 		listeners.forEach(l->notifyQuietly(l, notification));
 	}
 

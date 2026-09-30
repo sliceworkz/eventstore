@@ -272,7 +272,9 @@ half of that.
 created and, on the default `ENSURE`, it upgrades in place: existing events are untouched, the notify
 functions are replaced with this release's bodies, the triggers are verified and recreated only if
 their shape differs, and objects a newer release added (`idx_events_stream_tags`,
-`idx_events_stream_idempotency`) are created. It also **drops** two indexes — `idx_events_tx_position`
+`idx_events_stream_idempotency`) are created, as is the bookmarks table's nullable `read_up_to_event_id`
+column with its foreign key and index — the one column `ENSURE` adds to an existing table, since it needs
+no data change. It also **drops** two indexes — `idx_events_tx_position`
 and `idx_events_context_tx_position`, replaced by `idx_events_global_order` and
 `idx_events_context_order`, which are partial on an admission predicate that keeps a stream or context
 read out of them. That is the one non-additive index change `ENSURE` makes, and it is deliberate: left

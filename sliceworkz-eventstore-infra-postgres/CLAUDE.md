@@ -447,7 +447,8 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     correlate with the heap. Change any of the three and the scenarios pass whether or not the
     mechanism is there.
 - **`ENSURE` brings functions and triggers up to date, and drops the two order indexes the admission
-  predicates replaced; tables, columns and every other index are only ever created.**
+  predicates replaced; tables, columns and every other index are only ever created** — which includes
+  adding a missing nullable column to an existing table, as it does for the bookmarks' read position.
   The functions are `CREATE OR REPLACE`d and each trigger is compared against the shape this release wants
   (`tgtype` plus target function, in a `DO $$` block) and recreated only when it differs — so wrong timing,
   wrong orientation or a trigger pointing at the wrong function self-heal, while the ordinary startup, where
@@ -600,6 +601,17 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   recognises the not-null violation (SQLSTATE 23502 — the one way this insert can raise it) and names
   the same migration. `PostgresSchemaDriftTest.testUnmigratedBookmarksTableIsReportedWithItsMigration`
   pins all three paths; the TCK's `BookmarksTest` pins the resolution and the notification payload
+- **A bookmark row holds a second event id, `read_up_to_event_id`: the read position.** Nullable, under
+  its own non-cascading `fk_bookmarks_read_up_to_event_id`, indexed like `event_id`; `bookmarkSql` LEFT
+  JOINs the events table a second time for it, and `notify_bookmark_placed` looks it up for the
+  `readUpTo*` fields of its payload (null when absent — and absent altogether from an older function's
+  payload, which `BookmarkPlacedPostgresNotification` reads as none). It is the one column `ENSURE` adds
+  to an existing table (`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, the foreign key added by name when
+  missing), since it is additive and nullable; `checkBookmarksTable` reports it missing under `VALIDATE`
+  with `BOOKMARKS_READ_UP_TO_MIGRATION`, and under `NONE` a bookmark read or write recognises SQLSTATE
+  42703 and names the same migration. A read-position foreign key violation is told apart from the
+  reference's by the constraint name. `PostgresSchemaDriftTest.testBookmarksTableWithoutAReadPositionIsMigrated`
+  pins the three modes
 - **Idempotency keys are scoped per event stream (context + purpose), not per storage/table.** Uniqueness is enforced by the partial unique index `idx_events_stream_idempotency` on `(stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL` (schema validation requires it), so the same key used on two unrelated streams does not collide and dedup behaviour does not depend on how storage instances / prefixes are wired at runtime. The `idempotency_key` is persisted and surfaced on `StoredEvent` when reading (it is not exposed on the public `Event` record). A duplicate append is silently ignored (returns an empty result). A database created by an older release may still carry a table-wide `UNIQUE` on `idempotency_key`; migrate it with: `ALTER TABLE <prefix>events DROP CONSTRAINT <prefix>events_idempotency_key_key; CREATE UNIQUE INDEX <prefix>idx_events_stream_idempotency ON <prefix>events (stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL;` — no data migration is needed
   - **The duplicate is recognised by the index the server names, never by the message text.** Both the
     append and the import path go through `isIdempotencyKeyViolation`, which pairs SQLSTATE 23505 with

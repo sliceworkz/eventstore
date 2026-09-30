@@ -326,17 +326,52 @@ END $$;
 -- unique event_id index whenever the bookmark is read -- so a bookmark can never carry coordinates
 -- that disagree with the event it names, and a bookmarks table copied between stores (an import,
 -- which preserves ids and reassigns both ordering columns) is valid as it stands.
+--
+-- A bookmark holds a second position, read_up_to_event_id: the event up to which the reader has read
+-- the stream, relevant to it or not. event_id is the last event the reader handled and where it resumes;
+-- a reader whose query names a few event types never handles the others, so its lag is counted from the
+-- read position instead. Nullable -- a bookmark placed without one falls back to event_id -- and held to
+-- the same rules as event_id: its own non-cascading foreign key, and resolved to the event's coordinates
+-- on every read.
 CREATE TABLE IF NOT EXISTS PREFIX_bookmarks (
       reader TEXT PRIMARY KEY,
       event_id UUID NOT NULL,
       updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
       updated_tags TEXT[] DEFAULT '{}',
+      read_up_to_event_id UUID,
       CONSTRAINT fk_bookmarks_event_id
           FOREIGN KEY (event_id)
+          REFERENCES PREFIX_events(event_id),
+      CONSTRAINT fk_bookmarks_read_up_to_event_id
+          FOREIGN KEY (read_up_to_event_id)
           REFERENCES PREFIX_events(event_id)
   );
 
   CREATE INDEX IF NOT EXISTS PREFIX_idx_bookmarks_event_id ON PREFIX_bookmarks(event_id);
+
+-- The one column ENSURE adds to an existing table. It is additive and nullable, so a table created
+-- before it existed takes it with no data change, and every bookmark it already holds reads as "no read
+-- position" until its reader next places one. The foreign key is added by name when it is missing,
+-- exactly as in the CREATE TABLE above.
+ALTER TABLE PREFIX_bookmarks ADD COLUMN IF NOT EXISTS read_up_to_event_id UUID;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+      SELECT 1
+      FROM information_schema.table_constraints
+      WHERE table_schema = current_schema()
+        AND table_name = 'PREFIX_bookmarks'
+        AND constraint_name = 'fk_bookmarks_read_up_to_event_id'
+        AND constraint_type = 'FOREIGN KEY'
+  ) THEN
+    ALTER TABLE PREFIX_bookmarks
+        ADD CONSTRAINT fk_bookmarks_read_up_to_event_id
+            FOREIGN KEY (read_up_to_event_id)
+            REFERENCES PREFIX_events(event_id);
+  END IF;
+END $$;
+
+  CREATE INDEX IF NOT EXISTS PREFIX_idx_bookmarks_read_up_to_event_id ON PREFIX_bookmarks(read_up_to_event_id);
 
 
 -- Deliberately still FOR EACH ROW, unlike the events trigger above. bookmark() is a single-row
@@ -346,20 +381,30 @@ CREATE TABLE IF NOT EXISTS PREFIX_bookmarks (
 --
 -- CREATE OR REPLACE for the same reason as PREFIX_notify_event_appended above.
 -- The notification carries the store's coordinates of the bookmarked event, looked up by id: one
--- probe on the unique event_id index per placement.
+-- probe on the unique event_id index per placement -- and a second for the read position, when the
+-- bookmark carries one (the readUpTo* fields are null otherwise).
 CREATE OR REPLACE FUNCTION PREFIX_notify_bookmark_placed()
 RETURNS trigger AS $fn$
 DECLARE
     bookmarked RECORD;
+    read_up_to_tx xid8;
+    read_up_to_position BIGINT;
 BEGIN
     SELECT event_tx, event_position INTO bookmarked
     FROM PREFIX_events WHERE event_id = NEW.event_id;
+    IF NEW.read_up_to_event_id IS NOT NULL THEN
+        SELECT event_tx, event_position INTO read_up_to_tx, read_up_to_position
+        FROM PREFIX_events WHERE event_id = NEW.read_up_to_event_id;
+    END IF;
     PERFORM pg_notify('PREFIX_bookmark_placed',
         jsonb_build_object(
             'reader', NEW.reader,
             'eventTx', bookmarked.event_tx,
             'eventPosition', bookmarked.event_position,
-            'eventId', NEW.event_id
+            'eventId', NEW.event_id,
+            'readUpToEventTx', read_up_to_tx,
+            'readUpToEventPosition', read_up_to_position,
+            'readUpToEventId', NEW.read_up_to_event_id
         )::text
     );
     RETURN NEW;

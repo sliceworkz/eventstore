@@ -17,10 +17,12 @@
  */
 package org.sliceworkz.eventstore.projection;
 
+import java.time.Duration;
 import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
@@ -133,6 +135,32 @@ import org.sliceworkz.eventstore.stream.AppendListener;
  * projector.run();
  * }</pre>
  *
+ * <h2>The two positions of a bookmark</h2>
+ * A bookmarked projector records two positions (see {@link Bookmark}): the last event it handled, where it
+ * resumes, and the event up to which it has <em>read</em> the stream, which is what its backlog is counted
+ * from. Its query names the event types it handles, so the first never moves past an event of another type,
+ * while the second does. The rules:
+ * <ol>
+ *   <li>At the start of every run the projector takes the stream's {@link EventSource#head() head}. It sits
+ *       behind the same visibility rules as every read, so anything committed later sorts after it.</li>
+ *   <li>After each committed batch the bookmark records the last event handled as both positions, so a run
+ *       that fails or dies part-way leaves the read position at the last batch that landed — never beyond.</li>
+ *   <li>When a run has read to the end — its last page came back shorter than its limit, and nothing
+ *       failed — the read position is the later of that head and the last event handled, compared in the
+ *       total order ({@link EventReference#happenedAfter}). Only then has everything up to the head been read.
+ *       A run bounded with {@link #runUntil(EventReference)} extends it only when the head is at or before
+ *       its boundary.</li>
+ *   <li>A run that handled nothing only moves the read position, and at most once per
+ *       {@link Builder#idleBookmarkInterval(Duration) idle bookmark interval}: every subscribed projector
+ *       runs on every append to its stream, and each placement is a write, so without it an idle reader
+ *       would cost a write per append. A move held back by the interval is written by the first run after
+ *       it has passed; {@link #deferredReadUpToDueIn()} says when that is due.</li>
+ *   <li>The projector never resumes from the read position. It would buy nothing — the typed query skips
+ *       what the projection does not read through the index — and a query that later gains an event type
+ *       would never be handed the events of that type between the two positions.</li>
+ * </ol>
+ * A projector that has handled nothing yet has no bookmark, and records no read position either.
+ *
  * @param <CONSUMED_EVENT_TYPE> the type of domain events processed by the projection
  * @see Projection
  * @see ProjectorMetrics
@@ -155,6 +183,18 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 	
 	private Optional<EventReference> lastEventReference = null;
 
+	/** The read position this projector last placed or read back, empty when it does not know of one. */
+	private Optional<EventReference> recordedReadUpTo = Optional.empty();
+
+	/** How often a run that handled nothing may move the read position. */
+	private final Duration idleBookmarkInterval;
+
+	/** When a run that handled nothing last moved the read position ({@link System#nanoTime()}), or null. */
+	private Long lastIdleBookmarkNanos = null;
+
+	/** A read position a run that handled nothing could not write yet, because of the interval. */
+	private boolean readUpToDeferred = false;
+
 	/**
 	 * How this projector's batches are observed: the observer and stream its source reports to, found
 	 * through {@link EventSource#observation()} so a projector is observed exactly when its source is.
@@ -166,7 +206,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 	// without waiting for the run in progress
 	private volatile ProjectorMetrics accumulatedMetrics;
 	
-	private Projector ( EventSource<CONSUMED_EVENT_TYPE> es, Projection<CONSUMED_EVENT_TYPE> projection, String projectionName, EventReference after, int maxEventsPerQuery, String bookmarkReader, Tags bookmarkTags, BookmarkRead bookmarkRead ) {
+	private Projector ( EventSource<CONSUMED_EVENT_TYPE> es, Projection<CONSUMED_EVENT_TYPE> projection, String projectionName, EventReference after, int maxEventsPerQuery, String bookmarkReader, Tags bookmarkTags, BookmarkRead bookmarkRead, Duration idleBookmarkInterval ) {
 		this.es = es;
 		this.projection = projection;
 		this.projectionName = projectionName;
@@ -175,6 +215,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 		this.bookmarkReader = bookmarkReader;
 		this.bookmarkTags = bookmarkTags;
 		this.bookmarkRead = bookmarkRead;
+		this.idleBookmarkInterval = idleBookmarkInterval;
 		this.lastEventReference =  ( after == null ) ? null : Optional.ofNullable(after); // keep it to null to detect first run if needed
 		// contained again, which is a no-op for the observer of a store of this library, so that a source
 		// written elsewhere cannot fail a batch through its observer
@@ -301,12 +342,32 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 	 * @see Builder#readBookmarkOnRequest()
 	 */
 	public synchronized Projector<CONSUMED_EVENT_TYPE> readBookmark ( ) {
-		Optional<EventReference> bookmarkReference = Optional.empty();
 		if ( bookmarkReader != null ) {
-			bookmarkReference = es.getBookmark(bookmarkReader);
-			lastEventReference = bookmarkReference;
+			Optional<Bookmark> bookmark = es.findBookmark(bookmarkReader);
+			// the resume point is the last event handled, never the read position
+			lastEventReference = bookmark.map(Bookmark::reference);
+			recordedReadUpTo = bookmark.flatMap(Bookmark::readUpTo);
 		}
 		return this;
+	}
+
+	/**
+	 * How long until a read position held back by the {@link Builder#idleBookmarkInterval(Duration) idle
+	 * bookmark interval} may be written, or empty when none is held back.
+	 * <p>
+	 * A run that handled nothing moves the read position at most once per interval, and a move it holds
+	 * back is written by the first run after the interval has passed — so a caller driving the projector
+	 * itself, rather than subscribing it, runs it again no later than this to keep the read position from
+	 * trailing the stream until the next append. {@link Duration#ZERO} means it is due now.
+	 *
+	 * @return the time until the held-back read position may be written, or empty when there is none
+	 */
+	public synchronized Optional<Duration> deferredReadUpToDueIn ( ) {
+		if ( !readUpToDeferred || lastIdleBookmarkNanos == null ) {
+			return Optional.empty();
+		}
+		long remaining = idleBookmarkInterval.toNanos() - ( System.nanoTime() - lastIdleBookmarkNanos );
+		return Optional.of(remaining <= 0 ? Duration.ZERO : Duration.ofNanos(remaining));
 	}
 	
 	private class ProjectorRun {
@@ -316,6 +377,8 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 		private long queriesDone = 0;
 		private EventReference currentEventReference; // required for identifying a poison event
 		private EventReference mostRecentEventReference; // chronologically newest event seen (for optimistic locking)
+		private boolean movedBookmarkThisRun; // a run that placed a bookmark is not idle, and is not held to the idle interval
+		private boolean placedInBatch; // whether the current batch placed the bookmark, reported on its observation
 
 		private ProjectorRunResult execute ( EventReference until, boolean singleBatch ) {
 			boolean done = false;
@@ -366,6 +429,18 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 			}
 
 			ProjectorException exception = null;
+
+			// The head as the run starts: what a run that reads to the end has read up to. Taken before the
+			// first page, and behind the same visibility rules as the pages, so anything committed later
+			// sorts after it. A bounded run has read up to its boundary at most, so the head only counts
+			// when it is at or before that boundary.
+			EventReference headAtStart = null;
+			if ( bookmarkReader != null ) {
+				headAtStart = es.head().orElse(null);
+				if ( headAtStart != null && until != null && headAtStart.storedEventHappenedAfter(until) ) {
+					headAtStart = null;
+				}
+			}
 
 			Optional<EventReference> lastReadAtStart = lastEventReference;
 
@@ -463,10 +538,12 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 				// rather than per run, because everything committed before a crash and not bookmarked
 				// is projected a second time on restart.
 				try {
-					Optional<EventReference> bookmarkedBefore = bookmarked;
-					bookmarked = placeBookmarkIfMoved(bookmarked);
+					placedInBatch = false;
+					// read to the end: everything up to the head taken at the start has been read. Before
+					// that, only up to the last event handled
+					bookmarked = placeBookmarkIfMoved(bookmarked, done ? headAtStart : null);
 					scope.completed(new Outcome.Projected((int) storedInBatch, (int) ( eventsHandled - handledBefore ),
-							lastEventReference == null ? Optional.empty() : lastEventReference, !java.util.Objects.equals(bookmarked, bookmarkedBefore)));
+							lastEventReference == null ? Optional.empty() : lastEventReference, placedInBatch));
 				} catch ( RuntimeException | Error e ) {
 					scope.failed(e);
 					throw e;
@@ -505,14 +582,36 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 		 * than at-most-once, and it is why a projection writing to a store of its own wants to record
 		 * its own position inside its own transaction -- see {@link BatchAwareProjection#afterBatch}.
 		 */
-		private Optional<EventReference> placeBookmarkIfMoved ( Optional<EventReference> bookmarked ) {
+		private Optional<EventReference> placeBookmarkIfMoved ( Optional<EventReference> bookmarked, EventReference readToHead ) {
 			if ( bookmarkReader == null || lastEventReference == null || lastEventReference.isEmpty() ) {
 				return bookmarked;
 			}
-			if ( lastEventReference.equals(bookmarked) ) {
+			EventReference handled = lastEventReference.get();
+			// the later of the two, in the total order -- never on position alone
+			EventReference readUpTo = readToHead != null && readToHead.happenedAfter(handled) ? readToHead : handled;
+
+			boolean referenceMoved = !lastEventReference.equals(bookmarked);
+			// what a reader of the bookmark takes the read position to be: the one recorded, or the
+			// reference it falls back to
+			EventReference readUpToAsKnown = recordedReadUpTo.orElse(bookmarked == null ? null : bookmarked.orElse(null));
+			boolean readUpToMoved = readUpToAsKnown == null || readUpTo.happenedAfter(readUpToAsKnown);
+			if ( !referenceMoved && !readUpToMoved ) {
 				return bookmarked;
 			}
-			es.placeBookmark(bookmarkReader, lastEventReference.get(), bookmarkTags);
+			if ( !referenceMoved && !movedBookmarkThisRun ) {
+				// a run that handled nothing moves the read position only, and at most once per interval
+				long now = System.nanoTime();
+				if ( lastIdleBookmarkNanos != null && now - lastIdleBookmarkNanos < idleBookmarkInterval.toNanos() ) {
+					readUpToDeferred = true;
+					return bookmarked;
+				}
+				lastIdleBookmarkNanos = now;
+			}
+			es.placeBookmark(bookmarkReader, handled, readUpTo, bookmarkTags);
+			recordedReadUpTo = Optional.of(readUpTo);
+			readUpToDeferred = false;
+			movedBookmarkThisRun = true;
+			placedInBatch = true;
 			return lastEventReference;
 		}
 	
@@ -692,6 +791,15 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 		 */
 		public static final int DEFAULT_MAX_EVENTS_PER_QUERY = 500;
 
+		/**
+		 * How often, by default, a run that handled nothing may move a bookmark's read position: two seconds.
+		 * <p>
+		 * Short enough that a reader waiting for another to have read past an event — an automation waiting
+		 * for its todo list — waits about that long at worst, and long enough that a reader woken by every
+		 * append to a busy stream writes its bookmark a handful of times a minute rather than once per append.
+		 */
+		public static final Duration DEFAULT_IDLE_BOOKMARK_INTERVAL = Duration.ofSeconds(2);
+
 		private final EventSource<EVENT_TYPE> eventSource;
 		private Projection<EVENT_TYPE> projection;
 		private EventReference after;
@@ -703,6 +811,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 		private String name;
 		private BookmarkRead bookmarkRead = BookmarkRead.BEFORE_EACH_RUN;
 		private boolean bookmarkReadChosen = false;
+		private Duration idleBookmarkInterval = DEFAULT_IDLE_BOOKMARK_INTERVAL;
 
 		private Builder ( EventSource<EVENT_TYPE> eventSource ) {
 			this.eventSource = eventSource;
@@ -891,6 +1000,31 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 			return readBookmark(BookmarkRead.ON_REQUEST);
 		}
 
+		/**
+		 * How often a run that handled nothing may move the bookmark's read position — the event up to which
+		 * the projector has read the stream (see {@link Bookmark#readUpTo()}).
+		 * <p>
+		 * A run that handled something places its bookmark, read position included, after every batch, and
+		 * is not held to this. A run that handled nothing has only its read position to move, and a
+		 * subscribed projector runs on every append to its stream, whether the projection reads the event
+		 * or not; on PostgreSQL each placement is an upsert that fires the bookmark trigger and its
+		 * notification. So such a run writes at most once per interval, and a move held back is written by
+		 * the first run after the interval has passed (see {@link Projector#deferredReadUpToDueIn()}).
+		 * {@link Duration#ZERO} writes on every idle run. Defaults to {@link #DEFAULT_IDLE_BOOKMARK_INTERVAL}.
+		 *
+		 * @param interval the least time between two read-position moves of runs that handled nothing, not
+		 *        null and not negative
+		 * @return this builder for method chaining
+		 * @throws IllegalArgumentException if the interval is null or negative
+		 */
+		public Builder<EVENT_TYPE> idleBookmarkInterval ( Duration interval ) {
+			if ( interval == null || interval.isNegative() ) {
+				throw new IllegalArgumentException("an idle bookmark interval is zero or more, not %s".formatted(interval));
+			}
+			this.idleBookmarkInterval = interval;
+			return this;
+		}
+
 		private Builder<EVENT_TYPE> readBookmark ( BookmarkRead bookmarkRead ) {
 			this.bookmarkRead = bookmarkRead;
 			this.bookmarkReadChosen = true;
@@ -922,7 +1056,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 			if ( bookmarkReader != null && initQuery != null && !initQuery.filter().isMatchNone() ) {
 				LOGGER.warn("Projection has initQuery but bookmarking is enabled — initQuery will be ignored. Remove bookmarking for live-model use, or remove initQuery for full replay.");
 			}
-			Projector<EVENT_TYPE> projector = new Projector<>(eventSource, projection, name != null ? name : defaultNameOf(projection), after, maxEventsPerQuery, bookmarkReader, bookmarkTags, bookmarkRead);
+			Projector<EVENT_TYPE> projector = new Projector<>(eventSource, projection, name != null ? name : defaultNameOf(projection), after, maxEventsPerQuery, bookmarkReader, bookmarkTags, bookmarkRead, idleBookmarkInterval);
 			if ( subscribe ) {
 				// subscribe for eventually consistent updates about event appends, so the projector will automatically trigger projection updates
 				eventSource.subscribe(projector);

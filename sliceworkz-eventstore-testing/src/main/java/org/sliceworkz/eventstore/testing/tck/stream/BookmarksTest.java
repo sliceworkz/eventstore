@@ -210,6 +210,116 @@ public class BookmarksTest extends AbstractEventStoreTest {
 		}
 	}
 
+	/**
+	 * A bookmark records a second position, the event up to which the reader has read the stream. It
+	 * reads back beside the reference, through the list and through the single-reader lookup alike, and
+	 * the resume point stays the reference.
+	 */
+	@ForEachBackend
+	void readPositionIsStoredBesideTheReference ( ) {
+		EventReference handled = appendOne();
+		EventReference read = appendOne();
+		EventStream<MockDomainEvent> s = stream();
+
+		s.placeBookmark("reading-reader", handled, read, Tags.none());
+
+		Bookmark bookmark = s.findBookmark("reading-reader").orElseThrow();
+		assertEquals(handled, bookmark.reference());
+		assertEquals(Optional.of(read), bookmark.readUpTo());
+		assertEquals(read, bookmark.readUpToOrReference());
+		assertEquals(Optional.of(read), s.getBookmarks().getFirst().readUpTo());
+		assertEquals(Optional.of(handled), s.getBookmark("reading-reader"), "the resume point is the reference, never the read position");
+	}
+
+	/**
+	 * A bookmark placed without a read position has none, and readers of it fall back to the reference.
+	 * Placing one without it after one with it clears it, rather than leaving a read position the
+	 * placement did not vouch for.
+	 */
+	@ForEachBackend
+	void absentReadPositionReadsAsNone ( ) {
+		EventReference handled = appendOne();
+		EventReference read = appendOne();
+		EventStream<MockDomainEvent> s = stream();
+
+		s.placeBookmark("plain-reader", handled, Tags.none());
+		Bookmark bookmark = s.findBookmark("plain-reader").orElseThrow();
+		assertEquals(Optional.empty(), bookmark.readUpTo());
+		assertEquals(handled, bookmark.readUpToOrReference());
+
+		s.placeBookmark("plain-reader", handled, read, Tags.none());
+		s.placeBookmark("plain-reader", handled, Tags.none());
+		assertEquals(Optional.empty(), s.findBookmark("plain-reader").orElseThrow().readUpTo());
+		assertEquals(Optional.empty(), s.findBookmark("no-such-reader"));
+	}
+
+	/**
+	 * The read position is held to the rule the reference is: one naming an event this store never
+	 * stored is rejected, and the bookmark already there stays as it was.
+	 */
+	@ForEachBackend
+	void readPositionNamingNoStoredEventIsRejected ( ) {
+		EventReference real = appendOne();
+		EventStream<MockDomainEvent> s = stream();
+		s.placeBookmark("guarded-reader", real, real, Tags.parse("phase:before"));
+
+		EventReference fabricated = EventReference.create(real.position(), real.tx());
+		assertThrows(EventStorageException.class,
+				() -> s.placeBookmark("guarded-reader", real, fabricated, Tags.parse("phase:after")),
+				"a read position must name an event this storage stored");
+
+		Bookmark bookmark = s.findBookmark("guarded-reader").orElseThrow();
+		assertEquals(Optional.of(real), bookmark.readUpTo(), "the previous bookmark must survive the rejected update");
+		assertEquals(Tags.parse("phase:before"), bookmark.tags());
+	}
+
+	/** The read position, like the reference, reads back as the store's own coordinates for its event. */
+	@ForEachBackend
+	void readPositionIsResolvedToTheStoresOwnCoordinates ( ) {
+		EventReference handled = appendOne();
+		EventReference read = appendOne();
+		EventStream<MockDomainEvent> s = stream();
+
+		EventReference foreignCoordinates = EventReference.of(read.id(), read.position() + 1_000_000, read.tx() + 1_000_000);
+		s.placeBookmark("resolved-reader", handled, foreignCoordinates, Tags.none());
+
+		assertEquals(Optional.of(read), s.findBookmark("resolved-reader").orElseThrow().readUpTo());
+		assertEquals(Optional.of(read), s.getBookmarks().getFirst().readUpTo());
+	}
+
+	/**
+	 * The notification carries the read position too, as the store's own coordinates, and carries none
+	 * for a bookmark placed without one.
+	 */
+	@ForEachBackend
+	void bookmarkNotificationCarriesTheReadPosition ( ) {
+		EventReference handled = appendOne();
+		EventReference read = appendOne();
+		List<EventStorage.BookmarkPlacedNotification> notifications = new CopyOnWriteArrayList<>();
+		EventStorage.EventStoreListener listener = new EventStorage.EventStoreListener() {
+			@Override public void notify ( EventStorage.AppendsToEventStoreNotification newEventsInStore ) { }
+			@Override public void notify ( EventStorage.BookmarkPlacedNotification bookmarkPlaced ) { notifications.add(bookmarkPlaced); }
+		};
+		eventStorage().subscribe(listener);
+		try {
+			EventReference foreignCoordinates = EventReference.of(read.id(), read.position() + 1_000_000, read.tx() + 1_000_000);
+			stream().placeBookmark("reading-reader", handled, foreignCoordinates, Tags.none());
+			stream().placeBookmark("plain-reader", handled, Tags.none());
+
+			waitBecauseOfEventualConsistency(() -> notifications.stream().anyMatch(n -> "reading-reader".equals(n.reader()))
+					&& notifications.stream().anyMatch(n -> "plain-reader".equals(n.reader())));
+			EventStorage.BookmarkPlacedNotification reading = notifications.stream()
+					.filter(n -> "reading-reader".equals(n.reader())).findFirst().orElseThrow();
+			assertEquals(handled, reading.bookmark());
+			assertEquals(Optional.of(read), reading.readUpTo(), "the notification must carry the store's reference for the read position");
+			EventStorage.BookmarkPlacedNotification plain = notifications.stream()
+					.filter(n -> "plain-reader".equals(n.reader())).findFirst().orElseThrow();
+			assertEquals(Optional.empty(), plain.readUpTo());
+		} finally {
+			eventStorage().unsubscribe(listener);
+		}
+	}
+
 	@ForEachBackend
 	void snapshotIsIndependentOfSubsequentMutations ( ) {
 		EventReference ref = appendOne();

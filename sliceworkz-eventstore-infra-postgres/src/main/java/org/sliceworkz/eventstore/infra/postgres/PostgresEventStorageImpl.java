@@ -706,6 +706,7 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 			checkIndex(readConnection, prefix + "idx_events_stream_position");
 			checkIndex(readConnection, idempotencyIndexName());
 			checkIndex(readConnection, prefix + "idx_bookmarks_event_id");
+			checkIndex(readConnection, prefix + "idx_bookmarks_read_up_to_event_id");
 
 			LOGGER.info("Database schema validation completed successfully for prefix '{}'", prefix);
 
@@ -763,8 +764,16 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 			}
 		}
 
-		// Check foreign key constraint
+		// The read position: nullable, and the one column ENSURE adds to an existing table. VALIDATE never
+		// adds it, so name the migration rather than the bare column
+		if ( !columnExists(connection, tableName, "read_up_to_event_id") ) {
+			throw new EventStorageException(missingReadUpToMessage());
+		}
+		checkColumn(connection, tableName, "read_up_to_event_id", "uuid", true);
+
+		// Check foreign key constraints
 		checkForeignKey(connection, tableName, "fk_bookmarks_event_id");
+		checkForeignKey(connection, tableName, BOOKMARKS_READ_UP_TO_FK);
 
 		LOGGER.debug("Table {} validated successfully", tableName);
 	}
@@ -2547,6 +2556,9 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 	 */
 	private static final String BOOKMARKS_EVENT_FK = "fk_bookmarks_event_id";
 
+	/** Name of the foreign key from the bookmarks table's read position to the events table. */
+	private static final String BOOKMARKS_READ_UP_TO_FK = "fk_bookmarks_read_up_to_event_id";
+
 	/** Unprefixed name of the partial unique index that scopes idempotency keys to a stream. */
 	private static final String IDEMPOTENCY_INDEX = "idx_events_stream_idempotency";
 
@@ -2634,6 +2646,29 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 	 */
 	static final String BOOKMARKS_ID_ONLY_MIGRATION =
 		"ALTER TABLE %sbookmarks DROP COLUMN event_position, DROP COLUMN event_tx;";
+
+	/** SQLSTATE 42703 */
+	private static final String UNDEFINED_COLUMN = "42703";
+
+	/**
+	 * The hand-applied migration for a bookmarks table created before bookmarks recorded a read position.
+	 * Every {@code %s} is the prefix. Additive and nullable: nothing is backfilled, a bookmark without a
+	 * read position falls back to the event it names, and its reader fills the column in on its next
+	 * placement. {@code ENSURE} applies the same statements itself.
+	 */
+	static final String BOOKMARKS_READ_UP_TO_MIGRATION =
+		"ALTER TABLE %sbookmarks ADD COLUMN IF NOT EXISTS read_up_to_event_id UUID; "
+		+ "ALTER TABLE %sbookmarks ADD CONSTRAINT fk_bookmarks_read_up_to_event_id FOREIGN KEY (read_up_to_event_id) REFERENCES %sevents(event_id); "
+		+ "CREATE INDEX IF NOT EXISTS %sidx_bookmarks_read_up_to_event_id ON %sbookmarks(read_up_to_event_id);";
+
+	private static boolean isUndefinedColumn ( SQLException e ) {
+		return UNDEFINED_COLUMN.equals(e.getSQLState());
+	}
+
+	private static boolean isBookmarkReadUpToFkViolation ( SQLException e ) {
+		return FOREIGN_KEY_VIOLATION.equals(e.getSQLState())
+				&& BOOKMARKS_READ_UP_TO_FK.equalsIgnoreCase(serverConstraintName(e));
+	}
 
 	private static boolean isNotNullViolation ( SQLException e ) {
 		return NOT_NULL_VIOLATION.equals(e.getSQLState());
@@ -3411,11 +3446,22 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 		}
 	}
 
-	record BookmarkPlacedPostgresNotification ( String reader, long eventPosition, long eventTx, String eventId  ) { 
+	/**
+	 * The bookmark trigger's payload. The {@code readUpTo*} fields are null for a bookmark placed without a
+	 * read position, and absent altogether from the payload of a trigger function older than the read
+	 * position, which a {@code VALIDATE} or {@code NONE} deployment may still run: both read as a
+	 * notification without one.
+	 */
+	record BookmarkPlacedPostgresNotification ( String reader, long eventPosition, long eventTx, String eventId,
+			Long readUpToEventPosition, String readUpToEventTx, String readUpToEventId ) {
 		public BookmarkPlacedNotification toNotification ( ) {
-			return new BookmarkPlacedNotification ( 
+			Optional<EventReference> readUpTo = readUpToEventId == null || readUpToEventPosition == null || readUpToEventTx == null
+					? Optional.empty()
+					: Optional.of(EventReference.of(EventId.of(readUpToEventId), readUpToEventPosition, Long.parseUnsignedLong(readUpToEventTx)));
+			return new BookmarkPlacedNotification (
 					reader,
-					EventReference.of(EventId.of(eventId), eventPosition, eventTx));
+					EventReference.of(EventId.of(eventId), eventPosition, eventTx),
+					readUpTo);
 		}
 	}
 
@@ -3452,14 +3498,21 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 	 */
 	static String bookmarkSql ( String prefix ) {
 		return """
-			SELECT b.reader, e.event_position, b.event_id, e.event_tx::text, b.updated_at, b.updated_tags
+			SELECT b.reader, e.event_position, b.event_id, e.event_tx::text, b.updated_at, b.updated_tags,
+			       b.read_up_to_event_id, r.event_position AS read_up_to_position, r.event_tx::text AS read_up_to_tx
 			FROM %1$sbookmarks b
 			JOIN %1$sevents e ON e.event_id = b.event_id
+			LEFT JOIN %1$sevents r ON r.event_id = b.read_up_to_event_id
 			""".formatted(prefix);
 	}
 
 	@Override
 	public Optional<EventReference> getBookmark(String reader) {
+		return findBookmark(reader).map(Bookmark::reference);
+	}
+
+	@Override
+	public Optional<Bookmark> findBookmark(String reader) {
 		checkNotClosed();
 		String sql = bookmarkSql(prefix) + " WHERE b.reader = ?";
 
@@ -3470,15 +3523,11 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 
 				try (ResultSet rs = stmt.executeQuery()) {
 					if (rs.next()) {
-						long position = rs.getLong("event_position");
-						long tx = Long.parseUnsignedLong(rs.getString("event_tx"));
-						String eventIdValue = rs.getString("event_id");
-						EventId eventId = new EventId(eventIdValue);
-						return Optional.of(EventReference.of(eventId, position, tx));
+						return Optional.of(bookmarkFrom(rs));
 					}
 				}
 			} catch (SQLException e) {
-				throw new EventStorageException("Failed to retrieve bookmark for reader: " + reader, e);
+				throw bookmarkReadFailure("Failed to retrieve bookmark for reader: " + reader, e);
 			}
 		} catch (SQLException e) {
 			throw new EventStorageException("Failed to close connection", e);
@@ -3498,25 +3547,10 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 			try ( PreparedStatement stmt = readConnection.prepareStatement(sql);
 			      ResultSet rs = stmt.executeQuery() ) {
 				while ( rs.next() ) {
-					String reader = rs.getString("reader");
-					long position = rs.getLong("event_position");
-					long tx = Long.parseUnsignedLong(rs.getString("event_tx"));
-					EventId eventId = new EventId(rs.getString("event_id"));
-					EventReference reference = EventReference.of(eventId, position, tx);
-
-					String[] tagsArray = new String[0];
-					if ( rs.getArray("updated_tags") != null ) {
-						tagsArray = (String[]) rs.getArray("updated_tags").getArray();
-					}
-					Tags tags = Tags.parse(tagsArray);
-
-					OffsetDateTime updatedAtColumn = rs.getObject("updated_at", OffsetDateTime.class);
-					Instant updatedAt = updatedAtColumn != null ? updatedAtColumn.toInstant() : Instant.EPOCH;
-
-					bookmarks.add(new Bookmark(reader, reference, tags, updatedAt));
+					bookmarks.add(bookmarkFrom(rs));
 				}
 			} catch ( SQLException e ) {
-				throw new EventStorageException("Failed to list bookmarks", e);
+				throw bookmarkReadFailure("Failed to list bookmarks", e);
 			}
 		} catch ( SQLException e ) {
 			throw new EventStorageException("Failed to close connection", e);
@@ -3524,23 +3558,76 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 		return bookmarks;
 	}
 
+	/** One row of {@link #bookmarkSql(String)}, both positions resolved to the store's own coordinates. */
+	private static Bookmark bookmarkFrom ( ResultSet rs ) throws SQLException {
+		String reader = rs.getString("reader");
+		long position = rs.getLong("event_position");
+		long tx = Long.parseUnsignedLong(rs.getString("event_tx"));
+		EventId eventId = new EventId(rs.getString("event_id"));
+		EventReference reference = EventReference.of(eventId, position, tx);
+
+		// the LEFT JOIN answers null coordinates for a bookmark without a read position; the foreign key
+		// keeps a read position from naming an event that is not there
+		Optional<EventReference> readUpTo = Optional.empty();
+		String readUpToId = rs.getString("read_up_to_event_id");
+		String readUpToTx = rs.getString("read_up_to_tx");
+		if ( readUpToId != null && readUpToTx != null ) {
+			readUpTo = Optional.of(EventReference.of(new EventId(readUpToId), rs.getLong("read_up_to_position"), Long.parseUnsignedLong(readUpToTx)));
+		}
+
+		String[] tagsArray = new String[0];
+		if ( rs.getArray("updated_tags") != null ) {
+			tagsArray = (String[]) rs.getArray("updated_tags").getArray();
+		}
+		Tags tags = Tags.parse(tagsArray);
+
+		OffsetDateTime updatedAtColumn = rs.getObject("updated_at", OffsetDateTime.class);
+		Instant updatedAt = updatedAtColumn != null ? updatedAtColumn.toInstant() : Instant.EPOCH;
+
+		return new Bookmark(reader, reference, readUpTo, tags, updatedAt);
+	}
+
+	/**
+	 * A failed bookmark read, naming the migration when the table lacks the read position column: under
+	 * {@code NONE} nothing validated the schema, and a bare "column does not exist" says neither why nor
+	 * what to do.
+	 */
+	private EventStorageException bookmarkReadFailure ( String message, SQLException e ) {
+		if ( isUndefinedColumn(e) ) {
+			return new EventStorageException(missingReadUpToMessage(), e);
+		}
+		return new EventStorageException(message, e);
+	}
+
+	private String missingReadUpToMessage ( ) {
+		return ("Table %sbookmarks has no read_up_to_event_id column: a bookmark records the event up to which its "
+				+ "reader has read the stream beside the last event it handled. ENSURE adds it on the next start; "
+				+ "otherwise migrate the table with: " + BOOKMARKS_READ_UP_TO_MIGRATION).formatted(prefix, prefix, prefix, prefix, prefix, prefix);
+	}
+
 	
 	@Override
 	public void bookmark(String reader, EventReference eventReference, Tags tags ) {
+		bookmark(reader, eventReference, null, tags);
+	}
+
+	@Override
+	public void bookmark(String reader, EventReference eventReference, EventReference readUpTo, Tags tags ) {
 		checkNotClosed();
 		if ( eventReference == null ) {
 			removeBookmark(reader);
 		} else {
-			// only the id is stored: the position and transaction carried by the reference are the
-			// caller's copy of what the event already says, and getBookmark answers them from the event
+			// only the ids are stored: the position and transaction carried by either reference are the
+			// caller's copy of what the event already says, and a read answers them from the event
 			String sql = """
-				INSERT INTO %sbookmarks (reader, event_id, updated_at, updated_tags)
-				VALUES (?, ?::uuid, CURRENT_TIMESTAMP, ? )
+				INSERT INTO %sbookmarks (reader, event_id, updated_at, updated_tags, read_up_to_event_id)
+				VALUES (?, ?::uuid, CURRENT_TIMESTAMP, ?, ?::uuid )
 				ON CONFLICT (reader)
 				DO UPDATE SET
 					event_id = EXCLUDED.event_id,
 					updated_at = CURRENT_TIMESTAMP,
-					updated_tags = EXCLUDED.updated_tags
+					updated_tags = EXCLUDED.updated_tags,
+					read_up_to_event_id = EXCLUDED.read_up_to_event_id
 			""".formatted(prefix); 
 			
 			try (Connection writeConnection = dataSource.getConnection() ) {
@@ -3558,6 +3645,7 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 						// Convert tags to array
 						String[] tagsArray = tags.toStrings().toArray(new String[0]);
 						stmt.setArray(3, writeConnection.createArrayOf("text", (String[]) tagsArray));
+						stmt.setString(4, readUpTo == null ? null : readUpTo.id().value());
 						
 						int rowsAffected = stmt.executeUpdate();
 						if (rowsAffected == 0) {
@@ -3579,6 +3667,14 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 						throw new EventStorageException(
 							"Cannot place bookmark for reader '%s': %s does not reference an event stored in this event storage"
 								.formatted(reader, eventReference), e);
+					}
+					if ( isBookmarkReadUpToFkViolation(e) ) {
+						throw new EventStorageException(
+							"Cannot place bookmark for reader '%s': read position %s does not reference an event stored in this event storage"
+								.formatted(reader, readUpTo), e);
+					}
+					if ( isUndefinedColumn(e) ) {
+						throw new EventStorageException(missingReadUpToMessage(), e);
 					}
 					if ( isNotNullViolation(e) ) {
 						// the one way this insert violates a NOT NULL: a bookmarks table from before bookmarks

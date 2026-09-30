@@ -185,6 +185,32 @@ public class InMemoryFsEventStorageImplTest {
 		}
 	}
 
+	/** The read position of a bookmark survives a reload, beside the reference. */
+	@Test
+	void testBookmarkReadPositionRoundTrip ( @TempDir Path tempDir ) {
+		EventStreamId streamId = EventStreamId.forContext("orders").withPurpose("default");
+
+		EventReference handled;
+		EventReference read;
+		{
+			EventStorage storage = InMemoryFsEventStorage.newBuilder().directory(tempDir).name("read-position").build();
+			EventStream<TestEvent> stream = EventStoreFactory.get().eventStore(storage).getEventStream(streamId, TestEvent.class);
+			List<Event<TestEvent>> events = stream.append(AppendCriteria.none(), List.of(
+					Event.of(new TestEvent.CustomerRegistered("Alice"), Tags.none()),
+					Event.of(new TestEvent.CustomerRegistered("Bob"), Tags.none())
+			));
+			handled = events.get(0).reference();
+			read = events.get(1).reference();
+			storage.bookmark("reading-projection", handled, read, Tags.none());
+			storage.bookmark("plain-projection", handled, Tags.none());
+		}
+
+		EventStorage storage = InMemoryFsEventStorage.newBuilder().directory(tempDir).name("read-position-2").build();
+		assertEquals(java.util.Optional.of(handled), storage.findBookmark("reading-projection").map(b -> b.reference()));
+		assertEquals(java.util.Optional.of(read), storage.findBookmark("reading-projection").flatMap(b -> b.readUpTo()));
+		assertEquals(java.util.Optional.empty(), storage.findBookmark("plain-projection").flatMap(b -> b.readUpTo()));
+	}
+
 	/**
 	 * A bookmark file is trusted for the event id it names and nothing else: the reference a reloaded
 	 * store answers is the loaded event's own. That is what keeps a bookmark valid beside a log whose

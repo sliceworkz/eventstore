@@ -20,6 +20,7 @@ package org.sliceworkz.eventstore.serialization.json;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.time.Instant;
+import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.events.EventId;
@@ -56,6 +57,27 @@ class JsonBookmarkCodecTest {
 		assertEquals(reference, restored.reference());
 		assertEquals(tags, restored.tags());
 		assertEquals(updatedAt, restored.updatedAt());
+	}
+
+	@Test
+	void roundTripsAReadPosition ( ) {
+		EventReference reference = EventReference.of(EventId.of("id-1"), 42L, 7L, 0);
+		EventReference readUpTo = EventReference.of(EventId.of("id-2"), 45L, 8L, 0);
+
+		JsonBookmark restored = codec.read(codec.write("my-projection", reference, readUpTo, Tags.none(), Instant.EPOCH));
+
+		assertEquals(reference, restored.reference());
+		assertEquals(Optional.of(readUpTo), restored.readUpTo());
+	}
+
+	@Test
+	void readsAPayloadWithoutAReadPositionAsNone ( ) {
+		EventReference reference = EventReference.of(EventId.of("id-1"), 42L, 7L, 3);
+
+		assertEquals(Optional.empty(), codec.read(codec.write("my-projection", reference)).readUpTo());
+		assertEquals(Optional.empty(), codec.read("""
+				{"reader":"r","reference":{"id":"id-1","position":42,"tx":7,"index":3},"readUpTo":null}
+				""").readUpTo());
 	}
 
 	@Test

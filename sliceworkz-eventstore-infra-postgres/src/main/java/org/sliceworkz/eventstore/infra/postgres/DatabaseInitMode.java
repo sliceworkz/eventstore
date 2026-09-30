@@ -56,7 +56,8 @@ public enum DatabaseInitMode {
 	 * rather than race on the system catalogs.
 	 * <p>
 	 * <strong>Tables, columns and indexes are only ever created, never altered.</strong> An existing
-	 * table keeps its definition; a missing index is added. The functions and triggers, by contrast, are
+	 * table keeps its definition; a missing index is added, and so is a missing nullable column that needs
+	 * no data change — the bookmarks' read position, with its foreign key. The functions and triggers, by contrast, are
 	 * brought to the definition this release ships: the functions via {@code CREATE OR REPLACE}, the
 	 * triggers by comparing the installed shape and recreating only when it differs. Without that, a
 	 * changed function body would never reach a database that already had the old one, and the store

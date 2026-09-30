@@ -19,6 +19,7 @@ package org.sliceworkz.eventstore.serialization.json;
 
 import java.time.Instant;
 import java.util.HashSet;
+import java.util.Optional;
 import java.util.Set;
 
 import org.sliceworkz.eventstore.events.EventId;
@@ -40,13 +41,16 @@ import tools.jackson.databind.node.ObjectNode;
  * {
  *   "reader":    "...",
  *   "reference": { "id": ..., "position": ..., "tx": ..., "index": ... },
+ *   "readUpTo":  { "id": ..., "position": ..., "tx": ..., "index": ... },
  *   "tags":      [ { "key": ..., "value": ... }, ... ],
  *   "updatedAt": "2026-04-30T12:34:56.789Z"
  * }
  * </pre>
  * The {@code tags} and {@code updatedAt} fields are optional on read, for backwards
  * compatibility with payloads written before the metadata extension. Absent fields read as
- * {@link Tags#none()} and {@link Instant#EPOCH} respectively.
+ * {@link Tags#none()} and {@link Instant#EPOCH} respectively. {@code readUpTo} — the event up to
+ * which the reader has read the stream — is written only when the bookmark has one, and reads as
+ * empty when it is absent or null.
  */
 public final class JsonBookmarkCodec {
 
@@ -65,16 +69,18 @@ public final class JsonBookmarkCodec {
 	}
 
 	public String write ( String reader, EventReference reference, Tags tags, Instant updatedAt ) {
+		return write(reader, reference, null, tags, updatedAt);
+	}
+
+	public String write ( String reader, EventReference reference, EventReference readUpTo, Tags tags, Instant updatedAt ) {
 		try {
 			ObjectNode node = objectMapper.createObjectNode();
 			node.put("reader", reader);
 
-			ObjectNode refNode = objectMapper.createObjectNode();
-			refNode.put("id", reference.id().value());
-			refNode.put("position", reference.position());
-			refNode.put("tx", reference.tx());
-			refNode.put("index", reference.index());
-			node.set("reference", refNode);
+			node.set("reference", referenceNode(reference));
+			if ( readUpTo != null ) {
+				node.set("readUpTo", referenceNode(readUpTo));
+			}
 
 			ArrayNode tagsArray = objectMapper.createArrayNode();
 			for ( Tag tag : tags.tags() ) {
@@ -97,12 +103,11 @@ public final class JsonBookmarkCodec {
 		try {
 			JsonNode node = objectMapper.readTree(json);
 			String reader = node.get("reader").asText();
-			JsonNode refNode = node.get("reference");
-			EventReference reference = EventReference.of(
-					EventId.of(refNode.get("id").asText()),
-					refNode.get("position").asLong(),
-					refNode.get("tx").asLong(),
-					refNode.get("index").asInt());
+			EventReference reference = reference(node.get("reference"));
+			JsonNode readUpToNode = node.get("readUpTo");
+			Optional<EventReference> readUpTo = readUpToNode == null || readUpToNode.isNull()
+					? Optional.empty()
+					: Optional.of(reference(readUpToNode));
 
 			Set<Tag> tagSet = new HashSet<>();
 			JsonNode tagsNode = node.get("tags");
@@ -124,10 +129,27 @@ public final class JsonBookmarkCodec {
 					? Instant.parse(node.get("updatedAt").asText())
 					: Instant.EPOCH;
 
-			return new JsonBookmark(reader, reference, tags, updatedAt);
+			return new JsonBookmark(reader, reference, readUpTo, tags, updatedAt);
 		} catch ( JacksonException e ) {
 			throw new JsonCodecException("failed to deserialize bookmark", e);
 		}
+	}
+
+	private ObjectNode referenceNode ( EventReference reference ) {
+		ObjectNode refNode = objectMapper.createObjectNode();
+		refNode.put("id", reference.id().value());
+		refNode.put("position", reference.position());
+		refNode.put("tx", reference.tx());
+		refNode.put("index", reference.index());
+		return refNode;
+	}
+
+	private static EventReference reference ( JsonNode refNode ) {
+		return EventReference.of(
+				EventId.of(refNode.get("id").asText()),
+				refNode.get("position").asLong(),
+				refNode.get("tx").asLong(),
+				refNode.get("index").asInt());
 	}
 
 }

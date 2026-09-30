@@ -169,6 +169,33 @@ the event up for the notification payload. `checkDatabase()` reports an un-migra
 than failing on a bare not-null violation (`PostgresSchemaDriftTest` pins both). The grants are
 unchanged: the role already needs `SELECT` on the events table.
 
+### Migrating the bookmarks table to record a read position
+
+A bookmark holds a second, nullable position, `read_up_to_event_id`: the event up to which its reader has
+read the stream, relevant to it or not. `event_id` stays the last event handled and the resume point;
+lag is counted from the read position, so a reader whose query names a few event types no longer looks
+behind every event of another type for good. The column carries its own non-cascading foreign key,
+`fk_bookmarks_read_up_to_event_id`, for the reasons `fk_bookmarks_event_id` does, and an index for the
+foreign key checks an event deletion runs.
+
+`ENSURE` adds all three to an existing table on the next start — the column is additive and nullable, so
+nothing is backfilled. A bookmark already in the table reads back without a read position, and readers of
+it fall back to `event_id`, until its reader next places it. A `VALIDATE` or `NONE` deployment applies
+the same by hand:
+
+```sql
+ALTER TABLE <prefix>bookmarks ADD COLUMN IF NOT EXISTS read_up_to_event_id UUID;
+ALTER TABLE <prefix>bookmarks ADD CONSTRAINT fk_bookmarks_read_up_to_event_id FOREIGN KEY (read_up_to_event_id) REFERENCES <prefix>events(event_id);
+CREATE INDEX IF NOT EXISTS <prefix>idx_bookmarks_read_up_to_event_id ON <prefix>bookmarks(read_up_to_event_id);
+```
+
+and replaces the `notify_bookmark_placed` function with the current body from `ensure-schema.sql`, whose
+notification payload carries the read position. Until it does, the old function keeps notifying without
+one, which reads as a notification without a read position rather than failing. `checkDatabase()`
+reports a missing column under `VALIDATE` with these statements, and under `NONE` the first bookmark read
+or placement names them rather than failing on a bare "column does not exist"
+(`PostgresSchemaDriftTest.testBookmarksTableWithoutAReadPositionIsMigrated`). The grants are unchanged.
+
 ### Migrating a database created before the order indexes carried their admission predicates
 
 Two B-tree indexes on the `(event_tx, event_position)` order serve the reads that do not bind both

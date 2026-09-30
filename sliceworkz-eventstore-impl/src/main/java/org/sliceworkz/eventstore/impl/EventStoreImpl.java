@@ -1070,12 +1070,18 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		@Override
-		public void placeBookmark(String reader, EventReference reference, Tags tags) {
+		public void placeBookmark(String reader, EventReference reference, EventReference readUpTo, Tags tags) {
 			checkStoreNotClosed();
 			requireReader(reader);
-			observed(new Observation.PlaceBookmark(info, reader, reference), reporter -> {
+			observed(new Observation.PlaceBookmark(info, reader, reference, Optional.ofNullable(readUpTo)), reporter -> {
 				long start = System.nanoTime();
-				eventStorage.bookmark(reader, reference, tags);
+				// the three-argument SPI method for a placement without a read position, so a storage
+				// that only implements that one is handed exactly what it always was
+				if ( readUpTo == null ) {
+					eventStorage.bookmark(reader, reference, tags);
+				} else {
+					eventStorage.bookmark(reader, reference, readUpTo, tags);
+				}
 				reporter.completed(new Outcome.Done(since(start)));
 				return null;
 			});
@@ -1098,6 +1104,18 @@ public class EventStoreImpl implements EventStore {
 			return observed(new Observation.GetBookmark(info, reader), reporter -> {
 				long start = System.nanoTime();
 				Optional<EventReference> bookmark = eventStorage.getBookmark(reader);
+				reporter.completed(new Outcome.Found(since(start), bookmark.isPresent()));
+				return bookmark;
+			});
+		}
+
+		@Override
+		public Optional<Bookmark> findBookmark(String reader) {
+			checkStoreNotClosed();
+			requireReader(reader);
+			return observed(new Observation.GetBookmark(info, reader), reporter -> {
+				long start = System.nanoTime();
+				Optional<Bookmark> bookmark = eventStorage.findBookmark(reader);
 				reporter.completed(new Outcome.Found(since(start), bookmark.isPresent()));
 				return bookmark;
 			});

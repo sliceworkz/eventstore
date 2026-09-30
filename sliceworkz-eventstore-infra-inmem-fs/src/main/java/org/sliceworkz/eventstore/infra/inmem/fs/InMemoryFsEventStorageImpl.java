@@ -177,7 +177,17 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 
 	@Override
 	public void bookmark ( String reader, EventReference eventReference, Tags tags ) {
-		delegate.bookmark(reader, eventReference, tags);
+		bookmark(reader, eventReference, null, tags);
+	}
+
+	@Override
+	public Optional<Bookmark> findBookmark ( String reader ) {
+		return delegate.findBookmark(reader);
+	}
+
+	@Override
+	public void bookmark ( String reader, EventReference eventReference, EventReference readUpTo, Tags tags ) {
+		delegate.bookmark(reader, eventReference, readUpTo, tags);
 		// after delegate.bookmark, the snapshot in the delegate carries the canonical metadata
 		// (effective tags, updatedAt assigned by the delegate); persist that snapshot to disk
 		Bookmark snapshot = delegate.getBookmarks().stream()
@@ -240,7 +250,7 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 		try {
 			String fileName = sanitizeFileName(bookmark.reader()) + ".json";
 			Path filePath = bookmarksDir.resolve(fileName);
-			Files.writeString(filePath, bookmarkCodec.write(bookmark.reader(), bookmark.reference(), bookmark.tags(), bookmark.updatedAt()));
+			Files.writeString(filePath, bookmarkCodec.write(bookmark.reader(), bookmark.reference(), bookmark.readUpTo().orElse(null), bookmark.tags(), bookmark.updatedAt()));
 		} catch ( IOException e ) {
 			throw new EventStorageException("failed to persist bookmark for reader " + bookmark.reader(), e);
 		}
@@ -315,7 +325,7 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 	private void readBookmark ( Path file, Map<String, Bookmark> bookmarks ) {
 		try {
 			JsonBookmark parsed = bookmarkCodec.read(Files.readString(file));
-			bookmarks.put(parsed.reader(), new Bookmark(parsed.reader(), parsed.reference(), parsed.tags(), parsed.updatedAt()));
+			bookmarks.put(parsed.reader(), new Bookmark(parsed.reader(), parsed.reference(), parsed.readUpTo(), parsed.tags(), parsed.updatedAt()));
 		} catch ( IOException e ) {
 			throw new EventStorageException("failed to read bookmark file " + file, e);
 		}

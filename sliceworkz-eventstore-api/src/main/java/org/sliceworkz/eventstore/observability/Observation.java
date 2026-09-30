@@ -125,9 +125,10 @@ public sealed interface Observation<O extends Outcome> {
 	 *
 	 * @param stream the stream the bookmark is placed through
 	 * @param reader the reader
-	 * @param reference where the bookmark is placed
+	 * @param reference where the bookmark is placed: the last event the reader handled
+	 * @param readUpTo the event up to which the reader has read the stream, if the placement records one
 	 */
-	record PlaceBookmark ( StreamInfo stream, String reader, EventReference reference ) implements OnStream<Outcome.Done> { }
+	record PlaceBookmark ( StreamInfo stream, String reader, EventReference reference, Optional<EventReference> readUpTo ) implements OnStream<Outcome.Done> { }
 
 	/**
 	 * A bookmark read for a reader.

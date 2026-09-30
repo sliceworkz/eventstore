@@ -468,7 +468,54 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * @throws org.sliceworkz.eventstore.spi.EventStorageException if {@code reference} does not
 	 *         reference an event stored in this storage
 	 */
-	void placeBookmark ( String reader, EventReference reference, Tags tags );
+	default void placeBookmark ( String reader, EventReference reference, Tags tags ) {
+		placeBookmark(reader, reference, null, tags);
+	}
+
+	/**
+	 * Places a bookmark for a named reader: the last event it handled, and the event up to which it has
+	 * read the stream, handled or not.
+	 * <p>
+	 * {@code reference} is where the reader resumes. {@code readUpTo} is what its backlog is counted from:
+	 * a reader whose query names a few event types never handles the others, and without it would look
+	 * behind every one of them for good (see {@link Bookmark}). It is never a resume point.
+	 * <p>
+	 * Both references are held to the rules {@link #placeBookmark(String, EventReference, Tags)} states
+	 * for {@code reference}: each must name an event this storage has stored, and each reads back as the
+	 * storage's own reference for that event. A {@code null} {@code readUpTo} records none.
+	 * A {@link org.sliceworkz.eventstore.projection.Projector} places both itself; code bookmarking by hand
+	 * rarely needs this overload.
+	 *
+	 * @param reader the unique name/identifier of the reader placing the bookmark; must not be null
+	 * @param reference the last event the reader handled; must reference an event stored in this storage
+	 * @param readUpTo the event up to which the reader has read the stream, or {@code null} for none; when
+	 *        given, must reference an event stored in this storage
+	 * @param tags optional tags to attach to the bookmark for metadata
+	 * @throws NullPointerException if {@code reader} is null
+	 * @throws org.sliceworkz.eventstore.spi.EventStorageException if either reference does not reference
+	 *         an event stored in this storage
+	 */
+	void placeBookmark ( String reader, EventReference reference, EventReference readUpTo, Tags tags );
+
+	/**
+	 * The whole bookmark of a named reader — the last event it handled, the event up to which it has read
+	 * the stream, its tags and when it was last placed — or empty when it has none.
+	 * <p>
+	 * {@link #getBookmark(String)} answers the resume point only; this is the read for a caller that wants
+	 * to know how far a reader has <em>read</em>, such as one waiting for it to have seen a given event:
+	 * {@link Bookmark#readUpToOrReference()}.
+	 * <p>
+	 * The default looks the reader up in {@link #getBookmarks()}, so a source written outside this library
+	 * keeps compiling.
+	 *
+	 * @param reader the unique name/identifier of the reader; must not be null
+	 * @return the reader's bookmark, or empty if it has none
+	 * @throws NullPointerException if {@code reader} is null
+	 */
+	default Optional<Bookmark> findBookmark ( String reader ) {
+		java.util.Objects.requireNonNull(reader, "reader must not be null");
+		return getBookmarks().stream().filter(b -> b.reader().equals(reader)).findFirst();
+	}
 
 	/**
 	 * Retrieves the bookmark for a named reader from this stream.

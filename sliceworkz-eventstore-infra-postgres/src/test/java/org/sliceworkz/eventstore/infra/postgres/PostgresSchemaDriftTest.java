@@ -28,6 +28,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -43,6 +44,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
 import org.sliceworkz.eventstore.spi.EventStorage;
+import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
@@ -269,6 +271,57 @@ public class PostgresSchemaDriftTest {
 				EventStreamId stream = EventStreamId.forContext("account").withPurpose("1");
 				storage.bookmark("reader", storage.head(stream).orElseThrow(), Tags.none());
 				assertTrue(storage.getBookmark("reader").isPresent());
+			}
+
+			PostgresContainer.closeDataSource(image);
+		}
+
+		/**
+		 * A bookmarks table from before bookmarks recorded a read position lacks
+		 * {@code read_up_to_event_id}. The column is additive and nullable, so {@code ENSURE} adds it — with
+		 * its foreign key and index — and a bookmark already in the table reads back without one, falling
+		 * back to the event it names. {@code VALIDATE} reports it with the migration, and under
+		 * {@code NONE}, where nothing validates, the first bookmark read or write names it.
+		 */
+		@Test
+		public void testBookmarksTableWithoutAReadPositionIsMigrated ( ) throws Exception {
+			String prefix = "driftreadupto_";
+			DataSource dataSource = PostgresContainer.dataSource(image);
+			EventStreamId stream = EventStreamId.forContext("account").withPurpose("1");
+
+			EventReference handled;
+			try ( EventStorage storage = ensure(prefix, dataSource) ) {
+				handled = storage.append(AppendCriteria.none(), stream,
+					List.of(new EventToStore(stream, new EventType("Opened"), "{}", Tags.none(), null))).getFirst().reference();
+				storage.bookmark("old-reader", handled, Tags.none());
+			}
+			execute(dataSource, "DROP INDEX " + prefix + "idx_bookmarks_read_up_to_event_id");
+			execute(dataSource, "ALTER TABLE " + prefix + "bookmarks DROP COLUMN read_up_to_event_id");
+			String migration = PostgresEventStorageImpl.BOOKMARKS_READ_UP_TO_MIGRATION.formatted(prefix, prefix, prefix, prefix, prefix);
+
+			EventStorageException validation = assertThrows(EventStorageException.class, () ->
+				PostgresEventStorage.newBuilder()
+					.name("unit-test").prefix(prefix).dataSource(dataSource)
+					.validateDatabase().build());
+			assertTrue(validation.getMessage().contains(migration), "expected the migration statement, got: " + validation.getMessage());
+
+			try ( EventStorage storage = PostgresEventStorage.newBuilder()
+					.name("unit-test").prefix(prefix).dataSource(dataSource)
+					.databaseInitMode(DatabaseInitMode.NONE).build() ) {
+				EventStorageException read = assertThrows(EventStorageException.class, storage::getBookmarks);
+				assertTrue(read.getMessage().contains(migration), "a read must name the migration, got: " + read.getMessage());
+				EventStorageException write = assertThrows(EventStorageException.class, () ->
+					storage.bookmark("reader", handled, handled, Tags.none()));
+				assertTrue(write.getMessage().contains(migration), "a placement must name the migration, got: " + write.getMessage());
+			}
+
+			// ENSURE adds the column, and the bookmark already there reads back without a read position
+			try ( EventStorage storage = ensure(prefix, dataSource) ) {
+				assertEquals(Optional.empty(), storage.findBookmark("old-reader").orElseThrow().readUpTo());
+				EventReference read = storage.append(AppendCriteria.none(), stream,
+					List.of(new EventToStore(stream, new EventType("Renamed"), "{}", Tags.none(), null))).getFirst().reference();
+				storage.bookmark("old-reader", handled, read, Tags.none());
+				assertEquals(Optional.of(read), storage.findBookmark("old-reader").orElseThrow().readUpTo());
 			}
 
 			PostgresContainer.closeDataSource(image);

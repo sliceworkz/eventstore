@@ -575,7 +575,9 @@ mvn clean install -DskipTests
   the bookmark, entered and left around its own settings — loses because the sub-builder holds three
   settings and costs two calls to get to them, and because it puts the validation on the way out
   (`done()`) rather than on the setting itself. There is no other spelling: the source is given to
-  `from`, so the builder has no public constructor and no `from` of its own
+  `from`, so the builder has no public constructor and no `from` of its own.
+  `idleBookmarkInterval(Duration)` paces the read-position moves of runs that handled nothing (see
+  "Bookmarks" below)
 - `Projector.from(null)` is refused with `IllegalArgumentException` at the call; `build()` refuses a
   missing projection, and a bookmark read setting without a reader, with `IllegalStateException`
   naming the call to make, rather than leaving it to fail as a `NullPointerException` from inside the
@@ -997,6 +999,45 @@ later reference, which is after this one and so still delivered.
   DROP COLUMN event_position, DROP COLUMN event_tx;` — which `checkDatabase()` reports under `VALIDATE`
   and `ENSURE`, and the first placement names under `NONE`; see "Migrating the bookmarks table" in the
   postgres module README
+- **A bookmark holds two positions: `reference`, the last event the reader handled, and `readUpTo`,
+  the event up to which it has read the stream, relevant to it or not.** A reader's query names the
+  event types it handles, so its reference never moves past an event of another type; counting "events
+  after the reference" as its backlog counts events it will never handle, for good. `readUpTo` is what
+  lag is counted from, through `Bookmark.readUpToOrReference()`, and what a caller waiting for a reader
+  to have seen an event compares with (`EventSource.findBookmark(reader)` answers the whole bookmark,
+  `EventStorage.findBookmark` is the SPI half). It is **never a resume point**: a projector restarts from
+  `reference`. The alternative — resuming from `readUpTo` — loses because it buys nothing (the typed
+  query skips irrelevant events through the index anyway) and because a query that later gains an event
+  type would never be handed the events of that type between the two positions, silently. `readUpTo` is
+  optional: a bookmark placed without one (by a writer or storage that does not record it) reads back
+  empty, and readers fall back to `reference`; the next placement that carries one fills it in. It is held
+  to the rules `reference` is — an unknown event is rejected, only the id is stored, and it reads back (and
+  arrives on `BookmarkPlacedNotification`) as the store's own coordinates. On Postgres it is the nullable
+  `read_up_to_event_id` column with its own non-cascading `fk_bookmarks_read_up_to_event_id`, resolved by
+  a second (LEFT) join on the events table; `ENSURE` adds the column, its foreign key and index to an
+  existing table — the one column it adds, since it is nullable and needs no data change — and
+  `checkDatabase()` reports it missing under `VALIDATE`, while under `NONE` the first bookmark read or
+  write names the migration (see "Migrating the bookmarks table to record a read position" in the
+  postgres module README). The SPI's `bookmark(reader, reference, readUpTo, tags)` is a `default` that
+  drops `readUpTo` and delegates to the three-argument method, so a third-party storage keeps compiling
+  and simply records none; `BookmarksTest` holds every in-tree backend to the full contract
+- **A projector keeps `readUpTo` by four rules** (on `Projector`'s class javadoc):
+  - it takes the source's `head()` at the start of every run — behind the same visibility barrier as
+    every read, so anything committed later sorts after it; never a raw `MAX(position)`
+  - after each committed batch the bookmark records the last event handled as both positions, so a run
+    that fails or dies part-way leaves `readUpTo` at the last batch that landed, never at the head
+  - when a run has read to the end (its last page came back shorter than its limit, nothing failed),
+    `readUpTo` is the later of that head and the last event handled, compared with `happenedAfter` in the
+    total `(tx, position, index)` order; a `runUntil` extends it only when the head is at or before its
+    boundary
+  - a run that handled nothing moves only `readUpTo`, and at most once per
+    `Builder.idleBookmarkInterval(Duration)` (default 2s, `Duration.ZERO` for every run). Every subscribed
+    projector runs on every append to its stream and each placement is a write — on Postgres an upsert,
+    its trigger and a notification — so unthrottled it would be a write per processor per append. A move
+    held back is written by the first run after the interval; `Projector.deferredReadUpToDueIn()` says
+    when that is due, for a caller that drives its projector itself and would otherwise leave the read
+    position trailing until the next append. A projector that has handled nothing has no bookmark and
+    records no read position. `ProjectorReadPositionTest` in the TCK pins every rule per backend
 - **The foreign key deliberately does not cascade.** An absent bookmark means "replay from the
   beginning" — for a dispatcher in the eventmodeling framework, duplicate publishing to an external
   system, the worst outcome it documents. `ON DELETE CASCADE` handed exactly that to the readers least

@@ -18,6 +18,7 @@
 package org.sliceworkz.eventstore.serialization.json;
 
 import java.time.Instant;
+import java.util.Optional;
 
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
@@ -28,6 +29,24 @@ import org.sliceworkz.eventstore.events.Tags;
  * <p>
  * {@code tags} and {@code updatedAt} may be absent in legacy on-disk payloads written before
  * the metadata extension; in that case the codec returns {@link Tags#none()} and an
- * {@code updatedAt} of {@link Instant#EPOCH}.
+ * {@code updatedAt} of {@link Instant#EPOCH}. {@code readUpTo} is empty for a payload that carries none.
  */
-public record JsonBookmark ( String reader, EventReference reference, Tags tags, Instant updatedAt ) { }
+public record JsonBookmark ( String reader, EventReference reference, Optional<EventReference> readUpTo, Tags tags, Instant updatedAt ) {
+
+	public JsonBookmark {
+		readUpTo = readUpTo == null ? Optional.empty() : readUpTo;
+	}
+
+	/**
+	 * A bookmark payload without a read position.
+	 *
+	 * @param reader the reader
+	 * @param reference the event the reader handled last
+	 * @param tags the tags placed with it
+	 * @param updatedAt when it was placed
+	 */
+	public JsonBookmark ( String reader, EventReference reference, Tags tags, Instant updatedAt ) {
+		this(reader, reference, Optional.empty(), tags, updatedAt);
+	}
+
+}

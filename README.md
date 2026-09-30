@@ -178,7 +178,9 @@ Two things the snippet leaves out:
   the head relevant and admits every append without ever raising `OptimisticLockingException`.
 - **Read models.** `Projector.from(stream).into(projection).build().run()` replays a query into a
   `Projection` in batches; `.subscribe()` keeps it running as events arrive, and a bookmark lets it
-  resume where it left off.
+  resume where it left off. The bookmark also records how far the projector has *read* the stream,
+  past the events its query skips, so its lag is `Bookmark.readUpToOrReference()` to the head rather
+  than every event of a type it never handles.
 
 For PostgreSQL, `PostgresEventStorage.newBuilder().buildStore()` reads a `db.properties` describing a
 pooled connection for reads and appends and a direct one for LISTEN/NOTIFY; the

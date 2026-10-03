@@ -29,12 +29,28 @@ import org.sliceworkz.eventstore.events.Tags;
  * <p>
  * {@code tags} and {@code updatedAt} may be absent in legacy on-disk payloads written before
  * the metadata extension; in that case the codec returns {@link Tags#none()} and an
- * {@code updatedAt} of {@link Instant#EPOCH}. {@code readUpTo} is empty for a payload that carries none.
+ * {@code updatedAt} of {@link Instant#EPOCH}. {@code readUpTo} is empty for a payload that carries none,
+ * and {@code reference} for the bookmark of a reader that has read the stream without handling anything
+ * yet; a payload carries at least one of the two.
  */
-public record JsonBookmark ( String reader, EventReference reference, Optional<EventReference> readUpTo, Tags tags, Instant updatedAt ) {
+public record JsonBookmark ( String reader, Optional<EventReference> reference, Optional<EventReference> readUpTo, Tags tags, Instant updatedAt ) {
 
 	public JsonBookmark {
+		reference = reference == null ? Optional.empty() : reference;
 		readUpTo = readUpTo == null ? Optional.empty() : readUpTo;
+	}
+
+	/**
+	 * A bookmark payload naming the event the reader handled last, with or without a read position.
+	 *
+	 * @param reader the reader
+	 * @param reference the event the reader handled last
+	 * @param readUpTo the event up to which the reader has read the stream, empty for none
+	 * @param tags the tags placed with it
+	 * @param updatedAt when it was placed
+	 */
+	public JsonBookmark ( String reader, EventReference reference, Optional<EventReference> readUpTo, Tags tags, Instant updatedAt ) {
+		this(reader, Optional.ofNullable(reference), readUpTo, tags, updatedAt);
 	}
 
 	/**

@@ -1045,7 +1045,15 @@ public class EventStoreImpl implements EventStore {
 		 */
 		private void notifyQuietly ( BookmarkListener subscriber, BookmarkPlacedNotification bookmarkPlaced ) {
 			try {
-				subscriber.bookmarkUpdated(bookmarkPlaced.reader(), bookmarkPlaced.bookmark());
+				if ( bookmarkPlaced.bookmark().isEmpty() ) {
+					// a read position recorded by a reader that has handled nothing yet: no processed-until
+					// to report, only how far it has read
+					if ( bookmarkPlaced.readUpTo().isPresent() ) {
+						subscriber.readPositionUpdated(bookmarkPlaced.reader(), bookmarkPlaced.readUpTo().get());
+					}
+					return;
+				}
+				subscriber.bookmarkUpdated(bookmarkPlaced.reader(), bookmarkPlaced.bookmark().get());
 			} catch ( Exception e ) {
 				LOGGER.error("bookmark listener {} failed handling the bookmark update for reader {} to {} on stream {}: {}",
 						subscriber.getClass().getName(), bookmarkPlaced.reader(), bookmarkPlaced.bookmark(), eventStreamId, e.getMessage(), e);
@@ -1073,7 +1081,7 @@ public class EventStoreImpl implements EventStore {
 		public void placeBookmark(String reader, EventReference reference, EventReference readUpTo, Tags tags) {
 			checkStoreNotClosed();
 			requireReader(reader);
-			observed(new Observation.PlaceBookmark(info, reader, reference, Optional.ofNullable(readUpTo)), reporter -> {
+			observed(new Observation.PlaceBookmark(info, reader, Optional.ofNullable(reference), Optional.ofNullable(readUpTo)), reporter -> {
 				long start = System.nanoTime();
 				// the three-argument SPI method for a placement without a read position, so a storage
 				// that only implements that one is handed exactly what it always was
@@ -1088,13 +1096,28 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		@Override
+		public void placeReadPosition(String reader, EventReference readUpTo, Tags tags) {
+			checkStoreNotClosed();
+			requireReader(reader);
+			Objects.requireNonNull(readUpTo, "readUpTo must not be null");
+			observed(new Observation.PlaceBookmark(info, reader, Optional.empty(), Optional.of(readUpTo)), reporter -> {
+				long start = System.nanoTime();
+				eventStorage.bookmarkReadPosition(reader, readUpTo, tags);
+				reporter.completed(new Outcome.Done(since(start)));
+				return null;
+			});
+		}
+
+		@Override
 		public Optional<EventReference> removeBookmark(String reader) {
 			checkStoreNotClosed();
-			Optional<EventReference> result = getBookmark(reader);
-			if ( result.isPresent() ) {
+			// the whole bookmark, so one recording a read position only is removed too; what is answered
+			// is the handled reference it held, empty for such a one
+			Optional<Bookmark> removed = findBookmark(reader);
+			if ( removed.isPresent() ) {
 				eventStorage.removeBookmark(reader);
 			}
-			return result;
+			return removed.flatMap(Bookmark::reference);
 		}
 
 		@Override

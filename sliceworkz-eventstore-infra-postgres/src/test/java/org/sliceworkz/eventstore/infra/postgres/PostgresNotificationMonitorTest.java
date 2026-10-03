@@ -149,7 +149,21 @@ class PostgresNotificationMonitorTest {
 		BookmarkPlacedNotification notification = bookmarkMonitor.parse(VALID_BOOKMARK).orElseThrow();
 
 		assertEquals("projection-a", notification.reader());
-		assertEquals(EventReference.of(EventId.of("evt-7"), 7, 1001), notification.bookmark());
+		assertEquals(Optional.of(EventReference.of(EventId.of("evt-7"), 7, 1001)), notification.bookmark());
+	}
+
+	/**
+	 * The trigger's payload for the bookmark of a reader that has read the stream without handling
+	 * anything: the handled event's fields are null, and the notification carries the read position alone.
+	 */
+	@Test
+	void aReadPositionOnlyBookmarkPayloadParsesIntoANotificationWithoutAHandledReference ( ) {
+		BookmarkPlacedNotification notification = bookmarkMonitor.parse("""
+			{"reader":"projection-a","eventTx":null,"eventPosition":null,"eventId":null,			"readUpToEventTx":"1001","readUpToEventPosition":7,"readUpToEventId":"evt-7"}""").orElseThrow();
+
+		assertEquals("projection-a", notification.reader());
+		assertEquals(Optional.empty(), notification.bookmark());
+		assertEquals(Optional.of(EventReference.of(EventId.of("evt-7"), 7, 1001)), notification.readUpTo());
 	}
 
 	@Test
@@ -159,5 +173,8 @@ class PostgresNotificationMonitorTest {
 			"{\"reader\":\"r\",\"eventPosition\":0,\"eventTx\":\"1\",\"eventId\":\"x\"}")));
 		assertEquals(Optional.empty(), assertDoesNotThrow(() -> bookmarkMonitor.parse(
 			"{\"reader\":\"r\",\"eventPosition\":1,\"eventTx\":\"1\",\"eventId\":null}")));
+		// neither a handled event nor a read position: a bookmark always names one
+		assertEquals(Optional.empty(), assertDoesNotThrow(() -> bookmarkMonitor.parse(
+			"{\"reader\":\"r\",\"eventPosition\":null,\"eventTx\":null,\"eventId\":null}")));
 	}
 }

@@ -196,6 +196,33 @@ reports a missing column under `VALIDATE` with these statements, and under `NONE
 or placement names them rather than failing on a bare "column does not exist"
 (`PostgresSchemaDriftTest.testBookmarksTableWithoutAReadPositionIsMigrated`). The grants are unchanged.
 
+### Migrating the bookmarks table to record a read position without a handled event
+
+A reader whose query selects event types that have not occurred yet reads the stream without handling
+anything, and records its read position alone: a bookmark row with `read_up_to_event_id` set and
+`event_id` `NULL` ("read up to here, handled nothing yet"). It still resumes from the beginning, since the
+read position is never a resume point. So `event_id` is nullable, and the check
+`ck_bookmarks_handled_or_read_position` keeps a row from naming neither position. The foreign key
+`fk_bookmarks_event_id` stays as it is: it is `MATCH SIMPLE`, PostgreSQL's default, so a `NULL` `event_id`
+is not checked and a present one still has to name a stored event. A read-position-only placement never
+clears the `event_id` a row already holds — the upsert keeps it with `COALESCE`.
+
+`ENSURE` relaxes an existing table on the next start — no data change, since every row already names a
+handled event — guarded on the column's nullability, so an ordinary start issues no `ALTER TABLE`. A
+`VALIDATE` or `NONE` deployment applies the same by hand:
+
+```sql
+ALTER TABLE <prefix>bookmarks ALTER COLUMN event_id DROP NOT NULL;
+ALTER TABLE <prefix>bookmarks ADD CONSTRAINT ck_bookmarks_handled_or_read_position CHECK (event_id IS NOT NULL OR read_up_to_event_id IS NOT NULL);
+```
+
+and replaces the `notify_bookmark_placed` function with the current body from `ensure-schema.sql`, which
+looks the handled event up only when the row names one. `checkDatabase()` reports an unrelaxed table under
+`VALIDATE` with these statements, and under `NONE` the first read-position-only placement names them
+rather than failing on a bare not-null violation
+(`PostgresSchemaDriftTest.testBookmarksTableRequiringAHandledEventIsRelaxed`). Until the table is relaxed,
+bookmarks naming a handled event work as before. The grants are unchanged.
+
 ### Migrating a database created before the order indexes carried their admission predicates
 
 Two B-tree indexes on the `(event_tx, event_position)` order serve the reads that do not bind both

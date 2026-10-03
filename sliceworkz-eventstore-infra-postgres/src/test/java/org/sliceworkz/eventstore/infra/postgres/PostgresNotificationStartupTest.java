@@ -455,7 +455,7 @@ class PostgresNotificationStartupTest {
 				awaitTrue(() -> !listener.appends.isEmpty() && !listener.bookmarks.isEmpty(),
 					"the real append and bookmark never reached the listener: a monitor died on the junk ahead of them");
 				assertEquals(stored.reference(), listener.appends.getFirst().atLeastUntil());
-				assertEquals(stored.reference(), listener.bookmarks.getFirst().bookmark());
+				assertEquals(java.util.Optional.of(stored.reference()), listener.bookmarks.getFirst().bookmark());
 				assertTrue(storage.isNotificationsAvailable());
 				assertEquals(1d, gauge(registry, "event_appended"));
 				assertEquals(1d, gauge(registry, "bookmark_placed"));

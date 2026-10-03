@@ -259,7 +259,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 
 		Bookmark bookmark = es.getBookmarks().stream().filter(b -> b.reader().equals("taggedReader")).findFirst().orElseThrow();
 		assertEquals(tags, bookmark.tags());
-		assertEquals(bookmark.reference(), es.getBookmark("taggedReader").orElseThrow());
+		assertEquals(bookmark.reference(), es.getBookmark("taggedReader"));
 	}
 
 	@ForEachBackend

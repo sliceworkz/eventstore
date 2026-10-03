@@ -53,7 +53,7 @@
 		-->
 		<maven.javadoc.skip>true</maven.javadoc.skip>
 		
-		<logback.version>1.6.3</logback.version>
+		<logback.version>1.6.4</logback.version>
 
 	</properties>
 	

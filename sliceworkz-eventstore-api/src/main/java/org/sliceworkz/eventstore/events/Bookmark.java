@@ -108,20 +108,6 @@ public record Bookmark ( String reader, Optional<EventReference> reference, Opti
 	}
 
 	/**
-	 * A bookmark recording a read position only: the reader has read the stream up to {@code readUpTo} and
-	 * has handled nothing yet, so it resumes from the beginning.
-	 *
-	 * @param reader    the reader
-	 * @param readUpTo  the event up to which the reader has read the stream, not {@code null}
-	 * @param tags      tags supplied at placement time
-	 * @param updatedAt when the bookmark was last placed
-	 * @return the bookmark, with an empty {@link #reference()}
-	 */
-	public static Bookmark readPositionOnly ( String reader, EventReference readUpTo, Tags tags, Instant updatedAt ) {
-		return new Bookmark(reader, Optional.empty(), Optional.of(Objects.requireNonNull(readUpTo, "readUpTo must not be null")), tags, updatedAt);
-	}
-
-	/**
 	 * The event up to which the reader has read the stream: {@link #readUpTo()} when it was recorded, the
 	 * {@link #reference()} otherwise. What a reader's backlog is counted from. Always present, since a
 	 * bookmark names at least one of the two.

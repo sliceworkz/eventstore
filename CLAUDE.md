@@ -1021,6 +1021,31 @@ later reference, which is after this one and so still delivered.
   postgres module README). The SPI's `bookmark(reader, reference, readUpTo, tags)` is a `default` that
   drops `readUpTo` and delegates to the three-argument method, so a third-party storage keeps compiling
   and simply records none; `BookmarksTest` holds every in-tree backend to the full contract
+- **The handled reference is optional too: `Bookmark.reference()` is an `Optional`, empty for a reader
+  that has read the stream without handling anything yet** — one whose query selects event types that
+  have not occurred. Without it such a reader has no bookmark, and monitoring counts its whole stream as
+  backlog although nothing in it concerns it. A bookmark names at least one of the two positions (the
+  record refuses neither, as do `BookmarkPlacedNotification`, the JSON codec and the Postgres check).
+  It is placed through its own method — `EventSource.placeReadPosition(reader, readUpTo, tags)`, the
+  SPI's `EventStorage.bookmarkReadPosition(...)` — rather than a nullable reference on `placeBookmark`,
+  so no public signature takes a null to mean "nothing handled". Its rules: the reader **resumes from
+  the beginning**, exactly as without a bookmark — `getBookmark(reader)`, the resume point, answers
+  empty, and the read position is never a resume point; a read position placed alone **never clears a
+  handled reference** already there (in memory under the monitor, on Postgres by `COALESCE` in the same
+  upsert, so a concurrent placement is never lost to it); the first placement naming a handled event
+  fills it in; `removeBookmark` removes such a bookmark too (answering empty). Its notification carries
+  an empty `bookmark()` — or the reference the row kept — and a `BookmarkListener`, which reports a
+  processed-until, is not told of a read position placed with nothing processed. The SPI method is a
+  `default` that records nothing, so a third-party storage keeps compiling and its readers simply have no
+  bookmark until they handle something, as before. On Postgres `event_id` is nullable, the foreign key
+  stays (MATCH SIMPLE: a `NULL` is not checked, a present id still has to name a stored event), and
+  `ck_bookmarks_handled_or_read_position` refuses a row naming neither; `getBookmark(s)` LEFT JOINs the
+  handled event as it does the read position, and the trigger payload's `event*` fields are null for such
+  a row. `ENSURE` relaxes an existing table in place (`DROP NOT NULL`, guarded on the column's
+  nullability so an ordinary start takes no lock, and the check added when absent — no data change);
+  `checkDatabase()` reports an unrelaxed table under `VALIDATE`, and under `NONE` the first
+  read-position-only placement names the migration (see "Migrating the bookmarks table to record a read
+  position without a handled event" in the postgres module README)
 - **A projector keeps `readUpTo` by four rules** (on `Projector`'s class javadoc):
   - it takes the source's `head()` at the start of every run — behind the same visibility barrier as
     every read, so anything committed later sorts after it; never a raw `MAX(position)`
@@ -1036,10 +1061,13 @@ later reference, which is after this one and so still delivered.
     its trigger and a notification — so unthrottled it would be a write per processor per append. A move
     held back is written by the first run after the interval; `Projector.deferredReadUpToDueIn()` says
     when that is due, for a caller that drives its projector itself and would otherwise leave the read
-    position trailing until the next append. A projector that has handled nothing has no bookmark and
-    records no read position. `ProjectorReadPositionTest` in the TCK pins every rule per backend
-- **The foreign key deliberately does not cascade.** An absent bookmark means "replay from the
-  beginning" — for a dispatcher in the eventmodeling framework, duplicate publishing to an external
+    position trailing until the next append. A projector that has handled nothing yet records its read
+    position alone by the same rules — after a run that read to the end, the head within its `runUntil`
+    boundary, as an idle move held to the interval — and still resumes from the beginning; the first
+    event it handles fills the handled reference in. `ProjectorReadPositionTest` in the TCK pins every
+    rule per backend
+- **The foreign key deliberately does not cascade.** An absent bookmark — or one recording a read
+  position alone — means "replay from the beginning" — for a dispatcher in the eventmodeling framework, duplicate publishing to an external
   system, the worst outcome it documents. `ON DELETE CASCADE` handed exactly that to the readers least
   able to afford it: an event deletion (retention pruning, surgically removing a poison event) cascades
   away the bookmarks of readers still pointing into the deleted range — the *lagging* ones — silently,

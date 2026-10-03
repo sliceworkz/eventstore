@@ -333,9 +333,19 @@ END $$;
 -- read position instead. Nullable -- a bookmark placed without one falls back to event_id -- and held to
 -- the same rules as event_id: its own non-cascading foreign key, and resolved to the event's coordinates
 -- on every read.
+--
+-- event_id is nullable too: a reader whose query selects event types that have not occurred yet has read
+-- the stream without handling anything, and records its read position alone ("read up to here, handled
+-- nothing yet"), so its lag is not the whole stream. It still resumes from the beginning, since the read
+-- position is never a resume point. The foreign key stays: it is MATCH SIMPLE (the default), so a NULL
+-- event_id is simply not checked, and a present one still has to name a stored event.
+-- ck_bookmarks_handled_or_read_position keeps a row from saying nothing: it names the handled event, the
+-- read position, or both. (event_id is the one handled-event column -- the position and transaction are
+-- the event's, answered by the join below -- so "all handled-event columns set or all null" holds by
+-- construction.)
 CREATE TABLE IF NOT EXISTS bookmarks (
       reader TEXT PRIMARY KEY,
-      event_id UUID NOT NULL,
+      event_id UUID,
       updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
       updated_tags TEXT[] DEFAULT '{}',
       read_up_to_event_id UUID,
@@ -344,7 +354,9 @@ CREATE TABLE IF NOT EXISTS bookmarks (
           REFERENCES events(event_id),
       CONSTRAINT fk_bookmarks_read_up_to_event_id
           FOREIGN KEY (read_up_to_event_id)
-          REFERENCES events(event_id)
+          REFERENCES events(event_id),
+      CONSTRAINT ck_bookmarks_handled_or_read_position
+          CHECK (event_id IS NOT NULL OR read_up_to_event_id IS NOT NULL)
   );
 
   CREATE INDEX IF NOT EXISTS idx_bookmarks_event_id ON bookmarks(event_id);
@@ -373,6 +385,39 @@ END $$;
 
   CREATE INDEX IF NOT EXISTS idx_bookmarks_read_up_to_event_id ON bookmarks(read_up_to_event_id);
 
+-- A table created while every bookmark had to name a handled event carries event_id NOT NULL. Relaxing it
+-- needs no data change: every row it holds names one, and so satisfies the check below. Guarded on the
+-- column's nullability rather than issued on every start, since ALTER TABLE takes an ACCESS EXCLUSIVE lock
+-- even when there is nothing to change. The foreign key is left as it is: MATCH SIMPLE does not check a
+-- NULL event_id, and a present one is checked exactly as before.
+DO $$ BEGIN
+  IF EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'bookmarks'
+        AND column_name = 'event_id'
+        AND is_nullable = 'NO'
+  ) THEN
+    ALTER TABLE bookmarks ALTER COLUMN event_id DROP NOT NULL;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+      SELECT 1
+      FROM information_schema.table_constraints
+      WHERE table_schema = current_schema()
+        AND table_name = 'bookmarks'
+        AND constraint_name = 'ck_bookmarks_handled_or_read_position'
+        AND constraint_type = 'CHECK'
+  ) THEN
+    ALTER TABLE bookmarks
+        ADD CONSTRAINT ck_bookmarks_handled_or_read_position
+            CHECK (event_id IS NOT NULL OR read_up_to_event_id IS NOT NULL);
+  END IF;
+END $$;
+
 
 -- Deliberately still FOR EACH ROW, unlike the events trigger above. bookmark() is a single-row
 -- upsert keyed on the reader, so one row per statement is all there ever is: per-row and
@@ -382,16 +427,20 @@ END $$;
 -- CREATE OR REPLACE for the same reason as notify_event_appended above.
 -- The notification carries the store's coordinates of the bookmarked event, looked up by id: one
 -- probe on the unique event_id index per placement -- and a second for the read position, when the
--- bookmark carries one (the readUpTo* fields are null otherwise).
+-- bookmark carries one (the readUpTo* fields are null otherwise). The event* fields are null for the
+-- bookmark of a reader that has recorded a read position without handling anything yet.
 CREATE OR REPLACE FUNCTION notify_bookmark_placed()
 RETURNS trigger AS $fn$
 DECLARE
-    bookmarked RECORD;
+    handled_tx xid8;
+    handled_position BIGINT;
     read_up_to_tx xid8;
     read_up_to_position BIGINT;
 BEGIN
-    SELECT event_tx, event_position INTO bookmarked
-    FROM events WHERE event_id = NEW.event_id;
+    IF NEW.event_id IS NOT NULL THEN
+        SELECT event_tx, event_position INTO handled_tx, handled_position
+        FROM events WHERE event_id = NEW.event_id;
+    END IF;
     IF NEW.read_up_to_event_id IS NOT NULL THEN
         SELECT event_tx, event_position INTO read_up_to_tx, read_up_to_position
         FROM events WHERE event_id = NEW.read_up_to_event_id;
@@ -399,8 +448,8 @@ BEGIN
     PERFORM pg_notify('bookmark_placed',
         jsonb_build_object(
             'reader', NEW.reader,
-            'eventTx', bookmarked.event_tx,
-            'eventPosition', bookmarked.event_position,
+            'eventTx', handled_tx,
+            'eventPosition', handled_position,
             'eventId', NEW.event_id,
             'readUpToEventTx', read_up_to_tx,
             'readUpToEventPosition', read_up_to_position,

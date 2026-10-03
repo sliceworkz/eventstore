@@ -49,6 +49,12 @@ import org.sliceworkz.eventstore.events.EventReference;
  * <p>
  * Each bookmark is identified by a reader name (a unique identifier for the processor) and contains
  * an {@link EventReference} indicating the last event processed by that reader.
+ * <p>
+ * A placement that records only a read position — by a reader that has read the stream without handling
+ * anything yet ({@link EventSource#placeReadPosition(String, EventReference, org.sliceworkz.eventstore.events.Tags)})
+ * — has no processed-until to report, and is not passed to {@link #bookmarkUpdated}; it is passed to
+ * {@link #readPositionUpdated}, which does nothing unless overridden. A caller waiting for a reader to have
+ * read further (an automation waiting for its todo list, say) overrides it too.
  *
  * <h2>Example Usage:</h2>
  * <pre>{@code
@@ -126,5 +132,15 @@ public interface BookmarkListener {
 	 * @param processedUntil the event reference up to which the reader has processed, never null
 	 */
 	void bookmarkUpdated ( String reader, EventReference processedUntil );
+
+	/**
+	 * Called when a reader that has handled nothing yet records how far it has read the stream: a bookmark
+	 * with a read position and no processed-until. Does nothing by default.
+	 *
+	 * @param reader the reader that placed it
+	 * @param readUpTo the event up to which it has read the stream
+	 */
+	default void readPositionUpdated ( String reader, EventReference readUpTo ) {
+	}
 
 }

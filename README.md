@@ -180,7 +180,8 @@ Two things the snippet leaves out:
   `Projection` in batches; `.subscribe()` keeps it running as events arrive, and a bookmark lets it
   resume where it left off. The bookmark also records how far the projector has *read* the stream,
   past the events its query skips, so its lag is `Bookmark.readUpToOrReference()` to the head rather
-  than every event of a type it never handles.
+  than every event of a type it never handles — including a projector that has handled nothing yet,
+  whose bookmark records its read position alone (and which still resumes from the beginning).
 
 For PostgreSQL, `PostgresEventStorage.newBuilder().buildStore()` reads a `db.properties` describing a
 pooled connection for reads and appends and a direct one for LISTEN/NOTIFY; the

@@ -160,7 +160,8 @@ public interface EventStorage extends AutoCloseable {
 	 *       must close this storage <em>before</em> closing the resource.</li>
 	 *   <li><b>Terminal.</b> A closed storage cannot be reopened.</li>
 	 *   <li><b>Operations throw afterwards.</b> {@link #query}, {@link #append}, {@link #importEvents},
-	 *       {@link #getEventById}, {@link #subscribe}, {@link #bookmark}, {@link #getBookmark},
+	 *       {@link #getEventById}, {@link #subscribe}, {@link #bookmark}, {@link #bookmarkReadPosition},
+	 *       {@link #getBookmark},
 	 *       {@link #getBookmarks}, {@link #removeBookmark}, {@link #requestLease},
 	 *       {@link #releaseLease} and {@link #getLeases} throw
 	 *       {@link EventStorageClosedException} once the storage is closed. Continuing to serve reads
@@ -587,8 +588,13 @@ public interface EventStorage extends AutoCloseable {
 	 * then resume from that position later. This is essential for building reliable event
 	 * processors that can recover from failures or restarts.
 	 *
+	 * The answer is the last event the reader handled, its resume point. A bookmark recording a read
+	 * position only ({@link #bookmarkReadPosition(String, EventReference, Tags)}) names none, so its reader
+	 * gets an empty answer and resumes from the beginning, exactly as a reader without a bookmark does.
+	 *
 	 * @param reader the unique identifier of the reader (e.g., projection name, processor ID)
-	 * @return an Optional containing the last bookmarked reference, or empty if no bookmark exists
+	 * @return an Optional containing the last event the reader handled, or empty if it has no bookmark or
+	 *         has handled nothing yet
 	 * @throws EventStorageException if an error occurs during bookmark retrieval
 	 * @see #bookmark(String, EventReference, Tags)
 	 * @see EventReference
@@ -680,8 +686,47 @@ public interface EventStorage extends AutoCloseable {
 	}
 
 	/**
+	 * Records a read position for a reader that has handled nothing yet: a bookmark without a handled
+	 * reference.
+	 * <p>
+	 * A reader whose query selects event types that have not occurred reads the stream without handling
+	 * anything. Without this it has no bookmark, and counted from the start of the stream, its whole stream
+	 * is its backlog although nothing in it concerns it. The bookmark this records reads back with an empty
+	 * {@link Bookmark#reference()} and {@code readUpTo} as its {@link Bookmark#readUpTo()};
+	 * {@link #getBookmark(String)} answers empty for it, so the reader resumes from the beginning — the read
+	 * position is never a resume point.
+	 * <p>
+	 * The contract:
+	 * <ul>
+	 *   <li>{@code readUpTo} is held to the rules {@link #bookmark(String, EventReference, EventReference, Tags)}
+	 *       states for it: it must name an event stored in this storage, or the placement is rejected with
+	 *       {@link EventStorageException} and a previously stored bookmark stays as it was; only its id is
+	 *       stored, and it reads back as this storage's own reference for that event;</li>
+	 *   <li>it <em>never</em> clears a handled reference: when the reader's bookmark already names one, that
+	 *       reference stays and only the read position, tags and update time are replaced — atomically, so a
+	 *       concurrent placement of a handled reference is never lost to it;</li>
+	 *   <li>a later {@link #bookmark(String, EventReference, EventReference, Tags)} fills the reference in;</li>
+	 *   <li>listeners are notified with a {@link BookmarkPlacedNotification} whose {@code bookmark} is the
+	 *       reference the stored bookmark holds — empty when it holds none.</li>
+	 * </ul>
+	 * <p>
+	 * The default records nothing, so a storage written before this method keeps compiling: its readers
+	 * have no bookmark until they handle an event, which is what such a storage always said. The TCK's
+	 * {@code BookmarksTest} holds every in-tree backend to the full contract.
+	 *
+	 * @param reader the unique identifier of the reader
+	 * @param readUpTo the reference up to which the reader has read the stream, not {@code null}
+	 * @param tags additional metadata tags for the bookmark
+	 * @throws EventStorageException if {@code readUpTo} does not name a stored event, or an error occurs
+	 *         during bookmark storage
+	 */
+	default void bookmarkReadPosition ( String reader, EventReference readUpTo, Tags tags ) {
+	}
+
+	/**
 	 * The whole bookmark of one reader — both positions, its tags and when it was last placed — or empty
-	 * when the reader has none.
+	 * when the reader has none. A bookmark recording a read position only is answered with an empty
+	 * {@link Bookmark#reference()}.
 	 * <p>
 	 * The default looks the reader up in {@link #getBookmarks()}, which is correct but lists every
 	 * bookmark to find one; a backend should answer it directly.
@@ -975,16 +1020,39 @@ public interface EventStorage extends AutoCloseable {
 	 * or coordinating between multiple readers.
 	 *
 	 * @param reader the unique identifier of the reader that placed the bookmark
-	 * @param bookmark the event reference where the bookmark was placed: the last event the reader handled
+	 * @param bookmark the last event the reader handled, as the bookmark now holds it; empty for a reader
+	 *        that has recorded a read position without having handled anything yet, never {@code null}
 	 * @param readUpTo the event up to which the reader has read the stream, handled or not; empty when the
 	 *        placement recorded none, never {@code null}
 	 * @see EventStoreListener#notify(BookmarkPlacedNotification)
 	 * @see #bookmark(String, EventReference, EventReference, Tags)
+	 * @see #bookmarkReadPosition(String, EventReference, Tags)
 	 */
-	record BookmarkPlacedNotification ( String reader, EventReference bookmark, Optional<EventReference> readUpTo ) {
+	record BookmarkPlacedNotification ( String reader, Optional<EventReference> bookmark, Optional<EventReference> readUpTo ) {
 
+		/**
+		 * @throws NullPointerException if {@code reader} or {@code bookmark} is {@code null} (a {@code null}
+		 *         {@code readUpTo} reads as empty)
+		 * @throws IllegalArgumentException if both positions are empty
+		 */
 		public BookmarkPlacedNotification {
+			java.util.Objects.requireNonNull(reader, "reader must not be null");
+			java.util.Objects.requireNonNull(bookmark, "bookmark must not be null (use Optional.empty() for a reader that has handled nothing yet)");
 			readUpTo = readUpTo == null ? Optional.empty() : readUpTo;
+			if ( bookmark.isEmpty() && readUpTo.isEmpty() ) {
+				throw new IllegalArgumentException("a bookmark notification for reader '%s' names a handled event, a read position, or both; it has neither".formatted(reader));
+			}
+		}
+
+		/**
+		 * A notification of a bookmark naming the last event handled, with or without a read position.
+		 *
+		 * @param reader the reader that placed the bookmark
+		 * @param bookmark the last event the reader handled, not {@code null}
+		 * @param readUpTo the event up to which the reader has read the stream, empty for none
+		 */
+		public BookmarkPlacedNotification ( String reader, EventReference bookmark, Optional<EventReference> readUpTo ) {
+			this(reader, Optional.of(java.util.Objects.requireNonNull(bookmark, "bookmark must not be null")), readUpTo);
 		}
 
 		/**

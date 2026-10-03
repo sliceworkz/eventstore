@@ -188,11 +188,22 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 	@Override
 	public void bookmark ( String reader, EventReference eventReference, EventReference readUpTo, Tags tags ) {
 		delegate.bookmark(reader, eventReference, readUpTo, tags);
-		// after delegate.bookmark, the snapshot in the delegate carries the canonical metadata
-		// (effective tags, updatedAt assigned by the delegate); persist that snapshot to disk
-		Bookmark snapshot = delegate.getBookmarks().stream()
-				.filter(b -> b.reader().equals(reader))
-				.findFirst()
+		persistBookmarkOf(reader);
+	}
+
+	@Override
+	public void bookmarkReadPosition ( String reader, EventReference readUpTo, Tags tags ) {
+		delegate.bookmarkReadPosition(reader, readUpTo, tags);
+		persistBookmarkOf(reader);
+	}
+
+	/**
+	 * Persists the reader's bookmark as the delegate now holds it: after a placement, the snapshot there
+	 * carries the canonical metadata (effective tags, updatedAt assigned by the delegate) and, for a read
+	 * position placed alone, the handled reference the delegate kept.
+	 */
+	private void persistBookmarkOf ( String reader ) {
+		Bookmark snapshot = delegate.findBookmark(reader)
 				.orElseThrow(() -> new EventStorageException("bookmark snapshot missing for reader " + reader));
 		persistBookmark(snapshot);
 	}
@@ -250,7 +261,7 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 		try {
 			String fileName = sanitizeFileName(bookmark.reader()) + ".json";
 			Path filePath = bookmarksDir.resolve(fileName);
-			Files.writeString(filePath, bookmarkCodec.write(bookmark.reader(), bookmark.reference(), bookmark.readUpTo().orElse(null), bookmark.tags(), bookmark.updatedAt()));
+			Files.writeString(filePath, bookmarkCodec.write(bookmark.reader(), bookmark.reference(), bookmark.readUpTo(), bookmark.tags(), bookmark.updatedAt()));
 		} catch ( IOException e ) {
 			throw new EventStorageException("failed to persist bookmark for reader " + bookmark.reader(), e);
 		}

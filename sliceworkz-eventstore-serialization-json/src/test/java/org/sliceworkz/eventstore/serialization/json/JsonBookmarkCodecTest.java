@@ -18,6 +18,8 @@
 package org.sliceworkz.eventstore.serialization.json;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.time.Instant;
 import java.util.Optional;
@@ -39,7 +41,7 @@ class JsonBookmarkCodecTest {
 		JsonBookmark restored = codec.read(json);
 
 		assertEquals("my-projection", restored.reader());
-		assertEquals(reference, restored.reference());
+		assertEquals(Optional.of(reference), restored.reference());
 		assertEquals(Tags.none(), restored.tags());
 		assertEquals(Instant.EPOCH, restored.updatedAt());
 	}
@@ -54,7 +56,7 @@ class JsonBookmarkCodecTest {
 		JsonBookmark restored = codec.read(json);
 
 		assertEquals("my-projection", restored.reader());
-		assertEquals(reference, restored.reference());
+		assertEquals(Optional.of(reference), restored.reference());
 		assertEquals(tags, restored.tags());
 		assertEquals(updatedAt, restored.updatedAt());
 	}
@@ -66,7 +68,7 @@ class JsonBookmarkCodecTest {
 
 		JsonBookmark restored = codec.read(codec.write("my-projection", reference, readUpTo, Tags.none(), Instant.EPOCH));
 
-		assertEquals(reference, restored.reference());
+		assertEquals(Optional.of(reference), restored.reference());
 		assertEquals(Optional.of(readUpTo), restored.readUpTo());
 	}
 
@@ -78,6 +80,35 @@ class JsonBookmarkCodecTest {
 		assertEquals(Optional.empty(), codec.read("""
 				{"reader":"r","reference":{"id":"id-1","position":42,"tx":7,"index":3},"readUpTo":null}
 				""").readUpTo());
+	}
+
+	/**
+	 * The bookmark of a reader that has read the stream without handling anything has a read position
+	 * alone: it is written without a reference, and reads back with none.
+	 */
+	@Test
+	void roundTripsAReadPositionWithoutAHandledReference ( ) {
+		EventReference readUpTo = EventReference.of(EventId.of("id-2"), 45L, 8L, 0);
+
+		String json = codec.write("idle-projection", Optional.empty(), Optional.of(readUpTo), Tags.none(), Instant.EPOCH);
+		assertFalse(json.contains("\"reference\""), "no reference is written: " + json);
+		JsonBookmark restored = codec.read(json);
+
+		assertEquals(Optional.empty(), restored.reference());
+		assertEquals(Optional.of(readUpTo), restored.readUpTo());
+		assertEquals(Optional.empty(), codec.read("""
+				{"reader":"r","reference":null,"readUpTo":{"id":"id-2","position":45,"tx":8,"index":0}}
+				""").reference());
+	}
+
+	/** A bookmark always names a handled event, a read position, or both; one naming neither is refused. */
+	@Test
+	void refusesABookmarkNamingNeitherPosition ( ) {
+		assertThrows(JsonCodecException.class,
+				() -> codec.write("empty", Optional.empty(), Optional.empty(), Tags.none(), Instant.EPOCH));
+		assertThrows(JsonCodecException.class, () -> codec.read("""
+				{"reader":"empty","tags":[],"updatedAt":"2026-04-30T12:34:56.789Z"}
+				"""));
 	}
 
 	@Test

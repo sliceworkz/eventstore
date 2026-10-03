@@ -42,6 +42,7 @@ import org.sliceworkz.eventstore.testing.ForEachBackend;
 import org.sliceworkz.eventstore.testing.tck.mock.MockDomainEvent.FirstDomainEvent;
 import org.sliceworkz.eventstore.testing.tck.mock.MockDomainEvent;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
+import org.sliceworkz.eventstore.stream.BookmarkListener;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
@@ -481,6 +482,37 @@ public class BookmarksTest extends AbstractEventStoreTest {
 			s.placeBookmark("waking-reader", handled, Tags.none());
 
 			waitBecauseOfEventualConsistency(() -> !processedUntil.isEmpty());
+			assertEquals(List.of(handled), processedUntil);
+		}
+	}
+
+	/**
+	 * A listener that follows read positions too is told of one placed alone, with the event read up to,
+	 * and of the handled event a later placement names through {@code bookmarkUpdated}, as before.
+	 */
+	@ForEachBackend
+	void aBookmarkListenerFollowingReadPositionsIsToldOfOnePlacedAlone ( ) {
+		EventReference read = appendOne();
+		EventReference handled = appendOne();
+		EventStream<MockDomainEvent> s = stream();
+		List<EventReference> readUpTo = new CopyOnWriteArrayList<>();
+		List<EventReference> processedUntil = new CopyOnWriteArrayList<>();
+		try ( var subscription = s.subscribe(new BookmarkListener() {
+			@Override
+			public void bookmarkUpdated ( String reader, EventReference processed ) {
+				processedUntil.add(processed);
+			}
+
+			@Override
+			public void readPositionUpdated ( String reader, EventReference read ) {
+				readUpTo.add(read);
+			}
+		}) ) {
+			s.placeReadPosition("following-reader", read, Tags.none());
+			s.placeBookmark("following-reader", handled, Tags.none());
+
+			waitBecauseOfEventualConsistency(() -> !processedUntil.isEmpty());
+			assertEquals(List.of(read), readUpTo);
 			assertEquals(List.of(handled), processedUntil);
 		}
 	}

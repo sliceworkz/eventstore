@@ -1044,12 +1044,15 @@ public class EventStoreImpl implements EventStore {
 		 * additionally costs a thread, replaced by the pool.
 		 */
 		private void notifyQuietly ( BookmarkListener subscriber, BookmarkPlacedNotification bookmarkPlaced ) {
-			if ( bookmarkPlaced.bookmark().isEmpty() ) {
-				// a read position recorded by a reader that has handled nothing yet: there is no
-				// processed-until to report, and a BookmarkListener is told about nothing else
-				return;
-			}
 			try {
+				if ( bookmarkPlaced.bookmark().isEmpty() ) {
+					// a read position recorded by a reader that has handled nothing yet: no processed-until
+					// to report, only how far it has read
+					if ( bookmarkPlaced.readUpTo().isPresent() ) {
+						subscriber.readPositionUpdated(bookmarkPlaced.reader(), bookmarkPlaced.readUpTo().get());
+					}
+					return;
+				}
 				subscriber.bookmarkUpdated(bookmarkPlaced.reader(), bookmarkPlaced.bookmark().get());
 			} catch ( Exception e ) {
 				LOGGER.error("bookmark listener {} failed handling the bookmark update for reader {} to {} on stream {}: {}",

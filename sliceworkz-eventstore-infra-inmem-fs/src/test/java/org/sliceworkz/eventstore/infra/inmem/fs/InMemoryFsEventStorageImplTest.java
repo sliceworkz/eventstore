@@ -206,9 +206,44 @@ public class InMemoryFsEventStorageImplTest {
 		}
 
 		EventStorage storage = InMemoryFsEventStorage.newBuilder().directory(tempDir).name("read-position-2").build();
-		assertEquals(java.util.Optional.of(handled), storage.findBookmark("reading-projection").map(b -> b.reference()));
+		assertEquals(java.util.Optional.of(handled), storage.findBookmark("reading-projection").flatMap(b -> b.reference()));
 		assertEquals(java.util.Optional.of(read), storage.findBookmark("reading-projection").flatMap(b -> b.readUpTo()));
 		assertEquals(java.util.Optional.empty(), storage.findBookmark("plain-projection").flatMap(b -> b.readUpTo()));
+	}
+
+	/**
+	 * A bookmark recording a read position alone — a reader that has read without handling anything —
+	 * survives a reload with no handled reference, and a read position placed alone later keeps the
+	 * handled reference a reloaded bookmark names.
+	 */
+	@Test
+	void testReadPositionOnlyBookmarkRoundTrip ( @TempDir Path tempDir ) {
+		EventStreamId streamId = EventStreamId.forContext("orders").withPurpose("default");
+
+		EventReference handled;
+		EventReference read;
+		{
+			EventStorage storage = InMemoryFsEventStorage.newBuilder().directory(tempDir).name("read-only").build();
+			EventStream<TestEvent> stream = EventStoreFactory.get().eventStore(storage).getEventStream(streamId, TestEvent.class);
+			List<Event<TestEvent>> events = stream.append(AppendCriteria.none(), List.of(
+					Event.of(new TestEvent.CustomerRegistered("Alice"), Tags.none()),
+					Event.of(new TestEvent.CustomerRegistered("Bob"), Tags.none())
+			));
+			handled = events.get(0).reference();
+			read = events.get(1).reference();
+			storage.bookmarkReadPosition("idle-projection", read, Tags.parse("phase:idle"));
+			storage.bookmark("busy-projection", handled, Tags.none());
+			storage.bookmarkReadPosition("busy-projection", read, Tags.none());
+		}
+
+		EventStorage storage = InMemoryFsEventStorage.newBuilder().directory(tempDir).name("read-only-2").build();
+		org.sliceworkz.eventstore.events.Bookmark idle = storage.findBookmark("idle-projection").orElseThrow();
+		assertEquals(java.util.Optional.empty(), idle.reference());
+		assertEquals(java.util.Optional.of(read), idle.readUpTo());
+		assertEquals(Tags.parse("phase:idle"), idle.tags());
+		assertEquals(java.util.Optional.empty(), storage.getBookmark("idle-projection"));
+		assertEquals(java.util.Optional.of(handled), storage.findBookmark("busy-projection").flatMap(b -> b.reference()));
+		assertEquals(java.util.Optional.of(read), storage.findBookmark("busy-projection").flatMap(b -> b.readUpTo()));
 	}
 
 	/**

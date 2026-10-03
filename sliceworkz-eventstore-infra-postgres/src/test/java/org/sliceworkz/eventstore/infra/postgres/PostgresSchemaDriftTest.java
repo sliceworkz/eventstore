@@ -328,6 +328,90 @@ public class PostgresSchemaDriftTest {
 		}
 
 		/**
+		 * A bookmarks table from before a reader could record its read position without having handled
+		 * anything carries {@code event_id NOT NULL} and no check that a row names one of the two positions.
+		 * {@code ENSURE} relaxes it in place — {@code DROP NOT NULL} and the check, no data change, and the
+		 * bookmark already there untouched — while the foreign key stays and is simply not checked for a
+		 * {@code NULL}. {@code VALIDATE} reports the table with the migration, and under {@code NONE}, where
+		 * nothing validates, the first read-position-only placement names it rather than failing on a bare
+		 * not-null violation.
+		 */
+		@Test
+		public void testBookmarksTableRequiringAHandledEventIsRelaxed ( ) throws Exception {
+			String prefix = "driftreadonly_";
+			DataSource dataSource = PostgresContainer.dataSource(image);
+			EventStreamId stream = EventStreamId.forContext("account").withPurpose("1");
+
+			EventReference handled;
+			try ( EventStorage storage = ensure(prefix, dataSource) ) {
+				handled = storage.append(AppendCriteria.none(), stream,
+					List.of(new EventToStore(stream, new EventType("Opened"), "{}", Tags.none(), null))).getFirst().reference();
+				storage.bookmark("old-reader", handled, Tags.none());
+			}
+			// the table as a release before read-position-only bookmarks created it
+			execute(dataSource, "ALTER TABLE " + prefix + "bookmarks DROP CONSTRAINT " + PostgresEventStorageImpl.BOOKMARKS_HANDLED_OR_READ_POSITION_CHECK);
+			execute(dataSource, "ALTER TABLE " + prefix + "bookmarks ALTER COLUMN event_id SET NOT NULL");
+			assertEquals("NO", eventIdNullability(dataSource, prefix), "precondition: event_id is NOT NULL");
+			String migration = PostgresEventStorageImpl.BOOKMARKS_READ_POSITION_ONLY_MIGRATION.formatted(prefix, prefix);
+
+			EventStorageException validation = assertThrows(EventStorageException.class, () ->
+				PostgresEventStorage.newBuilder()
+					.name("unit-test").prefix(prefix).dataSource(dataSource)
+					.validateDatabase().build());
+			assertTrue(validation.getMessage().contains(migration), "expected the migration statement, got: " + validation.getMessage());
+
+			try ( EventStorage storage = PostgresEventStorage.newBuilder()
+					.name("unit-test").prefix(prefix).dataSource(dataSource)
+					.databaseInitMode(DatabaseInitMode.NONE).build() ) {
+				EventStorageException write = assertThrows(EventStorageException.class, () ->
+					storage.bookmarkReadPosition("new-reader", handled, Tags.none()));
+				assertTrue(write.getMessage().contains(migration), "a placement must name the migration, got: " + write.getMessage());
+				// a placement naming a handled event is unaffected
+				storage.bookmark("old-reader", handled, handled, Tags.none());
+			}
+
+			// ENSURE relaxes the column and adds the check; the bookmark already there is untouched
+			try ( EventStorage storage = ensure(prefix, dataSource) ) {
+				assertEquals("YES", eventIdNullability(dataSource, prefix), "ENSURE made event_id nullable");
+				assertEquals(Optional.of(handled), storage.getBookmark("old-reader"));
+
+				EventReference read = storage.append(AppendCriteria.none(), stream,
+					List.of(new EventToStore(stream, new EventType("Renamed"), "{}", Tags.none(), null))).getFirst().reference();
+				storage.bookmarkReadPosition("new-reader", read, Tags.none());
+				assertEquals(Optional.empty(), storage.findBookmark("new-reader").orElseThrow().reference());
+				assertEquals(Optional.of(read), storage.findBookmark("new-reader").orElseThrow().readUpTo());
+				assertEquals(Optional.empty(), storage.getBookmark("new-reader"), "a read position alone is no resume point");
+
+				// and a read position placed alone keeps the handled event a row already names
+				storage.bookmarkReadPosition("old-reader", read, Tags.none());
+				assertEquals(Optional.of(handled), storage.getBookmark("old-reader"));
+			}
+
+			// the constraints, straight at the table: the check refuses a row naming neither position, and
+			// the foreign key still refuses an event_id no event has, while a NULL one is not checked
+			SQLException neither = assertThrows(SQLException.class, () -> execute(dataSource,
+				"INSERT INTO " + prefix + "bookmarks (reader, event_id, read_up_to_event_id) VALUES ('raw-neither', NULL, NULL)"));
+			assertEquals("23514", neither.getSQLState(), "check_violation, got: " + neither.getMessage());
+			SQLException unknown = assertThrows(SQLException.class, () -> execute(dataSource,
+				"INSERT INTO " + prefix + "bookmarks (reader, event_id) VALUES ('raw-unknown', '" + UUID.randomUUID() + "')"));
+			assertEquals("23503", unknown.getSQLState(), "foreign_key_violation, got: " + unknown.getMessage());
+			execute(dataSource, "INSERT INTO " + prefix + "bookmarks (reader, event_id, read_up_to_event_id) VALUES ('raw-read-only', NULL, '"
+				+ handled.id().value() + "')");
+
+			// and ENSURE is idempotent over the relaxed table
+			ensure(prefix, dataSource).close();
+			assertEquals("1", queryString(dataSource, "SELECT count(*) FROM information_schema.table_constraints WHERE table_schema = current_schema() "
+				+ "AND table_name = '" + prefix + "bookmarks' AND constraint_name = '" + PostgresEventStorageImpl.BOOKMARKS_HANDLED_OR_READ_POSITION_CHECK + "'"));
+
+			PostgresContainer.closeDataSource(image);
+		}
+
+		private String eventIdNullability ( DataSource dataSource, String prefix ) throws SQLException {
+			return queryString(dataSource, "SELECT is_nullable FROM information_schema.columns WHERE table_schema = current_schema() "
+				+ "AND table_name = '" + prefix + "bookmarks' AND column_name = 'event_id'");
+		}
+
+		/**
 		 * A trigger whose shape has drifted is repaired by {@code ENSURE}.
 		 * <p>
 		 * The script compares the installed trigger's {@code tgtype} and target function rather than

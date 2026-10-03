@@ -274,7 +274,9 @@ functions are replaced with this release's bodies, the triggers are verified and
 their shape differs, and objects a newer release added (`idx_events_stream_tags`,
 `idx_events_stream_idempotency`) are created, as is the bookmarks table's nullable `read_up_to_event_id`
 column with its foreign key and index — the one column `ENSURE` adds to an existing table, since it needs
-no data change. It also **drops** two indexes — `idx_events_tx_position`
+no data change. It relaxes the bookmarks table's `event_id` to nullable and adds the
+`ck_bookmarks_handled_or_read_position` check — no data change either — so a reader that has handled
+nothing yet can record its read position. It also **drops** two indexes — `idx_events_tx_position`
 and `idx_events_context_tx_position`, replaced by `idx_events_global_order` and
 `idx_events_context_order`, which are partial on an admission predicate that keeps a stream or context
 read out of them. That is the one non-additive index change `ENSURE` makes, and it is deliberate: left
@@ -282,7 +284,8 @@ in place the superseded indexes are what those reads walk instead of their own, 
 harmless superset would keep the problem. See "Migrating a database created before the order indexes
 carried their admission predicates" in the README for the `CONCURRENTLY` form.
 
-**What it does not do** is anything needing `ALTER TABLE` — still the manual list in `CLAUDE.md`. Three
+**What it does not do** is anything else needing `ALTER TABLE` — beyond the additive column and the
+bookmarks relaxation above, still the manual list in `CLAUDE.md`. Three
 of those survive an upgrade: the pre-alignment `stream_purpose DEFAULT ''`, the old table-wide
 `UNIQUE (idempotency_key)`, and the unused nullable `event_erasable_data` column. The second is worth
 knowing before upgrading: the new per-stream partial unique index is created *alongside* the old

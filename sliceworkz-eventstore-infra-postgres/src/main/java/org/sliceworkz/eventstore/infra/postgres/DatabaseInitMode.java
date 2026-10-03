@@ -55,9 +55,12 @@ public enum DatabaseInitMode {
 	 * one transaction under a per-prefix advisory lock, so several instances starting together queue
 	 * rather than race on the system catalogs.
 	 * <p>
-	 * <strong>Tables, columns and indexes are only ever created, never altered.</strong> An existing
-	 * table keeps its definition; a missing index is added, and so is a missing nullable column that needs
-	 * no data change — the bookmarks' read position, with its foreign key. The functions and triggers, by contrast, are
+	 * <strong>Tables, columns and indexes are only ever created, never altered</strong> — with two
+	 * relaxations of the bookmarks table that need no data change. An existing table keeps its definition; a
+	 * missing index is added, and so is a missing nullable column — the bookmarks' read position, with its
+	 * foreign key. The bookmarks' handled event is made nullable where it is still {@code NOT NULL}, with the
+	 * check that a row names a handled event or a read position, so a reader that has read the stream without
+	 * handling anything can record its read position. The functions and triggers, by contrast, are
 	 * brought to the definition this release ships: the functions via {@code CREATE OR REPLACE}, the
 	 * triggers by comparing the installed shape and recreating only when it differs. Without that, a
 	 * changed function body would never reach a database that already had the old one, and the store

@@ -448,7 +448,9 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     mechanism is there.
 - **`ENSURE` brings functions and triggers up to date, and drops the two order indexes the admission
   predicates replaced; tables, columns and every other index are only ever created** — which includes
-  adding a missing nullable column to an existing table, as it does for the bookmarks' read position.
+  adding a missing nullable column to an existing table, as it does for the bookmarks' read position —
+  with one relaxation: the bookmarks' `event_id` loses its `NOT NULL` and gains
+  `ck_bookmarks_handled_or_read_position`, which needs no data change.
   The functions are `CREATE OR REPLACE`d and each trigger is compared against the shape this release wants
   (`tgtype` plus target function, in a `DO $$` block) and recreated only when it differs — so wrong timing,
   wrong orientation or a trigger pointing at the wrong function self-heal, while the ordinary startup, where
@@ -612,6 +614,26 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   42703 and names the same migration. A read-position foreign key violation is told apart from the
   reference's by the constraint name. `PostgresSchemaDriftTest.testBookmarksTableWithoutAReadPositionIsMigrated`
   pins the three modes
+- **`event_id` is nullable: a reader that has read without handling anything records its read position
+  alone** (`bookmarkReadPosition`). `fk_bookmarks_event_id` stays — MATCH SIMPLE, so a `NULL` is not
+  checked — and `ck_bookmarks_handled_or_read_position` (`CHECK (event_id IS NOT NULL OR
+  read_up_to_event_id IS NOT NULL)`) refuses a row naming neither; `event_id` is the one handled-event
+  column, so "all set or all null" holds by construction. One upsert serves both placements: a
+  read-position-only one binds a `NULL` `event_id` and the conflict branch keeps the row's own with
+  `COALESCE(EXCLUDED.event_id, b.event_id)`, so it never clears a handled event, even one a concurrent
+  placement just wrote; the trigger then notifies with the kept one. `bookmarkSql` LEFT JOINs the handled
+  event as well as the read position (an inner join would drop the row and the reader with it), and the
+  trigger looks the handled event up only when there is one — its `event*` payload fields are null
+  otherwise, and `BookmarkPlacedPostgresNotification` (`eventPosition`/`eventTx` boxed, `eventTx` a JSON
+  string parsed unsigned) reads that as an empty `bookmark()`. `ENSURE` relaxes an existing table — `DROP
+  NOT NULL` inside a `DO` block guarded on `information_schema.columns.is_nullable`, since `ALTER TABLE`
+  takes an ACCESS EXCLUSIVE lock even with nothing to change, and the check added by name when absent;
+  `checkBookmarksTable` reports an unrelaxed table under `VALIDATE` with
+  `BOOKMARKS_READ_POSITION_ONLY_MIGRATION`, and under `NONE` the placement recognises the not-null
+  violation on column `event_id` (the server's structured column field, never the message) and names the
+  same migration, while one on the legacy ordering columns still names `BOOKMARKS_ID_ONLY_MIGRATION`.
+  `PostgresSchemaDriftTest.testBookmarksTableRequiringAHandledEventIsRelaxed` pins the three modes and the
+  constraints straight at the table
 - **Idempotency keys are scoped per event stream (context + purpose), not per storage/table.** Uniqueness is enforced by the partial unique index `idx_events_stream_idempotency` on `(stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL` (schema validation requires it), so the same key used on two unrelated streams does not collide and dedup behaviour does not depend on how storage instances / prefixes are wired at runtime. The `idempotency_key` is persisted and surfaced on `StoredEvent` when reading (it is not exposed on the public `Event` record). A duplicate append is silently ignored (returns an empty result). A database created by an older release may still carry a table-wide `UNIQUE` on `idempotency_key`; migrate it with: `ALTER TABLE <prefix>events DROP CONSTRAINT <prefix>events_idempotency_key_key; CREATE UNIQUE INDEX <prefix>idx_events_stream_idempotency ON <prefix>events (stream_context, stream_purpose, idempotency_key) WHERE idempotency_key IS NOT NULL;` — no data migration is needed
   - **The duplicate is recognised by the index the server names, never by the message text.** Both the
     append and the import path go through `isIdempotencyKeyViolation`, which pairs SQLSTATE 23505 with

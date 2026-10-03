@@ -49,6 +49,11 @@ import org.sliceworkz.eventstore.events.EventReference;
  * <p>
  * Each bookmark is identified by a reader name (a unique identifier for the processor) and contains
  * an {@link EventReference} indicating the last event processed by that reader.
+ * <p>
+ * A placement that records only a read position — by a reader that has read the stream without handling
+ * anything yet ({@link EventSource#placeReadPosition(String, EventReference, org.sliceworkz.eventstore.events.Tags)})
+ * — has no processed-until to report, and is not passed to this listener. A caller that wants to follow
+ * read positions too reads them with {@link EventSource#findBookmark(String)}.
  *
  * <h2>Example Usage:</h2>
  * <pre>{@code

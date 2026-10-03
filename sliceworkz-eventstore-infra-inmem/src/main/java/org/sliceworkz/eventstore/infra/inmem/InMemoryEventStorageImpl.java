@@ -27,6 +27,7 @@ import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -222,14 +223,11 @@ class InMemoryEventStorageImpl implements EventStorage {
 			loadedById.putIfAbsent(event.reference().id(), event);
 		}
 		initialBookmarks.forEach(( reader, bookmark ) -> {
-			StoredEvent bookmarked = loadedById.get(bookmark.reference().id());
-			Optional<EventReference> readUpTo = bookmark.readUpTo().map(r -> {
-				StoredEvent read = loadedById.get(r.id());
-				return read == null ? r : read.reference();
-			});
-			this.bookmarks.put(reader, new Bookmark(bookmark.reader(),
-				bookmarked == null ? bookmark.reference() : bookmarked.reference(),
-				readUpTo, bookmark.tags(), bookmark.updatedAt()));
+			// either position may be absent -- a reader that has read without handling anything has no
+			// reference -- and each present one is resolved on its own
+			Optional<EventReference> reference = bookmark.reference().map(r -> resolvedOrAsStored(loadedById, r));
+			Optional<EventReference> readUpTo = bookmark.readUpTo().map(r -> resolvedOrAsStored(loadedById, r));
+			this.bookmarks.put(reader, new Bookmark(bookmark.reader(), reference, readUpTo, bookmark.tags(), bookmark.updatedAt()));
 		});
 		this.txCounter = initialEvents.stream()
 				.mapToLong(e -> e.reference().tx())
@@ -664,10 +662,17 @@ class InMemoryEventStorageImpl implements EventStorage {
 		listeners.remove(listener);
 	}
 
+	/** The loaded event's own reference for a persisted one, or the persisted one when its event is not in the log. */
+	private static EventReference resolvedOrAsStored ( Map<EventId, StoredEvent> loadedById, EventReference persisted ) {
+		StoredEvent loaded = loadedById.get(persisted.id());
+		return loaded == null ? persisted : loaded.reference();
+	}
+
 	@Override
 	public synchronized Optional<EventReference> getBookmark(String reader) {
 		checkNotClosed();
-		return Optional.ofNullable(bookmarks.get(reader)).map(Bookmark::reference);
+		// the resume point: empty for a reader that has recorded a read position without handling anything
+		return Optional.ofNullable(bookmarks.get(reader)).flatMap(Bookmark::reference);
 	}
 
 	@Override
@@ -696,6 +701,23 @@ class InMemoryEventStorageImpl implements EventStorage {
 	@Override
 	public synchronized void bookmark(String reader, EventReference eventReference, EventReference readUpTo, Tags tags ) {
 		checkNotClosed();
+		Objects.requireNonNull(eventReference, "eventReference must not be null; a reader that has handled nothing records its read position with bookmarkReadPosition");
+		place(reader, eventReference, readUpTo, tags);
+	}
+
+	@Override
+	public synchronized void bookmarkReadPosition(String reader, EventReference readUpTo, Tags tags ) {
+		checkNotClosed();
+		Objects.requireNonNull(readUpTo, "readUpTo must not be null");
+		place(reader, null, readUpTo, tags);
+	}
+
+	/**
+	 * Places a bookmark; a {@code null} {@code eventReference} records the read position alone, keeping the
+	 * handled reference the reader's bookmark already holds. Called under the monitor, so the check, the
+	 * merge with the bookmark already there and the write are one step.
+	 */
+	private void place(String reader, EventReference eventReference, EventReference readUpTo, Tags tags ) {
 		// A bookmark is a position in this store's log, so a reference the store never stored --
 		// typically one from a different store -- is a caller error. The Postgres backend rejects it
 		// through the fk_bookmarks_event_id foreign key; checking here keeps the write-side contract
@@ -719,7 +741,12 @@ class InMemoryEventStorageImpl implements EventStorage {
 		// an event by id, and its position and transaction are the event's to say. The Postgres backend
 		// gets the same by joining the events row on every read; here the log is immutable, so resolving
 		// once at placement is the same answer
-		EventReference resolved = bookmarked == null ? null : bookmarked.reference();
+		Optional<EventReference> resolved = bookmarked == null ? Optional.empty() : Optional.of(bookmarked.reference());
+		if ( resolved.isEmpty() ) {
+			// a read position alone never clears the handled reference already there
+			Bookmark existing = bookmarks.get(reader);
+			resolved = existing == null ? Optional.empty() : existing.reference();
+		}
 		Tags effectiveTags = tags == null ? Tags.none() : tags;
 		Optional<EventReference> resolvedReadUpTo = read == null ? Optional.empty() : Optional.of(read.reference());
 		bookmarks.put(reader, new Bookmark(reader, resolved, resolvedReadUpTo, effectiveTags, Instant.now()));

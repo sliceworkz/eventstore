@@ -50,7 +50,10 @@ import tools.jackson.databind.node.ObjectNode;
  * compatibility with payloads written before the metadata extension. Absent fields read as
  * {@link Tags#none()} and {@link Instant#EPOCH} respectively. {@code readUpTo} — the event up to
  * which the reader has read the stream — is written only when the bookmark has one, and reads as
- * empty when it is absent or null.
+ * empty when it is absent or null. {@code reference} — the last event the reader handled — is written
+ * only when the bookmark has one too: a reader that has read the stream without handling anything yet
+ * has a read position alone. It reads as empty when absent or null, and a payload naming neither
+ * position is rejected, since a bookmark always says something.
  */
 public final class JsonBookmarkCodec {
 
@@ -73,14 +76,30 @@ public final class JsonBookmarkCodec {
 	}
 
 	public String write ( String reader, EventReference reference, EventReference readUpTo, Tags tags, Instant updatedAt ) {
+		return write(reader, Optional.of(reference), Optional.ofNullable(readUpTo), tags, updatedAt);
+	}
+
+	/**
+	 * Writes a bookmark whose positions may each be absent, though not both.
+	 *
+	 * @param reader the reader
+	 * @param reference the last event the reader handled, empty when it has handled nothing yet
+	 * @param readUpTo the event up to which the reader has read the stream, empty for none
+	 * @param tags the tags placed with it
+	 * @param updatedAt when it was placed
+	 * @return the JSON document
+	 * @throws JsonCodecException if both positions are empty, or the document cannot be written
+	 */
+	public String write ( String reader, Optional<EventReference> reference, Optional<EventReference> readUpTo, Tags tags, Instant updatedAt ) {
+		if ( reference.isEmpty() && readUpTo.isEmpty() ) {
+			throw new JsonCodecException("bookmark for reader " + reader + " names neither a handled event nor a read position", null);
+		}
 		try {
 			ObjectNode node = objectMapper.createObjectNode();
 			node.put("reader", reader);
 
-			node.set("reference", referenceNode(reference));
-			if ( readUpTo != null ) {
-				node.set("readUpTo", referenceNode(readUpTo));
-			}
+			reference.ifPresent(r -> node.set("reference", referenceNode(r)));
+			readUpTo.ifPresent(r -> node.set("readUpTo", referenceNode(r)));
 
 			ArrayNode tagsArray = objectMapper.createArrayNode();
 			for ( Tag tag : tags.tags() ) {
@@ -103,11 +122,11 @@ public final class JsonBookmarkCodec {
 		try {
 			JsonNode node = objectMapper.readTree(json);
 			String reader = node.get("reader").asText();
-			EventReference reference = reference(node.get("reference"));
-			JsonNode readUpToNode = node.get("readUpTo");
-			Optional<EventReference> readUpTo = readUpToNode == null || readUpToNode.isNull()
-					? Optional.empty()
-					: Optional.of(reference(readUpToNode));
+			Optional<EventReference> reference = optionalReference(node.get("reference"));
+			Optional<EventReference> readUpTo = optionalReference(node.get("readUpTo"));
+			if ( reference.isEmpty() && readUpTo.isEmpty() ) {
+				throw new JsonCodecException("bookmark for reader " + reader + " names neither a handled event nor a read position", null);
+			}
 
 			Set<Tag> tagSet = new HashSet<>();
 			JsonNode tagsNode = node.get("tags");
@@ -142,6 +161,10 @@ public final class JsonBookmarkCodec {
 		refNode.put("tx", reference.tx());
 		refNode.put("index", reference.index());
 		return refNode;
+	}
+
+	private static Optional<EventReference> optionalReference ( JsonNode refNode ) {
+		return refNode == null || refNode.isNull() ? Optional.empty() : Optional.of(reference(refNode));
 	}
 
 	private static EventReference reference ( JsonNode refNode ) {

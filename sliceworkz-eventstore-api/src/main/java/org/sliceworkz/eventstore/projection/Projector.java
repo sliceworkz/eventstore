@@ -155,11 +155,16 @@ import org.sliceworkz.eventstore.stream.AppendListener;
  *       runs on every append to its stream, and each placement is a write, so without it an idle reader
  *       would cost a write per append. A move held back by the interval is written by the first run after
  *       it has passed; {@link #deferredReadUpToDueIn()} says when that is due.</li>
+ *   <li>A projector that has handled nothing yet — its query selects event types that have not occurred —
+ *       records its read position alone, by the rules above: after a run that read to the end, the head,
+ *       through {@link EventSource#placeReadPosition(String, EventReference, Tags)}, and as an idle move,
+ *       so at most once per interval. Its bookmark then names no handled event, and its backlog is not
+ *       the whole stream. The first event it handles fills the handled reference in.</li>
  *   <li>The projector never resumes from the read position. It would buy nothing — the typed query skips
  *       what the projection does not read through the index — and a query that later gains an event type
- *       would never be handed the events of that type between the two positions.</li>
+ *       would never be handed the events of that type between the two positions. A projector whose
+ *       bookmark names no handled event resumes from the beginning, exactly as one without a bookmark.</li>
  * </ol>
- * A projector that has handled nothing yet has no bookmark, and records no read position either.
  *
  * @param <CONSUMED_EVENT_TYPE> the type of domain events processed by the projection
  * @see Projection
@@ -344,8 +349,9 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 	public synchronized Projector<CONSUMED_EVENT_TYPE> readBookmark ( ) {
 		if ( bookmarkReader != null ) {
 			Optional<Bookmark> bookmark = es.findBookmark(bookmarkReader);
-			// the resume point is the last event handled, never the read position
-			lastEventReference = bookmark.map(Bookmark::reference);
+			// the resume point is the last event handled, never the read position: a bookmark recording a
+			// read position only resumes from the beginning, as no bookmark does
+			lastEventReference = bookmark.flatMap(Bookmark::reference);
 			recordedReadUpTo = bookmark.flatMap(Bookmark::readUpTo);
 		}
 		return this;
@@ -583,7 +589,11 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 		 * its own position inside its own transaction -- see {@link BatchAwareProjection#afterBatch}.
 		 */
 		private Optional<EventReference> placeBookmarkIfMoved ( Optional<EventReference> bookmarked, EventReference readToHead ) {
-			if ( bookmarkReader == null || lastEventReference == null || lastEventReference.isEmpty() ) {
+			if ( bookmarkReader == null ) {
+				return bookmarked;
+			}
+			if ( lastEventReference == null || lastEventReference.isEmpty() ) {
+				placeReadPositionIfMoved(readToHead);
 				return bookmarked;
 			}
 			EventReference handled = lastEventReference.get();
@@ -613,6 +623,33 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 			movedBookmarkThisRun = true;
 			placedInBatch = true;
 			return lastEventReference;
+		}
+
+		/**
+		 * Records the read position alone, for a projector that has handled nothing yet: only when the run
+		 * read to the end ({@code readToHead} is the head it took at the start, within its boundary), only
+		 * when that is past the read position already recorded, and — a run that handled nothing being idle
+		 * — at most once per idle bookmark interval. The handled reference stays empty, so the projector
+		 * still resumes from the beginning; the storage never clears one a bookmark already names.
+		 */
+		private void placeReadPositionIfMoved ( EventReference readToHead ) {
+			if ( readToHead == null ) {
+				return;
+			}
+			if ( recordedReadUpTo.isPresent() && !readToHead.happenedAfter(recordedReadUpTo.get()) ) {
+				return;
+			}
+			long now = System.nanoTime();
+			if ( lastIdleBookmarkNanos != null && now - lastIdleBookmarkNanos < idleBookmarkInterval.toNanos() ) {
+				readUpToDeferred = true;
+				return;
+			}
+			lastIdleBookmarkNanos = now;
+			es.placeReadPosition(bookmarkReader, readToHead, bookmarkTags);
+			recordedReadUpTo = Optional.of(readToHead);
+			readUpToDeferred = false;
+			movedBookmarkThisRun = true;
+			placedInBatch = true;
 		}
 	
 		private void offerEventToProjection ( Event<CONSUMED_EVENT_TYPE> e, EventQuery eventQuery, EventReference until, Batch batch ) {

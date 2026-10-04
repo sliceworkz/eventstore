@@ -290,6 +290,103 @@ public class ProjectorReadPositionTest extends AbstractEventStoreTest {
 		assertEquals(Optional.empty(), es.findBookmark(READER));
 	}
 
+	/**
+	 * A projector built to resume after its read position reads on from there while it has handled nothing:
+	 * the events before it — the history it was started to skip — are not handed over, and the bookmark keeps
+	 * naming no handled event until one is handled.
+	 */
+	@ForEachBackend
+	void aProjectorResumingAfterItsReadPositionSkipsWhatCameBeforeIt ( ) {
+		append(new FirstDomainEvent("before"));
+		EventReference start = append(new SecondDomainEvent("start"));
+		es.placeReadPosition(READER, start, Tags.none());
+
+		Projector<MockDomainEvent> projector = resumingAfterReadPosition(new FirstEvents());
+		assertEquals(0, projector.run().eventsHandled(), "nothing before the read position is handed over");
+		assertEquals(Optional.empty(), bookmark().reference(), "the read position is not recorded as handled");
+		assertEquals(Optional.of(start), bookmark().readUpTo());
+
+		EventReference handled = append(new FirstDomainEvent("after"));
+		assertEquals(1, projector.run().eventsHandled());
+		assertEquals(Optional.of(handled), bookmark().reference(), "the handled reference is the first event really handled");
+	}
+
+	/**
+	 * Reading past events it does not read moves only the read position, and a restart before anything was
+	 * handled resumes after the read position it got to — not from the beginning.
+	 */
+	@ForEachBackend
+	void aRestartBeforeAnythingWasHandledResumesAfterTheReadPosition ( ) {
+		append(new FirstDomainEvent("before"));
+		EventReference start = append(new SecondDomainEvent("start"));
+		es.placeReadPosition(READER, start, Tags.none());
+
+		resumingAfterReadPosition(new FirstEvents()).run();
+		EventReference irrelevant = append(new SecondDomainEvent("irrelevant"));
+		resumingAfterReadPosition(new FirstEvents()).run();
+		assertEquals(Optional.empty(), bookmark().reference());
+		assertEquals(Optional.of(irrelevant), bookmark().readUpTo(), "the read position moves past what the projector does not read");
+
+		EventReference handled = append(new FirstDomainEvent("after"));
+		RecordingFirstEvents restarted = new RecordingFirstEvents();
+		resumingAfterReadPosition(restarted).run();
+		assertEquals(List.of("after"), restarted.seen, "restarted, it resumes after its read position");
+		assertEquals(Optional.of(handled), bookmark().reference());
+	}
+
+	/**
+	 * Once an event has been handled, that event is the resume point, as for every projector: a query that
+	 * gains an event type is handed the events of that type between the two positions.
+	 */
+	@ForEachBackend
+	void onceSomethingWasHandledTheHandledEventIsTheResumePoint ( ) {
+		EventReference start = append(new SecondDomainEvent("start"));
+		es.placeReadPosition(READER, start, Tags.none());
+		append(new FirstDomainEvent("1"));
+		EventReference second = append(new SecondDomainEvent("2"));
+		resumingAfterReadPosition(new FirstEvents()).run();
+		assertEquals(Optional.of(second), bookmark().readUpTo());
+
+		BothEvents widened = new BothEvents();
+		resumingAfterReadPosition(widened).run();
+		assertEquals(List.of("2"), widened.seen, "resumed from the handled event, not from the read position");
+	}
+
+	/** Without a bookmark there is no read position to resume after: it reads from the beginning. */
+	@ForEachBackend
+	void withoutABookmarkItReadsFromTheBeginning ( ) {
+		append(new FirstDomainEvent("1"));
+		assertEquals(1, resumingAfterReadPosition(new FirstEvents()).run().eventsHandled());
+	}
+
+	@ForEachBackend
+	void resumingAfterAReadPositionNeedsABookmark ( ) {
+		assertThrows(IllegalStateException.class, () -> Projector.from(es).into(new FirstEvents()).resumeAfterReadPosition().build());
+	}
+
+	private Projector<MockDomainEvent> resumingAfterReadPosition ( Projection<MockDomainEvent> projection ) {
+		return Projector.from(es).into(projection).bookmarkAs(READER).resumeAfterReadPosition().idleBookmarkInterval(Duration.ZERO).build();
+	}
+
+	/** Reads the first event type only, recording its values. */
+	static class RecordingFirstEvents implements Projection<MockDomainEvent> {
+
+		final List<String> seen = new ArrayList<>();
+
+		@Override
+		public EventQuery eventQuery ( ) {
+			return EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none());
+		}
+
+		@Override
+		public void when ( Event<MockDomainEvent> event ) {
+			if ( event.data() instanceof FirstDomainEvent first ) {
+				seen.add(first.value());
+			}
+		}
+
+	}
+
 	private Projector<MockDomainEvent> projector ( Projection<MockDomainEvent> projection, Duration idleInterval ) {
 		return Projector.from(es).into(projection).bookmarkAs(READER).idleBookmarkInterval(idleInterval).build();
 	}

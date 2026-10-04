@@ -163,7 +163,9 @@ import org.sliceworkz.eventstore.stream.AppendListener;
  *   <li>The projector never resumes from the read position. It would buy nothing — the typed query skips
  *       what the projection does not read through the index — and a query that later gains an event type
  *       would never be handed the events of that type between the two positions. A projector whose
- *       bookmark names no handled event resumes from the beginning, exactly as one without a bookmark.</li>
+ *       bookmark names no handled event resumes from the beginning, exactly as one without a bookmark —
+ *       unless it was built to {@link Builder#resumeAfterReadPosition() resume after its read position},
+ *       for a reader that was started at a point in the stream on purpose and has handled nothing since.</li>
  * </ol>
  *
  * @param <CONSUMED_EVENT_TYPE> the type of domain events processed by the projection
@@ -185,6 +187,9 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 	private String bookmarkReader;
 	private Tags bookmarkTags;
 	private BookmarkRead bookmarkRead;
+
+	/** Whether a bookmark naming no handled event resumes after its read position: {@link Builder#resumeAfterReadPosition()}. */
+	private final boolean resumeAfterReadPosition;
 	
 	private Optional<EventReference> lastEventReference = null;
 
@@ -211,7 +216,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 	// without waiting for the run in progress
 	private volatile ProjectorMetrics accumulatedMetrics;
 	
-	private Projector ( EventSource<CONSUMED_EVENT_TYPE> es, Projection<CONSUMED_EVENT_TYPE> projection, String projectionName, EventReference after, int maxEventsPerQuery, String bookmarkReader, Tags bookmarkTags, BookmarkRead bookmarkRead, Duration idleBookmarkInterval ) {
+	private Projector ( EventSource<CONSUMED_EVENT_TYPE> es, Projection<CONSUMED_EVENT_TYPE> projection, String projectionName, EventReference after, int maxEventsPerQuery, String bookmarkReader, Tags bookmarkTags, BookmarkRead bookmarkRead, Duration idleBookmarkInterval, boolean resumeAfterReadPosition ) {
 		this.es = es;
 		this.projection = projection;
 		this.projectionName = projectionName;
@@ -221,6 +226,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 		this.bookmarkTags = bookmarkTags;
 		this.bookmarkRead = bookmarkRead;
 		this.idleBookmarkInterval = idleBookmarkInterval;
+		this.resumeAfterReadPosition = resumeAfterReadPosition;
 		this.lastEventReference =  ( after == null ) ? null : Optional.ofNullable(after); // keep it to null to detect first run if needed
 		// contained again, which is a no-op for the observer of a store of this library, so that a source
 		// written elsewhere cannot fail a batch through its observer
@@ -471,6 +477,12 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 			Limit queryTotalLimit = eventQuery.limit();
 
 			EventReference lastRead = lastEventReference==null?null:lastEventReference.orElse(null);
+			if ( lastRead == null && resumeAfterReadPosition && bookmarkReader != null ) {
+				// nothing handled yet: read on from the read position the bookmark records, and keep the handled
+				// reference empty -- the read position is where reading resumes, not an event that was handled,
+				// so the bookmark goes on recording a read position alone until an event is handed over
+				lastRead = recordedReadUpTo.orElse(null);
+			}
 
 			while ( !done ) {
 
@@ -848,6 +860,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 		private String name;
 		private BookmarkRead bookmarkRead = BookmarkRead.BEFORE_EACH_RUN;
 		private boolean bookmarkReadChosen = false;
+		private boolean resumeAfterReadPosition = false;
 		private Duration idleBookmarkInterval = DEFAULT_IDLE_BOOKMARK_INTERVAL;
 
 		private Builder ( EventSource<EVENT_TYPE> eventSource ) {
@@ -1062,6 +1075,34 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 			return this;
 		}
 
+		/**
+		 * Resumes after the bookmark's read position while the bookmark names no handled event, where a
+		 * projector otherwise resumes such a bookmark from the beginning.
+		 * <p>
+		 * For a reader started at a chosen point in the stream on purpose — one deployed to react only to
+		 * what is appended from then on, whose first bookmark is a read position placed at the head
+		 * ({@link EventSource#placeReadPosition(String, EventReference, Tags)}). Resumed from the beginning,
+		 * it would be handed the very history it was started to skip, as soon as it restarted before handling
+		 * anything. With this setting it reads on from the read position, and its bookmark keeps naming no
+		 * handled event until it handles one: the handled reference is only ever an event the projection was
+		 * handed, never the point reading began at — what a reader of the bookmark takes it to be.
+		 * <p>
+		 * Once an event has been handled, that event is the resume point, as for every projector. And the
+		 * cost the default rule avoids is accepted here, deliberately: a query that later gains an event type
+		 * is not handed the events of that type before the read position — which, for a reader started at a
+		 * point on purpose, is what it was started to skip.
+		 * <p>
+		 * The read position is the one the bookmark was read with ({@link #readBookmarkOnce()} or the default,
+		 * or {@link Projector#readBookmark()}), and the one the projector moves itself afterwards.
+		 *
+		 * @return this builder for method chaining
+		 * @see #bookmarkAs(String)
+		 */
+		public Builder<EVENT_TYPE> resumeAfterReadPosition ( ) {
+			this.resumeAfterReadPosition = true;
+			return this;
+		}
+
 		private Builder<EVENT_TYPE> readBookmark ( BookmarkRead bookmarkRead ) {
 			this.bookmarkRead = bookmarkRead;
 			this.bookmarkReadChosen = true;
@@ -1079,8 +1120,8 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 		 * its own cursor is not what the caller asked for.
 		 *
 		 * @return a new Projector configured with the builder's settings
-		 * @throws IllegalStateException if no projection was configured, or a bookmark read setting was
-		 *         chosen without a reader
+		 * @throws IllegalStateException if no projection was configured, or a bookmark read setting or
+		 *         {@link #resumeAfterReadPosition()} was chosen without a reader
 		 */
 		public Projector<EVENT_TYPE> build ( ) {
 			if ( projection == null ) {
@@ -1089,11 +1130,14 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 			if ( bookmarkReadChosen && bookmarkReader == null ) {
 				throw new IllegalStateException("no bookmark to read: call bookmarkAs(...) before choosing when the bookmark is read");
 			}
+			if ( resumeAfterReadPosition && bookmarkReader == null ) {
+				throw new IllegalStateException("no bookmark to resume from: call bookmarkAs(...) before resumeAfterReadPosition()");
+			}
 			EventQuery initQuery = projection.initQuery();
 			if ( bookmarkReader != null && initQuery != null && !initQuery.filter().isMatchNone() ) {
 				LOGGER.warn("Projection has initQuery but bookmarking is enabled — initQuery will be ignored. Remove bookmarking for live-model use, or remove initQuery for full replay.");
 			}
-			Projector<EVENT_TYPE> projector = new Projector<>(eventSource, projection, name != null ? name : defaultNameOf(projection), after, maxEventsPerQuery, bookmarkReader, bookmarkTags, bookmarkRead, idleBookmarkInterval);
+			Projector<EVENT_TYPE> projector = new Projector<>(eventSource, projection, name != null ? name : defaultNameOf(projection), after, maxEventsPerQuery, bookmarkReader, bookmarkTags, bookmarkRead, idleBookmarkInterval, resumeAfterReadPosition);
 			if ( subscribe ) {
 				// subscribe for eventually consistent updates about event appends, so the projector will automatically trigger projection updates
 				eventSource.subscribe(projector);

@@ -1008,7 +1008,18 @@ later reference, which is after this one and so still delivered.
   `EventStorage.findBookmark` is the SPI half). It is **never a resume point**: a projector restarts from
   `reference`. The alternative — resuming from `readUpTo` — loses because it buys nothing (the typed
   query skips irrelevant events through the index anyway) and because a query that later gains an event
-  type would never be handed the events of that type between the two positions, silently. `readUpTo` is
+  type would never be handed the events of that type between the two positions, silently. The one
+  exception is opted into on the projector: `Projector.Builder.resumeAfterReadPosition()` makes a
+  projector whose bookmark names **no handled event** read on after its read position instead of from the
+  beginning — for a reader started at a point on purpose (its first bookmark a read position placed at the
+  head), which resumed from the beginning would be handed the very history it was started to skip. The
+  handled reference stays empty until an event is really handed over, so it is only ever an event the
+  projection handled, never the point reading began at; once one is, that event is the resume point as for
+  every projector. The cost the rule above avoids is accepted there deliberately: a query gaining an event
+  type is not handed that type's events before the read position — which, for such a reader, is the
+  history it skips. The alternative — `startingAfter(readPosition)` — loses because the projector's cursor
+  is also the reference it records as handled, so the start point would be written as handled on the next
+  idle move. `ProjectorReadPositionTest` pins it per backend `readUpTo` is
   optional: a bookmark placed without one (by a writer or storage that does not record it) reads back
   empty, and readers fall back to `reference`; the next placement that carries one fills it in. It is held
   to the rules `reference` is — an unknown event is rejected, only the id is stored, and it reads back (and

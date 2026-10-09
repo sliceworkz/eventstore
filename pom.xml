@@ -41,6 +41,7 @@
 		<maven.mycila-license-plugin.version>5.1.2</maven.mycila-license-plugin.version>
 		<maven.maven-central-publishing-plugin.version>0.11.0</maven.maven-central-publishing-plugin.version>
 		<maven.flatten-plugin.version>1.8.0</maven.flatten-plugin.version>
+		<maven.cyclonedx-plugin.version>2.9.3</maven.cyclonedx-plugin.version>
 
 		<maven.compiler.release>21</maven.compiler.release>
 
@@ -237,6 +238,38 @@
 						</licenseSet>
 					</licenseSets>
 			    </configuration>
+			</plugin>
+
+			<!--
+				Software bill of materials (CycloneDX 1.6, JSON), as the EU Cyber Resilience Act asks
+				for. Every module gets target/bom.json, attached as the "cyclonedx" classifier, so a
+				published module carries its SBOM to Maven Central next to its jar (signed like it). The
+				root gets the aggregate over the whole reactor, which the release workflow attaches to
+				the GitHub release. Test-scoped dependencies, and the modules that are never published
+				(benchmark, tests, examples), are not shipped and are left out.
+			-->
+			<plugin>
+				<groupId>org.cyclonedx</groupId>
+				<artifactId>cyclonedx-maven-plugin</artifactId>
+				<version>${maven.cyclonedx-plugin.version}</version>
+				<configuration>
+					<schemaVersion>1.6</schemaVersion>
+					<outputFormat>json</outputFormat>
+					<outputName>bom</outputName>
+					<projectType>library</projectType>
+					<includeTestScope>false</includeTestScope>
+					<includeLicenseText>false</includeLicenseText>
+					<excludeArtifactId>sliceworkz-eventstore-benchmark,sliceworkz-eventstore-tests,sliceworkz-eventstore-examples</excludeArtifactId>
+				</configuration>
+				<executions>
+					<execution>
+						<id>sbom</id>
+						<phase>package</phase>
+						<goals>
+							<goal>makeAggregateBom</goal>
+						</goals>
+					</execution>
+				</executions>
 			</plugin>
 		</plugins>
 	</build>

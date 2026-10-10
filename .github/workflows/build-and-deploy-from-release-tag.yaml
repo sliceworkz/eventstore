@@ -95,13 +95,16 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # The software bill of materials of this release, as the EU Cyber Resilience Act
-      # asks for: the CycloneDX aggregate the Maven build wrote over every shipped module
-      # (no test scope). Each module also carries its own SBOM to the Maven repository,
-      # deployed above as its "cyclonedx" classifier.
+      # asks for: the CycloneDX aggregate the Maven build wrote over the runtime library
+      # (no test scope), and beside it the test kit's own, kept apart so its JUnit and
+      # Testcontainers are not read as dependencies of the library. Each module also
+      # carries its own SBOM to the Maven repository, deployed above as its "cyclonedx"
+      # classifier.
       - name: Collect the SBOM
         run: |
           mkdir -p sbom
           cp target/bom.json "sbom/sliceworkz-eventstore-${{ steps.get_version.outputs.VERSION }}.cdx.json"
+          cp sliceworkz-eventstore-testing/target/bom.json "sbom/sliceworkz-eventstore-testing-${{ steps.get_version.outputs.VERSION }}.cdx.json"
 
       # Signed build provenance for the SBOM: binds it to this commit and this workflow
       # run, verifiable with 'gh attestation verify <file> --repo sliceworkz/eventstore'.

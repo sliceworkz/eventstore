@@ -241,12 +241,14 @@
 			</plugin>
 
 			<!--
-				Software bill of materials (CycloneDX 1.6, JSON), as the EU Cyber Resilience Act asks
-				for. Every module gets target/bom.json, attached as the "cyclonedx" classifier, so a
-				published module carries its SBOM to Maven Central next to its jar (signed like it). The
-				root gets the aggregate over the whole reactor, which the release workflow attaches to
-				the GitHub release. Test-scoped dependencies, and the modules that are never published
-				(benchmark, tests, examples), are not shipped and are left out.
+				Software bill of materials (CycloneDX 1.6, JSON), as the EU Cyber Resilience Act asks for.
+				Every module gets target/bom.json, attached as the "cyclonedx" classifier, so a published
+				module carries its SBOM to Maven Central next to its jar (signed like it). The root gets the
+				aggregate, which the release workflow attaches to the GitHub release: it describes the
+				runtime library, so it leaves out the test kit (sliceworkz-eventstore-testing, whose
+				compile-scoped JUnit and Testcontainers a consumer only ever takes in test scope; its own
+				SBOM goes on the release beside it) and the modules that are never published (benchmark,
+				tests, examples). Test-scoped dependencies are left out everywhere.
 			-->
 			<plugin>
 				<groupId>org.cyclonedx</groupId>
@@ -259,7 +261,7 @@
 					<projectType>library</projectType>
 					<includeTestScope>false</includeTestScope>
 					<includeLicenseText>false</includeLicenseText>
-					<excludeArtifactId>sliceworkz-eventstore-benchmark,sliceworkz-eventstore-tests,sliceworkz-eventstore-examples</excludeArtifactId>
+					<excludeArtifactId>sliceworkz-eventstore-testing,sliceworkz-eventstore-benchmark,sliceworkz-eventstore-tests,sliceworkz-eventstore-examples</excludeArtifactId>
 				</configuration>
 				<executions>
 					<execution>

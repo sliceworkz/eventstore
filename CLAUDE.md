@@ -94,519 +94,168 @@ mvn clean install -DskipTests
 
 ### Core Concepts
 
+**Read `docs/design/core-concepts.md` before you change any of the types below.** It holds the reasons
+and the rejected alternatives. The rules:
+
 **EventStore:**
-- Main entry point for interacting with the event storage system
-- Built on an `EventStorage` with `EventStore.on(storage).build()`, or taken from a storage builder's
-  `buildStore()`, which does the same and hands back one handle owning both
-- **`EventStore.on(storage)` is the one entry point, and `EventStoreFactory` is the SPI behind it.**
-  Everything a store can be given beyond its storage is a call on the builder, each defaulting to what
-  the storage builders use: `.observer(o)` (default the storage's own observer, which a storage builder's
-  `.observer(...)` put there and which is `EventStoreObserver.NOOP` otherwise) and `.shredding(codec)`
-  (default the storage's own codec, which a storage builder's `.shredding(...)` put there). Every setter refuses `null`, since each has a default
-  and a null could only be a mistake, and `build()` is where the `ServiceLoader` lookup happens, so a
-  builder is configured before anything is resolved and fails at `build()` with the same
-  `EventStorageException` the factory throws when no implementation is on the classpath. The built
-  store does not own the storage (see "Lifecycle: closing a store"); `EventStore.owning` composes the
-  two. The alternative — calling the factory, as
-  `EventStoreFactory.get().eventStore(storage, observer, codec)` — loses because it puts a
-  `ServiceLoader` chain and positional arguments, where a `null` means "the storage's own", at every
-  call site that wants anything but the defaults. The factory stays public: it is what an implementation of this library provides through the `ServiceLoader`, what
-  the builder and the storage builders' `buildStore()` call, and nothing application code needs to
-  name. `EventStoreTest` in the api module pins the builder's argument checks and its failure with no
-  implementation on the classpath; `EventStoreBuilderTest` in the tests module pins that each setting
-  reaches the built store and that each default is the documented one
-- Provides access to event streams via `getEventStream()`
+- `EventStore.on(storage).build()` is the one entry point; a storage builder's `buildStore()` does the
+  same and owns both. Builder settings: `.observer(o)` and `.shredding(codec)`, each defaulting to the
+  storage's own; every setter refuses `null`. The `ServiceLoader` lookup happens in `build()`, which
+  throws `EventStorageException` when no implementation is on the classpath.
+- `EventStoreFactory` is the SPI behind the builder; application code does not name it.
+  Tests: `EventStoreTest` (api), `EventStoreBuilderTest` (tests module).
 
 **EventStream:**
-- Identified by `EventStreamId` which consists of a context and optional purpose
-- Purpose is optional: `EventStreamId.forContext("x")` defaults purpose to `"default"`, so a context that needs only one stream can ignore purpose entirely. Set a purpose only to distinguish multiple streams within a context (e.g. per-instance, or separating event kinds). Whether to make the purpose an *entity id* — a stream per SKU rather than a stream per context — is the one layout decision with measured consequences on both reads and write contention; see the Benchmarking digest below, and "Choosing a stream design" in `sliceworkz-eventstore-benchmark/CLAUDE.md` for the figures
-- Supports both reading (via `query()`) and writing (via `append()`)
-- Type-safe through generic parameter `<DOMAIN_EVENT_TYPE>`, which the single-class overloads of
-  `getEventStream` fix from the root class: `getEventStream(id, CustomerEvent.class)` is an
-  `EventStream<CustomerEvent>`, and assigning it to an `EventStream<OrderEvent>` — or widening it to an
-  `EventStream<Object>`, which would let an append of a foreign event type compile — is a compile error
-  rather than a runtime append failure. The legacy root class is not constrained, since legacy events
-  upcast into current ones. The `Set<Class<?>>` overloads carry no such constraint and are the way to open
-  a stream typed wider than its roots. `EventStoreTypeParameterTest` in the api module pins it by running
-  javac against probe snippets
-- Combines `EventSource` (reading) and `EventSink` (writing) interfaces
-- **An append takes `List<? extends EphemeralEvent<? extends DOMAIN_EVENT_TYPE>>`, so an ordinary list
-  of one event type fits.** A caller mapping its domain events into ephemeral ones holds a
-  `List<EphemeralEvent<CustomerRegistered>>`, and `List` is invariant, so without the outer wildcard
-  that list is not a `List<EphemeralEvent<? extends CustomerEvent>>`: every such call site has to name
-  the parameter type it is producing — `.<EphemeralEvent<? extends CustomerEvent>>map(...)` — to say
-  what the signature can say once, for a list the append only ever reads. The inner wildcard is what
-  still lets a batch mix event types of the hierarchy, and what still refuses a batch of a foreign
-  one; the outer one only removes the witness. Widening a parameter this way is source-compatible for
-  callers and leaves the erasure alone, so a consumer compiled against the narrower signature keeps
-  working — an *implementor* of `EventSink` has to widen its override with it, since the narrower one
-  no longer overrides anything. `EventStoreTypeParameterTest` pins both the acceptance and the foreign
-  batch's rejection by running javac
-- **Raw mode is its own method, with its own type: `getRawEventStream(id)` returns an
-  `EventSource<String>`.** No event root classes, so no type mapping: every stored event reads as the
-  JSON document it is stored as — the same text `StoredEvent.payload()` carries, parsed by
-  nothing on the way out, so on Postgres the `jsonb` rendering rather than the bytes appended — under
-  its stored type, nothing upcast and nothing decrypted: a `Shreddable` comes back as its sealed
-  envelope. A caller that wants to look inside parses it with whatever JSON library it uses; most
-  never do. It is an `EventSource` rather than an `EventStream` because a raw stream cannot append (an
-  append is admitted only for a type the stream maps, and a raw stream maps none), so the type says so
-  instead of every append failing at runtime. What it is for: reading the event an
-  `EventDeserializationException` names through `getEventById`, following every append in a store, and
-  the presence check before an import. Two alternatives lose. An `EventSource<Object>` whose value is
-  a parsed tree — a Jackson 3 `JsonNode` behind an `Object`, since the api carries no Jackson — names
-  no type the api can describe, is usable only by a caller importing Jackson 3 (and not by one on
-  Jackson 2 or another library), and pays a parse per event on the one read path that looks inside
-  almost none of them. A `getEventStream(id)` overload with a free type parameter loses because
-  `EventStream<CustomerEvent> s = store.getEventStream(id)` then compiles and hands back JSON
-  documents under the domain type, a `ClassCastException` at the first `switch`. A stream typed wider
-  than its roots that can still append is the `Set<Class<?>>` overload's job, not raw mode.
-  `EventStoreTypeParameterTest` pins the acceptance and the rejections by running javac;
-  `RawStreamTest` in the TCK pins per backend that the document is the storage's own text for the
-  event, through `query` and `getEventById` alike
-- **A wildcard stream is a source, not a sink.** An event is stored in exactly one stream, and a
-  wildcard (`anyContext()`, or `anyPurpose()` within a context) names none, so a stream opened on
-  one reads across every stream it matches and refuses `append` with `IllegalArgumentException`,
-  nothing stored. To write to a stream it reads across, open that stream by its own id: a handle is
-  cheap and shares its serde (see "Lifecycle: closing a stream" below), and a stream per operation
-  is the intended usage. There is deliberately no append that names a target stream as a further
-  argument, and `EventStreamId` carries no relation saying which stream may write to which — only
-  `covers`, which says whether an id's scope contains a stream, and is what scopes every read and
-  decides which subscribers a notification is relevant to. It is called that because it is a
-  relation between two values, a scope containing a stream, and not a permission a stream holds:
-  the alternative name — `canRead` — loses because it invites a `canWrite` beside it, the very
-  relation this design refuses. The alternative — an `append(criteria, events,
-  target)` through a wildcard stream bound to the target's context — loses because a stream is then
-  a sink for some targets and not others, decided per call; because every append is observed as an
-  append through the stream it went through, so a write landing in `customer#123` would be reported
-  under the wildcard's id and never under its own; and because it buys nothing the shared serde does
-  not already give. The refusal is at
-  runtime, not at compile time, because whether an id is a wildcard is a property of its value: the
-  same `EventStream` type reads a context or one of its streams depending only on the id it was
-  opened with (the raw stream, whose read-only nature *is* static, is a separate case).
-  `EventStreamTest.testAppendToNonSpecificStream` and `testAppendToWildcardPurposeStream` pin it per
-  backend
-- **`getEventById` answers in two levels: `Optional<List<Event<E>>>`.** The `Optional` says whether
-  this stream holds a stored event with the id, the list what it reads as through the stream's
-  mappings — one event, or through an upcaster several or none. A stored event that upcasts into
-  nothing is therefore *present with an empty list*, and an id the storage does not hold, or holds
-  in a stream this one does not read across, is *absent*. The alternative — a bare list, empty in
-  both cases — loses because a presence check through a stream with upcasters then reports every
-  legacy event that upcasts into nothing as missing, with nothing to say so; the two levels are what
-  let `isPresent()` be the presence check on a typed stream and a raw one alike. `UpcastMultiTest`
-  pins both answers per backend
-- **`query()` returns a `List`, read in full.** Storage has finished reading by the time the list
-  comes back, and every event in it is deserialized and upcast, so the type says what a query costs:
-  a query with no limit against a storage with no `resultLimit` reads everything matching into heap,
-  an OOM rather than a slow read, with no back-pressure to arrive at. Bound the read with
-  `EventQuery.limit(n)`, which is the limit storage is given; nothing applied to the result bounds
-  anything. The alternative — returning a `Stream` — loses because the type promises a laziness the
-  storage does not deliver: `findFirst()` on it reads as though it bounded the read and does not, and
-  a poison event fails from whichever terminal operation the caller wrote rather than from the query.
-  `.stream()` is one call away for a caller who wants stream operations over events already read.
-  Nothing needs closing — no database resource is held open behind the list (`EventSource.close()` is
-  about subscriptions, not queries)
-- **A full replay is a loop, not one unbounded query.** `Projector` already reads in batches of 500,
-  carrying a cursor between them, and is the right tool for a stream of unknown size. By hand, read
-  with `page(q.limit(n), cursor)`, which answers an `EventPage`: the events, the number of stored
-  events read, and the reference of the last stored event read, which is the cursor of the next
-  page. The last two are what paging needs and the events alone cannot say once upcasting is
-  involved: a limit counts stored events, an upcaster may turn one into several or into none, so a
-  page holding no events may sit in the middle of a stream and the reference to continue from may
-  be on no event returned. A page shorter than its limit is the last one. `query(q, cursor)` is the
-  same read without that account, read whole exactly as a page is (an `EventDeserializationException`
-  comes from the call itself, and a page or a query holding a poison event hands out none of its
-  events). `EventPageTest` pins it per backend. The unlimited path exists for
-  callers who know their result set is small, or who genuinely want it all at once — it is not a
-  way to process a large stream incrementally
-- **`head()` is the reference of the newest stored event of the stream, answered without reading it.**
-  It exists to pin a consistency boundary *before* a decision is read: take the head, bound every read
-  with `until(head)` or `Projector.runUntil(head)`, and hand the same reference to `AppendCriteria`.
-  Several reads then share one boundary, so nothing lands between them unseen, and the lock check gets
-  a cursor at the stream head instead of at the boundary's own newest event — which on Postgres turns
-  a walk over every stream event since that event into a walk over the few appended during the
-  decision (see the stale-cursor note under PostgreSQL). Three properties carry it, pinned per backend
-  by `HeadTest`:
-  - **It is what a query would see**, not what has been committed: on Postgres it sits behind the same
-    `pg_snapshot_xmin` barrier as every read, so during a visibility stall it lags exactly as reads do.
-    A head that ran ahead of the reads it bounds would let the reads and the check disagree
-    (`PostgresVisibilityStallTest.testTheHeadSitsBehindTheSameBarrierAsReads`)
-  - **It never deserializes, upcasts or decrypts.** The stream's mappings are irrelevant, so a head this
-    stream cannot map, one that upcasts into nothing, or one holding a `Shreddable` under a key store
-    that is down cannot make it fail or lie. The natural alternative — the typed
-    `query(matchAll().backwards().limit(1))` idiom — loses on all three: a poison event at the head
-    fails every command, an upcast-to-nothing head reads as an empty stream, and a sealed value costs a
-    key-store round trip. That is why it is a method on `EventSource` and an SPI method on
-    `EventStorage`, whose `default` is that query for a backend written before it; Postgres reads the
-    three reference columns off `idx_events_stream_position` — off `idx_events_context_order`
-    for a context, off `idx_events_global_order` for a wildcard stream, decided by the scope and never
-    by an estimate — and no payload (`PostgresHeadStatementTest`, `PostgresGlobalOrderIndexTest`,
-    `PostgresOrderIndexAdmissionTest`)
-  - **It names a stored event, whole**: `index` 0, and a boundary at it includes every event the stored
-    event upcasts into — see the `until` note under EventFilter
-  - The event at the head need not match the boundary's filter: the reference is a cursor for the check,
-    and only matching events after it count. An absent head is an empty stream and must stay an absent
-    reference — "I decided on an empty boundary" — never be substituted with some other reference.
-    Reported as its own observation (`Observation.Head`), never as a read. `EventStoreImporter` bounds its
-    reads at the source head through the same method
+- Identified by `EventStreamId` (context + purpose; `forContext("x")` uses purpose `"default"`).
+  Whether the purpose is an entity id is a layout decision with measured costs — see Benchmarking.
+- `getEventStream(id, Root.class)` returns `EventStream<Root>`; a wider type is a compile error. The
+  `Set<Class<?>>` overloads carry no such constraint. The legacy root class is not constrained.
+- `append` takes `List<? extends EphemeralEvent<? extends E>>`. An implementor of `EventSink` must
+  override with that signature.
+- **Raw mode:** `getRawEventStream(id)` returns `EventSource<String>`: each event is its stored JSON text
+  (`StoredEvent.payload()`), under its stored type, not upcast, not decrypted. It cannot append.
+  Do not add an `EventSource<Object>` of parsed trees or a `getEventStream(id)` with a free type
+  parameter. Tests: `EventStoreTypeParameterTest` (javac probes), `RawStreamTest`.
+- **A wildcard stream (`anyContext()`, `anyPurpose()`) reads and never appends** —
+  `IllegalArgumentException`, nothing stored. To write, open the target stream by its own id. There is
+  no append naming a target stream, and `EventStreamId` has no write relation — only `covers`. Do not
+  add `canRead`/`canWrite`. Tests: `EventStreamTest.testAppendToNonSpecificStream`,
+  `testAppendToWildcardPurposeStream`.
+- **`getEventById` returns `Optional<List<Event<E>>>`**: absent = not held by this stream; present with
+  an empty list = held, upcasts into nothing. Test: `UpcastMultiTest`.
+- **`query()` returns a `List`, read in full** (deserialized and upcast). Not a `Stream`. A query with no
+  limit reads everything into heap; bound it with `EventQuery.limit(n)`.
+- **A full replay is a loop**: `Projector` (batches of 500), or by hand `page(q.limit(n), cursor)`,
+  which returns an `EventPage` (events, stored events read, reference of the last stored event read).
+  A page shorter than its limit is the last one; an empty page can be mid-stream. A poison event fails
+  the whole page or query. Test: `EventPageTest`.
+- **`head()`** is the reference of the newest stored event, read without deserializing, upcasting or
+  decrypting. It sits behind the same visibility barrier as reads (Postgres `pg_snapshot_xmin`). It is
+  an SPI method on `EventStorage` (default: a backwards limit-1 query); Postgres reads reference
+  columns from the stream, context or global order index only, chosen by scope. It has `index` 0 and
+  names the whole stored event. An absent head is an empty stream — keep it absent. Reported as
+  `Observation.Head`. Use: take the head, bound reads with `until(head)`, pass the head to
+  `AppendCriteria`. Tests: `HeadTest`, `PostgresVisibilityStallTest`, `PostgresHeadStatementTest`,
+  `PostgresGlobalOrderIndexTest`, `PostgresOrderIndexAdmissionTest`.
 
-**Event:**
-- Record type containing: `stream`, `type`, `storedType`, `reference`, `data`, `tags`, `timestamp`
-- `type` is the type of `data`; `storedType` is the name under which the event sits in storage. They differ only
-  for an upcast event, where `storedType` names the legacy type it was read from
-- Data is the actual domain event (typically a sealed interface with record implementations)
-- Tags enable dynamic querying and consistency boundaries
-- Created via `Event.of(data, tags)` for ephemeral events or full constructor for persisted events
-- **`timestamp` is an `Instant`**: the moment the store persisted the event, on the storage's clock — the
-  JVM's in memory, the server's on Postgres, where the column is a `timestamptz`. It is the same kind of
-  value as `Bookmark.updatedAt` and the clocks on `Lease`, so the three compare without conversion, and it
-  is what `StoredEvent`, `EventToStore.positionAt` and `EventToImport` carry too. An instant has no zone:
-  the day or wall-clock time it falls on is the reader's rendering, made with the zone the reader means
-  (`event.timestamp().atZone(zone)`). The alternative — a `LocalDateTime` documented as "always UTC" —
-  loses because the type does not carry the convention: nothing stops a reader comparing it with a
-  wall-clock reading in the JVM's zone, and every correct use starts by re-attaching the offset the type
-  dropped. The file codec writes it as an ISO-8601 instant at UTC and reads a value carrying no offset as
-  UTC, so an events directory holds one meaning of the field whichever shape a file carries.
-  `EventTimestampTest` pins per backend that the stamp is the instant of the append
-- **On the SPI records the payload is `payload`: one JSON document, as text.** `EventToStore`,
-  `StoredEvent` and `EventToImport` name it the same, it is the text a raw stream's `data()` answers and
-  what `EventToImport.withPayload` rewrites, and the in-memory backends refuse one that is not a JSON
-  document. The file codec writes it under that key as the document it is, not as an escaped string, and
-  reads a file carrying it under `immutableData` the same, so an events directory reloads whichever key
-  its files carry
-
-**EphemeralEvent:**
-- Lightweight event representation before persistence (no stream, reference, or timestamp)
-- Converted to full `Event` upon appending to a stream
-- Created via `Event.of(data, tags)`
+**Event / EphemeralEvent:**
+- `Event` record: `stream`, `type`, `storedType`, `reference`, `data`, `tags`, `timestamp`. `storedType`
+  differs from `type` only for an upcast event.
+- `timestamp` is an `Instant` on the storage's clock (JVM in memory, server on Postgres). The file codec
+  writes ISO-8601 UTC and reads a value with no offset as UTC. Do not use `LocalDateTime`.
+  Test: `EventTimestampTest`.
+- On SPI records (`EventToStore`, `StoredEvent`, `EventToImport`) the payload field is `payload`: one
+  JSON document as text. The file codec writes it as a document, and also reads `immutableData`.
+- `EphemeralEvent` (no stream, reference, timestamp) is made by `Event.of(data, tags)`.
 
 **EventType:**
-- The stored name of an event: `EventType.of(Class)` is `Class.getSimpleName()`, unless the class is
-  annotated `@EventName("...")`, in which case it is the annotation's value. That method is the one place
-  a class becomes a stored name, so the annotation is honoured on append, in a stream's type mappings, in
-  `EventTypesFilter.of(Class...)` and on a `@LegacyEvent`
-- **`of(Class)` and `named(String)` are the two factories, and there is deliberately no `of(Object)`
-  deriving the type from an event instance.** The alternative — an `of(Object)` overload beside
-  `of(Class)`, calling `getClass()` itself — loses because an overload on `Object` accepts every
-  argument the `Class` one does not: a stored name passed by mistake, `EventType.of("CustomerRegistered")`,
-  compiles and is the type named `String`, which matches no stored event and fails nothing. With `Class`
-  the only parameter type that call is a compile error, and the code holding an instance
-  (`EphemeralEvent.of`, the serde, a filter matched in memory) writes `EventType.of(data.getClass())`
-  itself. `named` is called that so the string factory reads as what it is.
-  `EventStoreTypeParameterTest` pins the rejection by running javac against a probe
-- **The plain class name is the intended setup; `@EventName` is for the class whose stored name cannot
-  be its own name** (a renamed class, a simple name another context already stores). Annotating every
-  event up front is not a best practice and buys nothing: a string literal is as permanent a commitment
-  as a class name, so it does not avoid the rename problem, only adds a second name to keep in step
-  with the first
-- Deliberately the *simple* name, not the fully qualified one, so moving a class between packages —
-  the refactor people actually do — costs nothing
-- **The stored name is therefore wire format**, and it is global to a storage rather than scoped to a
-  stream. See "Event type names are wire format" under Naming Conventions before renaming an event class
-  or introducing a second class with an existing simple name — `@EventName` is the answer to both, and
-  `EventNameTest` in the TCK pins it per backend
+- `EventType.of(Class)` is the simple name, or the `@EventName` value. It is the one place a class
+  becomes a stored name. `EventType.named(String)` is the string factory. Do not add `of(Object)`.
+- Do not annotate every event with `@EventName`; use it only for a class whose stored name cannot be
+  its own name. The stored name is wire format and global to a storage — see "Event type names are
+  wire format". Test: `EventNameTest`.
 
 **Tags:**
-- Key-value pairs attached to events for dynamic retrieval
-- Enable querying events across different event types
-- Core to the Dynamic Consistency Boundary pattern
-- Created via `Tags.of("key", "value")`, `Tags.of("k1", "v1", "k2", "v2", ...)` (alternating keys and
-  values; an odd count is rejected rather than read as a trailing flag) or `Tags.of(Tag.of("key", "value"))`
-- **`Tags` is a set, and its factories behave like one.** `Tags.of(Tag...)` eliminates a repeated tag
-  rather than rejecting it: tags gathered from several sources (a domain tag list plus what a
-  decorator adds) legitimately overlap, and building with `Set.of` would turn that overlap into an
-  append failure. A `null` element is an `IllegalArgumentException`. Several tags under one *key* are
-  an ordinary shape — a transfer tagged `customer:alice` and `customer:bob` — so `tags.tag(key)` answers
-  only a key holding a single tag and throws `IllegalStateException` when more than one carries it,
-  rather than returning whichever hash order put first; `tags.tags(key)` is the read for a key that may
-  hold several. `TagsTest` pins both
-- **`Tag.toString()` is the wire format, not a debugging rendering.** A tag is flattened to
-  `"key:value"` to be persisted and to be matched: the Postgres backend stores `Tags.toStrings()` in a
-  `text[]` column and answers a tag query with `event_tags @> ARRAY[...]` built from the *same*
-  rendering, then hands tags back through `Tags.parse(String[])`. The string is unescaped, and
-  `Tag.parse` splits on the **first** `':'`, strips both halves and maps an empty half to `null` —
-  so `toString`/`parse` is only a round trip for tags whose key has no colon and whose halves are
-  neither empty nor padded. The in-memory backends flatten nothing and match on the `Tag` record,
-  so they cannot fail this way — a tag that does not survive the rendering behaves in a test against
-  the in-memory store and diverges on Postgres, which is why the rejection below lives in `Tag` itself
-- **Construction therefore rejects the shapes that do not survive it**, rather than escaping the
-  stored form — existing rows cannot be rewritten, so the encoding has to stay as it is.
-  `IllegalArgumentException` for: a `':'` in the **key** (`Tag.of("a:b","c")` rendered as `"a:b:c"`,
-  which is also what `Tag.of("a","b:c")` renders to — two logical tags, one stored string); leading
-  or trailing whitespace on either half (`parse` strips it); an empty key or value (`parse` nulls
-  it); and a tag with neither key nor value (renders as `""`, reads back as nothing). Values may
-  contain `':'` freely, and whitespace *inside* a key or value is fine. Whitespace is rejected
-  rather than silently stripped so the mistake surfaces where it is made — a caller handling
-  untrusted input should `strip()` first. `Tag.of(null, "v")` stays legal, because `Tag.parse(":v")`
-  still produces it from history
-- **What that buys: `toString` is injective, so `parse(tag.toString())` is the identity** for every
-  constructible tag. Two distinct tags on one event cannot be stored as one array element,
-  and a tag read off an `Event` is the tag that was appended — which matters because re-tagging a
-  new event with a tag read back from an old one is an ordinary pattern
-- **`Tag.parse` and `Tags.parse` stay lenient, deliberately.** They are the read path for tags
-  written before any of this was enforced, and they normalise instead of rejecting: a stored
-  `"k: v "` comes back as `Tag.of("k","v")`, a stored `"k:"` as `Tag.of("k")`. Everything they
-  return is constructible, so reading legacy data never throws. Two consequences for legacy rows
-  only: the tag read off such an event is not the tag that was appended, and because `Tags.parse`
-  builds a `Set`, two stored strings normalising to the same tag **collapse into one**
-- **Matching is exact containment, never key-prefix.** `Tag.of("customer")` and
-  `Tag.of("customer","123")` are two different tags on every backend, and a query for the first does
-  **not** return events carrying the second. Users reasonably expect the bare key to act as "any
-  customer"; it does not, and there is no wildcard form. Tag every event with
-  `Tag.of("customer", id)` and query for that; a bare key is a flag, for when the presence of the
-  tag is itself the fact
-- `TagTest`/`TagsTest` pin the round trip and the rejections; `TagRoundTripTest` in the TCK proves
-  per backend that a written tag is found by a query for itself and comes back unchanged, over the
-  full legal character set (colons in values, unicode, newlines, `{`/`,`/quotes that are `text[]`
-  syntax, 1000-character values)
+- `Tags.of("k","v")`, `Tags.of("k1","v1","k2","v2",...)` (odd count rejected), `Tags.of(Tag...)`.
+- `Tags` is a set: a repeated tag is removed, a `null` is `IllegalArgumentException`. `tags.tag(key)`
+  throws `IllegalStateException` when several tags have the key; use `tags.tags(key)`.
+- **`Tag.toString()` (`"key:value"`) is the wire format** — Postgres stores and matches it in a
+  `text[]`. `Tag.parse` splits on the first `':'`, strips, maps empty to `null`.
+- **Construction rejects** (`IllegalArgumentException`): `':'` in the key, leading/trailing whitespace,
+  an empty key or value, a tag with neither. Values may contain `':'`. `Tag.of(null, "v")` stays legal.
+  So `parse(tag.toString())` is the identity. Do not escape the stored form.
+- `Tag.parse`/`Tags.parse` stay lenient for legacy rows (normalise, never throw).
+- **Matching is exact containment, never key-prefix.** `Tag.of("customer")` does not match
+  `Tag.of("customer","123")`. There is no wildcard.
+  Tests: `TagTest`, `TagsTest`, `TagRoundTripTest`.
 
 **EventFilter:**
-- Pure matching criteria: event types, tags, and an optional "until" temporal boundary
-- Does not carry traversal semantics (direction, limit) — those belong to `EventQuery`
-- Can match all (`EventFilter.matchAll()`), none (`EventFilter.matchNone()`), or specific criteria
-- Created via `EventFilter.forEvents(eventTypesFilter, tags)`, or `EventFilter.forTags(tags)` for events of
-  any type carrying the tags, or as a chain: `EventFilter.forTypes(CustomerEvent.class).tagged("customer", id)`
-- Used by `AppendCriteria` for optimistic locking (where direction/limit are irrelevant)
-- **The fluent form and the two-halves form build the same filter.** `forTypes(classes...)` is
-  `forEvents(EventTypesFilter.of(classes...), Tags.none())`, and `tagged(key, value)` narrows what is
-  there: every item gets the tag on top of the tags it already requires, chained calls accumulate, and
-  the `until` boundary is kept. Narrowing distributes over a union — `a.or(b).tagged(t)` is
-  `a.tagged(t).or(b.tagged(t))` — which is what makes it well-defined on a filter of several items;
-  a match-all narrowed is `forTags(t)`, a match-none stays match-none. `or` is the union: the items of
-  both side by side, match-all on either side making the union match-all, and the same `until` on both
-  or `IllegalArgumentException`. Both spellings resolve to the same `EventFilterItem`s, so a query
-  built one way compares equal to the same query built the other way. `EventFilterTest` pins each rule, `EventQueryTest` the mirror on the query
-- **A sealed interface in a type filter stands for every event type under it.** An event is stored
-  under the simple name of its record, never under an interface it implements, so
-  `EventTypesFilter.of(Class...)` resolves a sealed interface into the event types it permits,
-  recursively, when the filter is built: the root of a hierarchy names all of it
-  (`EventTypesFilter.of(CustomerEvent.class)`), a nested interface names its own branch, and the
-  filter then holds those names only. Resolved at construction rather than where the filter is
-  matched, because a filter is matched in several places — the storage query, the store's re-check
-  of the events it upcasts, a `Projector`'s check of the events it is handed, the lock check of an
-  append — and only some of them have the stream's registrations at hand; resolving once keeps them
-  in agreement. The alternative — resolving an interface by name inside the typed serde — loses
-  because the filter then holds a name no stored event carries, honoured by whichever path consults
-  the serde and by none of the others; a lock check built on it admits every append, silently. A
-  non-sealed interface is refused with `IllegalArgumentException`, as `getEventStream` refuses it as
-  a root. A filter built from `EventType`s is literal: `EventType.of(SomeInterface.class)` names a
-  stored type no record has. `EventTypesFilterTest` pins the resolution,
-  `EventTypesFilterHierarchyTest` in the TCK pins the four paths per backend, legacy upcasts included
-- **`until` is an inclusive upper bound over *stored* events, in the `(tx, position)` order, and is
-  direction-independent**: `.backwards()` returns the same events as forward, newest first. It is part of
-  the filter, so it also bounds a consistency boundary — an event past it is not a new relevant fact and
-  raises no `OptimisticLockingException`. Backends must compare it as the tuple, exactly as they compare
-  the cursor; comparing positions alone drops events whose transaction and position were assigned in
-  different orders. `EventQueryUntilBoundaryTest` pins all of this down per backend
-- **So an `AppendCriteria`'s filter must carry no `until`.** One that does deems nothing after it
-  relevant, so the check finds no new fact whatever lands: every append is admitted and nothing is
-  raised — the check off, not merely narrowed. The head idiom puts both forms of one query in a
-  caller's hands — `relevant.until(head)` for the read, `relevant` plus `head` for the criteria — and
-  `AppendCriteria.of(relevant.until(head), head)`, which is what reusing "the query I read with"
-  produces and reads as the more careful of the two, is the one that turns optimistic locking off. The
-  head is a boundary as the criteria's *reference*, where the matching events after it are what
-  conflict; in the filter it bounds the check away. Nothing catches it — the append reports success —
-  so it is documented at all three places a caller meets it: `AppendCriteria` (both `of` factories),
-  `EventFilter.until` and `EventSource.head()`
-- **A boundary names a stored event, whole — never a fragment of one.** The `index` on a reference
-  distinguishes the events one stored event upcasts into, and a storage never sees it: it compares
-  stored events, whose index is always 0. So the read side compares the same way
-  (`EventReference.storedEventHappenedAfter`, used by `EventFilter.matches` and `Projector.runUntil`),
-  and every event the stored event at the boundary upcasts into is at or before it, whatever its index.
-  This is what lets a reference obtained without upcasting — `head()`, a bookmark read back from
-  Postgres, which stores no index — bound a typed read without cutting the newest stored event in
-  pieces. The alternative — comparing the full `(tx, position, index)` on the read side — loses
-  because such a reference would then include the first upcast event of the newest stored event and
-  drop the rest, and a decision made on that fragment is admitted by the lock check, which compares
-  stored events and sees nothing after the boundary. `EventFilterTest` pins the comparison,
-  `HeadTest.theHeadNamesTheWholeStoredEventWhenItUpcastsIntoSeveral` the read and the projector
+- Matching only: event types, tags, optional `until`. No direction or limit.
+- Built by `matchAll()`, `matchNone()`, `forEvents(types, tags)`, `forTags(tags)`,
+  `forTypes(classes...)`, `.tagged(key, value)` (adds the tag to every item, keeps `until`, distributes
+  over `or`), `.or(...)` (union; both sides need the same `until`). Both spellings make equal filters.
+  Test: `EventFilterTest`.
+- **A sealed interface in a type filter resolves to every type under it at construction.** A
+  non-sealed interface is `IllegalArgumentException`. A filter built from `EventType`s is literal.
+  Tests: `EventTypesFilterTest`, `EventTypesFilterHierarchyTest`.
+- **`until` is an inclusive bound over stored events in the `(tx, position)` order**, the same forwards
+  and backwards, and it also bounds a consistency boundary. Compare it as the tuple.
+  Test: `EventQueryUntilBoundaryTest`.
+- **An `AppendCriteria` filter must carry no `until`.** `AppendCriteria.of(relevant.until(head), head)`
+  turns optimistic locking off with no error. Use `relevant.until(head)` for the read and
+  `AppendCriteria.of(relevant, head)` for the append. This is documented on `AppendCriteria.of`,
+  `EventFilter.until` and `EventSource.head()`.
+- **A boundary names a whole stored event.** The read side compares with
+  `EventReference.storedEventHappenedAfter` (ignores `index`). Do not compare `(tx, position, index)`
+  on the read side. Test: `HeadTest.theHeadNamesTheWholeStoredEventWhenItUpcastsIntoSeveral`.
 
 **EventQuery:**
-- Wraps an `EventFilter` together with traversal semantics (direction and limit)
-- Use `EventQuery.filter()` to extract the pure matching criteria
-- Can match all (`EventQuery.matchAll()`), none (`EventQuery.matchNone()`), or specific criteria
-- Supports backward direction (`.backwards()`) and result limits (`.limit(n)`)
-- Created via `EventQuery.forEvents(eventTypesFilter, tags)`, or `EventQuery.forTags(tags)` for events of
-  any type carrying the tags — the usual shape of a consistency boundary — or as a chain,
-  `EventQuery.forTypes(CustomerEvent.class).tagged("customer", id)`, where a sealed root names its
-  whole hierarchy. `EventQuery` re-exposes the `EventFilter` builders and none of its readers:
-  `forTypes`, `forTags`, `forEvents`, `tagged`, `or`, `until` and `untilIfEarlier` behave as they do
-  on the filter (see EventFilter above), `tagged` keeping the query's direction and limit, `or`
-  refusing two directions or a limit on either side, since a shared limit over a union does not mean
-  "the last of each". Whether an event matches, whether the query matches everything or nothing, its
-  items and its `until` boundary are the filter's to answer, through `filter()`:
-  `query.filter().matches(event)`, `query.filter().isMatchNone()` — which is how `Projector` asks
-  them. The readers of the query's own are the two it adds, `isBackwards()` and `limit()`. The
-  alternative — the query delegating each filter reader through a method of its own — loses because it
-  hands every caller two spellings of one question and makes the filter's read surface something to
-  keep in step on the query. In the same spirit, the query names no `EventFilterItem`: its constructor
-  takes an `EventFilter`, and `forEvents(types, tags)` builds one. `EventFilterItem` stays public
-  because it is the component type of `EventFilter.items()`, which the impl (the legacy-type
-  trace-back), the Postgres backend (the SQL it builds from each item) and the fixture read; it is a
-  filter's item, and nothing application code needs to construct. `EventQueryTest` pins the surface
-  reflectively
-- **`.limit(n)` means "read n stored events", and it is pushed into the storage query** — a SQL
-  `LIMIT` on Postgres, a short-circuiting `Stream.limit` in memory — not applied to the result. That
-  is what makes it bound memory as well as output: a storage query materialises its whole result set
-  before returning it, so an unbounded query over a large stream is a heap problem rather than a slow
-  one. A cursor does not change this: `query(q.limit(500), cursor)` and `page(q.limit(500), cursor)`
-  read 500, same as `query(q)` would with the limit on `q`. A query with no limit reads to the end of
-  a stream, deliberately. The limit is a property of the query: `Limit` is the type of
-  `EventQuery.limit()`, and of the SPI's `EventStorage.query`, and is not an argument of any read on
-  `EventSource` — the alternative, a read taking a `Limit` beside the query's own, loses because two
-  limits for one read is one more than a caller can keep straight, and the projector's page size is
-  just `eventQuery().limit(n)`
-- **The SPI is asked with an `EventFilter`, never with an `EventQuery`.** `EventStorage.query` takes
-  the filter, the stream, the cursor, the limit and the direction as five parameters, so direction and
-  limit reach a backend exactly once: the stream layer derives all three from the query it was given,
-  the `Projector`'s page size included, since that is the limit of the query it pages with. The
-  alternative — an `EventQuery` parameter beside a `Limit` and a `Direction` — loses because a
-  backend is then handed two limits and two directions and nothing says which wins; the in-tree
-  backends read the parameters and ignore the query's own, and a third-party one reading the query's
-  own would be right by the signature and wrong by the store. The limit and the direction arrive as
-  the query's own types, `Limit` and `EventQuery.Direction`: the SPI declares no direction enum of
-  its own, since one with the same two values says one thing in two types and puts a translation
-  between them on every path from a query to a backend, while the SPI already names `EventFilter`,
-  `Limit` and `EventStreamId` from the api. The stream scope is an `EventStreamId`
-  and never absent: a wildcard component reads across it, so `EventStreamId.anyContext()` is the whole
-  storage, and a null is refused with `IllegalArgumentException` on `query`, `append` and `head` alike
-  (`StreamScopeTest` in the TCK pins it per backend, with what each wildcard reads).
-- **Without upcasting, n stored events are n events back. With it, they are not.** An `Upcaster`
-  may turn one stored event into several or into none, and the limit is spent before it runs,
-  so `.limit(1)` over an event upcasting into two returns two, and over one upcasting into none
-  returns zero — having read exactly one stored event either way. Trimming the surplus would return a
-  fragment of a stored event and leave a cursor pointing into its middle; `Projector` counts stored
-  events for exactly this reason. Where a caller needs exactly n, take a `subList` of the returned
-  list — cheap, since those events are already read. `UpcastMultiTest` pins this per backend
+- An `EventFilter` plus direction (`.backwards()`) and limit (`.limit(n)`). It re-exposes the filter
+  builders (`forTypes`, `forTags`, `forEvents`, `tagged`, `or`, `until`, `untilIfEarlier`) but none of
+  the filter readers: ask `query.filter()`. Its own readers are `isBackwards()` and `limit()`. `or`
+  refuses two directions or a limit on either side. The query names no `EventFilterItem`.
+  Test: `EventQueryTest`.
+- **`.limit(n)` means "read n stored events" and is pushed into storage** (SQL `LIMIT`, `Stream.limit`).
+  A cursor does not change it. `Limit` is a property of the query, never a separate read argument.
+- **The SPI is asked with an `EventFilter`, never an `EventQuery`:** `EventStorage.query(filter, stream,
+  cursor, limit, direction)`, with `Limit` and `EventQuery.Direction`. Do not add an SPI direction enum.
+  The stream scope is never null (`IllegalArgumentException` on `query`, `append`, `head`); `anyContext()`
+  is the whole storage. Test: `StreamScopeTest`.
+- With upcasting, n stored events can read as more or fewer events. Do not trim; take a `subList`.
+  Test: `UpcastMultiTest`.
 
 **AppendCriteria:**
-- Controls optimistic locking when appending events
-- Contains an `EventFilter` and an optional `EventReference` for the expected last event
-- If new matching events are found after the reference, append fails with `OptimisticLockingException`
-- Use `AppendCriteria.none()` for simple appends without locking, or the overloads that take no
-  criteria — `append(events)` and `append(event)` on `EventSink` — which are the same append with
-  `none()` and nothing else: no boundary checked, no `OptimisticLockingException` possible, and on
-  Postgres no advisory lock taken. The two spellings are interchangeable. The alternative — making
-  `none()` the only spelling, so that skipping the check is written out at every call — loses
-  because a DCB append is opted into by presenting a boundary the caller holds from its read, not by
-  the absence of an argument; an argument that is always `none()` where there is nothing to present
-  marks nothing. `EventStreamTest.anAppendWithoutCriteriaIsAnAppendWithNoCriteria` pins it per backend
-- Use `AppendCriteria.of(eventQuery, reference)` or `AppendCriteria.of(eventFilter, reference)` for conditional appends
-- **`expectedLastEventReference()` is never null**, whichever factory or constructor produced the criteria — the
-  compact constructor normalises a null to `Optional.empty()`, so a backend can call `.isPresent()` on it
-  without a null guard of its own
-- **"No criteria" and "an empty expected reference" are different things, and only `isNone()` distinguishes
-  them.** `isNone()` is derived from the filter being `matchNone`, independently of the reference. An empty
-  reference under a *real* filter means "I decided on an empty stream", which is still a consistency boundary:
-  any matching event in the stream is a new relevant fact and must raise `OptimisticLockingException` (see
-  `OptimisticLockingTest.testOptimisticLockingSucceedsWhenExpectingEmptyStreamAndStreamIsNotEmpty`). A backend
-  skipping the check when the reference is absent is a silent loss of optimistic locking; `AppendCriteriaTest`
-  in the TCK pins both halves down
-- **A boundary over a current type counts the legacy events that upcast into it**, exactly as a query for
-  that type returns them. Storage checks stored type names, so `EventStreamImpl.append` traces the
-  criteria's types back to their legacy names before handing it over, the same trace-back the query path
-  applies (`determineLegacyTypes`). Without it the two paths disagree on one filter: a decision read
-  through the query sees the legacy event and the lock check admits the append over it. The exception
-  names the boundary the caller decided on, never the stored names it was checked with — a caller
-  comparing `getFilter()` to its own criteria, as the fixture's `OptimisticLockingFailure` does, finds no
-  legacy names it never wrote; storage's exception is the cause. On a stream without legacy types the
-  trace-back changes nothing and storage's exception passes through untouched.
-  `UpcastTest.aBoundaryOverACurrentTypeCountsTheLegacyEventsUpcastIntoIt` pins it per backend
+- An `EventFilter` plus an optional expected last `EventReference`. New matching events after the
+  reference raise `OptimisticLockingException`.
+- `AppendCriteria.none()` and `append(events)`/`append(event)` are the same: no check, no exception, no
+  advisory lock on Postgres. Test: `EventStreamTest.anAppendWithoutCriteriaIsAnAppendWithNoCriteria`.
+- `AppendCriteria.of(query or filter, reference)`. `expectedLastEventReference()` is never null.
+- **Only `isNone()` (filter is `matchNone`) means "no criteria".** An empty reference under a real filter
+  means "I decided on an empty stream" and must still be checked. Tests: `AppendCriteriaTest`,
+  `OptimisticLockingTest.testOptimisticLockingSucceedsWhenExpectingEmptyStreamAndStreamIsNotEmpty`.
+- **A boundary over a current type counts the legacy events that upcast into it**:
+  `EventStreamImpl.append` traces types back with `determineLegacyTypes`. The exception names the
+  caller's boundary; storage's exception is the cause.
+  Test: `UpcastTest.aBoundaryOverACurrentTypeCountsTheLegacyEventsUpcastIntoIt`.
 
-**Projection:**
-- Combines an `EventQuery` with an `EventHandler`
-- Processes all events matching the query criteria
-- Used for building read models from event streams
-- Optionally defines an `initQuery()` for the savepoint pattern (see below)
-- **`EventHandler` is the one handler interface, and `when(Event<E>)` its one method.** The `Projector`
-  hands every matching event to it, one call per event, and a handler that needs only the domain
-  event switches on `event.data()`. The alternative — a second interface whose `when` takes the
-  payload alone, with a default `when(Event)` unwrapping into it, and a `WithoutMetaData` twin of
-  every interface built on the pair — loses because two methods of one name on one object, one to
-  call and one to implement, is a split the compiler does not enforce (an `@Override` on the wrong
-  one is found by the events that never arrive); because for a handler over `Object` the pair
-  collapses into `when(Object)` and `when(Event<Object>)`, where an `Event` *is* an `Object`; and
-  because it bought one `.data()` call per handler. Nor are there `when(List)`/`when(Stream)`
-  batch defaults: the projector never calls them, so an override runs for nobody, and batch-level
-  work has its seam in `BatchAwareProjection`. A payload-only convenience, if one is ever wanted,
-  gets a distinct method name, never an overload of `when`. `ProjectionTest` in the api module pins
-  the contract reflectively: one `when`, abstract, taking the `Event`, on both `EventHandler` and
-  `Projection`
+**Projection and EventHandler:**
+- A `Projection` is an `EventQuery` plus an `EventHandler`, with an optional `initQuery()`.
+- **`EventHandler.when(Event<E>)` is the one handler method.** Do not add a payload-only overload of
+  `when`, a `WithoutMetaData` twin, or `when(List)`/`when(Stream)` defaults. Batch work goes in
+  `BatchAwareProjection`. Test: `ProjectionTest` (api).
 
-**BatchAwareProjection — the seam between a projection's own store and the bookmark:**
-- A `BatchAwareProjection` commits its own work in `afterBatch`, and the bookmark saying how far it has
-  come lives in the event store. There is no transaction across the two, so the ordering is the whole
-  guarantee: **the batch is committed first and bookmarked second**, which makes a crash in that window
-  cost a re-projection and never a silent skip. At-least-once, deliberately, in that direction
-- **The bookmark is placed after every batch, not once per run.** The re-projection window after a crash
-  is therefore one batch (500 events by default), not the whole catch-up. Bookmarking once at the end of
-  `run()` would be cheaper — one upsert instead of one per batch — but a catch-up that commits 2000 batches
-  and then dies would replay all of them; one upsert per batch during a replay is what the bookmark is for
-- **A batch that fails takes the projector's cursor back with it.** `afterBatch` is called inside the
-  try, not from a `finally`: a commit that throws rolls `lastEventReference` back to where the batch
-  started and is reported as a `ProjectorException` like any other projection failure. Both halves
-  matter. A cursor left advanced past a rolled-back batch skips its events for good, and a later
-  successful batch bookmarks over the hole. An untyped throwable misses the `catch ( ProjectorException )`
-  that stops a processor and lands in a catch-all that loops, so a projection whose commits keep
-  failing would re-query and re-project at full thread speed
-- **A batch is ended exactly once.** `cancelBatch` is not called after an `afterBatch` that threw — that
-  projection has already released what it held — and a `cancelBatch` that throws is logged and attached
-  to the original failure as a **suppressed** exception rather than replacing it, so a poison event whose
-  rollback also fails is still reported as a poison event, not as a rollback problem in the wrong store
-- **Where a re-projection would duplicate rather than merely repeat, the projection should hold its own
-  position.** `afterBatch` is handed the batch's last `EventReference` for exactly this: write it into the
-  same store, in the same transaction, and resume from it. Two stores that cannot share a transaction
-  cannot be made exactly-once any other way. `sliceworkz-eventmodeling`'s `SqlReadModelProjector` is the
-  worked example
-- **`readBookmark()` and a run never overlap.** Both take the projector's lock, so a manual bookmark read
-  while a run is in progress — a subscribed projector runs on the storage's notification thread — waits
-  for the run to finish and then resets the position, rather than moving a cursor the run is about to
-  overwrite with its own progress. `ProjectorTest.testReadBookmarkWaitsForARunInProgress` pins it
-- `ProjectorBatchDurabilityTest` in the TCK pins all of it per backend: the bookmark visible from inside
-  the *second* batch already names the first, a failed commit is a `ProjectorException` and its events
-  come round again, and a failing rollback keeps the cause
+**BatchAwareProjection:**
+- `afterBatch` commits the projection's own work first; the bookmark is placed second, after every
+  batch. At-least-once.
+- `afterBatch` runs inside the try: a commit that throws rolls the cursor back and is a
+  `ProjectorException`.
+- A batch ends once: no `cancelBatch` after a failed `afterBatch`; a throwing `cancelBatch` is logged
+  and added as a suppressed exception.
+- For exactly-once, store the `EventReference` given to `afterBatch` in the projection's own store.
+- `readBookmark()` and a run take the same lock. Tests: `ProjectorBatchDurabilityTest`,
+  `ProjectorTest.testReadBookmarkWaitsForARunInProgress`.
 
 **Projector.Builder:**
-- **One flat builder, starting from the source.** `Projector.from(stream).into(projection)` is the
-  whole of a projector; `bookmarkAs("reader")` (or `bookmarkAs("reader", tags)`), `startingAfter`,
-  `inBatchesOf`, `subscribe` are the optional settings, each one method on the same builder. A
-  bookmarked projector reads its bookmark before every run; `readBookmarkOnce()` reads it before the
-  first run only and `readBookmarkOnRequest()` only on `readBookmark()`. Those are the two readings
-  that differ from the default, so they are the two that exist. The alternative — a sub-builder for
-  the bookmark, entered and left around its own settings — loses because the sub-builder holds three
-  settings and costs two calls to get to them, and because it puts the validation on the way out
-  (`done()`) rather than on the setting itself. There is no other spelling: the source is given to
-  `from`, so the builder has no public constructor and no `from` of its own.
-  `idleBookmarkInterval(Duration)` paces the read-position moves of runs that handled nothing (see
-  "Bookmarks" below)
-- `Projector.from(null)` is refused with `IllegalArgumentException` at the call; `build()` refuses a
-  missing projection, and a bookmark read setting without a reader, with `IllegalStateException`
-  naming the call to make, rather than leaving it to fail as a `NullPointerException` from inside the
-  first batch — after the bookmark has been read and, for a subscribed projector, after the source has
-  been registered with the storage. `inBatchesOf(n)` refuses a batch size below 1
-- **`ProjectorException.getEventReference()` is the last event handed to `when`, which is the failing
-  event only when `when` threw.** For a page that could not be read or a batch hook that threw, it is
-  the last event of an earlier batch, or null when there was none; an
-  `EventDeserializationException`'s own reference names the poison event. Its javadoc lists the cases
-- `accumulatedMetrics()` is the read of a subscribed projector's position from another thread: the
-  field it answers is `volatile` and published by every run, where `run()`'s return value is only
-  seen by the thread that called it, which for a subscribed projector is the storage's notification
-  thread
-- **`Projection.eventQuery()` is read once per run.** Storage is asked with that query and every event
-  of the run is matched against it, so a projection that computes its query cannot be asked twice and
-  answer differently in one run, and is not asked once per event. `ProjectorTest` pins both per backend
+- `Projector.from(stream).into(projection)`, then optional `bookmarkAs("reader"[, tags])`,
+  `readBookmarkOnce()`, `readBookmarkOnRequest()`, `startingAfter`, `inBatchesOf(n)` (n ≥ 1),
+  `subscribe()`, `idleBookmarkInterval(Duration)`, `named(String)`. One flat builder; no sub-builder,
+  no public constructor.
+- `from(null)` is `IllegalArgumentException`; `build()` with no projection, or a bookmark setting with
+  no reader, is `IllegalStateException`.
+- `ProjectorException.getEventReference()` is the last event given to `when`, not always the failing
+  one; `EventDeserializationException.getReference()` names a poison event.
+- `accumulatedMetrics()` is the thread-safe read of a subscribed projector's position.
+- `Projection.eventQuery()` is read once per run. Test: `ProjectorTest`.
 
-**Projection initQuery (Savepoint Pattern):**
-- Projections can define an optional `initQuery()` (default returns `EventQuery.matchNone()`; a `null` is tolerated and means the same) that runs before the main `eventQuery()`
-- Enables the savepoint pattern: a backward query with limit 1 finds the most recent savepoint event that summarizes prior state
-- The `Projector` executes `initQuery()` first, passes results to `when()`, then uses the last event's reference as the cursor for `eventQuery()`
-- Savepoint events are pure domain events — no special framework support needed
-- When no savepoint exists, the main `eventQuery()` replays from the beginning (graceful degradation)
-- When bookmarking is enabled on the `Projector`, `initQuery()` is ignored (a warning is logged at build time)
-- A savepoint handler that throws fails the run as a `ProjectorException` naming the savepoint event, exactly
-  as a failing batch does, and the cursor goes back to where the run started, so the next run re-runs
-  `initQuery()` rather than skipping it and starting the main query from a read model that was never
-  initialised. `ProjectorTest.testProjectorWrapsAFailingSavepointHandlerInAProjectorException` pins it per backend
-- The `initQuery()` and `eventQuery()` should query different event types to avoid double-processing and to allow recovery from buggy savepoints
+**initQuery (savepoint pattern):**
+- `initQuery()` defaults to `matchNone()` (`null` means the same). The `Projector` runs it first, gives
+  its events to `when()`, then starts `eventQuery()` after the last one. No savepoint: replay from the
+  beginning.
+- With bookmarking, `initQuery()` is ignored (a warning at build time).
+- A failing savepoint handler is a `ProjectorException`, and the cursor goes back so the next run runs
+  `initQuery()` again. Test: `ProjectorTest.testProjectorWrapsAFailingSavepointHandlerInAProjectorException`.
+- `initQuery()` and `eventQuery()` should select different event types. Example: "Savepoint Pattern
+  with initQuery" below.
 
 ### Storage Implementations
 
@@ -974,125 +623,49 @@ later reference, which is after this one and so still delivered.
 
 ### Bookmarks: a cursor that must name a stored event, and a foreign key that never cascades
 
+**Read `docs/design/bookmarks.md` before you change bookmarks, the bookmarks table or how a `Projector`
+places them.** It holds the reasons, the rejected alternatives and the migrations. The rules:
+
 - **`placeBookmark` rejects a reference this storage never stored** — `EventStorageException`, nothing
-  written, and a previously placed bookmark for that reader stays. The realistic mistake it catches is a
-  reference from a *different* store or prefix in a miswired multi-store setup, which would otherwise
-  poison the reader's cursor silently. Postgres enforces it with the `fk_bookmarks_event_id` foreign key
-  (recognised by the constraint name the server reports, like the idempotency index — never by message
-  text); the in-memory store checks its log under the same monitor that guards `append`. The contract is
-  documented on `EventStorage.bookmark`, and `BookmarksTest` in the TCK pins it per backend, so a backend
-  that accepts any reference fails compliance rather than diverging quietly
-- **A bookmark stores the event id and nothing else about the event; its position and transaction
-  are answered from the event.** On Postgres the bookmarks table has no ordering columns, and
-  `getBookmark`/`getBookmarks` join the events row on the unique `event_id` index (one probe; the
-  bookmark trigger does the same for its notification payload). The in-memory store resolves the
-  reference from its log at placement and again when a persisted bookmark is loaded. So the reference
-  read back — and the one a `BookmarkPlacedNotification` carries — is always the store's own for that
-  event, whatever the caller passed: a bookmark cannot carry a cursor that disagrees with the event it
-  names, and a bookmarks table carried between stores by id (an import preserves ids and reassigns
-  both ordering columns) is valid as it stands. The alternative — storing the caller's `(tx, position)`
-  beside the id — loses because the foreign key never checks that copy, so a bookmark could pass
-  validation with a stored id and a wrong cursor, and because it makes every bookmark meaningless
-  outside the store it was taken from. `BookmarksTest.bookmarkIsResolvedToTheStoresOwnCoordinates`
-  and `bookmarkNotificationCarriesTheStoresOwnCoordinates` pin it per backend. A Postgres database
-  created while the columns existed needs a hand-applied migration — `ALTER TABLE <prefix>bookmarks
-  DROP COLUMN event_position, DROP COLUMN event_tx;` — which `checkDatabase()` reports under `VALIDATE`
-  and `ENSURE`, and the first placement names under `NONE`; see "Migrating the bookmarks table" in the
-  postgres module README
-- **A bookmark holds two positions: `reference`, the last event the reader handled, and `readUpTo`,
-  the event up to which it has read the stream, relevant to it or not.** A reader's query names the
-  event types it handles, so its reference never moves past an event of another type; counting "events
-  after the reference" as its backlog counts events it will never handle, for good. `readUpTo` is what
-  lag is counted from, through `Bookmark.readUpToOrReference()`, and what a caller waiting for a reader
-  to have seen an event compares with (`EventSource.findBookmark(reader)` answers the whole bookmark,
-  `EventStorage.findBookmark` is the SPI half). It is **never a resume point**: a projector restarts from
-  `reference`. The alternative — resuming from `readUpTo` — loses because it buys nothing (the typed
-  query skips irrelevant events through the index anyway) and because a query that later gains an event
-  type would never be handed the events of that type between the two positions, silently. The one
-  exception is opted into on the projector: `Projector.Builder.resumeAfterReadPosition()` makes a
-  projector whose bookmark names **no handled event** read on after its read position instead of from the
-  beginning — for a reader started at a point on purpose (its first bookmark a read position placed at the
-  head), which resumed from the beginning would be handed the very history it was started to skip. The
-  handled reference stays empty until an event is really handed over, so it is only ever an event the
-  projection handled, never the point reading began at; once one is, that event is the resume point as for
-  every projector. The cost the rule above avoids is accepted there deliberately: a query gaining an event
-  type is not handed that type's events before the read position — which, for such a reader, is the
-  history it skips. The alternative — `startingAfter(readPosition)` — loses because the projector's cursor
-  is also the reference it records as handled, so the start point would be written as handled on the next
-  idle move. `ProjectorReadPositionTest` pins it per backend `readUpTo` is
-  optional: a bookmark placed without one (by a writer or storage that does not record it) reads back
-  empty, and readers fall back to `reference`; the next placement that carries one fills it in. It is held
-  to the rules `reference` is — an unknown event is rejected, only the id is stored, and it reads back (and
-  arrives on `BookmarkPlacedNotification`) as the store's own coordinates. On Postgres it is the nullable
-  `read_up_to_event_id` column with its own non-cascading `fk_bookmarks_read_up_to_event_id`, resolved by
-  a second (LEFT) join on the events table; `ENSURE` adds the column, its foreign key and index to an
-  existing table — the one column it adds, since it is nullable and needs no data change — and
-  `checkDatabase()` reports it missing under `VALIDATE`, while under `NONE` the first bookmark read or
-  write names the migration (see "Migrating the bookmarks table to record a read position" in the
-  postgres module README). The SPI's `bookmark(reader, reference, readUpTo, tags)` is a `default` that
-  drops `readUpTo` and delegates to the three-argument method, so a third-party storage keeps compiling
-  and simply records none; `BookmarksTest` holds every in-tree backend to the full contract
-- **The handled reference is optional too: `Bookmark.reference()` is an `Optional`, empty for a reader
-  that has read the stream without handling anything yet** — one whose query selects event types that
-  have not occurred. Without it such a reader has no bookmark, and monitoring counts its whole stream as
-  backlog although nothing in it concerns it. A bookmark names at least one of the two positions (the
-  record refuses neither, as do `BookmarkPlacedNotification`, the JSON codec and the Postgres check).
-  It is placed through its own method — `EventSource.placeReadPosition(reader, readUpTo, tags)`, the
-  SPI's `EventStorage.bookmarkReadPosition(...)` — rather than a nullable reference on `placeBookmark`,
-  so no public signature takes a null to mean "nothing handled". Its rules: the reader **resumes from
-  the beginning**, exactly as without a bookmark — `getBookmark(reader)`, the resume point, answers
-  empty, and the read position is never a resume point; a read position placed alone **never clears a
-  handled reference** already there (in memory under the monitor, on Postgres by `COALESCE` in the same
-  upsert, so a concurrent placement is never lost to it); the first placement naming a handled event
-  fills it in; `removeBookmark` removes such a bookmark too (answering empty). Its notification carries
-  an empty `bookmark()` — or the reference the row kept — and a `BookmarkListener`, which reports a
-  processed-until, is not told of a read position placed with nothing processed. The SPI method is a
-  `default` that records nothing, so a third-party storage keeps compiling and its readers simply have no
-  bookmark until they handle something, as before. On Postgres `event_id` is nullable, the foreign key
-  stays (MATCH SIMPLE: a `NULL` is not checked, a present id still has to name a stored event), and
-  `ck_bookmarks_handled_or_read_position` refuses a row naming neither; `getBookmark(s)` LEFT JOINs the
-  handled event as it does the read position, and the trigger payload's `event*` fields are null for such
-  a row. `ENSURE` relaxes an existing table in place (`DROP NOT NULL`, guarded on the column's
-  nullability so an ordinary start takes no lock, and the check added when absent — no data change);
-  `checkDatabase()` reports an unrelaxed table under `VALIDATE`, and under `NONE` the first
-  read-position-only placement names the migration (see "Migrating the bookmarks table to record a read
-  position without a handled event" in the postgres module README)
-- **A projector keeps `readUpTo` by four rules** (on `Projector`'s class javadoc):
-  - it takes the source's `head()` at the start of every run — behind the same visibility barrier as
-    every read, so anything committed later sorts after it; never a raw `MAX(position)`
-  - after each committed batch the bookmark records the last event handled as both positions, so a run
-    that fails or dies part-way leaves `readUpTo` at the last batch that landed, never at the head
-  - when a run has read to the end (its last page came back shorter than its limit, nothing failed),
-    `readUpTo` is the later of that head and the last event handled, compared with `happenedAfter` in the
-    total `(tx, position, index)` order; a `runUntil` extends it only when the head is at or before its
-    boundary
-  - a run that handled nothing moves only `readUpTo`, and at most once per
-    `Builder.idleBookmarkInterval(Duration)` (default 2s, `Duration.ZERO` for every run). Every subscribed
-    projector runs on every append to its stream and each placement is a write — on Postgres an upsert,
-    its trigger and a notification — so unthrottled it would be a write per processor per append. A move
-    held back is written by the first run after the interval; `Projector.deferredReadUpToDueIn()` says
-    when that is due, for a caller that drives its projector itself and would otherwise leave the read
-    position trailing until the next append. A projector that has handled nothing yet records its read
-    position alone by the same rules — after a run that read to the end, the head within its `runUntil`
-    boundary, as an idle move held to the interval — and still resumes from the beginning; the first
-    event it handles fills the handled reference in. `ProjectorReadPositionTest` in the TCK pins every
-    rule per backend
-- **The foreign key deliberately does not cascade.** An absent bookmark — or one recording a read
-  position alone — means "replay from the beginning" — for a dispatcher in the eventmodeling framework, duplicate publishing to an external
-  system, the worst outcome it documents. `ON DELETE CASCADE` handed exactly that to the readers least
-  able to afford it: an event deletion (retention pruning, surgically removing a poison event) cascades
-  away the bookmarks of readers still pointing into the deleted range — the *lagging* ones — silently,
-  with no notification, since the bookmark trigger fires on INSERT/UPDATE only. With the default NO
-  ACTION, deleting events out from under an outstanding bookmark fails loudly, and whoever prunes
-  decides explicitly what happens to the reader. The constraint carries the reads too: a bookmark
-  resolves to its event on every read (next bullet), so an event deleted from under one would leave
-  the reader with no position at all — the same "replay from the beginning"
-- **Migration for a database created while the cascade existed**: `ENSURE` only ever creates tables, so
-  an existing database keeps its constraint until migrated by hand —
-  `ALTER TABLE <prefix>bookmarks DROP CONSTRAINT fk_bookmarks_event_id; ALTER TABLE <prefix>bookmarks
-  ADD CONSTRAINT fk_bookmarks_event_id FOREIGN KEY (event_id) REFERENCES <prefix>events(event_id);` —
-  no data migration is needed. `checkDatabase()` validates the constraint by name only, not its delete
-  rule, so an un-migrated database still starts, with the old cascade behaviour
+  written, the earlier bookmark stays. Postgres enforces it with `fk_bookmarks_event_id` (recognised by
+  constraint name, never by message text); in memory it is checked under the `append` monitor.
+- **A bookmark stores only the event id.** Position and transaction are read from the event (Postgres
+  joins on `event_id`; in memory it resolves from the log). So a bookmark read back, and a
+  `BookmarkPlacedNotification`, always carry the store's own coordinates. Do not store the caller's
+  `(tx, position)`. Tests: `BookmarksTest.bookmarkIsResolvedToTheStoresOwnCoordinates`,
+  `bookmarkNotificationCarriesTheStoresOwnCoordinates`.
+- **A bookmark has two positions:** `reference` (last event handled) and `readUpTo` (read up to,
+  relevant or not). Lag is counted from `Bookmark.readUpToOrReference()`; `EventSource.findBookmark`
+  answers the whole bookmark. **`readUpTo` is never a resume point**; a projector resumes from
+  `reference`. The one exception is opt-in: `Projector.Builder.resumeAfterReadPosition()`, for a
+  bookmark with no handled event. Do not use `startingAfter(readPosition)` for that.
+  Test: `ProjectorReadPositionTest`.
+- `readUpTo` is optional and follows the same rules as `reference` (unknown event rejected, id only,
+  store's own coordinates). Postgres: nullable `read_up_to_event_id` with
+  `fk_bookmarks_read_up_to_event_id`, LEFT JOIN. The SPI `bookmark(reader, reference, readUpTo, tags)`
+  defaults to dropping `readUpTo`.
+- **`Bookmark.reference()` is an `Optional`**: empty for a reader that has read but handled nothing. A
+  bookmark names at least one of the two positions. Place a read position alone with
+  `EventSource.placeReadPosition(reader, readUpTo, tags)` (SPI: `EventStorage.bookmarkReadPosition`,
+  default records nothing). Such a reader resumes from the beginning (`getBookmark` answers empty); a
+  read position placed alone never clears a handled reference (Postgres: `COALESCE` in the upsert);
+  `removeBookmark` removes it; a `BookmarkListener` is not told of it. Postgres: `event_id` nullable,
+  check `ck_bookmarks_handled_or_read_position`.
+- **A projector keeps `readUpTo` by four rules** (on `Projector`'s class javadoc): take `head()` at the
+  start of every run; after each committed batch record the last handled event as both positions; after
+  a run that read to the end, record the later of the head and the last handled event (`runUntil` only
+  within its boundary); a run that handled nothing moves only `readUpTo`, at most once per
+  `idleBookmarkInterval` (default 2s; `Duration.ZERO` for every run; `deferredReadUpToDueIn()` says when
+  a held-back move is due). Test: `ProjectorReadPositionTest`.
+- **The foreign key never cascades** (default NO ACTION). Deleting events under a bookmark must fail
+  loudly; a cascade would silently delete a lagging reader's bookmark and replay it from the beginning.
+- **Schema changes:** `ENSURE` adds the `read_up_to_event_id` column and relaxes `event_id` to nullable;
+  `checkDatabase()` reports a table that is not migrated under `VALIDATE`; under `NONE` the first use
+  names the migration. Dropping the old `event_position`/`event_tx` columns and removing an old
+  `ON DELETE CASCADE` are hand migrations — see `docs/design/bookmarks.md` and the postgres module
+  README.
+
+Test for the whole contract, per backend: `BookmarksTest`.
 
 ### Idempotent appends: a key per event, and the batch as the unit of de-duplication
 
@@ -1607,338 +1180,50 @@ serialization complaint naming nothing about the conflict, so every exception he
 
 ### Erasing personal data: `Shreddable` values and crypto-shredding
 
-**Personal data is wrapped, not annotated, and erasure destroys a key rather than rewriting an event.**
-A record component declared `Shreddable<T>` is bound to a `DataSubject`, encrypted on append under the
-key held for that subject, and stored as a sealed envelope inside the ordinary payload.
-`EventStore.erase(type, id, reason)` destroys the keys; nothing in the events table is written.
+**Read `docs/design/shredding.md` before you change anything in shredding, a key store, a codec or the
+audit.** It holds the reasons and the rejected alternatives. The rules:
 
-```java
-record TransferMade(
-        String transferId, Money amount,
-        String fromCustomerId,                  // pseudonymous — survives erasure
-        Shreddable<PartyDetails> from,          // Alice's data, Alice's key
-        Shreddable<PartyDetails> to             // Bob's data, Bob's key
-) implements PaymentEvent { }
+- **A record component declared `Shreddable<T>` is sealed on append** under a key for its `DataSubject`
+  `(type, id, category)`, and stored as an envelope inside the ordinary payload. Erasure destroys keys;
+  **the stored event never changes** — no UPDATE, no re-seal, no rotation of a live key.
+- **A `Shreddable` is `Present`, `Shredded` or `Withheld`, never null.** `Withheld` means "this reader
+  may not read it" and says nothing about erasure. A `Shreddable` works anywhere in a payload (nested
+  records, `List` elements, `Map` values); two subjects in one event get two keys.
+- **`erase(type, id, reason)` erases the whole person, every category** (`shredAllCategories`, answers a
+  `SubjectErasureReport`); `eraseCategory(subject, reason)` erases one category. Keep the two separate.
+  Erasure notifies nothing: read models keep their copies.
+- **The subject id and tags must not be personal data** — they stay in the clear. Key ids land on the
+  event as `dek:` tags; "which events use this key" is a tag query.
+- **Without a codec, registering an event type that declares a `Shreddable` fails** at `getEventStream`,
+  and a `Shreddable` behind an interface-typed component fails the append as `EventSerializationException`.
+- **The codec travels with the storage** (`EventStorage.shreddingCodec()`), like the observer; a codec
+  given to `EventStore.on(storage).shredding(codec)` wins.
+- **Seams:** `ShreddingKeyStore` (keys only; `resolveKey` answers `KeyResolution.Resolved | Erased |
+  Withheld`) and `ShreddingCodec` (encryption too; `open` answers `Unsealed.Plaintext | Erased |
+  Withheld`). Shipped: `AesGcmShreddingCodec` (AES-256-GCM, refuses a non-256-bit key, a key with no
+  visible material, and a `|` in the authenticated labels).
+- **Only a real erasure may answer `Erased`. An outage, and a key id the store never held, throw
+  `ShreddingException`** — never report them as erased. The serde rethrows `ShreddingException`
+  unwrapped, so it is never an `EventDeserializationException`. Shredded key rows are never pruned.
+- **A key is committed before the event sealed under it**, on its own connection, never in one
+  transaction with the append.
+- **Access limits:** `ShreddingCodec.withholdingAll()`, `restrictedTo(categories)` (symmetric: seals
+  nothing outside its categories, but passes erasure and audit through whole), and a key store that
+  refuses keys (Postgres: SQLSTATE 42501 on `key_material` reads as `Withheld`; row-level security does
+  not work — a hidden row reads as erased).
+- **`ShreddingAudit` reports without key material.** No audit statement on Postgres names
+  `key_material`, not even in a predicate; "shredded" is judged by `shredded_at`. `KeyAuditQuery` is
+  always limited (default 500). `categories()` and `forKeys(...)` are part of it.
+- **Postgres key cache:** ttl `DEFAULT_CACHE_TTL` (1 hour; the cross-instance bound on "erased"),
+  size bound `DEFAULT_MAX_CACHED_KEYS` (10.000, LRU). A never-seen key is not cached as absent.
+- **Raw mode does not decrypt**, so raw streams, exports and imports see the envelope. An import moves
+  ciphertext only: move the keys too.
+- A component that was a plain field when its events were written cannot be read as a `Shreddable`;
+  migrate with `EventStoreImporter.transform` or a `@LegacyEvent` upcaster.
 
-DataSubject alice = DataSubject.of("customer", "alice-42");
-payments.append(AppendCriteria.none(), Event.of(new TransferMade(..., Shreddable.of(details, alice), ...), tags));
-
-eventStore.erase("customer", "alice-42", ErasureReason.of("GDPR art.17 request #4711"));
-
-transfer.from();   // Shredded[customer/alice-42/default, k-7f2a91c4]
-transfer.to();     // Present[PartyDetails[Bob Jansen, ...]]   -- unaffected
-transfer.from().map(PartyDetails::name).orElse("[erased]");
-```
-
-- **The stored event never changes.** Its bytes stay identical forever, so an erasure needs no UPDATE,
-  produces no new tuple to VACUUM, leaves the heap in insertion order, and reaches
-  the ciphertext already sitting in WAL, on replicas and in every backup. The alternative — nulling a
-  separate erasable column with an `UPDATE` — reaches none of those copies and makes the log no longer
-  append-only.
-- **A shredded value is never null**, which is what keeps erasure from creating poison events: a record
-  whose compact constructor rejects nulls still builds after its data is gone. Nor can "erased" be
-  confused with "never held any", and a `Shreddable<Integer>` reads as shredded rather than as `0`.
-- **A `Shreddable` anywhere works** — nested records, `List` elements, `Map` values — because it is one
-  Jackson serializer on one document. The alternative — annotating personal components and splitting them
-  into a second document — loses because reconciling the two on read takes a deep merge, and a merge that
-  replaces JSON arrays wholesale silently drops the non-personal fields of partly-personal collection
-  elements on every ordinary read, erasure or not.
-- **Two subjects in one event each get their own key**, which no per-field annotation or per-event key
-  can express. Keys are scoped to `(type, id, category)`, so "erase marketing, retain financial" is a
-  category away.
-- **`erase(type, id, reason)` erases the person; `eraseCategory(subject, reason)` erases one
-  category.** The plain name is the whole-person erasure because that is what an art.17 request asks
-  for, and the erasure that can leave data readable carries the qualifier. A `DataSubject` always
-  names a category — `DataSubject.of("customer", id)` is the `default` one — so `eraseCategory`
-  destroys the keys of that category only, reporting success because the erasure it names was
-  performed: on a subject that also holds `marketing` data it leaves the marketing data readable,
-  which is right for "erase marketing, retain financial" and wrong for an art.17 request. The
-  whole-person erasure takes the type and id and no category, so it cannot be narrowed by accident,
-  and answers a `SubjectErasureReport` with one `ErasureReport` per category that held live keys. It
-  is a separate SPI method on `ShreddingKeyStore` and `ShreddingCodec` (`shredAllCategories`, beside
-  the per-category `shred` a key store implements), whose defaults throw
-  `UnsupportedOperationException` so a key store written before it is told rather than made to erase
-  one category and report success; a restricted codec passes it through whole. The alternative —
-  `erase` taking a `DataSubject` too and erasing the person it belongs to — loses because the category
-  the argument carries is then either ignored or refused: ignored,
-  `erase(alice.withCategory("marketing"), reason)` destroys the financial history a retention rule
-  says to keep; refused, a subject read off a `Shredded` value cannot be handed straight to it. Two
-  parameter shapes keep the two erasures apart at compile time, so a call that meant one category
-  cannot silently become the whole person, or the other way round. Having the default-category
-  erasure mean "every category" loses too: it makes erasing only the default category inexpressible,
-  and a category is what a subject's data is *written* under, so which one a caller names is not a
-  statement about the others.
-- **The subject id must not itself be personal data.** It is stored in the clear in the envelope and
-  survives erasure by construction — use a customer number, never an email address.
-- **`KeyId` values are random and land on the event as `dek:` tags**, so "every event holding data under
-  this key" is an ordinary tag query on the existing index. The tags stay after the key is destroyed, as
-  a tombstone that says an erasure touched the event without saying what it took.
-- **Erasure notifies nothing.** Read models, caches, search indexes and downstream systems keep their
-  copies, and projections hold bookmarks so they never re-read. Re-projecting is the application's job.
-- **Without a codec configured, registering an event type that declares a `Shreddable` fails** at
-  `getEventStream` — before anything is read or written — rather than storing personal data in the clear.
-  That check reads declarations (record components, type arguments, array elements) and cannot see a
-  `Shreddable` held behind a component declared as an interface or a non-record class, so the
-  codec-less mapper carries a `Shreddable` serializer of its own that throws: such an append fails as
-  `EventSerializationException`, nothing stored, on the typed and the raw serde alike, instead of
-  Jackson writing the `Present` record — value and subject in the clear — as it otherwise would.
-  `CodecLessShreddableSerdeTest` in the impl module pins both routes and that a codec seals the same
-  value; `ShreddableEventDataTest.registeringAProtectedEventTypeWithoutACodecFails` pins the
-  registration check per backend.
-
-**Two seams, and a shipped default.** `AesGcmShreddingCodec` (AES-256-GCM, random 96-bit IV per value,
-envelope metadata bound as AAD) over a `ShreddingKeyStore`:
-
-```java
-InMemoryEventStorage.newBuilder().shredding(new InMemoryShreddingKeyStore()).buildStore();
-InMemoryFsEventStorage.newBuilder().directory(dir).shredding(new InMemoryFsShreddingKeyStore(dir)).buildStore();
-PostgresEventStorage.newBuilder().shredding().buildStore();          // keys in <prefix>shredding_keys
-PostgresEventStorage.newBuilder().shredding(myKmsCodec).buildStore(); // take over encryption entirely
-```
-
-- **The codec travels with the storage, so `build()` honours `.shredding(...)` as `buildStore()` does.**
-  `EventStorage.shreddingCodec()` answers the codec a builder was given (empty by default, so a backend
-  written before it keeps working), and `EventStore.on(storage).build()` — and every factory overload
-  not handed a codec of its own — uses it; a codec given to the builder's `.shredding(codec)` wins. The storage
-  never seals or unseals anything itself, which is what keeps raw mode, exports and imports seeing the
-  envelope as stored. The alternative — a codec living on the store alone, wired only by `buildStore()`
-  — loses because a caller taking the storage from `build()` then gets a store that refuses the very
-  event types the builder was configured for, and on Postgres cannot construct the key store the
-  no-arg `shredding()` stands for at all: it needs the `DataSource` the builder resolves, and one
-  loaded from `db.properties` is never handed out. `StorageShreddingCodecTest` pins the two in-memory
-  backends and the precedence rule; `PostgresShreddingBuilderTest` pins the no-arg case per Postgres
-  version. The observer travels with the storage the same way (`EventStorage.observer()`).
-
-- **`ShreddingKeyStore`** is the narrow seam: keep the shipped encryption, hold keys in Vault/KMS/an HSM.
-- **`ShreddingCodec`** is the outer seam: take over encryption too, so key material never enters the JVM.
-- **`open`/`resolveKey` answering erased means *erased*; anything else must throw `ShreddingException`.**
-  This is the contract that matters most. Reported as empty, a key-store outage renders every protected
-  value as erased — and projections, being at-least-once and bookmarked, write those gaps into read
-  models permanently and never revisit them. `TypedEventPayloadSerializerDeserializer` rethrows a
-  `ShreddingException` unwrapped (and unwraps one Jackson wrapped) precisely so that "retry later" does
-  not arrive as `EventDeserializationException`, which means "never retry".
-- **A key id the store has never held is not erased either; it throws.** A shredded key keeps its row,
-  so every shipped key store can tell "destroyed" from "never seen", and the second means the store is
-  not the one the events were sealed against: the fs store pointed at the wrong directory, the Postgres
-  one at the wrong prefix or database, events imported without their keys. Reported as erased, that is
-  the outage failure above applied to the *whole* store at once. The alternative — a fourth
-  `KeyResolution` answer — loses because a reader could do nothing with it but throw: the value is not
-  erased, and not withheld from this reader in particular. The cost is that shredded rows must stay
-  (which the audit already requires): pruning one turns that subject's events from "erased" into
-  unreadable, with an error naming the key. `ShreddableEventDataTest.aKeyThisStoreNeverHeldThrowsRatherThanReadingAsErased`
-  pins it per backend, at the seam and through a projector.
-- **The shipped codec measures the key it seals under, and keeps the label it binds unambiguous.**
-  The JCE encrypts under a 128-, 192- or 256-bit AES key alike, so a key store minting the wrong
-  length would otherwise seal without complaint under an envelope recording `A256GCM` for a value
-  not sealed that way. `AesGcmShreddingCodec.seal` refuses a key that is not 256-bit AES material —
-  `ShreddingException` naming the key and its length, nothing sealed — and refuses a key whose
-  material it cannot see (`getEncoded()` null, an HSM-resident key), since the key-store seam hands
-  material into the JVM and a key that never leaves its hardware belongs behind a `ShreddingCodec` of
-  its own. `open` deliberately does not measure: what is sealed is sealed, and refusing to read it
-  would strand the data while protecting nothing. The metadata GCM authenticates is the algorithm,
-  key id, subject type, id and category joined with `|`, nothing escaped, so `seal` also refuses a
-  `|` in any of those — two labels differing only in where the `|` falls would otherwise authenticate
-  as one, and a sealed value could be relabelled between them with decryption still succeeding. The
-  alternative — escaping the fields — loses because the authenticated string is recomputed on both
-  sides and stored nowhere, so an escaped form stops authenticating every value already sealed whose
-  fields hold the escape character, with nothing on the envelope to say which form it was sealed
-  under; an envelope already carrying a `|` stays readable, ambiguous as it was written. The subject
-  rule applies to this codec only — a codec of your own binds what it likes — and a subject is refused
-  before the key store is asked, so it is not given a key row it will never use.
-  `AesGcmShreddingCodecTest` pins all of it, the layout of the authenticated bytes included.
-- **Nothing here needs post-quantum work.** The design uses no asymmetric cryptography, so Shor has no
-  target; Grover leaves AES-256 at ~128 bits of effective security. Shredding is in fact a stronger
-  position than encryption at rest generally is — the threat model is ciphertext recovered from a backup
-  with the key destroyed, and no computation recovers a key that does not exist. Post-quantum only
-  becomes a question inside an implementor's own codec that wraps data keys under a KEK with RSA-OAEP or
-  ECIES, which is exactly the decision the seam leaves to them.
-- **`alg` is recorded per sealed value**, so a store can hold several algorithms at once and change
-  algorithm without rewriting history. That agility, not the choice of cipher, is the real defence
-  against harvest-now-decrypt-later.
-
-**Rotation only ever applies forward, and that is the design rather than an omission.** There is no way
-to rotate a live key and re-seal what it protects, because re-sealing means rewriting stored events —
-the one thing this design exists to avoid. Events staying byte-identical is what makes destroying a key
-reach every copy of them (WAL, replicas, backups) with nothing to chase; a re-seal would have to reach
-all of those too, and would not. So:
-
-- **A subject whose keys are shredded gets a fresh key** for anything appended afterwards, and
-  everything sealed under the old key stays sealed under it for as long as that ciphertext exists.
-  Erasing twice therefore destroys two keys, not one — which is why `shred` matches on *every* key a
-  subject has ever held, not just the active one.
-- **What can change without rewriting anything is the algorithm**, recorded per sealed value. New
-  appends can use a new one while old events keep decrypting under the one they were written with. For
-  a long-lived log that agility is what rotation is usually reached for anyway.
-- **A key-encrypting key can be rotated freely**, since that lives inside an implementor's own codec or
-  key store and never touches the events. That is where a KMS's rotation story belongs.
-
-**A key store can report on itself, without being able to decrypt anything.** `ShreddingAudit` —
-`EventStore.shreddingAudit()`, or `ShreddingKeyStore.audit()` — answers which subjects hold protected
-data and which erasures have happened, and is the *only* way to read that: the events record nothing
-about an erasure, since they are never rewritten, so the key store is the whole account of it.
-
-```java
-ShreddingAudit audit = eventStore.shreddingAudit().orElseThrow();
-
-audit.totals();                                          // subjects with live keys, live keys, shredded keys
-audit.keys(KeyAuditQuery.forSubject("customer", "alice-42"));   // one person, every category
-audit.keys(KeyAuditQuery.all().onlyShredded());                 // the erasure log: what, when, on whose authority
-audit.categories();                                             // which categories exist, and how much under each
-audit.keys(KeyAuditQuery.forKeys(keysOnAnEvent));               // are the keys this event carries still live?
-```
-
-- **`KeyRecord` carries no key material, and no method here returns any.** That separation is the whole
-  reason this is a second interface rather than another method on the key store: a dashboard credential
-  granted it can see *that* data is protected and *when* it was erased, and never *what* it was. The
-  Postgres implementation does not merely refrain from reading `key_material` — the column is absent
-  from every statement the audit issues, predicates included, so key bytes cannot reach a log or a heap
-  dump through this path. That absence is also what keeps the audit working for the reporting role the
-  postgres README recommends, which is granted every column *but* that one: PostgreSQL checks `SELECT`
-  privilege on every column a statement references, a `WHERE` or `FILTER` clause as much as the select
-  list, so "shredded" is judged by `shredded_at` — stamped by the same statement that nulls the material
-  — never by `key_material IS NULL`. `PostgresShreddingReportingRoleTest` pins every audit statement
-  under that role. The same privilege rule hides the column from `information_schema`, so such a role
-  starts its store with `DatabaseInitMode.NONE`; `VALIDATE` would report `key_material` as missing.
-- **Bounded, with no cursor.** `KeyAuditQuery` always carries a limit (default 500). A store running for
-  years holds one row per subject per category and never prunes the shredded ones, and unlike an event
-  query there is nothing to resume from — so an accidental full enumeration is not offered.
-- **`categories()` is the inventory: which categories of personal data the store holds, and how much
-  under each** (`CategoryTotals`: live subjects, live keys, shredded keys per category, most live
-  subjects first). A category is the unit of erasure *and* of access, and only the key store knows
-  which exist — writers choose them, and events carry them only inside sealed envelopes — so this is
-  what an operator reads before deciding which categories a service is `restrictedTo`. Deriving it
-  from `keys()` is wrong on any store holding more keys than the query's limit, which is why it is a
-  method rather than a recipe. An erased category stays listed with zero live keys and its erasures
-  counted. The default throws `UnsupportedOperationException`, like the optional SPI methods on
-  `EventStorage`, so an audit written before it compiles and a caller is told rather than shown an empty
-  inventory; the three shipped key stores all answer it.
-- **`KeyAuditQuery.forKeys(Set<KeyId>)` is the join back from an event.** An event carries its keys as
-  `dek:` tags and in each envelope, and nothing else; whether those keys still exist is the key store's
-  to say. A reader holding an event — a dashboard rendering it, a support tool — asks for exactly those
-  keys and can tell "protected" from "erased on … because …" without holding a key of its own. A
-  primary-key lookup on Postgres, however many keys a page of events carries; the limit defaults to the
-  number of keys asked for. It narrows the other parts rather than replacing them, an empty set is
-  refused (it could only mean "nothing"), and a key the store never held answers nothing rather than
-  failing — an envelope from another store is a miswiring the caller can see from the gap. The
-  five-argument constructor stays, meaning "any key".
-- **Which *events* hold data under a key is not answered here** — the key store has never seen an event.
-  That is an ordinary tag query, since each event carries its keys as `dek:` tags:
-  `EventQuery.forEvents(EventTypesFilter.any(), Tags.of(KeyId.TAG_KEY, record.id().value()))`.
-- **Optional, like leases.** A key store fronting a KMS that does not enumerate returns empty and
-  callers do without; all three shipped key stores implement it.
-
-**The Postgres key store caches resolved keys with a TTL, default one hour**
-(`PostgresShreddingKeyStore.DEFAULT_CACHE_TTL`). Without a cache, replaying a stream costs a query per
-protected value; with one that never expires, an erasure performed by *another* instance would never be
-noticed. An erasure performed by *this* instance drops its entries immediately, so the ttl bounds only
-the cross-instance case — which makes it the outer edge of "erased" for a multi-instance deployment, and
-a number worth stating in a data protection notice rather than discovering. `Duration.ZERO` disables the
-cache and makes an erasure effective everywhere at once, at a query per protected value. A key that was
-never seen is deliberately not cached as absent, so a shredded key still costs one query per read rather
-than reporting stale data as readable.
-
-**The cache is bounded in size too, at `DEFAULT_MAX_CACHED_KEYS` (10.000) entries, least recently used
-evicted first.** The ttl bounds how stale an entry can be, not how many there are: a lapsed entry is
-dropped when it is next asked for, and one never asked for again is dropped by nothing else, so a
-process that resolves a key per subject over its lifetime — a projection replaying a stream of a
-million subjects — would otherwise hold every one of them for good, at a few hundred bytes each. Below
-the bound nothing changes; above it a key outside the working set costs one query when it comes round
-again, and the four-argument constructor sets the bound for a working set that is genuinely larger.
-`KeyCacheTest` pins the bound, the ttl and the eviction order without a database;
-`PostgresShreddingKeyStoreCacheTest` pins that the store honours them, by counting the connections it
-takes.
-
-**A key is committed before the event sealed under it, never with it.** `keyFor` runs while the
-payload is sealed, before the storage is handed anything to append, and the Postgres key store takes a
-connection of its own for it even though it writes to the same `DataSource` as the events. Sharing the
-`DataSource` buys the schema machinery, one set of credentials and a backup carrying both; it does not
-put the two in one transaction, on this or any key store, and the order is the guarantee: mint first,
-durable before it is returned, append second. A rolled-back append leaves a key row with no event under
-it, which the subject's next append seals under; an event whose key was never persisted cannot happen.
-
-**Raw mode does not decrypt**, deliberately: a wildcard stream, an export or an import sees the sealed
-envelope as stored, which is what lets `EventStoreImporter` copy events with no keys and no domain
-classes.
-
-**Not every reader may read everything, and a reader that may not gets a third state: `Withheld`.**
-Access to a protected value is the ability to resolve its key, so who may read what is decided on the
-key seams and never in the read path. `Shreddable` is `Present`, `Shredded` or `Withheld`; a withheld
-value exists, may well still have its key, and this reader does not get it. It carries the subject and
-key id like `Shredded`, cannot be appended (this process never held the plaintext), and says nothing
-about erasure — a reader that may not decrypt a value cannot tell whether it was erased, and is not
-told; `ShreddingAudit` stays the account of erasures.
-
-- **Why a third state rather than either existing answer.** Reported as `Shredded`, a projection renders
-  "erased" for data that is not and writes that into its read model for good. Reported as a
-  `ShreddingException`, it means "retry later", so a `Projector` that is merely not entitled fails the
-  batch and never advances. Withheld is neither: the read completes, the projection decides how to
-  render the gap, and everything the reader *is* entitled to still gets projected. Adding a case to the
-  sealed interface breaks every exhaustive `switch` at compile time, which is the point — each renderer
-  has to decide what a withheld value looks like. `orElse("[erased]")` call sites are the ones to review,
-  since the fallback now covers both cases.
-- **The seams carry it as sealed results, not exceptions.** `ShreddingKeyStore.resolveKey` answers
-  `KeyResolution.Resolved | Erased | Withheld`, and `ShreddingCodec.open` answers
-  `Unsealed.Plaintext | Erased | Withheld`; each is the one abstract read method of its seam, and the
-  refusal carries the same name on both, and on `Shreddable`, so that one word follows a refused key
-  from the key store through the codec to the value a reader is handed. A sealed
-  type rather than a `ShreddingException` subtype because the difference between "erased", "withheld"
-  and "down" is the most important contract in this subsystem, and a `catch (ShreddingException)`
-  retry loop would swallow a refusal by accident. The alternative — a two-answer
-  `Optional`-returning method beside it, abstract, with the three-answer one a default derived from
-  it — loses because such a method cannot say withheld, so the derived default never would: a new key
-  store or codec would implement what nothing in the library calls and inherit an answer it never
-  chose, and a `Withheld` could only be smuggled through the two-answer method as an exception, which
-  is the retry-loop conflation above.
-- **Three ways a reader is limited, from cheap to hard:**
-  ```java
-  // a reporting service: typed events, none of the personal data. Without a codec it could not open
-  // the stream at all -- registering a type that declares a Shreddable fails on a store with none
-  PostgresEventStorage.newBuilder().shredding(ShreddingCodec.withholdingAll()).buildStore();
-
-  // a service that reads names and never addresses: an in-process policy on the category
-  PostgresEventStorage.newBuilder().shredding(AesGcmShreddingCodec.over(keyStore).restrictedTo(Set.of("identity"))).buildStore();
-
-  // the hard boundary: a key store that refuses keys this role is not granted
-  KeyResolution resolveKey ( KeyId key ) { ... return new KeyResolution.Withheld("vault: 403"); }
-  ```
-  `restrictedTo` decides on the category the envelope carries in the clear, before any key lookup, so a
-  denied category costs no key-store traffic. It is symmetric — the codec seals nothing outside its
-  categories either, and such an append fails as an `EventSerializationException` with nothing stored —
-  and it passes erasure and audit through whole, because an erasure that silently left another category
-  readable while reporting success is the worst outcome an erasure can have. It is a data-minimisation
-  boundary a deployment declares for itself, not a security boundary: the process still holds the codec.
-  The security boundary is the key store's refusal — a KMS policy per service role, or on Postgres a
-  role granted every column of `shredding_keys` *except* `key_material`, which `PostgresShreddingKeyStore`
-  recognises by SQLSTATE 42501 and reports as `Withheld` (cached for the key ttl). Row-level security on
-  that table does **not** produce a denial: a hidden row reads as erased. The two compose.
-- **The unit of access is the unit of encryption: the `Shreddable` value, partitioned by `category`.**
-  "Name but not address" is two wrapped values under two categories, chosen when the event is written,
-  not one `Shreddable<ContactDetails>` holding both. Nothing inside one sealed value can be handed out on
-  its own — the alternative, decrypting and blanking fields, leaves the plaintext in the reader's memory
-  and needs the annotation-plus-split design already rejected above. A category is forward-only: a
-  value sealed under `default` cannot be re-categorised without re-sealing, which means rewriting the
-  event. Each category is one more key row per subject and one more `keyFor` query per append that
-  carries it, so a handful per subject is the intended scale, not one per field.
-- **A withheld reader still sees the pseudonymous subject id, the category, and the `dek:` tags.** That
-  is unchanged and by design, and it is why the rule that subject ids and tags must not themselves be
-  personal data is load-bearing for the PII-less reader.
-
-**A component that was a plain field when its events were written cannot be read as a `Shreddable`.**
-The stored value is bare, so nothing can say whose data it is, and the read fails with a message saying
-to migrate the events via `EventStoreImporter.transform` or to read the old shape through a
-`@LegacyEvent` upcaster. Guessing a subject would leave old personal data unprotected and unerasable.
-
-`ShreddableEventDataTest` in the TCK pins all of this per backend, against *that backend's* key store:
-the two-subject erasure, the collection case, a record whose constructor rejects nulls surviving erasure,
-category independence and the whole-person erasure across every category (through a restricted codec
-too), idempotent erasure and a fresh key afterwards, the `dek:` tags, the audit view
-(including, reflectively, that `KeyRecord` cannot carry key material), that an unreachable key store
-throws instead of reporting the data as erased and so does one asked for a key it never held — and, for entitlement, that a withholding codec reads the
-typed events with every value withheld, that a restricted codec reads its categories and withholds the
-rest without a key lookup, seals nothing outside them and erases everything, that a withheld value says
-nothing about erasure, that a key store's `Withheld` reads as withheld and a projector advances over it,
-and that a withheld value cannot be appended again. `ReaderEntitlementTest` in the api module pins the
-seams below the store.
+Tests: `ShreddableEventDataTest` (TCK, per backend), `ReaderEntitlementTest`, `AesGcmShreddingCodecTest`,
+`CodecLessShreddableSerdeTest`, `KeyCacheTest`, `PostgresShreddingKeyStoreCacheTest`,
+`PostgresShreddingReportingRoleTest`, `StorageShreddingCodecTest`, `PostgresShreddingBuilderTest`.
 
 ## Testing
 
@@ -2207,6 +1492,12 @@ Documentation and javadoc describe the design as it is, not how it got here. Two
   re-treading it. Phrase it as a standing design choice ("the alternative — X — loses because Y"),
   never as a chronology ("we replaced X"). A rejected alternative's measured record may stay
   committed (e.g. under the benchmark module's `results/`) as the evidence behind such a note.
+- **Write the rule in `CLAUDE.md` and the reasons in `docs/design/`.** Claude Code loads this file in
+  full at every start, so it holds what a change must respect: the rule, the names, the tests that pin
+  it. The reasoning, the rejected alternatives and the measurements go in the topic's file under
+  `docs/design/`, and the section here names that file as plain text. Do not import it with `@`: an
+  imported file loads at start too, and the size comes back. A module's own rules go in that module's
+  `CLAUDE.md`, which loads only when work touches the module.
 
 ## DCB Compliance
 

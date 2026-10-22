@@ -75,6 +75,14 @@ import org.sliceworkz.eventstore.spi.EventStorage;
  */
 public interface InMemoryFsEventStorage {
 
+	/**
+	 * The name of the {@link org.sliceworkz.eventstore.observability.HealthCheck} this storage reports
+	 * beside {@link org.sliceworkz.eventstore.observability.HealthCheck#OPEN OPEN}: whether the events and
+	 * bookmarks directories are still writable, since every append and bookmark is written to a file as it
+	 * happens. {@link org.sliceworkz.eventstore.observability.HealthStatus#DOWN DOWN} when either is not.
+	 */
+	String HEALTH_DIRECTORIES = "directories";
+
 	static Builder newBuilder ( ) {
 		return InMemoryFsEventStorage.Builder.newBuilder();
 	}

@@ -145,6 +145,24 @@ public interface EventStoreObserver {
 	default void notificationChannelChanged ( String storage, NotificationChannel channel, boolean listening ) { }
 
 	/**
+	 * A storage's reads started, or stopped, being held behind its visibility barrier.
+	 * <p>
+	 * A backend whose reads only see what every older writing transaction has finished — PostgreSQL's
+	 * {@code pg_snapshot_xmin} — can have committed events no reader sees yet, for as long as a writing
+	 * transaction anywhere in the cluster stays open. Nothing fails while that lasts: appends succeed,
+	 * reads return, and projections simply stop advancing. The PostgreSQL backend reports {@code true}
+	 * once an append notification has been held back for ten seconds, {@code false} once it is delivered,
+	 * and {@code false} when the storage closes while stalled, so a gauge built on this does not keep
+	 * reporting a stall for a storage that is gone. Only a store something is appended to can notice:
+	 * a stall during which nothing is appended withholds nothing. A backend without such a barrier never
+	 * calls this.
+	 *
+	 * @param storage the storage's name
+	 * @param stalled whether reads are held behind the barrier
+	 */
+	default void visibilityStallChanged ( String storage, boolean stalled ) { }
+
+	/**
 	 * A stream handle was opened. Handles are cheap and opened per operation, and one used only to query
 	 * and append is never closed — it holds nothing — so there is deliberately no counterpart: what a
 	 * stream holds is a subscription, reported by {@link #subscriptionOpened(StreamInfo)}.

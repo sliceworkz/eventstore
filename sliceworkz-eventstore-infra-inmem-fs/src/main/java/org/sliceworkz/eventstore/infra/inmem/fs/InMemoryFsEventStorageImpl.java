@@ -20,11 +20,13 @@ package org.sliceworkz.eventstore.infra.inmem.fs;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -43,6 +45,9 @@ import org.sliceworkz.eventstore.serialization.json.JsonBookmark;
 import org.sliceworkz.eventstore.serialization.json.JsonBookmarkCodec;
 import org.sliceworkz.eventstore.serialization.json.JsonEventCodec;
 import org.sliceworkz.eventstore.observability.EventStoreObserver;
+import org.sliceworkz.eventstore.observability.HealthCheck;
+import org.sliceworkz.eventstore.observability.HealthStatus;
+import org.sliceworkz.eventstore.observability.StorageHealth;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageException;
@@ -119,6 +124,35 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 	@Override
 	public EventStoreObserver observer ( ) {
 		return delegate.observer();
+	}
+
+	/**
+	 * The in-memory delegate's health, plus {@link InMemoryFsEventStorage#HEALTH_DIRECTORIES}: every append and bookmark is written to
+	 * a file as it happens, so a directory that is gone or no longer writable fails each of them. Only
+	 * checked while open — a closed storage writes nothing.
+	 */
+	@Override
+	public StorageHealth health ( Duration timeout ) {
+		StorageHealth delegated = delegate.health(timeout);
+		if ( delegated.status() == HealthStatus.DOWN ) {
+			return delegated;
+		}
+		List<HealthCheck> checks = new ArrayList<>(delegated.checks());
+		checks.add(directoriesCheck());
+		return new StorageHealth(delegated.storage(), checks);
+	}
+
+	private HealthCheck directoriesCheck ( ) {
+		Map<String, Object> details = new LinkedHashMap<>();
+		details.put("events", eventsDir.toAbsolutePath().toString());
+		details.put("bookmarks", bookmarksDir.toAbsolutePath().toString());
+		List<Path> unwritable = Stream.of(eventsDir, bookmarksDir)
+			.filter(dir -> !Files.isDirectory(dir) || !Files.isWritable(dir))
+			.toList();
+		return unwritable.isEmpty()
+			? HealthCheck.up(InMemoryFsEventStorage.HEALTH_DIRECTORIES, details)
+			: HealthCheck.of(InMemoryFsEventStorage.HEALTH_DIRECTORIES, HealthStatus.DOWN,
+				"not a writable directory: %s; every append or bookmark written there fails".formatted(unwritable), details);
 	}
 
 	@Override

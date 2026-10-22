@@ -168,6 +168,57 @@ import com.zaxxer.hikari.metrics.MetricsTrackerFactory;
 public interface PostgresEventStorage extends EventStorage {
 
 	/**
+	 * The {@link org.sliceworkz.eventstore.observability.HealthCheck} on the database itself: one round
+	 * trip on the main {@code DataSource}, a pooled connection and {@code SELECT 1}, with the time it took
+	 * as {@code roundTripMicros}. {@link org.sliceworkz.eventstore.observability.HealthStatus#DOWN DOWN}
+	 * when it fails or does not answer within the timeout {@link #health(Duration)} is given. It says the
+	 * database answers on a connection from the pool, not that this store's tables are intact; those are
+	 * checked once, when the storage is built.
+	 */
+	String HEALTH_DATABASE = "database";
+
+	/**
+	 * The {@link org.sliceworkz.eventstore.observability.HealthCheck} on the append notification channel:
+	 * {@link org.sliceworkz.eventstore.observability.HealthStatus#DEGRADED DEGRADED} while its monitor
+	 * holds no live {@code LISTEN} — appends succeed, but no subscriber is woken.
+	 */
+	String HEALTH_EVENT_APPENDED_NOTIFICATIONS = "eventAppendedNotifications";
+
+	/**
+	 * The {@link org.sliceworkz.eventstore.observability.HealthCheck} on the bookmark notification channel:
+	 * {@link org.sliceworkz.eventstore.observability.HealthStatus#DEGRADED DEGRADED} while its monitor
+	 * holds no live {@code LISTEN} — bookmarks are placed, but no placement is announced.
+	 */
+	String HEALTH_BOOKMARK_PLACED_NOTIFICATIONS = "bookmarkPlacedNotifications";
+
+	/**
+	 * The {@link org.sliceworkz.eventstore.observability.HealthCheck} on the visibility barrier:
+	 * {@link org.sliceworkz.eventstore.observability.HealthStatus#DEGRADED DEGRADED} once an append
+	 * notification has been withheld for ten seconds, because a writing transaction older than the
+	 * appended events is still open somewhere in the cluster and reads do not advance past it (see
+	 * {@link org.sliceworkz.eventstore.observability.EventStoreObserver#visibilityStallChanged}).
+	 * Reports {@code withheldStreams} and, while something is withheld, {@code withheldForMillis}. Only a
+	 * store something is appended to can notice a stall, and while the append channel is down the age
+	 * keeps growing, since what it withholds then is delivered no sooner.
+	 */
+	String HEALTH_VISIBILITY = "visibility";
+
+	/**
+	 * The {@link org.sliceworkz.eventstore.observability.HealthCheck} on the main connection pool, reported
+	 * when it is a HikariCP pool — whoever created it. Its {@code active}, {@code idle}, {@code total},
+	 * {@code max} and {@code waiting} connections, and
+	 * {@link org.sliceworkz.eventstore.observability.HealthStatus#DEGRADED DEGRADED} while anyone is waiting
+	 * for one: every connection is in use, so every operation of the store waits its turn.
+	 */
+	String HEALTH_CONNECTION_POOL = "connectionPool";
+
+	/**
+	 * The {@link org.sliceworkz.eventstore.observability.HealthCheck} on the monitoring connection pool,
+	 * reported as {@link #HEALTH_CONNECTION_POOL} is, and only when the monitors have a pool of their own.
+	 */
+	String HEALTH_MONITORING_CONNECTION_POOL = "monitoringConnectionPool";
+
+	/**
 	 * Whether both LISTEN/NOTIFY monitors currently hold a live registration, i.e. whether appends and
 	 * bookmark placements are reaching subscribers.
 	 * <p>
@@ -178,7 +229,8 @@ public interface PostgresEventStorage extends EventStorage {
 	 * hands back answers {@code true}, since the build waits for the monitors and fails when they do not
 	 * register in time; a {@link #close() closed} one answers {@code false} for good.
 	 * <p>
-	 * Intended for health endpoints. The same state is reported, per channel, to the storage's observer
+	 * Intended for health endpoints, which find it, per channel and beside everything else this storage can
+	 * judge, in {@link #health()} too. The same state is reported, per channel, to the storage's observer
 	 * ({@link org.sliceworkz.eventstore.observability.EventStoreObserver#notificationChannelChanged}),
 	 * which needs no reference to the storage at all.
 	 *

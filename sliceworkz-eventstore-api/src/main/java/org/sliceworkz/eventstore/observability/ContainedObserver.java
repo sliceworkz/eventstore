@@ -82,6 +82,11 @@ final class ContainedObserver implements EventStoreObserver {
 	}
 
 	@Override
+	public void visibilityStallChanged ( String storage, boolean stalled ) {
+		contain("visibilityStallChanged", () -> delegate.visibilityStallChanged(storage, stalled));
+	}
+
+	@Override
 	public void streamOpened ( StreamInfo stream ) {
 		contain("streamOpened", () -> delegate.streamOpened(stream));
 	}

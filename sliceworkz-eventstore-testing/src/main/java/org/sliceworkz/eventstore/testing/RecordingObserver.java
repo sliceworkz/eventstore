@@ -92,6 +92,11 @@ public final class RecordingObserver implements EventStoreObserver {
 	}
 
 	@Override
+	public void visibilityStallChanged ( String storage, boolean stalled ) {
+		signals.add(new Signal.VisibilityStallChanged(storage, stalled));
+	}
+
+	@Override
 	public void streamOpened ( StreamInfo stream ) {
 		signals.add(new Signal.StreamOpened(stream));
 	}
@@ -291,6 +296,12 @@ public final class RecordingObserver implements EventStoreObserver {
 		 * @param listening whether it went up
 		 */
 		record ChannelChanged ( String storage, NotificationChannel channel, boolean listening ) implements Signal { }
+
+		/**
+		 * @param storage the storage
+		 * @param stalled whether its reads went behind the visibility barrier
+		 */
+		record VisibilityStallChanged ( String storage, boolean stalled ) implements Signal { }
 
 		/** @param stream the stream */
 		record StreamOpened ( StreamInfo stream ) implements Signal { }

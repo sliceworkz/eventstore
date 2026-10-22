@@ -70,7 +70,8 @@ import tools.jackson.databind.json.JsonMapper;
  * <p>
  * Key characteristics:
  * <ul>
- *   <li>Thread-safe: All critical operations are synchronized to ensure consistency</li>
+ *   <li>Thread-safe: All critical operations are synchronized to ensure consistency; listeners are
+ *       notified after the monitor is released (see {@link #notifyListenersAbout(List)})</li>
  *   <li>Non-persistent: Events exist only in memory and are lost on restart</li>
  *   <li>Fast: Direct memory access without I/O overhead</li>
  *   <li>Full feature support: Implements all EventStorage capabilities including subscriptions and bookmarks</li>
@@ -386,11 +387,17 @@ class InMemoryEventStorageImpl implements EventStorage {
 		return low;
 	}
 
+	@Override
+	public List<StoredEvent> append(AppendCriteria appendCriteria, EventStreamId streamId, List<EventToStore> events) {
+		List<StoredEvent> appended = appendUnderMonitor(appendCriteria, streamId, events);
+		notifyListenersAbout(appended);
+		return appended;
+	}
+
 	/*
 	 *  Synchronized method, to allow re-querying and storing in one shot (required for optimistic locking)
 	 */
-	@Override
-	public synchronized List<StoredEvent> append(AppendCriteria appendCriteria, EventStreamId streamId, List<EventToStore> events) {
+	private synchronized List<StoredEvent> appendUnderMonitor(AppendCriteria appendCriteria, EventStreamId streamId, List<EventToStore> events) {
 		checkNotClosed();
 		requireStream(streamId);
 		
@@ -403,7 +410,7 @@ class InMemoryEventStorageImpl implements EventStorage {
 		// (an empty expectedLastEventReference is NOT this case: it means "I decided on an empty stream",
 		//  which still has to be verified — see the else branch, which queries from the start of the stream)
 		if ( appendCriteria.isNone() ) {
-			result = addAndNotifyListeners(events);
+			result = addToEventLog(events);
 			
 		// otherwise, we'll need to be aware of any optimistic locking issues
 		} else {
@@ -416,7 +423,7 @@ class InMemoryEventStorageImpl implements EventStorage {
 			if ( newEvents.isEmpty() ) {
 
 				// we can safely append to the event log
-				result = addAndNotifyListeners(events);
+				result = addToEventLog(events);
 
 			} else {
 				// new events means an optimistic lock !
@@ -482,7 +489,7 @@ class InMemoryEventStorageImpl implements EventStorage {
 	 * unavailable on Postgres, where the append pairs the returned rows with the input by position and
 	 * so cannot insert a subset.
 	 */
-	private List<StoredEvent> addAndNotifyListeners ( List<EventToStore> events ) {
+	private List<StoredEvent> addToEventLog ( List<EventToStore> events ) {
 		Set<String> storedKeys = new HashSet<>();
 		Set<String> newKeys = new HashSet<>();
 		EventStreamId keyedStream = null;
@@ -501,13 +508,22 @@ class InMemoryEventStorageImpl implements EventStorage {
 		}
 
 		long tx = ++txCounter;
-		var addedEvents = events.stream().map(e -> addEventToEventLog(e, tx)).toList();
-
-		notifyListenersAbout(addedEvents);
-
-		return addedEvents;
+		return events.stream().map(e -> addEventToEventLog(e, tx)).toList();
 	}
 
+	/**
+	 * Notifies every listener of what an append or an import stored. Called after the monitor is
+	 * released, never under it: a listener runs code this storage does not control, and on Java 21 a
+	 * virtual thread that waits while holding a monitor -- or waits to enter one -- pins its carrier
+	 * thread. A listener waiting for a lock (a logger's appender lock is the ordinary one) under this
+	 * monitor, with every other carrier pinned by threads waiting to enter it, leaves the lock's next
+	 * owner no carrier to run on, and every thread of the process that touches the storage or the lock
+	 * stops for good, with nothing thrown or logged. Notified after the monitor, a listener holds
+	 * nothing of the storage's, and the events it is told about are stored and readable, as on the
+	 * Postgres backend, whose notifications arrive on a thread of their own. The alternative -- a
+	 * {@code ReentrantLock} in place of the monitor, which does not pin -- would still run every
+	 * listener with the storage locked, so a slow listener would stall every reader and writer.
+	 */
 	private void notifyListenersAbout ( List<StoredEvent> storedEvents ) {
 		// notify each Listener about the writes, but if multiple Events landed in one stream, only notify about the last one
 		storedEvents.stream()
@@ -533,12 +549,18 @@ class InMemoryEventStorageImpl implements EventStorage {
 		return storedEvent;
 	}
 
+	@Override
+	public List<StoredEvent> importEvents ( List<EventToImport> events, ImportMode mode ) {
+		List<StoredEvent> imported = importUnderMonitor(events, mode);
+		notifyListenersAbout(imported);
+		return imported;
+	}
+
 	/*
 	 *  Synchronized method, so the conflict check and the insertion are one atomic step, and so a rejected
 	 *  batch leaves the event log untouched.
 	 */
-	@Override
-	public synchronized List<StoredEvent> importEvents ( List<EventToImport> events, ImportMode mode ) {
+	private synchronized List<StoredEvent> importUnderMonitor ( List<EventToImport> events, ImportMode mode ) {
 		checkNotClosed();
 		if ( events == null ) {
 			throw new IllegalArgumentException("events to import must not be null");
@@ -597,8 +619,6 @@ class InMemoryEventStorageImpl implements EventStorage {
 			}
 			imported.add(storedEvent);
 		}
-
-		notifyListenersAbout(imported);
 
 		return imported;
 	}
@@ -694,30 +714,37 @@ class InMemoryEventStorageImpl implements EventStorage {
 	}
 
 	@Override
-	public synchronized void bookmark(String reader, EventReference eventReference, Tags tags ) {
+	public void bookmark(String reader, EventReference eventReference, Tags tags ) {
 		bookmark(reader, eventReference, null, tags);
 	}
 
 	@Override
-	public synchronized void bookmark(String reader, EventReference eventReference, EventReference readUpTo, Tags tags ) {
+	public void bookmark(String reader, EventReference eventReference, EventReference readUpTo, Tags tags ) {
 		checkNotClosed();
 		Objects.requireNonNull(eventReference, "eventReference must not be null; a reader that has handled nothing records its read position with bookmarkReadPosition");
-		place(reader, eventReference, readUpTo, tags);
+		notifyListenersAbout(place(reader, eventReference, readUpTo, tags));
 	}
 
 	@Override
-	public synchronized void bookmarkReadPosition(String reader, EventReference readUpTo, Tags tags ) {
+	public void bookmarkReadPosition(String reader, EventReference readUpTo, Tags tags ) {
 		checkNotClosed();
 		Objects.requireNonNull(readUpTo, "readUpTo must not be null");
-		place(reader, null, readUpTo, tags);
+		notifyListenersAbout(place(reader, null, readUpTo, tags));
+	}
+
+	/** Notifies every listener of a placed bookmark, after the monitor is released, for the reasons {@link #notifyListenersAbout(List)} gives. */
+	private void notifyListenersAbout ( BookmarkPlacedNotification notification ) {
+		listeners.forEach(l->notifyQuietly(l, notification));
 	}
 
 	/**
 	 * Places a bookmark; a {@code null} {@code eventReference} records the read position alone, keeping the
-	 * handled reference the reader's bookmark already holds. Called under the monitor, so the check, the
-	 * merge with the bookmark already there and the write are one step.
+	 * handled reference the reader's bookmark already holds. Under the monitor, so the check, the merge
+	 * with the bookmark already there and the write are one step; the notification it answers is
+	 * delivered by the caller once the monitor is released.
 	 */
-	private void place(String reader, EventReference eventReference, EventReference readUpTo, Tags tags ) {
+	private synchronized BookmarkPlacedNotification place(String reader, EventReference eventReference, EventReference readUpTo, Tags tags ) {
+		checkNotClosed();
 		// A bookmark is a position in this store's log, so a reference the store never stored --
 		// typically one from a different store -- is a caller error. The Postgres backend rejects it
 		// through the fk_bookmarks_event_id foreign key; checking here keeps the write-side contract
@@ -750,8 +777,7 @@ class InMemoryEventStorageImpl implements EventStorage {
 		Tags effectiveTags = tags == null ? Tags.none() : tags;
 		Optional<EventReference> resolvedReadUpTo = read == null ? Optional.empty() : Optional.of(read.reference());
 		bookmarks.put(reader, new Bookmark(reader, resolved, resolvedReadUpTo, effectiveTags, Instant.now()));
-		BookmarkPlacedNotification notification = new BookmarkPlacedNotification(reader, resolved, resolvedReadUpTo);
-		listeners.forEach(l->notifyQuietly(l, notification));
+		return new BookmarkPlacedNotification(reader, resolved, resolvedReadUpTo);
 	}
 
 	/*
@@ -866,12 +892,12 @@ class InMemoryEventStorageImpl implements EventStorage {
 	/**
 	 * Notifies one listener, containing its failure.
 	 * <p>
-	 * Listeners are notified inline here, on the thread that appended or bookmarked, so a listener
-	 * throwing would otherwise fail an operation that has already succeeded — the event is stored, and
-	 * reporting it as failed invites the caller to append it twice. It would also rob every listener
-	 * after it in the list of the notification. A backend delivering on a thread of its own has the
-	 * same duty for a starker reason: there, one listener's throwable kills notifications for
-	 * everybody.
+	 * Listeners are notified inline here, on the thread that appended or bookmarked (once the monitor is
+	 * released), so a listener throwing would otherwise fail an operation that has already succeeded —
+	 * the event is stored, and reporting it as failed invites the caller to append it twice. It would
+	 * also rob every listener after it in the list of the notification. A backend delivering on a
+	 * thread of its own has the same duty for a starker reason: there, one listener's throwable kills
+	 * notifications for everybody.
 	 */
 	private void notifyQuietly ( EventStoreListener listener, AppendsToEventStoreNotification notification ) {
 		try {

@@ -579,6 +579,12 @@ it returns — on Postgres by issuing the `COMMIT` inside it, in memory by havin
 by the time anything is notified, the events are durable and every other reader can see them. A
 notification is an announcement, never a vote.
 
+**A storage notifies holding none of its own locks.** The in-memory backend does its work under its
+monitor and delivers the notifications after releasing it; Postgres delivers on its monitor threads. A
+listener notified under the storage's monitor that waits for a lock deadlocks the process on Java 21 once
+the other carriers are pinned by threads waiting to enter that monitor. Read `docs/design/listeners.md`
+before you move a notification back under a lock. Test: `ListenerMayUseTheStorageTest` (TCK, per backend).
+
 **What a notification announces, a query can see — and a backend whose reads lag its commits has to
 hold the notification back until they can.** The store treats a listener that reads nothing as caught
 up (`OptimizingAppendListenerDecorator`, below), so a notification delivered before its events are

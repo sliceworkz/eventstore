@@ -43,6 +43,9 @@ jobs:
           java-version: '25'
           distribution: 'temurin'
           cache: 'maven'
+          server-id: cloudrepo
+          server-username: CLOUDREPO_USERNAME
+          server-password: CLOUDREPO_PASSWORD
       
       - name: Configure Git
         run: |
@@ -90,6 +93,16 @@ jobs:
           git add .
           git commit -m "Release version $RELEASE_VERSION" || echo "No changes to commit"
       
+      # Before anything is tagged or pushed: a release must not depend on a SNAPSHOT
+      # (requireReleaseDeps in the root pom, active now that the version is a release).
+      # Failing here stops the job with nothing pushed -- no tag, no version bump -- so the
+      # fix is to correct the dependency version on this branch and run the workflow again.
+      - name: Check the release has no SNAPSHOT dependencies
+        run: mvn -B validate
+        env:
+          CLOUDREPO_USERNAME: ${{ secrets.CLOUDREPO_USERNAME }}
+          CLOUDREPO_PASSWORD: ${{ secrets.CLOUDREPO_PASSWORD }}
+
       - name: Create and push tag
         run: |
           TAG_NAME="v$RELEASE_VERSION"

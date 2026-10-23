@@ -2,8 +2,25 @@ name: ci build - mvn package
 
 run-name: "ci build - mvn package [${{ github.ref_name }}]"
 
+# Builds and tests every push and pull request. A push to develop also deploys the SNAPSHOT to the
+# sliceworkz cloudrepo, so what downstream builds resolve is always what develop holds. To deploy
+# another branch on purpose, run this workflow by hand on it ("Use workflow from") with "deploy"
+# ticked; that overwrites the shared SNAPSHOT until the next push to develop deploys again.
+#
+# A deploying run builds and tests once and deploys what it built. Deploying runs of this repository
+# share one concurrency group, so two quick merges deploy one after the other rather than
+# interleaving their uploads; a run that is not deploying never waits on them.
+#
+# Runs directly on the runner (no container) so that setup-java's generated ~/.m2/settings.xml, the
+# one carrying the cloudrepo credentials, is the settings.xml Maven loads.
+
 on:
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Deploy this branch's SNAPSHOT to cloudrepo"
+        type: boolean
+        default: false
   push:
     branches: [ "develop", "feature/*", "release/*" ]
   pull_request:
@@ -14,13 +31,39 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    concurrency:
+      group: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'workflow_dispatch' && inputs.deploy)) && 'cloudrepo-snapshot' || format('ci-{0}', github.run_id) }}
+      cancel-in-progress: false
+
+    env:
+      DEPLOY: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'workflow_dispatch' && inputs.deploy) }}
+      CLOUDREPO_USERNAME: ${{ secrets.CLOUDREPO_USERNAME }}
+      CLOUDREPO_PASSWORD: ${{ secrets.CLOUDREPO_PASSWORD }}
+
     steps:
     - uses: actions/checkout@v5
-    - name: Set up JDK 21
+    - name: Set up JDK 25
       uses: actions/setup-java@v5
       with:
         java-version: '25'
         distribution: 'temurin'
         cache: maven
+        server-id: cloudrepo
+        server-username: CLOUDREPO_USERNAME
+        server-password: CLOUDREPO_PASSWORD
+    - name: Verify SNAPSHOT version
+      if: env.DEPLOY == 'true'
+      run: |
+        CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+        echo "Current version: $CURRENT_VERSION"
+        if [[ ! "$CURRENT_VERSION" =~ -SNAPSHOT$ ]]; then
+          echo "Error: Version $CURRENT_VERSION is not a SNAPSHOT version"
+          echo "Only SNAPSHOT builds are deployed to cloudrepo."
+          exit 1
+        fi
     - name: Build with Maven
+      if: env.DEPLOY != 'true'
       run: mvn -B package --file pom.xml
+    - name: Build with Maven and deploy the SNAPSHOT to cloudrepo
+      if: env.DEPLOY == 'true'
+      run: mvn -B -Pcloudrepo deploy --file pom.xml

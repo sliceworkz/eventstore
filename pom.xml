@@ -132,6 +132,27 @@
 							</rules>    
 						</configuration>
 					</execution>
+					<!--
+						A release must not depend on a SNAPSHOT: what it resolves to changes after the
+						release, so the released artifacts could no longer be rebuilt or trusted.
+						onlyWhenRelease keeps it silent on a -SNAPSHOT version (develop, feature and
+						release branches), so it only bites once create-release-tag-and-bump has set the
+						release version, and that workflow checks it before the tag is created.
+					-->
+					<execution>
+						<id>no-snapshot-dependencies-in-a-release</id>
+						<goals>
+							<goal>enforce</goal>
+						</goals>
+						<configuration>
+							<rules>
+								<requireReleaseDeps>
+									<onlyWhenRelease>true</onlyWhenRelease>
+									<message>A release must not depend on a SNAPSHOT version.</message>
+								</requireReleaseDeps>
+							</rules>
+						</configuration>
+					</execution>
 				</executions>
 			</plugin>
 					        					
@@ -308,7 +329,7 @@
 
 		<!--
 			Deploy SNAPSHOT artifacts to the sliceworkz cloudrepo instead of Maven
-			Central. Activated by the build-and-deploy-snapshot-cloudrepo workflow.
+			Central. Activated by the ci workflow when it deploys (a push to develop, or a run by hand with "deploy" ticked).
 
 			The central-publishing-maven-plugin installs a lifecycle participant that,
 			by default, clears the maven-deploy-plugin's executions and takes over the

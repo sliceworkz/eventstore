@@ -48,15 +48,22 @@ import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import javax.sql.DataSource;
+
+import com.zaxxer.hikari.HikariDataSource;
+import com.zaxxer.hikari.HikariPoolMXBean;
 
 
 import org.postgresql.PGConnection;
@@ -67,7 +74,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.observability.EventStoreObserver;
+import org.sliceworkz.eventstore.observability.HealthCheck;
+import org.sliceworkz.eventstore.observability.HealthStatus;
 import org.sliceworkz.eventstore.observability.NotificationChannel;
+import org.sliceworkz.eventstore.observability.StorageHealth;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
@@ -218,6 +228,40 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 		}
 
 	}
+
+	/**
+	 * Whether this storage's reads are held behind the visibility barrier: set by the append monitor once
+	 * a notification has been withheld for {@link #stallThresholdMillis}, cleared once it is delivered and
+	 * when the storage closes, reporting every change to the observer exactly once
+	 * ({@link EventStoreObserver#visibilityStallChanged}).
+	 */
+	private final AtomicBoolean visibilityStalled = new AtomicBoolean();
+
+	/**
+	 * What the append monitor is withholding right now, published for {@link #health(Duration)}: the
+	 * monitor's own map is touched by the monitor thread only. {@code null} while nothing is withheld.
+	 */
+	private volatile Withheld withheldNotifications;
+
+	/** when the notification withheld longest was parked, and on how many streams something is withheld */
+	private record Withheld ( long sinceNanos, int streams ) { }
+
+	/**
+	 * How long a notification is withheld before the stall is logged, reported and judged
+	 * {@link HealthStatus#DEGRADED}: {@link #WITHHELD_NOTIFICATION_WARN_MILLIS}, shortened by tests only
+	 * ({@link #stallThreshold(Duration)}).
+	 */
+	private volatile long stallThresholdMillis = WITHHELD_NOTIFICATION_WARN_MILLIS;
+
+	/**
+	 * The database round trip {@link #health(Duration)} is waiting on, or the last one it waited on. A
+	 * health call finding one still in flight waits on that one rather than starting another, so a
+	 * database that has stopped answering costs one outstanding probe, not one per health call.
+	 */
+	private final AtomicReference<DatabaseProbe> databaseProbe = new AtomicReference<>();
+
+	/** a round trip to the database, started at {@code startedNanos}, answering how long it took in nanoseconds */
+	private record DatabaseProbe ( long startedNanos, CompletableFuture<Long> roundTrip ) { }
 
 	/**
 	 * The latches {@link #start()} is waiting on, so that {@link #close()} can release a caller blocked in
@@ -386,6 +430,168 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 	@Override
 	public boolean isNotificationsAvailable ( ) {
 		return eventMonitorListening.get() && bookmarkMonitorListening.get();
+	}
+
+	/**
+	 * Open or closed, and while open: the database round trip, both notification channels, the visibility
+	 * barrier and the connection pools — see {@link PostgresEventStorage} for what each reports. The only
+	 * check that leaves the process is the round trip, so it is the only one the timeout bounds.
+	 */
+	@Override
+	public StorageHealth health ( Duration timeout ) {
+		Objects.requireNonNull(timeout, "timeout must not be null");
+		if ( timeout.isNegative() || timeout.isZero() ) {
+			throw new IllegalArgumentException("health timeout must be positive, but was " + timeout);
+		}
+		if ( stopped.get() ) {
+			// nothing else is worth asking: the pools may be closed, and every operation throws anyway
+			return new StorageHealth(name, List.of(HealthCheck.open(false)));
+		}
+		List<HealthCheck> checks = new ArrayList<>();
+		checks.add(HealthCheck.open(true));
+		checks.add(databaseCheck(timeout));
+		checks.add(channelCheck(HEALTH_EVENT_APPENDED_NOTIFICATIONS, eventMonitorListening,
+			"appends succeed, but no subscriber is woken, so subscribed projections only advance when run explicitly"));
+		checks.add(channelCheck(HEALTH_BOOKMARK_PLACED_NOTIFICATIONS, bookmarkMonitorListening,
+			"bookmarks are placed, but no placement is announced, so whatever waits on another reader's progress waits for its own poll"));
+		checks.add(visibilityCheck());
+		poolCheck(HEALTH_CONNECTION_POOL, dataSource).ifPresent(checks::add);
+		if ( monitoringDataSource != dataSource ) {
+			poolCheck(HEALTH_MONITORING_CONNECTION_POOL, monitoringDataSource).ifPresent(checks::add);
+		}
+		return new StorageHealth(name, checks);
+	}
+
+	/**
+	 * One round trip on the main {@code DataSource} — a connection from the pool and {@code SELECT 1} —
+	 * waited on for at most the timeout, on a thread of its own so that a pool that does not hand out a
+	 * connection, or a socket that does not answer, cannot hold the caller. A round trip that outlives
+	 * the timeout stays in flight and the next call waits on it, rather than queueing another behind it.
+	 */
+	private HealthCheck databaseCheck ( Duration timeout ) {
+		DatabaseProbe probe = currentDatabaseProbe(timeout);
+		try {
+			long nanos = probe.roundTrip().get(timeout.toNanos(), TimeUnit.NANOSECONDS);
+			return HealthCheck.up(HEALTH_DATABASE, Map.of("roundTripMicros", TimeUnit.NANOSECONDS.toMicros(nanos)));
+		} catch ( TimeoutException e ) {
+			long inFlightMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - probe.startedNanos());
+			return HealthCheck.of(HEALTH_DATABASE, HealthStatus.DOWN,
+				"the database has not answered a round trip in %dms".formatted(inFlightMillis),
+				Map.of("timeoutMillis", timeout.toMillis(), "inFlightMillis", inFlightMillis));
+		} catch ( ExecutionException e ) {
+			Throwable cause = e.getCause() != null ? e.getCause() : e;
+			Map<String, Object> details = new LinkedHashMap<>();
+			details.put("error", cause.getClass().getName());
+			if ( cause instanceof SQLException sql && sql.getSQLState() != null ) {
+				details.put("sqlState", sql.getSQLState());
+			}
+			return HealthCheck.of(HEALTH_DATABASE, HealthStatus.DOWN,
+				"the database round trip failed: " + Objects.toString(cause.getMessage(), cause.getClass().getSimpleName()), details);
+		} catch ( InterruptedException e ) {
+			Thread.currentThread().interrupt();
+			return HealthCheck.of(HEALTH_DATABASE, HealthStatus.UNKNOWN, "interrupted while waiting for the database round trip", Map.of());
+		}
+	}
+
+	/** the round trip still in flight, or a new one when there is none */
+	private DatabaseProbe currentDatabaseProbe ( Duration timeout ) {
+		while ( true ) {
+			DatabaseProbe current = databaseProbe.get();
+			if ( current != null && !current.roundTrip().isDone() ) {
+				return current;
+			}
+			DatabaseProbe fresh = new DatabaseProbe(System.nanoTime(), new CompletableFuture<>());
+			if ( databaseProbe.compareAndSet(current, fresh) ) {
+				Thread.ofVirtual().name("eventstore-health-" + name).start(() -> probeDatabase(fresh, timeout));
+				return fresh;
+			}
+		}
+	}
+
+	private void probeDatabase ( DatabaseProbe probe, Duration timeout ) {
+		try ( Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement() ) {
+			// the server is asked to give up too, so a round trip nobody waits on any more does not hold a backend
+			statement.setQueryTimeout((int) Math.max(1, Math.ceilDiv(timeout.toMillis(), 1000)));
+			statement.execute("SELECT 1");
+			probe.roundTrip().complete(System.nanoTime() - probe.startedNanos());
+		} catch ( Throwable t ) {
+			// completed whatever was thrown: a probe left incomplete would be waited on by every later call
+			probe.roundTrip().completeExceptionally(t);
+			if ( t instanceof Error error ) {
+				throw error;
+			}
+		}
+	}
+
+	private static HealthCheck channelCheck ( String check, ChannelState channel, String cost ) {
+		return channel.get()
+			? HealthCheck.up(check, Map.of())
+			: HealthCheck.of(check, HealthStatus.DEGRADED,
+				"not listening: " + cost + "; the monitor reconnects with backoff", Map.of());
+	}
+
+	/**
+	 * Judged on the notification withheld longest, as the stall log line is: {@link HealthStatus#DEGRADED}
+	 * once it has been withheld for the stall threshold. Something withheld for less is an append still in
+	 * flight, which a busy store has nearly always.
+	 */
+	private HealthCheck visibilityCheck ( ) {
+		Withheld withheld = withheldNotifications;
+		if ( withheld == null ) {
+			return HealthCheck.up(HEALTH_VISIBILITY, Map.of("withheldStreams", 0));
+		}
+		long withheldForMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - withheld.sinceNanos());
+		Map<String, Object> details = Map.of("withheldStreams", withheld.streams(), "withheldForMillis", withheldForMillis);
+		if ( withheldForMillis < stallThresholdMillis ) {
+			return HealthCheck.up(HEALTH_VISIBILITY, details);
+		}
+		return HealthCheck.of(HEALTH_VISIBILITY, HealthStatus.DEGRADED,
+			("appended events have been committed but unreadable for %ds: a writing transaction older than them is still open "
+			+ "somewhere in the cluster, holding pg_snapshot_xmin down. Reads do not advance until it ends. To find it: "
+			+ "SELECT pid, datname, now() - xact_start, query FROM pg_stat_activity WHERE backend_xid IS NOT NULL ORDER BY xact_start")
+				.formatted(withheldForMillis / 1000), details);
+	}
+
+	/** a pool's counts, for a HikariCP pool that has started; nothing for any other {@code DataSource} */
+	private static Optional<HealthCheck> poolCheck ( String check, DataSource pool ) {
+		if ( pool instanceof HikariDataSource hikari && !hikari.isClosed() && hikari.getHikariPoolMXBean() != null ) {
+			return Optional.of(poolCheck(check, hikari.getHikariPoolMXBean(), hikari.getMaximumPoolSize()));
+		}
+		return Optional.empty();
+	}
+
+	/**
+	 * {@link HealthStatus#DEGRADED} while anyone is waiting for a connection: every connection is in use,
+	 * so every operation of the store waits its turn, up to the pool's connection timeout.
+	 */
+	static HealthCheck poolCheck ( String check, HikariPoolMXBean pool, int maximumPoolSize ) {
+		int waiting = pool.getThreadsAwaitingConnection();
+		Map<String, Object> details = new LinkedHashMap<>();
+		details.put("active", pool.getActiveConnections());
+		details.put("idle", pool.getIdleConnections());
+		details.put("total", pool.getTotalConnections());
+		details.put("max", maximumPoolSize);
+		details.put("waiting", waiting);
+		return waiting == 0
+			? HealthCheck.up(check, details)
+			: HealthCheck.of(check, HealthStatus.DEGRADED,
+				"%d caller(s) waiting for a connection: all %d are in use".formatted(waiting, pool.getActiveConnections()), details);
+	}
+
+	/** sets the stall flag, reporting a change of it to the observer, and only a change */
+	private void reportVisibilityStall ( boolean stalled ) {
+		if ( visibilityStalled.compareAndSet(!stalled, stalled) ) {
+			observer.visibilityStallChanged(name, stalled);
+		}
+	}
+
+	/**
+	 * Shortens how long a notification is withheld before the stall is reported. For tests only, so that
+	 * a stall need not last ten seconds to be seen; production keeps {@link #WITHHELD_NOTIFICATION_WARN_MILLIS}.
+	 */
+	PostgresEventStorageImpl stallThreshold ( Duration threshold ) {
+		this.stallThresholdMillis = threshold.toMillis();
+		return this;
 	}
 
 	/** see {@link #lockTimeout(Duration)} */
@@ -1486,6 +1692,10 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 			}
 		}
 		if ( wasRunning ) {
+			// a stall ends with the storage, as its channels go down with it: a gauge must not keep
+			// reporting one for a storage that is gone
+			withheldNotifications = null;
+			reportVisibilityStall(false);
 			// after the monitors have stopped, so both channels have been reported down before this
 			observer.storageClosed(name);
 		}
@@ -3162,10 +3372,8 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 		 * merge keeps the entry's position and its park time. Only the monitor thread touches it.
 		 */
 		private final Map<EventStreamId, Parked> withheld = new LinkedHashMap<>();
-		/** when the stall being reported began, for the line that reports it over; meaningful only while {@link #stallReported} */
+		/** when the stall being reported began, for the line that reports it over; meaningful only while one is reported */
 		private long reportedStallSinceNanos;
-		/** whether the current stall has been logged, so that it is logged once rather than once per slice */
-		private boolean stallReported;
 
 		/** a parked notification and when it was parked, which a later notification for the same stream keeps */
 		private record Parked ( AppendsToEventStoreNotification notification, long sinceNanos ) { }
@@ -3316,13 +3524,15 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 			// has been non-empty: on a busy store with appends in flight there is nearly always something
 			// parked for a slice, and the map may not drain for minutes while nothing is stalled.
 			long now = System.nanoTime();
+			withheldNotifications = withheld.isEmpty() ? null : new Withheld(withheld.values().iterator().next().sinceNanos(), withheld.size());
 			long oldestWithheldForMillis = withheld.isEmpty() ? 0 : (now - withheld.values().iterator().next().sinceNanos()) / 1_000_000;
-			if ( stallReported && oldestWithheldForMillis < WITHHELD_NOTIFICATION_WARN_MILLIS ) {
+			boolean stallReported = visibilityStalled.get();
+			if ( stallReported && oldestWithheldForMillis < stallThresholdMillis ) {
 				LOGGER.info("the withheld event append notifications of event storage '{}' were delivered after {}s: "
 					+ "the blocking transaction has ended and the appended events are readable",
 					PostgresEventStorageImpl.this.name, (now - reportedStallSinceNanos) / 1_000_000_000);
-				stallReported = false;
-			} else if ( !stallReported && oldestWithheldForMillis >= WITHHELD_NOTIFICATION_WARN_MILLIS ) {
+				reportVisibilityStall(false);
+			} else if ( !stallReported && oldestWithheldForMillis >= stallThresholdMillis ) {
 				LOGGER.warn("event append notifications of event storage '{}' have been withheld for {}s on {} stream(s): "
 					+ "a writing transaction older than the appended events is still open somewhere in the cluster, "
 					+ "holding pg_snapshot_xmin down, so the events are committed but not readable yet. Subscribers are "
@@ -3330,7 +3540,7 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 					+ "FROM pg_stat_activity WHERE backend_xid IS NOT NULL ORDER BY xact_start",
 					PostgresEventStorageImpl.this.name, oldestWithheldForMillis / 1000, withheld.size());
 				reportedStallSinceNanos = withheld.values().iterator().next().sinceNanos();
-				stallReported = true;
+				reportVisibilityStall(true);
 			}
 		}
 

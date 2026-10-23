@@ -117,9 +117,13 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     milliseconds an older append is still in flight on every busy store, which is not worth a line;
     one withheld for longer than `WITHHELD_NOTIFICATION_WARN_MILLIS` (10s) is a WARN naming the
     storage, how long, how many streams are affected and the diagnosis query, once per stall, and an
-    INFO when it clears. Only a store with an append during the stall sees it — a stall on a store
-    nobody is writing to withholds nothing and is still silent — so it complements the external
-    monitoring below rather than replacing it.
+    INFO when it clears. The same two moments are reported to the observer
+    (`EventStoreObserver.visibilityStallChanged`, cleared on close too) and judged by `health()`
+    (`HEALTH_VISIBILITY`, `DEGRADED` while the oldest withheld notification is past the threshold,
+    with `withheldStreams` and `withheldForMillis`). Only a store with an append during the stall sees
+    it — a stall on a store nobody is writing to withholds nothing and is still silent — so it
+    complements the external monitoring below rather than replacing it. Tests shorten the threshold
+    with the package-private `stallThreshold(Duration)`; production keeps the constant.
   - **Only transactions that have *written* count** — this is what makes the hazard narrow rather than
     severe, and it is worth being precise about. PostgreSQL assigns a transaction id lazily, at the
     first write, and only assigned ids enter a snapshot's xmin. A read-only transaction pins nothing,
@@ -156,10 +160,10 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     NULL for other roles' sessions otherwise, and you get a row identifying the blocker with no way to
     tell how old it is or what it is doing. (`backend_xid` is readable regardless, so the `WHERE` clause
     still selects the right rows for any role.)
-  - **The library does not meter this**, and there is nothing in the `sliceworkz.eventstore.*` meters
-    that reveals it — they count and time the calls the store makes, all of which keep succeeding
-    throughout a stall. Beyond the withheld-notification WARN above, detection is external, on the
-    database, using the query above.
+  - **The operation meters do not reveal this** — they count and time the calls the store makes, all
+    of which keep succeeding throughout a stall. Beyond the withheld-notification signals above (the
+    WARN, the observer callback, the health check), detection is external, on the database, using the
+    query above.
     Two notes for whoever wires that up:
     - **Watch `pg_snapshot_xmin` standing still *while* something holds a transaction id**, not either
       alone. xmin also stops moving on a completely idle database, so "xmin has not advanced" on its own

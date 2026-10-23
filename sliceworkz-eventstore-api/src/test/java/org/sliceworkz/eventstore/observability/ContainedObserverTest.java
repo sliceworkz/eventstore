@@ -62,8 +62,9 @@ class ContainedObserverTest {
 			contained.subscriptionClosed(STREAM);
 			contained.streamOpened(STREAM);
 			contained.notificationChannelChanged("s", NotificationChannel.EVENT_APPENDED, true);
+			contained.visibilityStallChanged("s", true);
 		});
-		assertTrue(throwing.calls.get() >= 7, "every call reached the observer");
+		assertTrue(throwing.calls.get() >= 8, "every call reached the observer");
 	}
 
 	@Test
@@ -102,6 +103,7 @@ class ContainedObserverTest {
 		@Override public void subscriptionClosed ( StreamInfo stream ) { throw fail(); }
 		@Override public void streamOpened ( StreamInfo stream ) { throw fail(); }
 		@Override public void notificationChannelChanged ( String storage, NotificationChannel channel, boolean listening ) { throw fail(); }
+		@Override public void visibilityStallChanged ( String storage, boolean stalled ) { throw fail(); }
 
 	}
 

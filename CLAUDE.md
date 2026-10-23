@@ -385,9 +385,9 @@ EventStorage storage = PostgresEventStorage.newBuilder()
   the monitor listens, down again when a *running* store loses its monitoring connection, which is the
   same silence as never having had one, and down on close, before `storageClosed`. Every transition is
   reported exactly once, whichever path in the monitor made it.
-  `PostgresEventStorage.isNotificationsAvailable()` is the same state for a health endpoint, on the
-  type the builder's `build()` returns, so no downcast: keep that handle rather than widening it to
-  `EventStorage` where a health check needs it.
+  `PostgresEventStorage.isNotificationsAvailable()` is the same state as a boolean, on the type the
+  builder's `build()` returns; a health endpoint holding a plain `EventStorage` finds it, per channel,
+  in `health()` (see "Health" below).
 - **What arrives on the channel cannot take a monitor down, and a monitor that does go down cannot
   leave the channel reported up.** A `NOTIFY` channel is a database-wide name: any session in the database
   can publish on it, and a trigger left behind by another release may not agree with this one on the
@@ -835,6 +835,48 @@ Micrometer.
   subscription count, the erasure — and, through `RecordingObserver`'s contract checks, that every scope
   is completed or failed exactly once and closed in order. `RecordingObserver` is published in the
   testing module for application tests too; `ContainedObserverTest` in the api module pins containment.
+
+### Health: asked, not cached, and never the caller's failure
+
+**Read `docs/design/health.md` before you change `health()`, `StorageHealth` or a backend's checks.**
+It holds the reasons and the rejected alternatives. The rules:
+
+- **`EventStorage.health()` / `health(Duration)` answers a `StorageHealth`**: one `HealthCheck`
+  (name, `HealthStatus`, message, details) per aspect the backend can judge, and a `status()` derived
+  as the worst of them, never stated beside them. `HealthStatus` is ordered `UP < UNKNOWN < DEGRADED <
+  DOWN`; no checks is `UNKNOWN`. Details are JSON scalars only, kept in the order given. All of it
+  lives in `org.sliceworkz.eventstore.observability`.
+- **It never throws on account of the storage, a closed one included**: a closed storage answers
+  `DOWN` under `HealthCheck.OPEN` and asks nothing else. Only a timeout that is not positive is refused.
+- **It returns within its timeout** (`DEFAULT_HEALTH_TIMEOUT`, 2s, for `health()`), whatever the
+  database does. Only a check leaving the process is bounded by it.
+- **It is not observed and not cached.** Pacing, caching and mapping a status onto an HTTP code are
+  the caller's.
+- **What a status means for the application is the caller's decision.** `DEGRADED` is "reads and
+  writes work, something the application relies on does not"; a restart fixes none of what this
+  library reports as degraded.
+- **The default is `UNKNOWN`**, so a third-party backend predating the method compiles and does not
+  claim to be up.
+- **Every backend reports `HealthCheck.OPEN`.** The in-memory backend reports nothing else; the
+  file-backed one adds `InMemoryFsEventStorage.HEALTH_DIRECTORIES` (`DOWN` when the events or
+  bookmarks directory is gone or unwritable); PostgreSQL adds, under constants on
+  `PostgresEventStorage`:
+  - `HEALTH_DATABASE` — a pooled connection and `SELECT 1`, `roundTripMicros`; `DOWN` on failure
+    (`error`, `sqlState`) or no answer in time (`timeoutMillis`, `inFlightMillis`). It runs on a
+    virtual thread of its own, and **a probe still in flight is waited on again, never joined by a
+    second**, so a database that stopped answering costs one outstanding probe. Never touches this
+    store's tables, so it is no schema check
+  - `HEALTH_EVENT_APPENDED_NOTIFICATIONS`, `HEALTH_BOOKMARK_PLACED_NOTIFICATIONS` — `DEGRADED` while
+    the channel's monitor holds no `LISTEN` (the state `isNotificationsAvailable()` combines)
+  - `HEALTH_VISIBILITY` — `DEGRADED` once the oldest withheld append notification is past
+    `WITHHELD_NOTIFICATION_WARN_MILLIS`; the same moments go to
+    `EventStoreObserver.visibilityStallChanged`, cleared on close too
+  - `HEALTH_CONNECTION_POOL`, and `HEALTH_MONITORING_CONNECTION_POOL` when the monitors have a pool of
+    their own — reported for a started HikariCP pool only, whoever created it; `DEGRADED` while anyone
+    waits for a connection
+
+Tests: `StorageHealthTest` (TCK, per backend), `StorageHealthValuesTest` (api),
+`PostgresStorageHealthTest`, `InMemoryFsStorageHealthTest`, `ContainedObserverTest`.
 
 ### Typical Usage Pattern
 

@@ -47,6 +47,8 @@ import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.observability.EventStoreObserver;
+import org.sliceworkz.eventstore.observability.HealthCheck;
+import org.sliceworkz.eventstore.observability.StorageHealth;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec;
 import org.sliceworkz.eventstore.spi.EventImportConflictException;
 import org.sliceworkz.eventstore.spi.EventStorage;
@@ -949,6 +951,20 @@ class InMemoryEventStorageImpl implements EventStorage {
 	@Override
 	public EventStoreObserver observer ( ) {
 		return observer;
+	}
+
+	/**
+	 * Open or closed, and nothing else: the events live on the heap and notifications are delivered
+	 * in-process, so there is no database to ask, no channel to lose and no barrier to stall behind.
+	 * Asks nothing outside the process, so the timeout is never waited on.
+	 */
+	@Override
+	public StorageHealth health ( Duration timeout ) {
+		Objects.requireNonNull(timeout, "timeout must not be null");
+		if ( timeout.isNegative() || timeout.isZero() ) {
+			throw new IllegalArgumentException("health timeout must be positive, but was " + timeout);
+		}
+		return new StorageHealth(name, List.of(HealthCheck.open(!closed.get())));
 	}
 
 	private void checkNotClosed ( ) {

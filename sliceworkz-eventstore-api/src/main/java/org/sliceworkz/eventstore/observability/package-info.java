@@ -16,7 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 /**
- * Observability - the SPI through which a store, its storage and its projectors report what they do.
+ * Observability - the SPI through which a store, its storage and its projectors report what they do, and
+ * the health a storage reports when asked.
  * <p>
  * The library depends on no metrics or tracing library. It reports operations and lifecycle events in its
  * own terms to an {@link org.sliceworkz.eventstore.observability.EventStoreObserver}, and an
@@ -27,6 +28,7 @@
  *   <li>{@link org.sliceworkz.eventstore.observability.Outcome} - what an operation answered</li>
  *   <li>{@link org.sliceworkz.eventstore.observability.StreamInfo} - which stream an observation is about</li>
  *   <li>{@link org.sliceworkz.eventstore.observability.NotificationChannel} - the channels whose health a storage reports</li>
+ *   <li>{@link org.sliceworkz.eventstore.observability.StorageHealth} - a storage's health when asked, as {@link org.sliceworkz.eventstore.observability.HealthCheck}s with a {@link org.sliceworkz.eventstore.observability.HealthStatus}, for a health endpoint</li>
  *   <li>{@link org.sliceworkz.eventstore.observability.StreamObservation} - how a source is observed, which is how a projector finds its observer</li>
  * </ul>
  */

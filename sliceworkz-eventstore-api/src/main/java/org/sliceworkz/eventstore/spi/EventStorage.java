@@ -20,6 +20,7 @@ package org.sliceworkz.eventstore.spi;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -30,6 +31,9 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.observability.EventStoreObserver;
+import org.sliceworkz.eventstore.observability.HealthCheck;
+import org.sliceworkz.eventstore.observability.HealthStatus;
+import org.sliceworkz.eventstore.observability.StorageHealth;
 import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.Limit;
@@ -167,7 +171,7 @@ public interface EventStorage extends AutoCloseable {
 	 *       {@link EventStorageClosedException} once the storage is closed. Continuing to serve reads
 	 *       and writes while notifications are dead is not an acceptable alternative: it strands
 	 *       projections silently. {@link #name()} keeps working, so logging and diagnostics do not
-	 *       break.</li>
+	 *       break, and so does {@link #health()}, which reports the storage closed.</li>
 	 *   <li><b>No more notifications.</b> No {@link AppendsToEventStoreNotification} or
 	 *       {@link BookmarkPlacedNotification} is delivered to any listener after {@code close()}
 	 *       returns.</li>
@@ -484,6 +488,62 @@ public interface EventStorage extends AutoCloseable {
 	 */
 	default EventStoreObserver observer ( ) {
 		return EventStoreObserver.NOOP;
+	}
+
+	/**
+	 * How long {@link #health()} waits for a check that has to ask something outside the process, such
+	 * as the database answering a round trip.
+	 * <p>
+	 * Short on purpose: a health endpoint is asked every few seconds, by a caller with a deadline of its
+	 * own, and a database that has not answered a trivial statement in two seconds is not one the
+	 * application can serve from either.
+	 */
+	Duration DEFAULT_HEALTH_TIMEOUT = Duration.ofSeconds(2);
+
+	/**
+	 * This storage's health, checked now, waiting at most {@link #DEFAULT_HEALTH_TIMEOUT} for anything
+	 * it has to ask outside the process.
+	 *
+	 * @return the storage's health
+	 * @see #health(Duration)
+	 */
+	default StorageHealth health ( ) {
+		return health(DEFAULT_HEALTH_TIMEOUT);
+	}
+
+	/**
+	 * This storage's health, checked now: one {@link HealthCheck} per aspect the backend can judge, and a
+	 * status that is the worst of them.
+	 * <p>
+	 * Intended for health endpoints, and so held to three rules a storage operation is not:
+	 * <ul>
+	 *   <li><b>It never throws on account of the storage</b>, not on a closed one either: a closed storage answers
+	 *       {@link HealthStatus#DOWN} under {@link HealthCheck#OPEN}, and a check that fails is reported as
+	 *       a failed check. A health endpoint whose own call fails says nothing about what failed.</li>
+	 *   <li><b>It returns within the timeout</b>, give or take the in-process checks, whatever the
+	 *       database does. A check that has not answered in time is reported as such and left to finish
+	 *       on its own, and a later call does not start a second one beside it.</li>
+	 *   <li><b>It is not observed.</b> A health probe is not an operation a caller performed, and asked
+	 *       every few seconds it would drown the operations an observer is there for.</li>
+	 * </ul>
+	 * Every backend reports {@link HealthCheck#OPEN}. What else it reports is the backend's, named by
+	 * constants it publishes: the PostgreSQL backend adds the database round trip, both notification
+	 * channels, the visibility barrier and its connection pools; the file-backed one its directories.
+	 * <p>
+	 * The default answers {@link HealthStatus#UNKNOWN}, so a storage written before this method existed
+	 * keeps compiling and says, truthfully, that it reports nothing — rather than claiming to be up.
+	 *
+	 * @param timeout how long to wait for a check that has to ask outside the process; positive
+	 * @return the storage's health
+	 * @throws IllegalArgumentException for a timeout that is not positive
+	 */
+	default StorageHealth health ( Duration timeout ) {
+		Objects.requireNonNull(timeout, "timeout must not be null");
+		if ( timeout.isNegative() || timeout.isZero() ) {
+			throw new IllegalArgumentException("health timeout must be positive, but was " + timeout);
+		}
+		return new StorageHealth(name(), List.of(HealthCheck.of("health", HealthStatus.UNKNOWN,
+			"storage '%s' does not report its health".formatted(name()), Map.of())));
 	}
 
 	/**

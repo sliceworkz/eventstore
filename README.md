@@ -20,8 +20,9 @@ Supports all features described by the [DCB Specification](https://dcb.events/sp
 
 ## Requirements
 
-- **Java 21** or later (the library is compiled with `--release 21` and uses records and sealed
+- **Java 21** or later at runtime (the library is compiled with `--release 21` and uses records and sealed
   interfaces in its public API)
+- **JDK 25** to build from source; the build still targets release 21
 - **Maven 3.6.3** or later to build from source
 - For the PostgreSQL backend: **PostgreSQL 16** or later, with the `btree_gin` extension available
   (creating it needs `CREATE` on the database — see the

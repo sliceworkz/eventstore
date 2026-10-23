@@ -88,7 +88,7 @@ final class KeyCache {
 			private static final long serialVersionUID = 1L;
 
 			@Override
-			protected boolean removeEldestEntry ( Map.Entry<KeyId, Entry> eldest ) {
+			protected boolean removeEldestEntry ( Map.Entry<KeyId, KeyCache.Entry> eldest ) {
 				return size() > KeyCache.this.maxEntries;
 			}
 		};

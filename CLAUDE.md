@@ -290,6 +290,13 @@ log reloaded with a gap (a crash between two writes that landed out of order) ne
 position to the next append. `InMemoryEventStorageImplTest` pins the cursor, the gap and a
 preloaded log put in order; `InMemoryFsEventStorageImplTest` the reload with a gap.
 
+**The file-backed store writes every event and bookmark file whole or not at all**: to a `.tmp` file
+beside it, renamed into place (`InMemoryFsEventStorageImpl.writeAtomically`). A process stopped
+mid-write leaves a `.tmp`, which the next start removes; written in place, it left an empty `.json` that
+failed every later start. A file that still cannot be read fails the load with an `EventStorageException`
+naming it. Nothing is forced to disk: a stopped process is covered, a lost machine is not.
+`InMemoryFsEventStorageImplTest` pins it.
+
 ```java
 EventStorage storage = InMemoryEventStorage.newBuilder().build();
 EventStore store = EventStore.on(storage).build();

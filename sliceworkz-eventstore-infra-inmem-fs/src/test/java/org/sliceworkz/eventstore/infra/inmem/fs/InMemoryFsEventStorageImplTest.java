@@ -18,7 +18,9 @@
 package org.sliceworkz.eventstore.infra.inmem.fs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -45,6 +47,7 @@ import org.sliceworkz.eventstore.serialization.json.JsonBookmarkCodec;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorage.ImportMode;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
+import org.sliceworkz.eventstore.spi.EventStorageException;
 import org.sliceworkz.eventstore.spi.EventToImport;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
@@ -108,6 +111,52 @@ public class InMemoryFsEventStorageImplTest {
 			assertEquals("CustomerNameChanged", events.get(1).type().name());
 			assertTrue(events.get(0).tags().containsAll(Tags.of("customer", "123")));
 		}
+	}
+
+	@Test
+	void anAppendLeavesNoFileInProgressBehind ( @TempDir Path tempDir ) throws IOException {
+		EventStore store = InMemoryFsEventStorage.newBuilder().directory(tempDir).name("whole").buildStore();
+		store.getEventStream(EventStreamId.forContext("customer").withPurpose("1"), TestEvent.class)
+				.append(Event.of(new TestEvent.CustomerRegistered("John"), Tags.none()));
+		store.close();
+
+		try ( Stream<Path> paths = Files.list(tempDir.resolve("events")) ) {
+			List<String> names = paths.map(p -> p.getFileName().toString()).toList();
+			assertEquals(1, names.size(), names.toString());
+			assertTrue(names.get(0).endsWith(".json"), names.toString());
+		}
+	}
+
+	@Test
+	void aWriteLeftInProgressByAStoppedProcessIsRemovedOnLoad ( @TempDir Path tempDir ) throws IOException {
+		EventStreamId streamId = EventStreamId.forContext("customer").withPurpose("1");
+		EventStore store = InMemoryFsEventStorage.newBuilder().directory(tempDir).name("first").buildStore();
+		store.getEventStream(streamId, TestEvent.class).append(Event.of(new TestEvent.CustomerRegistered("John"), Tags.none()));
+		store.close();
+		// what a process stopped between writing and renaming leaves: content of any shape, under the in-progress suffix
+		Path leftOver = tempDir.resolve("events").resolve("0000000002-000002-0-2026-01-01-00-00-00-0000.json" + InMemoryFsEventStorageImpl.IN_PROGRESS_SUFFIX);
+		Files.writeString(leftOver, "");
+		Path leftOverBookmark = tempDir.resolve("bookmarks").resolve("reader.json" + InMemoryFsEventStorageImpl.IN_PROGRESS_SUFFIX);
+		Files.writeString(leftOverBookmark, "{");
+
+		EventStore reloaded = InMemoryFsEventStorage.newBuilder().directory(tempDir).name("second").buildStore();
+
+		assertEquals(1, reloaded.getEventStream(streamId, TestEvent.class).query(EventQuery.matchAll()).size(), "the write never completed, so it is not there");
+		assertFalse(Files.exists(leftOver), "removed, so it cannot pile up");
+		assertFalse(Files.exists(leftOverBookmark));
+		reloaded.close();
+	}
+
+	@Test
+	void anUnreadableEventFileFailsTheLoadNamingTheFile ( @TempDir Path tempDir ) throws IOException {
+		Files.createDirectories(tempDir.resolve("events"));
+		Path empty = Files.writeString(tempDir.resolve("events").resolve("0000000001-000001-0-2026-01-01-00-00-00-0000.json"), "");
+
+		EventStorageException failure = assertThrows(EventStorageException.class,
+				() -> InMemoryFsEventStorage.newBuilder().directory(tempDir).name("broken").build());
+
+		assertTrue(failure.getMessage().contains(empty.toString()), failure.getMessage());
+		assertTrue(failure.getMessage().contains("(empty)"), failure.getMessage());
 	}
 
 	@Test

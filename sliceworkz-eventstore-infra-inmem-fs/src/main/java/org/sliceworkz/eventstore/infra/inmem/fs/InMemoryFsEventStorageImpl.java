@@ -18,8 +18,10 @@
 package org.sliceworkz.eventstore.infra.inmem.fs;
 
 import java.io.IOException;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -270,9 +272,8 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 	/**
 	 * Closes this storage by closing its in-memory delegate.
 	 * <p>
-	 * Nothing is buffered on this side: every event and bookmark is written to its own file with a
-	 * single {@code Files.writeString} as it is appended, so there is nothing to flush and no handle to
-	 * release. Closing only stops further operations, per the contract on {@link EventStorage#close()}.
+	 * Nothing is buffered on this side: every event and bookmark is written to its own file as it is
+	 * appended (see {@link #writeAtomically}), so there is nothing to flush and no handle to release. Closing only stops further operations, per the contract on {@link EventStorage#close()}.
 	 */
 	@Override
 	public void close ( ) {
@@ -285,7 +286,7 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 		try {
 			String fileName = "%010d-%06d-%d-%s.json".formatted(event.reference().tx(), event.reference().position(), event.reference().index(), TIMESTAMP_FORMAT.format(event.timestamp()));
 			Path filePath = eventsDir.resolve(fileName);
-			Files.writeString(filePath, eventCodec.write(event));
+			writeAtomically(filePath, eventCodec.write(event));
 		} catch ( IOException e ) {
 			throw new EventStorageException("failed to persist event to " + eventsDir, e);
 		}
@@ -295,9 +296,40 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 		try {
 			String fileName = sanitizeFileName(bookmark.reader()) + ".json";
 			Path filePath = bookmarksDir.resolve(fileName);
-			Files.writeString(filePath, bookmarkCodec.write(bookmark.reader(), bookmark.reference(), bookmark.readUpTo(), bookmark.tags(), bookmark.updatedAt()));
+			writeAtomically(filePath, bookmarkCodec.write(bookmark.reader(), bookmark.reference(), bookmark.readUpTo(), bookmark.tags(), bookmark.updatedAt()));
 		} catch ( IOException e ) {
 			throw new EventStorageException("failed to persist bookmark for reader " + bookmark.reader(), e);
+		}
+	}
+
+	/**
+	 * Writes a file whole or not at all: the content goes to a {@value #IN_PROGRESS_SUFFIX} file beside the
+	 * target and is renamed onto it once written. A process stopped mid-write leaves that file behind, which
+	 * the next start removes, never a truncated {@code .json} the next start cannot read. The alternative --
+	 * writing the target in place -- loses because the file exists, empty, from the moment it is opened:
+	 * a stop between opening and writing left a file that failed every later start. Nothing is forced to
+	 * disk: this guards against a process that is stopped, not against a machine that loses power, which a
+	 * store for local development does not promise to survive.
+	 */
+	private static void writeAtomically ( Path target, String content ) throws IOException {
+		Path inProgress = target.resolveSibling(target.getFileName() + IN_PROGRESS_SUFFIX);
+		Files.writeString(inProgress, content);
+		try {
+			Files.move(inProgress, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+		} catch ( AtomicMoveNotSupportedException e ) {
+			Files.move(inProgress, target, StandardCopyOption.REPLACE_EXISTING);
+		}
+	}
+
+	/** The suffix of a file still being written; never loaded, and removed on the next start. */
+	static final String IN_PROGRESS_SUFFIX = ".tmp";
+
+	/** Removes what a process stopped mid-write left behind: a write that never completed was never acknowledged. */
+	private static void removeWritesInProgress ( Path dir ) throws IOException {
+		try ( Stream<Path> paths = Files.list(dir) ) {
+			for ( Path leftOver : paths.filter(p -> p.toString().endsWith(IN_PROGRESS_SUFFIX)).toList() ) {
+				Files.deleteIfExists(leftOver);
+			}
 		}
 	}
 
@@ -319,6 +351,7 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 			if ( !Files.exists(eventsDir) ) {
 				return events;
 			}
+			removeWritesInProgress(eventsDir);
 			try ( Stream<Path> paths = Files.list(eventsDir) ) {
 				List<Path> jsonFiles = paths
 						.filter(p -> p.toString().endsWith(".json"))
@@ -344,6 +377,8 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 			return eventCodec.read(Files.readString(file));
 		} catch ( IOException e ) {
 			throw new EventStorageException("failed to read event file " + file, e);
+		} catch ( RuntimeException e ) {
+			throw new EventStorageException(unreadable("event", file), e);
 		}
 	}
 
@@ -353,6 +388,7 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 			if ( !Files.exists(bookmarksDir) ) {
 				return bookmarks;
 			}
+			removeWritesInProgress(bookmarksDir);
 			try ( Stream<Path> paths = Files.list(bookmarksDir) ) {
 				List<Path> jsonFiles = paths
 						.filter(p -> p.toString().endsWith(".json"))
@@ -373,10 +409,28 @@ class InMemoryFsEventStorageImpl implements EventStorage {
 			bookmarks.put(parsed.reader(), new Bookmark(parsed.reader(), parsed.reference(), parsed.readUpTo(), parsed.tags(), parsed.updatedAt()));
 		} catch ( IOException e ) {
 			throw new EventStorageException("failed to read bookmark file " + file, e);
+		} catch ( RuntimeException e ) {
+			throw new EventStorageException(unreadable("bookmark", file), e);
 		}
 	}
 
 	// --- helpers ---
+
+	/**
+	 * Names the file that cannot be read and what can be done about it, where the codec's own failure
+	 * names neither: a file this storage wrote whole is never unreadable, so it is one written by a
+	 * version that wrote in place, or changed by hand.
+	 */
+	private static String unreadable ( String kind, Path file ) {
+		long size;
+		try {
+			size = Files.size(file);
+		} catch ( IOException e ) {
+			size = -1;
+		}
+		return "unreadable " + kind + " file " + file + (size == 0 ? " (empty)" : "")
+				+ ": it was not written whole, or was changed outside this storage; restore it from a copy, or remove it if losing what it held is acceptable";
+	}
 
 	private static String sanitizeFileName ( String name ) {
 		return name.replaceAll("[^a-zA-Z0-9._-]", "_");

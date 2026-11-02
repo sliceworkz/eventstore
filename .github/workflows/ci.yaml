@@ -30,6 +30,8 @@ jobs:
   build:
 
     runs-on: ubuntu-latest
+    # a build normally finishes well within this; past it something hangs, and GitHub's default would wait six hours
+    timeout-minutes: 20
 
     concurrency:
       group: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'workflow_dispatch' && inputs.deploy)) && 'cloudrepo-snapshot' || format('ci-{0}', github.run_id) }}

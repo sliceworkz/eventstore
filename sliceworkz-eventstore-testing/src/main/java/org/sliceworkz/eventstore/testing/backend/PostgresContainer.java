@@ -47,6 +47,12 @@ public final class PostgresContainer {
 	/** PostgreSQL 18 image tag. */
 	public static final String IMAGE_PG18 = "postgres:18";
 
+	/**
+	 * PostgreSQL 19 image tag, pinned to the release candidate until 19.0 is published as {@code postgres:19}.
+	 * A pre-release on purpose: it is what lets the compliance run find what 19 changes before users do.
+	 */
+	public static final String IMAGE_PG19 = "postgres:19rc1";
+
 	private static final Map<String, PostgreSQLContainer> CONTAINERS = new ConcurrentHashMap<>();
 	private static final Map<String, HikariDataSource> DATASOURCES = new ConcurrentHashMap<>();
 

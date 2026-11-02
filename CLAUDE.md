@@ -1321,8 +1321,8 @@ anything saying so.
 
 Backends are discovered with the `ServiceLoader`. In this repository the set is declared in
 `sliceworkz-eventstore-tests/src/test/resources/META-INF/services/org.sliceworkz.eventstore.testing.EventStoreBackend`
-and covers **all five in-tree storages**: `inmem`, `inmem-fs`, `postgres:16`, `postgres:17` and
-`postgres:18`. Adding a storage to the compliance run is one line in that file.
+and covers **all in-tree storages**: `inmem`, `inmem-fs`, `postgres:16`, `postgres:17`, `postgres:18`
+and `postgres:19rc1`. Adding a storage to the compliance run is one line in that file.
 
 - Narrow a local run with `-Deventstore.testing.backends=inmem` to skip the containers entirely.
 - Scenarios needing an optional part of the contract declare it —
@@ -1347,9 +1347,12 @@ for the store's prefix, so two scenarios sharing a backend concurrently would dr
 tables mid-test. To split a run anyway, `-Deventstore.testing.backends=...` partitions it across
 separate JVMs.
 
-The Postgres backends are `Postgres16Backend`, `Postgres17Backend` and `Postgres18Backend`; the shared
+The Postgres backends are `Postgres16Backend`, `Postgres17Backend`, `Postgres18Backend` and
+`Postgres19Backend` — the last pinned to the release candidate (`postgres:19rc1`) until 19.0 is published,
+so the compliance run meets a new major before users do; move `PostgresContainer.IMAGE_PG19` to
+`postgres:19` then. The shared
 base `AbstractPostgresBackend` is abstract on purpose, so no class name can be read as "PostgreSQL,
-unspecified version". `AbstractPostgresBackend.forImage("postgres:19")` covers a version with no
+unspecified version". `AbstractPostgresBackend.forImage("postgres:20")` covers a version with no
 dedicated class (the image tag becomes the backend name, so the version still shows in reports).
 
 **Test Structure:**

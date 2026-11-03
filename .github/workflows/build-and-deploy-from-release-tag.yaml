@@ -26,6 +26,13 @@ jobs:
           # shallow checkout does not fetch
           fetch-depth: 0
       
+      # Grype, the vulnerability scanner, with its database (about 3 GB unpacked) downloading in the
+      # background while the build runs; scan.sh waits for it (.github/vulnerability-scan/scan.sh)
+      - name: Install Grype
+        run: .github/vulnerability-scan/scan.sh install
+      - name: Download the vulnerability database
+        run: .github/vulnerability-scan/scan.sh prefetch
+
       - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:
@@ -135,6 +142,23 @@ jobs:
         with:
           sbom-path: sbom/sliceworkz-eventstore-testing-${{ steps.get_version.outputs.VERSION }}.cdx.json
           subject-path: sliceworkz-eventstore-testing/target/sliceworkz-eventstore-testing-${{ steps.get_version.outputs.VERSION }}.jar
+
+      # Report only: the gate ran before the tag was created (create-release-tag-and-bump), and a release
+      # that is already tagged is not stopped here. The findings are in the job summary and the
+      # vulnerability-reports artifact.
+      - name: Report known vulnerabilities in the release
+        continue-on-error: true
+        run: |
+          for sbom in sbom/*.cdx.json; do
+            .github/vulnerability-scan/scan.sh report "$sbom" "$(basename "$sbom" .cdx.json)"
+          done
+      - name: Keep the vulnerability reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vulnerability-reports
+          path: ${{ runner.temp }}/vulnerability-scan/reports/
+          if-no-files-found: ignore
 
       - name: Attach the SBOM to the GitHub release
         run: gh release upload ${{ github.ref_name }} sbom/*.cdx.json

@@ -21,6 +21,13 @@ jobs:
           # using a PAT as otherwise the workflow on the tag is not kicked off
           token: ${{ secrets.PAT_TOKEN }}
       
+      # Grype, the vulnerability scanner, with its database (about 3 GB unpacked) downloading in the
+      # background while the build runs; scan.sh waits for it (.github/vulnerability-scan/scan.sh)
+      - name: Install Grype
+        run: .github/vulnerability-scan/scan.sh install
+      - name: Download the vulnerability database
+        run: .github/vulnerability-scan/scan.sh prefetch
+
       - name: Validate branch name
         run: |
           BRANCH_NAME="${GITHUB_REF#refs/heads/}"
@@ -85,6 +92,26 @@ jobs:
         run: |
           echo "::notice title=create-release-tag-and-bump - release: v$RELEASE_VERSION"
       
+      # The vulnerability gate, before anything is changed: a release with a known High or Critical
+      # vulnerability that has a fix stops here, with no commit, tag or version bump, so its version
+      # number is not lost. SECURITY-RELEASES.md says what to do then: fix it, or record a statement in
+      # the VEX file (.vex/openvex.json) and run this workflow again.
+      - name: Build the SBOMs of the release
+        env:
+          CLOUDREPO_USERNAME: ${{ secrets.CLOUDREPO_USERNAME }}
+          CLOUDREPO_PASSWORD: ${{ secrets.CLOUDREPO_PASSWORD }}
+        run: |
+          mvn -B -DskipTests package
+      - name: Scan the release for known vulnerabilities
+        run: .github/vulnerability-scan/scan.sh project gate
+      - name: Keep the vulnerability reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vulnerability-reports
+          path: ${{ runner.temp }}/vulnerability-scan/reports/
+          if-no-files-found: ignore
+
       - name: Set release version
         run: |
           echo "Setting version to $RELEASE_VERSION"

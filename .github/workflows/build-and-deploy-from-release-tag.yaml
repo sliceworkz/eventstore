@@ -14,7 +14,7 @@ jobs:
     permissions:
       contents: write
       packages: write
-      # to sign the SBOM's build provenance (GitHub artifact attestations)
+      # to sign the SBOM's build provenance and attest the SBOM to the jars (GitHub artifact attestations)
       id-token: write
       attestations: write
     
@@ -112,6 +112,29 @@ jobs:
         uses: actions/attest-build-provenance@v3
         with:
           subject-path: sbom/*.cdx.json
+
+      # The SBOM attested to the jars it describes, so a consumer holding a jar from Maven
+      # Central can verify which SBOM belongs to it and that this workflow run produced both:
+      #   gh attestation verify <jar> --repo sliceworkz/eventstore \
+      #     --predicate-type https://cyclonedx.org/bom
+      # The library's aggregate goes to the library's jars, the test kit's SBOM to its own.
+      - name: Attest the SBOM to the library's jars
+        uses: actions/attest@v4
+        with:
+          sbom-path: sbom/sliceworkz-eventstore-${{ steps.get_version.outputs.VERSION }}.cdx.json
+          subject-path: |
+            sliceworkz-eventstore-api/target/sliceworkz-eventstore-api-${{ steps.get_version.outputs.VERSION }}.jar
+            sliceworkz-eventstore-impl/target/sliceworkz-eventstore-impl-${{ steps.get_version.outputs.VERSION }}.jar
+            sliceworkz-eventstore-serialization-json/target/sliceworkz-eventstore-serialization-json-${{ steps.get_version.outputs.VERSION }}.jar
+            sliceworkz-eventstore-infra-inmem/target/sliceworkz-eventstore-infra-inmem-${{ steps.get_version.outputs.VERSION }}.jar
+            sliceworkz-eventstore-infra-inmem-fs/target/sliceworkz-eventstore-infra-inmem-fs-${{ steps.get_version.outputs.VERSION }}.jar
+            sliceworkz-eventstore-infra-postgres/target/sliceworkz-eventstore-infra-postgres-${{ steps.get_version.outputs.VERSION }}.jar
+
+      - name: Attest the test kit's SBOM to its jar
+        uses: actions/attest@v4
+        with:
+          sbom-path: sbom/sliceworkz-eventstore-testing-${{ steps.get_version.outputs.VERSION }}.cdx.json
+          subject-path: sliceworkz-eventstore-testing/target/sliceworkz-eventstore-testing-${{ steps.get_version.outputs.VERSION }}.jar
 
       - name: Attach the SBOM to the GitHub release
         run: gh release upload ${{ github.ref_name }} sbom/*.cdx.json

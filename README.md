@@ -313,6 +313,37 @@ failed where you do not support them.
 
 # Other
 
+## Software bill of materials
+
+Every release comes with a software bill of materials (SBOM) in [CycloneDX](https://cyclonedx.org)
+1.6 JSON, listing the dependencies the library ships with (test-scoped dependencies are left out):
+
+- **On Maven Central**, next to each module's jar, as the `cyclonedx` classifier: the SBOM of that
+  module, e.g. `sliceworkz-eventstore-api-<version>-cyclonedx.json`.
+- **On the [GitHub release](https://github.com/sliceworkz/eventstore/releases)**: the aggregate over the
+  runtime library, `sliceworkz-eventstore-<version>.cdx.json`, and the test kit's own,
+  `sliceworkz-eventstore-testing-<version>.cdx.json`, kept apart so its test
+  dependencies are not read as dependencies of the library.
+
+Each release's SBOM is attested to the jars it describes with a
+[GitHub artifact attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations),
+signed by the workflow run that built and published them. To check that a jar you downloaded is the
+one this repository released, and which SBOM belongs to it:
+
+```bash
+gh attestation verify sliceworkz-eventstore-api-<version>.jar --repo sliceworkz/eventstore --predicate-type https://cyclonedx.org/bom
+```
+
+The SBOM files on the release carry a build provenance attestation of their own:
+
+```bash
+gh attestation verify sliceworkz-eventstore-<version>.cdx.json --repo sliceworkz/eventstore
+```
+
+## Reporting a vulnerability
+
+Please report security vulnerabilities privately, not in a public issue. See [SECURITY.md](SECURITY.md).
+
 ## Contributing
 
 Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

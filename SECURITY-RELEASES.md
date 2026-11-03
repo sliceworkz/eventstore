@@ -106,6 +106,19 @@ done about it, and the scan lets it through.
   `action_statement`.** The scan refuses a statement without them, naming it.
 - `under_investigation` is allowed but changes nothing: the finding still stops the build.
 
+## Keeping Grype current
+
+Two things keep the scan current, and only one of them needs a person:
+
+- **What Grype knows** (its vulnerability database) is downloaded fresh on every run, published daily: a
+  vulnerability announced today stops tomorrow's builds, whatever Grype version is pinned.
+- **Grype itself** is pinned in `.github/vulnerability-scan/Dockerfile` (`FROM anchore/grype:vX.Y.Z`; nothing is
+  built from it, `scan.sh` reads the version there). Dependabot proposes each new Grype release as a pull
+  request, and its build scans with the new version. Merge it when it is green. Do not let these wait for
+  long: a newer Grype matches packages better, and once Anchore moves its database to a format an old Grype
+  cannot read, that Grype stops getting updates and the scan fails on a database that is too old, possibly in
+  the middle of a release.
+
 ## Running the scan yourself
 
 With [Grype](https://github.com/anchore/grype) installed (`brew install grype`, or its install script), after

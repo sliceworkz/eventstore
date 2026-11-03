@@ -30,3 +30,5 @@ Security fixes are made on the latest release.
 A vulnerability in a library this project depends on is reported to that library. Every release
 carries a software bill of materials that lists those dependencies; see
 [Software bill of materials](README.md#software-bill-of-materials) in the README.
+Every build scans that SBOM for known vulnerabilities; how a finding is handled is in
+[SECURITY-RELEASES.md](SECURITY-RELEASES.md).

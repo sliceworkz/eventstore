@@ -340,6 +340,10 @@ The SBOM files on the release carry a build provenance attestation of their own:
 gh attestation verify sliceworkz-eventstore-<version>.cdx.json --repo sliceworkz/eventstore
 ```
 
+Every build also scans these SBOMs for known vulnerabilities with Grype, and a release with a High or
+Critical vulnerability that has a fix is stopped before it is tagged. What to do then, including how to
+release anyway with the vulnerability recorded: [SECURITY-RELEASES.md](SECURITY-RELEASES.md).
+
 ## Reporting a vulnerability
 
 Please report security vulnerabilities privately, not in a public issue. See [SECURITY.md](SECURITY.md).

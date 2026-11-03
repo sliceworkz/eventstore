@@ -44,6 +44,12 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    # Grype, the vulnerability scanner, with its database (about 3 GB unpacked) downloading in the
+    # background while the build runs; scan.sh waits for it (.github/vulnerability-scan/scan.sh)
+    - name: Install Grype
+      run: .github/vulnerability-scan/scan.sh install
+    - name: Download the vulnerability database
+      run: .github/vulnerability-scan/scan.sh prefetch
     - name: Set up JDK 25
       uses: actions/setup-java@v5
       with:
@@ -69,3 +75,14 @@ jobs:
     - name: Build with Maven and deploy the SNAPSHOT to cloudrepo
       if: env.DEPLOY == 'true'
       run: mvn -B -Pcloudrepo deploy --file pom.xml
+    # Fails on a High or Critical vulnerability with a fix available, unless the VEX file (.vex/openvex.json)
+    # has a statement on it. What to do then: SECURITY-RELEASES.md
+    - name: Scan the SBOMs for known vulnerabilities
+      run: .github/vulnerability-scan/scan.sh project gate
+    - name: Keep the vulnerability reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: vulnerability-reports
+        path: ${{ runner.temp }}/vulnerability-scan/reports/
+        if-no-files-found: ignore

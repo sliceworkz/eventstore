@@ -1700,3 +1700,14 @@ that bind everywhere:
 - Append notifications are emitted once per stream per statement, not per row; `timestamptz` keeps
   microseconds (the one lossy step of an inmem → Postgres → inmem round trip); and a `db.properties`
   *value* never reaches an error message or log line — only the key does.
+
+## Known vulnerabilities (Grype)
+
+CI, `create-release-tag-and-bump` (before it tags) and the release workflow scan the SBOMs listed in
+`.github/vulnerability-scan/targets` with `.github/vulnerability-scan/scan.sh`. A High or Critical vulnerability
+with a fix available fails CI and stops a release before its version is set; the release workflow only
+reports. Decisions on findings are statements in `.vex/openvex.json` (OpenVEX): `not_affected` with a
+justification and an impact statement, or `affected` with an action statement for an emergency release.
+**The procedure is [SECURITY-RELEASES.md](SECURITY-RELEASES.md)**; follow it when a scan fails, and keep it in
+step when the scan changes. A statement names the vulnerability by the id the scan reports (`GHSA-…`, not the
+CVE number) and the package by its purl with version.

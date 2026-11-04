@@ -344,6 +344,8 @@ Every build also scans these SBOMs for known vulnerabilities with Grype, and a r
 Critical vulnerability that has a fix is stopped before it is tagged. What to do then, including how to
 release anyway with the vulnerability recorded: [SECURITY-RELEASES.md](SECURITY-RELEASES.md).
 
+How the SBOMs, the scans, the daily re-scan of the released versions and the dependency updates fit together, explained for someone who is not a security specialist, with the words, the setup outside the code and the decisions behind it: [SUPPLY-CHAIN.md](SUPPLY-CHAIN.md).
+
 ## Reporting a vulnerability
 
 Please report security vulnerabilities privately, not in a public issue. See [SECURITY.md](SECURITY.md).

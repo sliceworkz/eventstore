@@ -1711,3 +1711,5 @@ justification and an impact statement, or `affected` with an action statement fo
 **The procedure is [SECURITY-RELEASES.md](SECURITY-RELEASES.md)**; follow it when a scan fails, and keep it in
 step when the scan changes. A statement names the vulnerability by the id the scan reports (`GHSA-…`, not the
 CVE number) and the package by its purl with version.
+
+Every morning `rescan-releases.yaml` scans the latest release of each `release/X.Y` branch again (`.github/vulnerability-scan/rescan-releases.py`) and opens an issue, "Known vulnerabilities in <repo> <version>", for a blocking finding, closing it once it is fixed or the release is replaced. `scan.sh` and `rescan-releases.py` are identical in eventstore, eventmodeling, dashboard, plugins and modeler: change them in all five. **[SUPPLY-CHAIN.md](SUPPLY-CHAIN.md)** explains the whole of it (SBOMs, scans, re-scan, Dependabot, the setup outside the code and the decisions behind it); keep it in step with any change to them.

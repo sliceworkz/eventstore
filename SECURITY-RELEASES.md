@@ -4,6 +4,9 @@ Every build scans this repository's software bill of materials (SBOM) for known 
 [Grype](https://github.com/anchore/grype). This page says what the scan does, what to do when it stops a
 build, and how to release anyway when that cannot wait: the **emergency release**.
 
+The words used here, and how the SBOMs, the scans and the dependency updates fit together, are explained in
+[SUPPLY-CHAIN.md](SUPPLY-CHAIN.md).
+
 ## Where the scan runs
 
 | Workflow | What it does | Stops the build? |

@@ -1,18 +1,41 @@
-Sliceworkz Eventstore
+Sliceworkz EventStore
 
-Copyright (C) 2025 Sliceworkz / XTi
+Copyright (C) 2025-2026 Sliceworkz / XTi
 
 
 This product is licensed under the GNU Lesser General Public License v3.0.
 See the LICENSE file for the full license text.
 
-This product includes software developed by third parties:
+This product depends on software developed by third parties. These components are not
+bundled in the Sliceworkz EventStore jars; they are resolved as dependencies of the
+published artifacts, each under its own license.
 
-- Jackson (https://github.com/FasterXML/jackson-core) - licensed under Apache 2.0 License
-- HikariCP (https://github.com/brettwooldridge/HikariCP) - licensed under Apache 2.0 License
-- SLF4j (Https://github.com/qos-ch/slf4j) - licensed under MIT License
-- PG/JDBC (https://github.com/pgjdbc/pgjdbc) - licensed under BSD-2 Clause License
-- Micrometer (https://github.com/micrometer-metrics/micrometer) - licensed under Apache 2.0 License
+Library (sliceworkz-eventstore-api, -impl, -infra-inmem, -infra-inmem-fs, -infra-postgres,
+-serialization-json):
+
+- SLF4J API (https://github.com/qos-ch/slf4j) - licensed under the MIT License
+- Jackson 3 core and databind (https://github.com/FasterXML/jackson-databind)
+  - licensed under the Apache License 2.0
+- Jackson annotations, optional (https://github.com/FasterXML/jackson-annotations)
+  - licensed under the Apache License 2.0
+- HikariCP, PostgreSQL backend (https://github.com/brettwooldridge/HikariCP)
+  - licensed under the Apache License 2.0
+- uuid-creator, PostgreSQL backend, optional (https://github.com/f4b6a3/uuid-creator)
+  - licensed under the MIT License
+- PostgreSQL JDBC Driver, PostgreSQL backend, provided by the application
+  (https://github.com/pgjdbc/pgjdbc) - licensed under the BSD 2-Clause License
+
+Test kit (sliceworkz-eventstore-testing):
+
+- JUnit 5 / JUnit Platform (https://github.com/junit-team/junit-framework)
+  - licensed under the Eclipse Public License 2.0
+- Awaitility (https://github.com/awaitility/awaitility) - licensed under the Apache License 2.0
+- Hamcrest (https://github.com/hamcrest/JavaHamcrest) - licensed under the BSD 3-Clause License
+- Testcontainers, optional, for the PostgreSQL backends
+  (https://github.com/testcontainers/testcontainers-java) - licensed under the MIT License
+- and the transitive dependencies of the above (among them OpenTest4J, API Guardian and
+  JSpecify, licensed under the Apache License 2.0)
+
 
 Trademarks:
 
@@ -27,6 +50,3 @@ Belgium
 
 www.xt-i.com
 info@xt-i.com
-
-
-

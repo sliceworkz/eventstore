@@ -1,5 +1,5 @@
 [![ci build - mvn package](https://github.com/sliceworkz/eventstore/actions/workflows/ci.yaml/badge.svg)](https://github.com/sliceworkz/eventstore/actions/workflows/ci.yaml)
-[![Status: Beta](https://img.shields.io/badge/status-beta-orange)](#project-status)
+[![Status: Release Candidate](https://img.shields.io/badge/status-release%20candidate-yellowgreen)](#project-status)
 [![Maven Central](https://img.shields.io/maven-central/v/org.sliceworkz/sliceworkz-eventstore-bom)](https://central.sonatype.com/search?q=g:org.sliceworkz)
 [![Quickstart](https://img.shields.io/badge/Quickstart%20Guide-blue)](https://sliceworkz.github.io/posts/eventstore-quickstart/)
 [![Docs](https://img.shields.io/badge/Documentation-purple)](https://sliceworkz.github.io/categories/eventstore-documentation/)
@@ -42,7 +42,8 @@ That is the whole idea. The rest of this library is what it takes to run it in p
 | **Operations** | Health reporting, an observability SPI you bind to Micrometer, OpenTelemetry or anything else, leases for leader election, and an importer for moving or archiving events between stores |
 | **Testing** | A `given/when/then` fixture for your own code, and a run-it-yourself compliance kit for third-party backends |
 
-The api module depends on SLF4J and nothing else you would notice: no metrics library, no Jackson 2.
+No metrics library on your classpath: the api module depends on SLF4J alone, and the backends bring
+Jackson 3 (`tools.jackson.*`), which lives beside a Jackson 2 your application may use without conflict.
 
 The [Sliceworkz Event Modeling framework](https://github.com/sliceworkz/eventmodeling) builds commands,
 read models, automations and feature slices on top of this store. Use this library directly when you want
@@ -331,8 +332,8 @@ Every jar declares an `Automatic-Module-Name` equal to its root package (`org.sl
 
 # Project status
 
-Beta. The API is settling but can still change between
-minor versions, and every change is listed in the [release notes](https://github.com/sliceworkz/eventstore/releases).
+Release candidate, on the way to a first stable release. Every change is listed in the
+[release notes](https://github.com/sliceworkz/eventstore/releases).
 
 ## Supply chain and security
 
@@ -352,4 +353,5 @@ privately, as described in [SECURITY.md](SECURITY.md).
 ## Contributing and license
 
 Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under the
-[LGPL-3.0](LICENSE); third-party components are listed in [NOTICE](NOTICE).
+[LGPL-3.0](LICENSE); the third-party components it depends on, and their licenses, are listed in
+[NOTICE](NOTICE).

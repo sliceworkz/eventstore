@@ -11,6 +11,7 @@ build, and how to release anyway when that cannot wait: the **emergency release*
 | CI (every push and pull request) | scans the SBOMs the build writes | yes, on a High or Critical vulnerability with a fix available |
 | `create-release-tag-and-bump` | builds without tests and scans, **before** the release version is set and tagged | yes, and then nothing has changed: no commit, no tag, no version bump, so the version number is not lost |
 | `build-and-deploy-from-release-tag` | scans what is released (and, for an image, the image) | no: it only reports, since the release is tagged by then |
+| `rescan released versions` (daily) | scans the latest release of each `release/*` line again, against that day's data | no: it opens an issue (below) |
 
 Only a vulnerability that is **High or Critical** and **has a fixed version** stops a build. Lower severities
 and vulnerabilities nobody has fixed yet are reported, never blocking.
@@ -105,6 +106,34 @@ done about it, and the scan lets it through.
 - **A `not_affected` statement needs a `justification` and an `impact_statement`, and an `affected` one an
   `action_statement`.** The scan refuses a statement without them, naming it.
 - `under_investigation` is allowed but changes nothing: the finding still stops the build.
+
+## When the daily re-scan finds one
+
+A vulnerability published after a release is not something the build could have stopped. Every morning the
+workflow `rescan released versions` takes the latest release of each `release/X.Y` branch (its highest tag
+`vX.Y.N`), downloads the SBOMs attached to its GitHub release,
+and scans them against that day's vulnerability data, with the VEX file **at the head of `release/X.Y`**. A
+release with a blocking finding (the same rule as the build's) gets an issue, labelled `vulnerability`:
+**"Known vulnerabilities in eventstore X.Y.N"**, listing what was found. GitHub notifies whoever watches the
+repository; a later vulnerability in the same release is added to the issue as a comment.
+
+Deal with it on the release branch, with the same three choices as above:
+
+- **Fix it** (A): the fixed version on `release/X.Y`, and a patch release from there.
+- **Not affected** (B), or **accepted for now** (C): a statement in `.vex/openvex.json` **on `release/X.Y`**,
+  through a pull request to that branch. An older release branch may have no VEX file yet: copy the one on
+  `develop` and empty its `statements`. Take a statement that still applies to `develop` there too.
+
+The next re-scan (or a run by hand: *Actions*, `rescan released versions`, *Run workflow*) closes the issue once
+nothing blocking is left, and also once the release is no longer the latest of its line, since its successor is
+scanned instead. Releasing a fix therefore closes it.
+
+- **Only the latest release of each line is scanned.** Deleting a `release/X.Y` branch ends that line's
+  re-scan. A release from before SBOMs were published has none to scan; the run's summary says so and moves on.
+- **A run fails only when a scan could not run at all** (a download, the registry, Grype itself), so that a
+  broken re-scan does not read as a clean one. Findings never fail it: they are what the issues are for.
+- The run's summary lists every line with its result and the whole report per release; the
+  `rescan-reports` artifact holds them as text and JSON.
 
 ## Keeping Grype current
 

@@ -9,6 +9,15 @@ updates:
     directory: "/" # Location of package manifests
     schedule:
       interval: "weekly"
+  # The GitHub Actions the workflows use (actions/checkout, actions/setup-java, docker/build-push-action, ...), in one
+  # pull request a week; the build of that pull request runs them
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]
   # The Grype version the vulnerability scan uses: the FROM line of .github/vulnerability-scan/Dockerfile,
   # which scan.sh reads. A new Grype release comes as a pull request; the build tests it by scanning with it.
   - package-ecosystem: "docker"

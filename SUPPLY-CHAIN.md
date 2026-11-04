@@ -153,6 +153,8 @@ Dependabot (`.github/dependabot.yaml`) checks every week, and proposes each new 
 pull request's build tests it, the scan included. What it watches:
 
 - **Maven**: a pull request per new version.
+- **The GitHub Actions** the workflows use (`actions/checkout`, `actions/setup-java`, …), in one pull request a week.
+  Its build runs the CI workflow with them; the release workflows only run at the next release, so look at that one.
 - **Grype itself**, through `.github/vulnerability-scan/Dockerfile`. Merge these when they are green and do not let
   them wait: a newer Grype matches packages better, and once Anchore moves its database to a format an old Grype
   cannot read, the scan stops getting new data.
@@ -164,9 +166,6 @@ Two things to know:
   next week.
 - **Security updates** (a vulnerability published in a dependency we use) come at once, outside the schedule,
   when Dependabot security updates are switched on in the repository settings.
-
-Not covered by Dependabot here: the versions of the GitHub Actions the workflows use (`actions/checkout@v5`, …),
-moved by hand.
 
 ## Setup outside the code
 
@@ -220,7 +219,6 @@ versions → Enable workflow*).
 - **Publishing the VEX file** with each release, once it has statements.
 - **A portfolio view** of every version in use (for example OWASP Dependency-Track), worth it once many versions are in
   the field or clients ask for reporting; the daily re-scan covers the latest release of each line.
-- **Dependabot for the GitHub Actions versions** the workflows use.
 
 ## Doing it yourself
 

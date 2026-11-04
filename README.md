@@ -1,37 +1,65 @@
 [![ci build - mvn package](https://github.com/sliceworkz/eventstore/actions/workflows/ci.yaml/badge.svg)](https://github.com/sliceworkz/eventstore/actions/workflows/ci.yaml)
-[![Status: Beta](https://img.shields.io/badge/status-beta-orange)](#)
+[![Status: Beta](https://img.shields.io/badge/status-beta-orange)](#project-status)
 [![Maven Central](https://img.shields.io/maven-central/v/org.sliceworkz/sliceworkz-eventstore-bom)](https://central.sonatype.com/search?q=g:org.sliceworkz)
 [![Quickstart](https://img.shields.io/badge/Quickstart%20Guide-blue)](https://sliceworkz.github.io/posts/eventstore-quickstart/)
 [![Docs](https://img.shields.io/badge/Documentation-purple)](https://sliceworkz.github.io/categories/eventstore-documentation/)
+[![License: LGPL-3.0](https://img.shields.io/badge/license-LGPL--3.0-green)](LICENSE)
 
-# About Eventstore
+# Sliceworkz EventStore
 
-A DCB (Dynamic Consistency Boundary) compliant EventStore implementation in Java.
+**An event store for Java that implements the [Dynamic Consistency Boundary (DCB)](https://dcb.events/specification/)
+specification — on PostgreSQL in production, in memory for development and tests.**
 
-Persistence options: PostgreSQL for production, and two in-memory stores (plain, and persisted to
-JSON files) for development, demos and tests.
+Classic event stores make you choose your consistency boundaries up front: one stream per aggregate, and
+every decision has to fit inside one of them. DCB drops that constraint. Events are tagged with whatever
+they are about, a decision reads exactly the facts it needs — across types, across entities — and the
+append succeeds only if none of those facts changed in the meantime. The consistency boundary is drawn per
+decision, not per class.
 
-Supports all features described by the [DCB Specification](https://dcb.events/specification/):
-- Tagging of events for dynamic retrieval
-- Optimistic locking / conditional append via `AppendCriteria`
+```java
+EventQuery customer = EventQuery.forTypes(CustomerEvent.class).tagged("customer", "123");
+
+EventReference head = stream.head().orElse(null);               // 1. pin the moment you decide on
+var history = stream.query(customer.until(head));               // 2. read the relevant facts
+// ... decide ...
+stream.append(AppendCriteria.of(customer, head),                // 3. append, unless a new fact about
+    Event.of(new CustomerNameChanged("123", "Jon"), Tags.of("customer", "123")));   //    customer 123 landed since
+```
+
+That is the whole idea. The rest of this library is what it takes to run it in production.
+
+## What you get
+
+| | |
+|---|---|
+| **DCB, fully compliant** | Tag-based queries, conditional appends with `AppendCriteria`, `OptimisticLockingException` on a conflict — atomic under concurrency on every backend, held to it by a shared compliance suite |
+| **Type-safe streams** | Events are records under a sealed interface; `EventStream<CustomerEvent>` is checked by the compiler, and a sealed root in a query stands for its whole hierarchy |
+| **Three backends** | PostgreSQL 16+ for production, in-memory for tests, and in-memory persisted to JSON files for local development that survives a restart |
+| **Projections** | `Projector` replays a query into a read model in batches, resumes from a bookmark, keeps running on new appends, and reports its lag |
+| **Schema evolution** | `@LegacyEvent` upcasters, chained version by version; `@EventName` to rename a class without touching history |
+| **Idempotent appends** | Per-event idempotency keys, so a retried command stores nothing twice |
+| **Personal data** | Crypto-shredding: a `Shreddable<T>` field is encrypted per data subject, and erasing the subject destroys the key — the event log is never rewritten |
+| **Operations** | Health reporting, an observability SPI you bind to Micrometer, OpenTelemetry or anything else, leases for leader election, and an importer for moving or archiving events between stores |
+| **Testing** | A `given/when/then` fixture for your own code, and a run-it-yourself compliance kit for third-party backends |
+
+The api module depends on SLF4J and nothing else you would notice: no metrics library, no Jackson 2.
+
+The [Sliceworkz Event Modeling framework](https://github.com/sliceworkz/eventmodeling) builds commands,
+read models, automations and feature slices on top of this store. Use this library directly when you want
+the store; use the framework when you want an application structure around it.
 
 
 # Getting started
 
 ## Requirements
 
-- **Java 21** or later at runtime (the library is compiled with `--release 21` and uses records and sealed
-  interfaces in its public API)
-- **JDK 25** to build from source; the build still targets release 21
-- **Maven 3.6.3** or later to build from source
-- For the PostgreSQL backend: **PostgreSQL 16** or later, with the `btree_gin` extension available
-  (creating it needs `CREATE` on the database — see the
-  [postgres module README](sliceworkz-eventstore-infra-postgres/README.md))
+- **Java 21** or later at runtime
+- For PostgreSQL: **PostgreSQL 16** or later, with the `btree_gin` extension available
+- To build from source: JDK 25 and Maven 3.6.3+ (the build still targets release 21)
 
-## Coordinates
+## Add the dependency
 
-Every artifact is published to Maven Central under the group `org.sliceworkz`. Import the BOM once,
-then add the modules you need without versions:
+Every artifact is on Maven Central under `org.sliceworkz`. Import the BOM, then pick a backend:
 
 ```xml
 <dependencyManagement>
@@ -39,7 +67,7 @@ then add the modules you need without versions:
         <dependency>
             <groupId>org.sliceworkz</groupId>
             <artifactId>sliceworkz-eventstore-bom</artifactId>
-            <version>0.11.1</version>
+            <version>0.12.0</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -47,12 +75,11 @@ then add the modules you need without versions:
 </dependencyManagement>
 
 <dependencies>
-    <!-- the API you code against -->
     <dependency>
         <groupId>org.sliceworkz</groupId>
         <artifactId>sliceworkz-eventstore-api</artifactId>
     </dependency>
-    <!-- one storage backend; for PostgreSQL use sliceworkz-eventstore-infra-postgres instead -->
+    <!-- for development and tests; use sliceworkz-eventstore-infra-postgres in production -->
     <dependency>
         <groupId>org.sliceworkz</groupId>
         <artifactId>sliceworkz-eventstore-infra-inmem</artifactId>
@@ -60,54 +87,12 @@ then add the modules you need without versions:
 </dependencies>
 ```
 
-A backend pulls in `sliceworkz-eventstore-impl` at runtime, so `EventStore.on(storage).build()` finds an
-implementation without you naming one. The PostgreSQL backend declares the JDBC driver as `provided`:
-add `org.postgresql:postgresql` yourself, at the version your platform ships.
-
-## Modules
-
-| artifact | module name | what it is | when you need it |
-|---|---|---|---|
-| `sliceworkz-eventstore-api` | `org.sliceworkz.eventstore` | The interfaces you code against (`EventStore`, `EventStream`, `Event`, `Tags`, `AppendCriteria`, `Projector`, …) and the `EventStorage` SPI a backend implements | always |
-| `sliceworkz-eventstore-impl` | `org.sliceworkz.eventstore.impl` | The `EventStore` implementation: streams, serialization, upcasting, crypto-shredding, observations | pulled in at runtime by every backend |
-| `sliceworkz-eventstore-infra-inmem` | `org.sliceworkz.eventstore.infra.inmem` | In-memory storage | development, demos and tests |
-| `sliceworkz-eventstore-infra-inmem-fs` | `org.sliceworkz.eventstore.infra.inmem.fs` | The in-memory storage persisted to JSON files | local development that must survive a restart |
-| `sliceworkz-eventstore-infra-postgres` | `org.sliceworkz.eventstore.infra.postgres` | PostgreSQL storage | production |
-| `sliceworkz-eventstore-serialization-json` | `org.sliceworkz.eventstore.serialization.json` | JSON codecs for stored events and bookmarks | pulled in by the file-backed store; only needed directly to build your own backend on it |
-| `sliceworkz-eventstore-testing` | `org.sliceworkz.eventstore.testing` | `EventStoreFixture` for testing your application, plus the compliance suite for third-party backends | in `test` scope, see [Testing](#testing) |
-| `sliceworkz-eventstore-bom` | — | Bill of materials pinning all of the above to one version | imported once, as shown above |
-
-The examples, benchmark and TCK-runner modules in this repository are not published.
-
-The module name is the `Automatic-Module-Name` in each jar's manifest, so `requires
-org.sliceworkz.eventstore.infra.postgres;` works on the module path and keeps working whatever the
-jar file is called. The jars carry no `module-info.java`: they are automatic modules, which read every
-other module and export every package, so nothing in them is encapsulated.
-
-## Five concepts
-
-- **Event.** A record from a sealed interface of domain events, past tense (`CustomerRegistered`).
-  Its simple class name is the stored type name, so treat it like a column name: renaming the class
-  breaks reads of its history.
-- **Tags.** Key-value pairs on an event (`Tags.of("customer", "123")`). They are how events are found
-  across types, and they are what a consistency boundary is drawn around.
-- **Stream.** `EventStreamId.forContext("customer")` names a stream; an optional purpose
-  (`.withPurpose("123")`) splits a context into several. A stream scopes reads and writes; it is not a
-  type namespace, so keep event class names unique across the whole store.
-- **Query.** `EventQuery.forTypes(CustomerEvent.class).tagged("customer", id)` selects events by type
-  and tag, a sealed root standing for its whole hierarchy; `EventQuery.forEvents(types, tags)` builds the
-  same query from its two halves at once, and `.or(other)` unites two. `query()` returns a
-  `List`, read in full — nothing about it is lazy — so bound a read over a large stream with
-  `.limit(n)`, which is pushed into the storage query, and page with `page(query, cursor)`, or let a
-  `Projector` do that for you.
-- **Conditional append.** `AppendCriteria.of(query, lastReference)` makes an append fail with
-  `OptimisticLockingException` when a new event matching the query has landed after the reference.
-  That is the DCB idea in one line: decide on the relevant facts, then append only if no new relevant
-  fact appeared in the meantime.
+A backend brings the implementation along, so `EventStore.on(storage).build()` finds it on its own. The
+PostgreSQL backend declares the JDBC driver `provided`: add `org.postgresql:postgresql` yourself.
 
 ## Hello world
 
-Two customers, one stream, tags to tell them apart, and a conditional append that only succeeds while
+Two customers in one stream, told apart by their tags, and a conditional append that succeeds only while
 nothing new is known about the customer it concerns:
 
 ```java
@@ -133,230 +118,238 @@ public class HelloEventstore {
 
     public static void main ( String[] args ) {
 
-        // 1. a store; swap in PostgresEventStorage.newBuilder().buildStore() for production
+        // a store; PostgresEventStorage.newBuilder().buildStore() in production
         try ( EventStore eventStore = InMemoryEventStorage.newBuilder().buildStore() ) {
 
-            // 2. a stream, typed to the sealed interface
             EventStream<CustomerEvent> customers =
                 eventStore.getEventStream(EventStreamId.forContext("customer"), CustomerEvent.class);
 
-            // 3. the first append, unconditional: nothing was read, so there is no boundary to check.
-            //    The returned events carry the references storage assigned
+            // an unconditional append: nothing was read, so there is nothing to check
             customers.append(List.of(
                 Event.of(new CustomerEvent.CustomerRegistered("123", "John"), Tags.of("customer", "123")),
                 Event.of(new CustomerEvent.CustomerRegistered("124", "Jane"), Tags.of("customer", "124"))));
 
-            // 4. read one customer's history by tag
+            // decide on what is known about customer 123, as of the stream head
             EventQuery customer123 = EventQuery.forTypes(CustomerEvent.class).tagged("customer", "123");
-            List<Event<CustomerEvent>> history = customers.query(customer123);
-            EventReference lastKnown = history.getLast().reference();
+            EventReference head = customers.head().orElse(null);
+            List<Event<CustomerEvent>> history = customers.query(customer123.until(head));
 
-            // 5. decide, then append only if nothing about customer 123 has landed since
-            customers.append(AppendCriteria.of(customer123, lastKnown),
+            // append, unless a new fact about 123 landed after the head
+            customers.append(AppendCriteria.of(customer123, head),
                 Event.of(new CustomerEvent.CustomerNameChanged("123", "Jon"), Tags.of("customer", "123")));
 
-            // 6. the same reference is now stale: a new fact about 123 exists, so this is refused
+            // the same decision again is now stale: refused
             try {
-                customers.append(AppendCriteria.of(customer123, lastKnown),
+                customers.append(AppendCriteria.of(customer123, head),
                     Event.of(new CustomerEvent.CustomerNameChanged("123", "Jonathan"), Tags.of("customer", "123")));
             } catch ( OptimisticLockingException expected ) {
                 System.out.println("refused: " + expected.getMessage());
             }
 
+            // a change to customer 124 would not have conflicted: it is outside the boundary
             customers.query(EventQuery.matchAll()).forEach(System.out::println);
         }
     }
 }
 ```
 
-Two things the snippet leaves out:
+One rule to keep from this: **bound the read with `until(head)`, but hand `AppendCriteria` the query
+unbounded.** `AppendCriteria.of(customer123.until(head), head)` deems nothing after the head relevant, so it
+would admit every append and never raise a conflict.
 
-- **A boundary at the stream head.** When a decision takes several reads, take `customers.head()`
-  first, bound each read with `query(relevant.until(head))`, and hand `AppendCriteria` the same
-  reference beside the query *unbounded*. It is cheaper to check on PostgreSQL and the only sound way
-  to pin more than one read to one moment. Keep the two forms apart: an `until` bounds a consistency
-  boundary as well as a query, so `AppendCriteria.of(relevant.until(head), head)` deems nothing after
-  the head relevant and admits every append without ever raising `OptimisticLockingException`.
-- **Read models.** `Projector.from(stream).into(projection).build().run()` replays a query into a
-  `Projection` in batches; `.subscribe()` keeps it running as events arrive, and a bookmark lets it
-  resume where it left off. The bookmark also records how far the projector has *read* the stream,
-  past the events its query skips, so its lag is `Bookmark.readUpToOrReference()` to the head rather
-  than every event of a type it never handles — including a projector that has handled nothing yet,
-  whose bookmark records its read position alone (and which still resumes from the beginning).
-
-For PostgreSQL, `PostgresEventStorage.newBuilder().buildStore()` reads a `db.properties` describing a
-pooled connection for reads and appends and a direct one for LISTEN/NOTIFY; the
-[postgres module README](sliceworkz-eventstore-infra-postgres/README.md) has the template, the
-database privileges per init mode, and the backup and migration notes.
-
-## Where to go next
-
-- The [quickstart guide](https://sliceworkz.github.io/posts/eventstore-quickstart/) walks through a
-  complete application step by step; the
-  [documentation](https://sliceworkz.github.io/categories/eventstore-documentation/) covers the rest.
-- [`sliceworkz-eventstore-examples`](sliceworkz-eventstore-examples/src/main/java/org/sliceworkz/eventstore/examples)
-  holds runnable examples: append and query, optimistic locking, aggregates, projections and
-  savepoints, subscriptions, upcasting.
-- [`CLAUDE.md`](CLAUDE.md) is the design record: why each contract is what it is, which alternatives
-  were rejected and what was measured. Read it when the javadoc says *what* and you want *why*.
-
-What lands on your classpath: `sliceworkz-eventstore-api` brings SLF4J, no metrics library — the store
-reports what it does through its own `EventStoreObserver` SPI, and you bind the metrics or tracing
-library you use by providing an observer — and no Jackson beyond the optional
-`jackson-annotations` artifact that Jackson 2 and 3 share. Jackson 3 (`tools.jackson.*`) comes with the
-impl and the backends; it is a different groupId and package from Jackson 2, so an application on
-Jackson 2 runs both side by side with no conflict.
+The [quickstart guide](https://sliceworkz.github.io/posts/eventstore-quickstart/) builds a complete
+application step by step.
 
 
-# Shutting a store down
+# Core concepts
 
-`EventStore` and `EventStorage` are `AutoCloseable`. A store that lives as long as the process needs
-nothing; one created per tenant, per test or per hot reload should be closed, because the Postgres
-backend runs two LISTEN/NOTIFY threads holding JDBC connections — and those threads keep the storage
-alive, so dropping the reference does not help.
+- **Event** — a record under a sealed interface, named in the past tense (`CustomerRegistered`). Its simple
+  class name is what is stored, so treat it like a column name; `@EventName` keeps the stored name when you
+  rename the class.
+- **Tags** — key-value pairs on an event (`Tags.of("customer", "123")`). How events are found across types,
+  and what consistency boundaries are drawn around.
+- **Stream** — `EventStreamId.forContext("customer")`, optionally split with `.withPurpose("123")`. A stream
+  scopes reads and writes; keep event names unique across the whole store all the same.
+- **Query** — `EventQuery.forTypes(...).tagged(...)`, combined with `.or(...)`, bounded with `.until(ref)`
+  and `.limit(n)`. `query()` returns a `List`, read in full: bound a large read, page it with
+  `page(query, cursor)`, or let a `Projector` do it.
+- **Conditional append** — `AppendCriteria.of(query, reference)`: refused with `OptimisticLockingException`
+  when an event matching the query landed after the reference.
+
+
+# Choosing a backend
+
+| backend | artifact | use it for | notes |
+|---|---|---|---|
+| PostgreSQL | `sliceworkz-eventstore-infra-postgres` | production | LISTEN/NOTIFY for live projections, advisory locks for the DCB check, indexes for tag queries. Configure with a `DataSource` or a `db.properties`; see the [module README](sliceworkz-eventstore-infra-postgres/README.md) for privileges, init modes and backup/restore |
+| In-memory | `sliceworkz-eventstore-infra-inmem` | tests, demos | Behaves exactly like PostgreSQL, but is an unindexed scan: never size an application from it |
+| In-memory, file-backed | `sliceworkz-eventstore-infra-inmem-fs` | local development | The in-memory store, persisted to JSON files so it survives a restart |
 
 ```java
-try ( EventStore eventStore = PostgresEventStorage.newBuilder().buildStore() ) {
-    ...
-}   // monitors stopped, and pools the builder created are closed
-```
-
-Closing blocks until the background threads have really stopped, is idempotent and terminal, and never
-closes a `DataSource` you supplied yourself. Afterwards every operation throws
-`EventStorageClosedException` rather than half-working with dead notifications. The full contract is on
-`EventStorage.close()`.
-
-Closing an `EventStore` shuts down that store, not the storage under it — a storage can back several
-stores and usually outlives them, so you close it yourself once the stores built on it are closed. The
-store from `buildStore()` is the exception: it created the storage and hands you nothing else, so it
-closes both. When you build the pair yourself and want one handle, compose it the same way:
-
-```java
-EventStorage storage = PostgresEventStorage.newBuilder().build();
-try ( EventStore eventStore = EventStore.owning(EventStore.on(storage).build(), storage) ) {
-    ...
-}
+EventStore store = PostgresEventStorage.newBuilder()
+    .dataSource(pool)                      // or a db.properties on the classpath
+    .monitoringDataSource(directPool)      // LISTEN/NOTIFY needs a direct connection
+    .prefix("tenant1_")
+    .buildStore();
 ```
 
 
-# Moving events between stores
+# A tour of the rest
 
-`EventStoreImporter` copies events from one storage backend into another, keeping each event's id,
-timestamp and idempotency key. Position and transaction are always reassigned by the target, so an
-import reproduces the source *order* but not its ordering numbers.
+## Read models
 
 ```java
-ImportReport report = EventStoreImporter.from(sourceStorage).to(targetStorage).run();
+Projector.from(stream).into(new CustomerListProjection())
+    .bookmarkAs("customer-list")   // resume where it left off
+    .subscribe()                   // keep running as events arrive
+    .build()
+    .run();
+```
 
-// or only part of it: one logical stream, or every event carrying a tag, selected by the storage
-// query rather than read and discarded -- which makes it the way to archive a closed period
-ImportReport archived = EventStoreImporter.from(live).to(cold)
+A `Projection` is a query plus a `when(Event<E>)` handler. The projector reads in batches of 500, places a
+bookmark after each, and records how far it has *read* past events its query skips, so its lag is measured
+to the stream head. `BatchAwareProjection` lets a projection commit its own work per batch; a savepoint
+query (`initQuery()`) starts a replay from the last snapshot-like event instead of the beginning.
+
+## Evolving events
+
+```java
+@LegacyEvent(upcaster = CustomerRegisteredV1ToV2.class)
+record CustomerRegisteredV1 ( String name ) implements LegacyCustomerEvent { }
+
+@EventName("CustomerRegistered")   // renamed class, same stored name
+record CustomerSignedUp ( String id, String name ) implements CustomerEvent { }
+```
+
+Upcasters chain (`V1 → V2 → V3`), queries and consistency boundaries over the current type include the
+legacy events behind it, and a misdeclared chain fails when the stream is opened rather than on a read.
+
+## Idempotent appends
+
+```java
+stream.append(AppendCriteria.of(query, head),
+    Event.of(new PaymentReceived(...), tags).withIdempotencyKey("payment-4711"));
+```
+
+A retry whose keys are all stored is swallowed: nothing written, an empty result returned. A batch mixing
+stored and new keys is refused with `IdempotencyKeyConflictException`, so a half-retried decision never
+lands silently.
+
+## Personal data and erasure
+
+```java
+record CustomerRegistered ( String id, Shreddable<ContactDetails> contact ) implements CustomerEvent { }
+
+EventStore store = InMemoryEventStorage.newBuilder()
+    .shredding(new InMemoryShreddingKeyStore())    // PostgresShreddingKeyStore in production
+    .buildStore();
+
+store.erase("customer", "123", ErasureReason.of("GDPR art.17 request #4711"));
+```
+
+A `Shreddable` value is encrypted (AES-256-GCM) under a key per data subject and category. Erasure destroys
+the keys; the stored events never change, and reads afterwards see the value as `Shredded`. An audit view
+reports what was erased without ever exposing key material. Read models keep their own copies, so rebuild
+them or keep personal data out of them.
+
+## Moving and archiving events
+
+```java
+EventStoreImporter.from(live).to(cold)
     .stream(EventStreamId.forContext("ledger").withPurpose("2024Q1"))
     .run();
 ```
 
-It works below the serialization layer, so no domain classes are needed and legacy event types are not
-upcasted on the way through. A transformation can remap the stream, retag, or rewrite the payload —
-which also makes it a stream-cloning and schema-migration tool, with no fidelity guarantee beyond what
-the transformation asks for. See the javadoc on `org.sliceworkz.eventstore.migration` for the caveats
-that matter: an import is atomic per batch only, nothing is verified afterwards, and one importer
-should run at a time per target.
+Copies events between storages below the serialization layer — ids, timestamps and idempotency keys
+preserved, order reproduced — with an optional transformation for remapping or migrating. It is also the
+way to move a store to another PostgreSQL cluster.
+
+## Operating it
+
+- **Health** — `storage.health()` answers per aspect (database round trip, notification channels, a
+  visibility stall, pool waits), never throws, and returns within its timeout.
+- **Observability** — `EventStoreObserver` sees every operation as a scope with its outcome (an append
+  answers `Appended`, `Conflicted` or `Duplicated`). Bind it to the metrics or tracing library you use.
+- **Leases** — `requestLease`/`releaseLease` with fencing tokens, for electing one processor among several
+  instances.
+- **Closing** — `EventStore` and `EventStorage` are `AutoCloseable`. Close a store you create per tenant or
+  test; closing a store leaves a storage you supplied alone, and `buildStore()` closes both.
 
 
 # Testing
 
-`sliceworkz-eventstore-testing` is published for two audiences.
+`sliceworkz-eventstore-testing` (in `test` scope) serves two audiences.
 
-**Testing your application.** `EventStoreFixture` covers the shape every DCB application has — read
-the relevant facts, decide, append conditionally:
+**Your application.** `EventStoreFixture` runs your unmodified code against a real stream:
 
 ```java
-EventStoreFixture<LearningEvent> fixture =
-    EventStoreFixture.inMemory(EventStreamId.forContext("learning"), LearningEvent.class);
-
 fixture.given(event(new CourseDefined("abc001", "Java basics", 12)).tagged("course", "abc001"))
        .when(stream -> new Registrations(stream).subscribe("123", "abc001"))
-       .expectResult(true)
        .expectAppended(event(new StudentSubscribed("123", "abc001"))
                            .tagged("student", "123").tagged("course", "abc001"));
 ```
 
-The decider gets a real `EventStream`, so the code under test is unmodified production code. Only the
-payload and tags are compared — stream, reference and timestamp are assigned by the store.
-`whenConcurrently(...)` appends into the window between the decider's query and its own append, which
-is the only deterministic way to provoke the conflict a consistency boundary exists to catch:
+`whenConcurrently(...)` appends into the window between your read and your append — the one deterministic
+way to prove a consistency boundary catches the conflict it exists for.
 
-```java
-fixture.given(event(new CourseDefined("abc001", "Java basics", 12)).tagged("course", "abc001"))
-       .whenConcurrently(
-           stream -> new Registrations(stream).subscribe("123", "abc001"),
-           event(new StudentSubscribed("123", "abc001")).tagged("course", "abc001"))
-       .expectOptimisticLockingFailure()
-       .matchingTags("course", "abc001");
-```
-
-**Implementing your own `EventStorage`.** The same module carries the compliance suite. Implement
-`EventStoreBackend`, register it in
-`META-INF/services/org.sliceworkz.eventstore.testing.EventStoreBackend`, and point surefire at the
-artifact:
-
-```xml
-<dependenciesToScan>
-    <dependency>org.sliceworkz:sliceworkz-eventstore-testing</dependency>
-</dependenciesToScan>
-```
-
-Every scenario then runs against your storage. Optional parts of the contract (`importEvents`, table
-prefixes, result limits, direct database access) are declared as capabilities and skipped rather than
-failed where you do not support them.
+**Your own backend.** Implement `EventStoreBackend`, register it as a service, and point surefire's
+`dependenciesToScan` at the artifact: every compliance scenario then runs against your storage, with
+optional capabilities skipped rather than failed.
 
 
-# Other
+# Modules
 
-## Software bill of materials
+| artifact | what it is |
+|---|---|
+| `sliceworkz-eventstore-api` | The interfaces you code against, and the `EventStorage` SPI a backend implements |
+| `sliceworkz-eventstore-impl` | The implementation: streams, serialization, upcasting, shredding, observations. Pulled in by every backend |
+| `sliceworkz-eventstore-infra-postgres` | PostgreSQL storage |
+| `sliceworkz-eventstore-infra-inmem` | In-memory storage |
+| `sliceworkz-eventstore-infra-inmem-fs` | In-memory storage persisted to JSON files |
+| `sliceworkz-eventstore-serialization-json` | JSON codecs for stored events and bookmarks, for building a file-based backend |
+| `sliceworkz-eventstore-testing` | The test fixture and the backend compliance kit |
+| `sliceworkz-eventstore-bom` | Bill of materials pinning all of the above |
 
-Every release comes with a software bill of materials (SBOM) in [CycloneDX](https://cyclonedx.org)
-1.6 JSON, listing the dependencies the library ships with (test-scoped dependencies are left out):
+Every jar declares an `Automatic-Module-Name` equal to its root package (`org.sliceworkz.eventstore`,
+`org.sliceworkz.eventstore.infra.postgres`, …) for use on the module path.
 
-- **On Maven Central**, next to each module's jar, as the `cyclonedx` classifier: the SBOM of that
-  module, e.g. `sliceworkz-eventstore-api-<version>-cyclonedx.json`.
-- **On the [GitHub release](https://github.com/sliceworkz/eventstore/releases)**: the aggregate over the
-  runtime library, `sliceworkz-eventstore-<version>.cdx.json`, and the test kit's own,
-  `sliceworkz-eventstore-testing-<version>.cdx.json`, kept apart so its test
-  dependencies are not read as dependencies of the library.
 
-Each release's SBOM is attested to the jars it describes with a
-[GitHub artifact attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations),
-signed by the workflow run that built and published them. To check that a jar you downloaded is the
-one this repository released, and which SBOM belongs to it:
+# Learn more
+
+- [Quickstart guide](https://sliceworkz.github.io/posts/eventstore-quickstart/) and
+  [documentation](https://sliceworkz.github.io/categories/eventstore-documentation/)
+- [Runnable examples](sliceworkz-eventstore-examples/src/main/java/org/sliceworkz/eventstore/examples):
+  append and query, optimistic locking, aggregates, projections and savepoints, subscriptions, upcasting
+- [PostgreSQL backend](sliceworkz-eventstore-infra-postgres/README.md): configuration, privileges,
+  migrations, backup and restore
+- [Benchmarks](sliceworkz-eventstore-benchmark/README.md): what reads and writes cost, and how stream design
+  changes it
+- [Design notes](docs/design) and [`CLAUDE.md`](CLAUDE.md): why each contract is what it is, and the
+  alternatives that were rejected
+- [DCB specification](https://dcb.events/specification/)
+
+
+# Project status
+
+Beta. The API is settling but can still change between
+minor versions, and every change is listed in the [release notes](https://github.com/sliceworkz/eventstore/releases).
+
+## Supply chain and security
+
+Every release ships a CycloneDX SBOM — per module on Maven Central (`cyclonedx` classifier) and aggregated
+on the [GitHub release](https://github.com/sliceworkz/eventstore/releases) — attested to the jars it
+describes:
 
 ```bash
 gh attestation verify sliceworkz-eventstore-api-<version>.jar --repo sliceworkz/eventstore --predicate-type https://cyclonedx.org/bom
 ```
 
-The SBOM files on the release carry a build provenance attestation of their own:
+Every build scans for known vulnerabilities, a release with a fixable High or Critical one is stopped, and
+released versions are re-scanned daily. [SUPPLY-CHAIN.md](SUPPLY-CHAIN.md) explains how it fits together;
+[SECURITY-RELEASES.md](SECURITY-RELEASES.md) is the procedure when a scan fails. Report vulnerabilities
+privately, as described in [SECURITY.md](SECURITY.md).
 
-```bash
-gh attestation verify sliceworkz-eventstore-<version>.cdx.json --repo sliceworkz/eventstore
-```
+## Contributing and license
 
-Every build also scans these SBOMs for known vulnerabilities with Grype, and a release with a High or
-Critical vulnerability that has a fix is stopped before it is tagged. What to do then, including how to
-release anyway with the vulnerability recorded: [SECURITY-RELEASES.md](SECURITY-RELEASES.md).
-
-How the SBOMs, the scans, the daily re-scan of the released versions and the dependency updates fit together, explained for someone who is not a security specialist, with the words, the setup outside the code and the decisions behind it: [SUPPLY-CHAIN.md](SUPPLY-CHAIN.md).
-
-## Reporting a vulnerability
-
-Please report security vulnerabilities privately, not in a public issue. See [SECURITY.md](SECURITY.md).
-
-## Contributing
-
-Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-
-## License
-
-This project is licensed under the LGPL-3.0 License - see the [LICENSE](LICENSE) file for details.
-External components on which this project depends are listed in the [NOTICE](NOTICE) file.
-
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under the
+[LGPL-3.0](LICENSE); third-party components are listed in [NOTICE](NOTICE).

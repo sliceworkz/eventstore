@@ -283,6 +283,13 @@
 					<includeTestScope>false</includeTestScope>
 					<includeLicenseText>false</includeLicenseText>
 					<excludeArtifactId>sliceworkz-eventstore-testing,sliceworkz-eventstore-benchmark,sliceworkz-eventstore-tests,sliceworkz-eventstore-examples</excludeArtifactId>
+					<!--
+						Written whether or not a module is deployed: the aggregator skips deploy (maven.deploy.skip),
+						and a build running the maven-deploy-plugin (the ci workflow's SNAPSHOT deploy to cloudrepo)
+						would otherwise leave target/bom.json unwritten, which the vulnerability scan reads. Which
+						modules the aggregate describes is decided by excludeArtifactId above.
+					-->
+					<skipNotDeployed>false</skipNotDeployed>
 				</configuration>
 				<executions>
 					<execution>

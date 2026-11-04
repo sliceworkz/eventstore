@@ -9,4 +9,9 @@ updates:
     directory: "/" # Location of package manifests
     schedule:
       interval: "weekly"
-
+  # The Grype version the vulnerability scan uses: the FROM line of .github/vulnerability-scan/Dockerfile,
+  # which scan.sh reads. A new Grype release comes as a pull request; the build tests it by scanning with it.
+  - package-ecosystem: "docker"
+    directory: "/.github/vulnerability-scan"
+    schedule:
+      interval: "weekly"

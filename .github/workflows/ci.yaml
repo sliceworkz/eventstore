@@ -43,7 +43,7 @@ jobs:
       CLOUDREPO_PASSWORD: ${{ secrets.CLOUDREPO_PASSWORD }}
 
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v7
     # Grype, the vulnerability scanner, with its database (about 3 GB unpacked) downloading in the
     # background while the build runs; scan.sh waits for it (.github/vulnerability-scan/scan.sh)
     - name: Install Grype
@@ -51,7 +51,7 @@ jobs:
     - name: Download the vulnerability database
       run: .github/vulnerability-scan/scan.sh prefetch
     - name: Set up JDK 25
-      uses: actions/setup-java@v5
+      uses: actions/setup-java@v6
       with:
         java-version: '25'
         distribution: 'temurin'
@@ -81,7 +81,7 @@ jobs:
       run: .github/vulnerability-scan/scan.sh project gate
     - name: Keep the vulnerability reports
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: vulnerability-reports
         path: ${{ runner.temp }}/vulnerability-scan/reports/

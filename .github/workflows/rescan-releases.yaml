@@ -1,0 +1,43 @@
+name: rescan released versions
+
+run-name: "rescan released versions"
+
+# Every day, the latest release of each release/* line is scanned again, against that day's vulnerability
+# data: a vulnerability published after a release is found here, where the build-time scan cannot see it.
+# A blocking one (High or Critical, with a fix, no statement in the VEX file on its release branch) gets an
+# issue, "Known vulnerabilities in <repository> <version>", which the re-scan closes again once nothing is
+# left. What to do about one: SECURITY-RELEASES.md, "When the daily re-scan finds one". The script:
+# .github/vulnerability-scan/rescan-releases.py
+
+on:
+  schedule:
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  rescan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v5
+      with:
+        # every release/* branch (the lines, and their VEX files) and every tag (the releases)
+        fetch-depth: 0
+    - name: Install Grype
+      run: .github/vulnerability-scan/scan.sh install
+    - name: Re-scan the latest release of each line
+      run: python3 -I .github/vulnerability-scan/rescan-releases.py
+      env:
+        GH_TOKEN: ${{ github.token }}
+    - name: Keep the reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: rescan-reports
+        path: ${{ runner.temp }}/rescan/reports/
+        if-no-files-found: ignore

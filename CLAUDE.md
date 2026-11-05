@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a Java-based EventStore library implementing the Dynamic Consistency Boundary (DCB) specification. The codebase is organized as a Maven multi-module project providing event storage abstractions with multiple backend implementations.
 
-**JDK 25 builds it, release 21 is what it targets.** CI and releases run on JDK 25, and every module is
-compiled with `--release 21`, so a consumer still runs the library on Java 21. Keep `maven.compiler.release`
+**Java 21 builds it, and release 21 is what it targets.** CI and releases run on JDK 21, and every module is
+compiled with `--release 21`, so a consumer runs the library on Java 21 or later. Keep `maven.compiler.release`
 at 21 and use no API newer than 21.
 
 **Core Modules:**

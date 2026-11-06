@@ -200,9 +200,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 
 		// which makes "every event holding data under this key" an ordinary tag query
 		Tag anyKeyTag = keyTags.getFirst();
-		assertEquals(1, payments.query(EventFilter.of(
-				org.sliceworkz.eventstore.query.EventTypesFilter.any(),
-				Tags.of(anyKeyTag.key(), anyKeyTag.value()))).size());
+		assertEquals(1, payments.query(EventFilter.forTags(anyKeyTag.key(), anyKeyTag.value())).size());
 	}
 
 	@ForEachBackend
@@ -454,8 +452,7 @@ public class ShreddableEventDataTest extends AbstractEventStoreTest {
 		assertNotNull(aliceKey.createdAt());
 		// the record must be enough to find the events under this key, which is a dek: tag query
 		assertEquals(1, store.getEventStream(STREAM, PaymentEvent.class)
-				.query(EventFilter.of(org.sliceworkz.eventstore.query.EventTypesFilter.any(),
-						Tags.of(KeyId.TAG_KEY, aliceKey.id().value()))).size());
+				.query(EventFilter.forTags(KeyId.TAG_KEY, aliceKey.id().value())).size());
 
 		store.eraseCategory(ALICE, ErasureReason.of("GDPR art.17 request #4711"));
 

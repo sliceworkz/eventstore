@@ -36,10 +36,8 @@ import org.sliceworkz.eventstore.events.EventDeserializationException;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
-import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.projection.ProjectorException;
 import org.sliceworkz.eventstore.query.EventFilter;
-import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 import org.sliceworkz.eventstore.stream.IdempotencyKeyConflictException;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
@@ -86,7 +84,7 @@ class ExceptionSerializationTest {
 		// the getter is documented as never null; holding the reference unwrapped is what keeps that
 		// true on the far side, where a serialized Optional would have arrived as null
 		OptimisticLockingException restored = roundTrip(new OptimisticLockingException(
-				EventFilter.of(EventTypesFilter.any(), Tags.none()), Optional.empty()));
+				EventFilter.matchAll(), Optional.empty()));
 
 		assertNotNull(restored.getExpectedLastEventReference());
 		assertTrue(restored.getExpectedLastEventReference().isEmpty());

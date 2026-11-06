@@ -31,7 +31,6 @@ import org.sliceworkz.eventstore.projection.Projection;
 import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
-import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.testing.tck.stream.EventStoreQueryTest.BankDomainEvent.AccountClosed;
 import org.sliceworkz.eventstore.testing.tck.stream.EventStoreQueryTest.BankDomainEvent.AccountOpened;
@@ -401,12 +400,12 @@ class MockReadModel implements Projection<MockDomainEvent> {
 
 	public MockReadModel ( String name, List<Class<?>> queriedClasses ) {
 		this.name = name;
-		this.eventQuery = EventQuery.of(EventFilter.of(EventTypesFilter.of(queriedClasses), Tags.none()));
+		this.eventQuery = EventQuery.of(EventFilter.forTypes(queriedClasses.toArray(Class<?>[]::new)));
 	}
 
 	public MockReadModel ( String name ) {
 		this.name = name;
-		this.eventQuery = EventQuery.of(EventFilter.of(EventTypesFilter.any(), Tags.none()));
+		this.eventQuery = EventQuery.of(EventFilter.matchAll());
 	}
 	@Override
 	public EventQuery eventQuery() {

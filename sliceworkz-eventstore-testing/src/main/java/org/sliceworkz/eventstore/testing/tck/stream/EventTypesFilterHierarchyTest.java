@@ -35,7 +35,6 @@ import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.projection.Projector.ProjectorMetrics;
 import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
-import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -187,7 +186,7 @@ public class EventTypesFilterHierarchyTest extends AbstractEventStoreTest {
 		stream.append(AppendCriteria.none(), Event.of(new OrderPlaced("1"), order("1")));
 
 		EventReference head = stream.head().orElseThrow();
-		AppendCriteria everyShopFactAboutOrder1 = AppendCriteria.of(EventQuery.of(EventFilter.forTypes(ShopEvent.class).tagged(order("1"))), head);
+		AppendCriteria everyShopFactAboutOrder1 = AppendCriteria.of(EventFilter.forTypes(ShopEvent.class).tagged(order("1")), head);
 
 		// an event of the other hierarchy is not a new fact for a boundary over this one -- which is
 		// what tells the hierarchy apart from "any type"
@@ -200,7 +199,7 @@ public class EventTypesFilterHierarchyTest extends AbstractEventStoreTest {
 
 		// and a boundary over one branch ignores the rest of the hierarchy
 		EventReference afterPayment = stream.head().orElseThrow();
-		AppendCriteria everyPaymentForOrder1 = AppendCriteria.of(EventQuery.of(EventFilter.forTypes(PaymentEvent.class).tagged(order("1"))), afterPayment);
+		AppendCriteria everyPaymentForOrder1 = AppendCriteria.of(EventFilter.forTypes(PaymentEvent.class).tagged(order("1")), afterPayment);
 		stream.append(AppendCriteria.none(), Event.of(new OrderShipped("1"), order("1")));
 		stream.append(everyPaymentForOrder1, Event.of(new ShopClosed(), order("1")));
 	}
@@ -227,7 +226,7 @@ public class EventTypesFilterHierarchyTest extends AbstractEventStoreTest {
 
 		// and a boundary over the branch counts a legacy event upcasting into it, as the query does
 		EventReference head = asRead.head().orElseThrow();
-		AppendCriteria everyOrderFact = AppendCriteria.of(EventQuery.of(EventFilter.forTypes(OrderEvent.class)), head);
+		AppendCriteria everyOrderFact = AppendCriteria.of(EventFilter.forTypes(OrderEvent.class), head);
 		asWritten.append(AppendCriteria.none(), Event.of(new OriginalShopEvent.OrderBooked("3"), order("3")));
 		assertThrows(OptimisticLockingException.class,
 				() -> asRead.append(everyOrderFact, Event.of(new OrderShipped("2"), order("2"))));

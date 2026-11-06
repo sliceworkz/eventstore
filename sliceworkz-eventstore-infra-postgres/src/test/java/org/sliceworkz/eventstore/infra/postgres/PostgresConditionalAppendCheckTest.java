@@ -41,7 +41,6 @@ import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
 import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
-import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorage.EventToStore;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
@@ -182,7 +181,7 @@ public class PostgresConditionalAppendCheckTest {
 			Tags taken = Tags.of("basket", "B-000");
 			assertThrows(OptimisticLockingException.class,
 					() -> storage.append(
-							AppendCriteria.of(EventQuery.of(EventFilter.forTags(taken)), null),
+							AppendCriteria.of(EventFilter.forTags(taken), null),
 							stream, List.of(event(stream, "OrderPlaced", taken))),
 					"the same empty-boundary criteria must conflict once its boundary holds an event");
 		}

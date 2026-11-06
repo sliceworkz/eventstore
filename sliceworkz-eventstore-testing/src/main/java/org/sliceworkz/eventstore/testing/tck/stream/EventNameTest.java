@@ -32,7 +32,6 @@ import org.sliceworkz.eventstore.events.LegacyEvent;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.events.Upcaster;
 import org.sliceworkz.eventstore.query.EventFilter;
-import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventSource;
@@ -190,7 +189,7 @@ public class EventNameTest extends AbstractEventStoreTest {
 		Event<CustomerEvent> last = byClass.getFirst();
 		stream.append(AppendCriteria.none(), Event.of(new CustomerEvent.CustomerSignedUp("c2", "Bob"), Tags.of("customer", "c1")));
 		assertThrows(org.sliceworkz.eventstore.stream.OptimisticLockingException.class, () -> stream.append(
-				AppendCriteria.of(EventQuery.of(EventFilter.forTypes(CustomerEvent.CustomerSignedUp.class).tagged("customer", "c1")), last.reference()),
+				AppendCriteria.of(EventFilter.forTypes(CustomerEvent.CustomerSignedUp.class).tagged("customer", "c1"), last.reference()),
 				Event.of(new CustomerEvent.CustomerChurned("c1"), Tags.of("customer", "c1"))));
 	}
 

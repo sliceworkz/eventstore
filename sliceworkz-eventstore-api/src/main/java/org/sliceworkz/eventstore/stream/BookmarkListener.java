@@ -105,7 +105,7 @@ import org.sliceworkz.eventstore.events.EventReference;
  * @see EventSource#subscribe(BookmarkListener)
  * @see Subscription
  * @see EventSource#placeBookmark(String, EventReference, org.sliceworkz.eventstore.events.Tags)
- * @see EventSource#getBookmark(String)
+ * @see EventSource#findBookmark(String)
  * @see EventStream
  * @see EventReference
  */

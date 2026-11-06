@@ -666,7 +666,9 @@ places them.** It holds the reasons, the rejected alternatives and the migration
   `bookmarkNotificationCarriesTheStoresOwnCoordinates`.
 - **A bookmark has two positions:** `reference` (last event handled) and `readUpTo` (read up to,
   relevant or not). Lag is counted from `Bookmark.readUpToOrReference()`; `EventSource.findBookmark`
-  answers the whole bookmark. **`readUpTo` is never a resume point**; a projector resumes from
+  answers the whole bookmark, and is the stream's one read of a bookmark: the resume point is
+  `findBookmark(reader).flatMap(Bookmark::reference)`. Do not add a second accessor for it on
+  `EventSource` (the SPI keeps `getBookmark`, which a backend answers cheaply). **`readUpTo` is never a resume point**; a projector resumes from
   `reference`. The one exception is opt-in: `Projector.Builder.resumeAfterReadPosition()`, for a
   bookmark with no handled event. Do not use `startingAfter(readPosition)` for that.
   Test: `ProjectorReadPositionTest`.
@@ -677,7 +679,7 @@ places them.** It holds the reasons, the rejected alternatives and the migration
 - **`Bookmark.reference()` is an `Optional`**: empty for a reader that has read but handled nothing. A
   bookmark names at least one of the two positions. Place a read position alone with
   `EventSource.placeReadPosition(reader, readUpTo, tags)` (SPI: `EventStorage.bookmarkReadPosition`,
-  default records nothing). Such a reader resumes from the beginning (`getBookmark` answers empty); a
+  default records nothing). Such a reader resumes from the beginning (`findBookmark` answers no handled reference); a
   read position placed alone never clears a handled reference (Postgres: `COALESCE` in the upsert);
   `removeBookmark` removes it; a `BookmarkListener` is not told of it. Postgres: `event_id` nullable,
   check `ck_bookmarks_handled_or_read_position`.

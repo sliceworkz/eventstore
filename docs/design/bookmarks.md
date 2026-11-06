@@ -69,8 +69,8 @@ The rules in brief are in the root `CLAUDE.md`, under "Bookmarks". This file hol
   It is placed through its own method — `EventSource.placeReadPosition(reader, readUpTo, tags)`, the
   SPI's `EventStorage.bookmarkReadPosition(...)` — rather than a nullable reference on `placeBookmark`,
   so no public signature takes a null to mean "nothing handled". Its rules: the reader **resumes from
-  the beginning**, exactly as without a bookmark — `getBookmark(reader)`, the resume point, answers
-  empty, and the read position is never a resume point; a read position placed alone **never clears a
+  the beginning**, exactly as without a bookmark — `findBookmark(reader)` answers a bookmark with no
+  handled reference, and the read position is never a resume point; a read position placed alone **never clears a
   handled reference** already there (in memory under the monitor, on Postgres by `COALESCE` in the same
   upsert, so a concurrent placement is never lost to it); the first placement naming a handled event
   fills it in; `removeBookmark` removes such a bookmark too (answering empty). Its notification carries

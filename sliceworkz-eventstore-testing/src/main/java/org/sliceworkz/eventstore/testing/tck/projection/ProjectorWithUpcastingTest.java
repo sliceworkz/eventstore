@@ -183,7 +183,7 @@ public class ProjectorWithUpcastingTest extends AbstractEventStoreTest {
 		assertEquals(List.of("first"), projection.values);
 
 		// Bookmark should have advanced past the vanished events
-		var bookmark = stream.getBookmark("test-reader");
+		var bookmark = stream.findBookmark("test-reader").flatMap(Bookmark::reference);
 		assertTrue(bookmark.isPresent());
 
 		// Append a new important event after the vanished ones

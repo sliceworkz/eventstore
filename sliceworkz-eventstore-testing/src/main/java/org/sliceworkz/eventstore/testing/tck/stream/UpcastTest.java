@@ -156,13 +156,13 @@ public class UpcastTest extends AbstractEventStoreTest {
 		// decided on the renames of this customer; a legacy registration is not one of them, so it is no
 		// new relevant fact and the append is admitted
 		EventReference head = current.head().orElseThrow();
-		AppendCriteria decidedOnRenames = AppendCriteria.of(EventQuery.of(EventFilter.forTypes(CustomerRenamed.class).tagged(customer)), head);
+		AppendCriteria decidedOnRenames = AppendCriteria.of(EventFilter.forTypes(CustomerRenamed.class).tagged(customer), head);
 		asWritten.append(AppendCriteria.none(), Event.of(new OriginalEvent.CustomerRegistered("John"), customer));
 		current.append(decidedOnRenames, Event.of(new CustomerEvent.CustomerRenamed(Name.of("Robin")), customer));
 
 		// a legacy rename is one of them
 		EventReference laterHead = current.head().orElseThrow();
-		AppendCriteria decidedOnRenamesAgain = AppendCriteria.of(EventQuery.of(EventFilter.forTypes(CustomerRenamed.class).tagged(customer)), laterHead);
+		AppendCriteria decidedOnRenamesAgain = AppendCriteria.of(EventFilter.forTypes(CustomerRenamed.class).tagged(customer), laterHead);
 		asWritten.append(AppendCriteria.none(), Event.of(new OriginalEvent.CustomerNameChanged("Batman"), customer));
 		OptimisticLockingException e = assertThrows(OptimisticLockingException.class,
 				() -> current.append(decidedOnRenamesAgain, Event.of(new CustomerEvent.CustomerRenamed(Name.of("Joker")), customer)));

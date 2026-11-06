@@ -29,7 +29,6 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
-import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.testing.AbstractEventStoreTest;
 import org.sliceworkz.eventstore.testing.ForEachBackend;
 import org.sliceworkz.eventstore.testing.tck.mock.MockDomainEvent.FirstDomainEvent;
@@ -78,7 +77,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 
 		// Second append with correct expected event ID (should succeed)
 		EphemeralEvent<SecondDomainEvent> secondEvent = Event.of(new SecondDomainEvent("test2"), Tags.none());
-		AppendCriteria criteria = AppendCriteria.of(EventQuery.of(EventFilter.matchAll()), lastEventInStream);
+		AppendCriteria criteria = AppendCriteria.of(EventFilter.matchAll(), lastEventInStream);
 		eventStream.append(criteria, Collections.singletonList(secondEvent));
 
 		// Verify both events are in store
@@ -98,7 +97,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 
 		// Second append with incorrect expected event ID (should fail)
 		EphemeralEvent<SecondDomainEvent> secondEvent = Event.of(new SecondDomainEvent("test2"), Tags.none());
-		AppendCriteria criteria = AppendCriteria.of(EventQuery.of(EventFilter.matchAll()), fakeEvent);
+		AppendCriteria criteria = AppendCriteria.of(EventFilter.matchAll(), fakeEvent);
 
 		// in the ideal world, we would throw an exception since the reference event would not be found, but not all implementations would be able to catch this ...
 		eventStream.append(criteria, Collections.singletonList(secondEvent));
@@ -121,7 +120,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 
 		// Try to append on expecting stream with assumed only first append (should fail)
 		EphemeralEvent<ThirdDomainEvent> thirdEvent = Event.of(new ThirdDomainEvent("test3"), Tags.none());
-		AppendCriteria criteria = AppendCriteria.of(EventQuery.of(EventFilter.matchAll()), firstEventStored.reference());
+		AppendCriteria criteria = AppendCriteria.of(EventFilter.matchAll(), firstEventStored.reference());
 
 		// Should throw OptimisticLockingException
 		assertThrows(OptimisticLockingException.class, () -> {
@@ -138,7 +137,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 
 		// Append to empty stream expecting it to be empty (should succeed)
 		EphemeralEvent<FirstDomainEvent> firstEvent = Event.of(new FirstDomainEvent("test1"), Tags.none());
-		AppendCriteria criteria = AppendCriteria.of(EventQuery.of(EventFilter.matchAll()), null);
+		AppendCriteria criteria = AppendCriteria.of(EventFilter.matchAll(), null);
 		eventStream.append(criteria, Collections.singletonList(firstEvent));
 
 		// Verify event was appended
@@ -151,7 +150,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 
 		// Append to empty stream expecting it to be empty (should succeed)
 		EphemeralEvent<FirstDomainEvent> firstEvent = Event.of(new FirstDomainEvent("test1"), Tags.none());
-		AppendCriteria criteria = AppendCriteria.of(EventQuery.of(EventFilter.matchAll()), null);
+		AppendCriteria criteria = AppendCriteria.of(EventFilter.matchAll(), null);
 
 		// quickly append another event on the stream ...
 		EphemeralEvent<FirstDomainEvent> intermediateEvent = Event.of(new FirstDomainEvent("test1"), Tags.none());

@@ -41,7 +41,6 @@ import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventFilter;
-import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.testing.AbstractEventStoreTest;
@@ -388,7 +387,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		// admitted without one, on a stream that has moved under it
 		EventReference stale = single.getFirst().reference();
 		assertThrows(org.sliceworkz.eventstore.stream.OptimisticLockingException.class,
-			()->es.append(AppendCriteria.of(EventQuery.of(EventFilter.matchAll()), stale), Event.of(new FirstDomainEvent("refused"), Tags.none())));
+			()->es.append(AppendCriteria.of(EventFilter.matchAll(), stale), Event.of(new FirstDomainEvent("refused"), Tags.none())));
 		assertEquals(1, es.append(Event.of(new FirstDomainEvent("4"), Tags.none())).size());
 		assertEquals(4, es.query(EventFilter.matchAll()).size());
 

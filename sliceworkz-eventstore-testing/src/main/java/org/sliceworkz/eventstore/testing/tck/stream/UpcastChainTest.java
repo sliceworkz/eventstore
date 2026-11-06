@@ -33,7 +33,6 @@ import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.events.Upcaster;
 import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
-import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -149,7 +148,7 @@ public class UpcastChainTest extends AbstractEventStoreTest {
 
 		// decided on the registrations of this customer; a first-version registration lands meanwhile
 		EventReference head = current.head().orElseThrow();
-		AppendCriteria decidedOnRegistrations = AppendCriteria.of(EventQuery.of(EventFilter.forTypes(CustomerRegisteredV3.class).tagged(customer)), head);
+		AppendCriteria decidedOnRegistrations = AppendCriteria.of(EventFilter.forTypes(CustomerRegisteredV3.class).tagged(customer), head);
 		asWritten.append(AppendCriteria.none(), Event.of(new AsWritten.CustomerRegistered("John"), customer));
 
 		OptimisticLockingException e = assertThrows(OptimisticLockingException.class,

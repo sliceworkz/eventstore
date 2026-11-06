@@ -47,7 +47,7 @@ import java.util.Optional;
  * query on the event store:
  * <pre>{@code
  * for ( KeyRecord key : audit.keys(KeyAuditQuery.forSubject("customer", "alice-42")) ) {
- *     stream.query(EventQuery.of(EventFilter.of(EventTypesFilter.any(), Tags.of(KeyId.TAG_KEY, key.id().value()))))
+ *     stream.query(EventFilter.forTags(KeyId.TAG_KEY, key.id().value()))
  *           .forEach(…);
  * }
  * }</pre>

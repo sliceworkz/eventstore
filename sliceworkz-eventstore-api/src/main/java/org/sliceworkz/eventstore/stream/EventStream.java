@@ -45,18 +45,18 @@ package org.sliceworkz.eventstore.stream;
  * stream.append(Event.of(new CustomerRegistered("John Doe"), Tags.of("region", "EU")));
  *
  * // Query all events from the stream
- * List<Event<CustomerEvent>> events = stream.query(EventQuery.of(EventFilter.matchAll()));
+ * List<Event<CustomerEvent>> events = stream.query(EventFilter.matchAll());
  *
  * // Query with filters
  * List<Event<CustomerEvent>> euCustomers = stream.query(
- *     EventQuery.of(EventFilter.of(EventTypesFilter.any(), Tags.of("region", "EU")))
+ *     EventQuery.of(EventFilter.forTags("region", "EU"))
  * );
  *
  * // Conditional append with optimistic locking (DCB pattern): pin the boundary at the head
  * // before reading, bound the read with it, and hand the same reference to the append
- * EventQuery customer = EventQuery.of(EventFilter.forTags(Tags.of("customer", "123")));
+ * EventFilter customer = EventFilter.forTags("customer", "123");
  * EventReference head = stream.head().orElse(null);   // absent for an empty stream: a valid boundary
- * List<Event<CustomerEvent>> relevantEvents = stream.query(customer.notAfter(head));
+ * List<Event<CustomerEvent>> relevantEvents = stream.query(EventQuery.of(customer).notAfter(head));
  *
  * stream.append(
  *     AppendCriteria.of(customer, head),

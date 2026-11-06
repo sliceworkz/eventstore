@@ -96,7 +96,7 @@ public class PostgresLockCheckOrderingTest {
 			try {
 				EventStreamId stream = EventStreamId.forContext("account").withPurpose("42");
 				Tags boundaryTags = Tags.of("account", "42");
-				EventFilter boundary = EventFilter.of(EventTypesFilter.any(), boundaryTags);
+				EventFilter boundary = EventFilter.forTags(boundaryTags);
 
 				// 1. Reserve a position out of band. Nothing has consumed it yet, so every event the
 				//    library appends from here on carries a HIGHER position than this one.

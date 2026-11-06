@@ -84,7 +84,7 @@ public class HeadTest extends AbstractEventStoreTest {
 
 	private final EventStreamId streamId = EventStreamId.forContext("app").withPurpose("head");
 
-	private static final EventFilter FIRSTS = EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.none());
+	private static final EventFilter FIRSTS = EventFilter.forTypes(FirstDomainEvent.class);
 
 	private EventStream<MockDomainEvent> stream ( ) {
 		return eventStore().getEventStream(streamId, MockDomainEvent.class);
@@ -118,7 +118,7 @@ public class HeadTest extends AbstractEventStoreTest {
 		Event<MockDomainEvent> c = append(stream, new FirstDomainEvent("c"));
 
 		assertEquals(Optional.of(c.reference()), stream.head(), "the head must move with every append");
-		assertEquals(stream.query(EventQuery.of(EventFilter.matchAll())).getLast().reference(), stream.head().orElseThrow(),
+		assertEquals(stream.query(EventFilter.matchAll()).getLast().reference(), stream.head().orElseThrow(),
 				"the head is the last event a full read returns");
 		assertEquals(stream.head(), eventStorage().head(streamId),
 				"the stream and the SPI must agree on the head");
@@ -223,7 +223,7 @@ public class HeadTest extends AbstractEventStoreTest {
 		EventReference head = current.head().orElseThrow();
 
 		// what the typed read makes of the stream: Renamed, then the split registration as two events
-		List<Event<CurrentEvent>> all = current.query(EventQuery.of(EventFilter.matchAll()));
+		List<Event<CurrentEvent>> all = current.query(EventFilter.matchAll());
 		assertEquals(3, all.size(), "fixture");
 		assertEquals(0, head.index(), "the head is the stored event's own reference");
 		assertEquals(all.get(1).reference(), head, "the stored reference is the first event it upcasts into");
@@ -277,7 +277,7 @@ public class HeadTest extends AbstractEventStoreTest {
 
 		EventStream<OrderEvent> orders = eventStore().getEventStream(streamId, OrderEvent.class);
 
-		assertThrows(EventDeserializationException.class, () -> orders.query(EventQuery.of(EventFilter.matchAll())),
+		assertThrows(EventDeserializationException.class, () -> orders.query(EventFilter.matchAll()),
 				"fixture: this stream cannot read the event at the head");
 
 		assertEquals(Optional.of(shipped.reference()), orders.head(),
@@ -300,7 +300,7 @@ public class HeadTest extends AbstractEventStoreTest {
 		keyStore.failing = true;
 
 		EventStream<ProfileEvent> reading = eventStoreWithShredding(keyStore).getEventStream(streamId, ProfileEvent.class);
-		assertThrows(ShreddingException.class, () -> reading.query(EventQuery.of(EventFilter.matchAll())),
+		assertThrows(ShreddingException.class, () -> reading.query(EventFilter.matchAll()),
 				"fixture: reading the event at the head needs the key store");
 
 		assertEquals(Optional.of(recorded.reference()), reading.head(),

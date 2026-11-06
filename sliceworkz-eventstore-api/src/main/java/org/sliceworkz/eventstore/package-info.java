@@ -35,7 +35,7 @@
  *
  * // Append and query events
  * stream.append(AppendCriteria.none(), Event.of(new CustomerRegistered("John"), Tags.none()));
- * List<Event<CustomerEvent>> events = stream.query(EventQuery.of(EventFilter.matchAll()));
+ * List<Event<CustomerEvent>> events = stream.query(EventFilter.matchAll());
  * }</pre>
  * <p>
  * This implementation is fully compliant with the Dynamic Consistency Boundary (DCB) specification,

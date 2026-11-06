@@ -73,7 +73,7 @@ class StorageTimeTest {
 
 			stream.append(AppendCriteria.none(), Event.of(new TestEvent.Ping("1"), Tags.none()));
 
-			List<Event<TestEvent>> events = stream.query(EventQuery.of(EventFilter.matchAll()));
+			List<Event<TestEvent>> events = stream.query(EventFilter.matchAll());
 			assertTrue(events.size() == 1, "expected the one appended event, got " + events.size());
 
 			List<RecordingObserver.Recording> reads = observer.recordings(Observation.Query.class);

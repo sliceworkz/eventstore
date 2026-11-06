@@ -69,7 +69,7 @@ public final class DeciderOutcome<DOMAIN_EVENT_TYPE, R> {
 	 */
 	public List<Event<DOMAIN_EVENT_TYPE>> appended ( ) {
 		if ( appended == null ) {
-			appended = fixture.stream().query(EventQuery.of(EventFilter.matchAll()), before);
+			appended = fixture.stream().query(EventFilter.matchAll(), before);
 		}
 		return appended;
 	}

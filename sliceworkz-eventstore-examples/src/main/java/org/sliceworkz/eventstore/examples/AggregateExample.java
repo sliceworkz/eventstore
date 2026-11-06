@@ -113,7 +113,7 @@ public class AggregateExample {
 				// DCB-style optimistic locking : only append the events ...
 				AppendCriteria.of(
 						// ... if no other event of any type exists by now for this customer ...
-						EventQuery.of(EventFilter.forTags(Tags.of("customer", customerId))),
+						EventFilter.forTags("customer", customerId),
 						// ... since we last read this customer
 						lastEventReference),
 				
@@ -228,7 +228,7 @@ public class AggregateExample {
 
 		@Override
 		public EventQuery eventQuery() {
-			return EventQuery.of(EventFilter.forTags(Tags.of("customer", customerId)));
+			return EventQuery.of(EventFilter.forTags("customer", customerId));
 		}
 
 		public CustomerAggregate customerAggregate ( ) {

@@ -75,7 +75,7 @@ import org.sliceworkz.eventstore.events.EventReference;
  * });
  *
  * // Process events and place bookmarks
- * stream.query(EventQuery.of(EventFilter.matchAll())).forEach(event -> {
+ * stream.query(EventFilter.matchAll()).forEach(event -> {
  *     processEvent(event);
  *
  *     // Place bookmark after processing - listener will be notified

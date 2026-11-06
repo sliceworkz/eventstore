@@ -37,7 +37,7 @@ import java.util.List;
  *                                                 ErasureReason.of("consent withdrawn, ticket #4711"));
  *
  * for ( KeyId key : report.shreddedKeys() ) {
- *     stream.query(EventQuery.of(EventFilter.of(EventTypesFilter.any(), Tags.of("dek", key.value()))))
+ *     stream.query(EventFilter.forTags("dek", key.value()))
  *           .forEach(…);
  * }
  * }</pre>

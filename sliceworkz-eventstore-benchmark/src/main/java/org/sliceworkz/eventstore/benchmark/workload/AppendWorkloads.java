@@ -185,9 +185,7 @@ public final class AppendWorkloads {
 
 			@Override
 			EventFilter filterFor ( WorkloadContext context, String sku ) {
-				return EventFilter.of(
-						EventTypesFilter.of(InventoryEvent.StockReserved.class, InventoryEvent.StockPicked.class),
-						Tags.none());
+				return EventFilter.forTypes(InventoryEvent.StockReserved.class, InventoryEvent.StockPicked.class);
 			}
 		};
 	}

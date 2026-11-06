@@ -88,7 +88,7 @@ public class ProjectionExample {
 
 		@Override
 		public EventQuery eventQuery() {
-			return EventQuery.of(EventFilter.forTags(Tags.of("customer", customerId)));
+			return EventQuery.of(EventFilter.forTags("customer", customerId));
 		}
 		
 		public record CustomerSummary ( String name, boolean churned ) {

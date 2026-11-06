@@ -696,7 +696,7 @@ public interface EventStorage extends AutoCloseable {
 	 * Typical Usage:
 	 * <pre>{@code
 	 * // Process events and bookmark progress
-	 * List<Event> events = eventStream.query(EventQuery.of(EventFilter.matchAll()));
+	 * List<Event> events = eventStream.query(EventFilter.matchAll());
 	 * events.forEach(event -> {
 	 *     processEvent(event);
 	 *     storage.bookmark("my-projection", event.reference(), Tags.of("status", "processed"));

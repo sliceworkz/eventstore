@@ -52,7 +52,7 @@ public class UpcastingExample {
 		stream.append(AppendCriteria.none(), Event.of(new OriginalEvent.CustomerChurned(), Tags.none()));
 
 		System.out.println("querying all events in the store, without upcasts:");
-			stream.query(EventQuery.of(EventFilter.matchAll())).stream().map(e->(OriginalEvent)e.data())
+			stream.query(EventFilter.matchAll()).stream().map(e->(OriginalEvent)e.data())
 			.forEach(System.out::println);
 
 		// query and print all events that are now in the stream, using the new definitions and upcasting
@@ -64,19 +64,19 @@ public class UpcastingExample {
 		System.out.println("querying all events in the store, the result will include (upcasted) legacy Event types:");
 
 		// explicit cast to verify that no legacy events are returned
-		streamNew.query(EventQuery.of(EventFilter.matchAll())).stream().map(e->(CustomerEvent)e.data())
+		streamNew.query(EventFilter.matchAll()).stream().map(e->(CustomerEvent)e.data())
 			.forEach(System.out::println);
 		
 		System.out.println("querying filtered on a specific new Event type, the result will include (upcasted) legacy Event types:");
 		
 		// we can even query old Event types with their upcasted counterparts ...
-		streamNew.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerRenamed.class), Tags.none()))).stream().map(e->(CustomerEvent)e.data())
+		streamNew.query(EventFilter.forTypes(CustomerRenamed.class)).stream().map(e->(CustomerEvent)e.data())
 			.forEach(System.out::println);
 
 		System.out.println("querying filtered on multiple new Event types, the result will include (upcasted) legacy Event types:");
 
 		// ... or multiple new event types, and have old events upcasted on the fly! ...
-		streamNew.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerRegisteredV2.class, CustomerRenamed.class, CustomerChurned.class), Tags.none()))).stream().map(e->(CustomerEvent)e.data())
+		streamNew.query(EventFilter.forTypes(CustomerRegisteredV2.class, CustomerRenamed.class, CustomerChurned.class)).stream().map(e->(CustomerEvent)e.data())
 			.forEach(System.out::println);
 
 		// ... while appending a legacy event type is not possible thanks to string typing!

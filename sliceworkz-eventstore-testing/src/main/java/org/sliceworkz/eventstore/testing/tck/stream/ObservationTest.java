@@ -216,7 +216,7 @@ public class ObservationTest extends AbstractEventStoreTest {
 		stream().append(Event.of(new FirstDomainEvent("a"), Tags.none()));
 		EventStream<OtherEvent> other = observedStore.getEventStream(STREAM, OtherEvent.class);
 
-		RuntimeException thrown = assertThrows(RuntimeException.class, () -> other.query(EventQuery.of(EventFilter.matchAll())));
+		RuntimeException thrown = assertThrows(RuntimeException.class, () -> other.query(EventFilter.matchAll()));
 		Recording query = observer.last(Observation.Query.class);
 		assertSame(thrown, query.failure().orElseThrow());
 		assertTrue(query.outcome().isEmpty());
@@ -400,7 +400,7 @@ public class ObservationTest extends AbstractEventStoreTest {
 		try ( EventStore store = EventStore.on(eventStorage()).observer(throwing).build() ) {
 			EventStream<MockDomainEvent> stream = store.getEventStream(STREAM, MockDomainEvent.class);
 			stream.append(Event.of(new FirstDomainEvent("a"), Tags.none()));
-			assertEquals(1, stream.query(EventQuery.of(EventFilter.matchAll())).size());
+			assertEquals(1, stream.query(EventFilter.matchAll()).size());
 		}
 	}
 

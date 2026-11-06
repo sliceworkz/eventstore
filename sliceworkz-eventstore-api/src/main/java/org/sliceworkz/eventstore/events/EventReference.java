@@ -44,9 +44,9 @@ package org.sliceworkz.eventstore.events;
  * // The stream head is the reference of its newest stored event: take it before reading, bound
  * // the read with it, and use the same reference for optimistic locking. It is absent for an
  * // empty stream, which is a valid boundary
- * EventQuery customer = EventQuery.of(EventFilter.forTags(Tags.of("customer", "123")));
+ * EventFilter customer = EventFilter.forTags("customer", "123");
  * EventReference head = stream.head().orElse(null);
- * List<Event<CustomerEvent>> events = stream.query(customer.notAfter(head));
+ * List<Event<CustomerEvent>> events = stream.query(EventQuery.of(customer).notAfter(head));
  *
  * stream.append(
  *     AppendCriteria.of(customer, head),

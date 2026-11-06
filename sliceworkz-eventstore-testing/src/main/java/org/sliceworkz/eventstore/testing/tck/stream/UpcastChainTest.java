@@ -109,7 +109,7 @@ public class UpcastChainTest extends AbstractEventStoreTest {
 		writeOneOfEachVersion();
 		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, LegacyCustomerEvent.class);
 
-		List<Event<CustomerEvent>> events = current.query(EventQuery.of(EventFilter.matchAll()));
+		List<Event<CustomerEvent>> events = current.query(EventFilter.matchAll());
 
 		assertEquals(3, events.size());
 		// every event is a current one, whichever version it was stored as: an exhaustive switch
@@ -130,7 +130,7 @@ public class UpcastChainTest extends AbstractEventStoreTest {
 	void aQueryForTheCurrentTypeFetchesEveryLegacyTypeOnTheChain ( ) {
 		writeOneOfEachVersion();
 		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, LegacyCustomerEvent.class);
-		EventQuery registrations = EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerRegisteredV3.class), customer));
+		EventQuery registrations = EventQuery.of(EventFilter.forTypes(CustomerRegisteredV3.class).tagged(customer));
 
 		assertEquals(List.of("John", "Jane", "Joe"),
 				current.query(registrations).stream().map(e -> ((CustomerRegisteredV3) e.data()).name()).toList());
@@ -149,7 +149,7 @@ public class UpcastChainTest extends AbstractEventStoreTest {
 
 		// decided on the registrations of this customer; a first-version registration lands meanwhile
 		EventReference head = current.head().orElseThrow();
-		AppendCriteria decidedOnRegistrations = AppendCriteria.of(EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerRegisteredV3.class), customer)), head);
+		AppendCriteria decidedOnRegistrations = AppendCriteria.of(EventQuery.of(EventFilter.forTypes(CustomerRegisteredV3.class).tagged(customer)), head);
 		asWritten.append(AppendCriteria.none(), Event.of(new AsWritten.CustomerRegistered("John"), customer));
 
 		OptimisticLockingException e = assertThrows(OptimisticLockingException.class,
@@ -167,16 +167,16 @@ public class UpcastChainTest extends AbstractEventStoreTest {
 		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, LegacyCustomerEvent.class);
 
 		IllegalArgumentException midChain = assertThrows(IllegalArgumentException.class,
-				() -> current.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(LegacyCustomerEvent.CustomerRegisteredV2.class), customer))));
+				() -> current.query(EventFilter.forTypes(LegacyCustomerEvent.CustomerRegisteredV2.class).tagged(customer)));
 		assertTrue(midChain.getMessage().endsWith("'CustomerRegisteredV2' (a legacy type, read as 'CustomerRegisteredV3')"), midChain.getMessage());
 
 		IllegalArgumentException start = assertThrows(IllegalArgumentException.class,
-				() -> current.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(LegacyCustomerEvent.CustomerRegistered.class), customer))));
+				() -> current.query(EventFilter.forTypes(LegacyCustomerEvent.CustomerRegistered.class).tagged(customer)));
 		assertTrue(start.getMessage().endsWith("'CustomerRegistered' (a legacy type, read as 'CustomerRegisteredV3')"), start.getMessage());
 
 		// both at once: named in one message, in name order
 		IllegalArgumentException both = assertThrows(IllegalArgumentException.class,
-				() -> current.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(LegacyCustomerEvent.class), customer))));
+				() -> current.query(EventFilter.forTypes(LegacyCustomerEvent.class).tagged(customer)));
 		assertTrue(both.getMessage().endsWith("'CustomerRegistered' (a legacy type, read as 'CustomerRegisteredV3'), 'CustomerRegisteredV2' (a legacy type, read as 'CustomerRegisteredV3')"), both.getMessage());
 	}
 
@@ -266,7 +266,7 @@ public class UpcastChainTest extends AbstractEventStoreTest {
 		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, CustomerNoteAdded.class);
 
 		EventDeserializationException e = assertThrows(EventDeserializationException.class,
-				() -> current.query(EventQuery.of(EventFilter.matchAll())));
+				() -> current.query(EventFilter.matchAll()));
 
 		assertEquals(EventType.named("CustomerNoteAdded"), e.getEventType());
 		assertTrue(e.getReference().isPresent(), "the stored event that failed should be named");

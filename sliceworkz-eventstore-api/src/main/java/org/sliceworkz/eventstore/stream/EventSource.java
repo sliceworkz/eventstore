@@ -101,14 +101,11 @@ import org.sliceworkz.eventstore.query.EventQuery;
  * );
  *
  * // Query all events (forward)
- * List<Event<CustomerEvent>> allEvents = stream.query(EventQuery.of(EventFilter.matchAll()));
+ * List<Event<CustomerEvent>> allEvents = stream.query(EventFilter.matchAll());
  *
  * // Query with filters
  * List<Event<CustomerEvent>> filtered = stream.query(
- *     EventQuery.of(EventFilter.of(
- *         EventTypesFilter.of(CustomerRegistered.class, CustomerNameChanged.class),
- *         Tags.of("region", "EU")
- *     ))
+ *     EventFilter.forTypes(CustomerRegistered.class, CustomerNameChanged.class).tagged("region", "EU")
  * );
  *
  * // Paged read (first 10 stored events)
@@ -369,7 +366,7 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * the decision. The event at the head need not match the boundary's filter: the reference is a
 	 * cursor for the check, and only matching events after it count.
 	 * <pre>{@code
-	 * EventFilter relevant = EventFilter.forTags(Tags.of("customer", "123"));
+	 * EventFilter relevant = EventFilter.forTags("customer", "123");
 	 * EventReference head = stream.head().orElse(null);
 	 *
 	 * EventQuery read = EventQuery.of(relevant).notAfter(head);
@@ -616,7 +613,7 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * }
 	 *
 	 * // Now start processing from the beginning
-	 * stream.query(EventQuery.of(EventFilter.matchAll())).forEach(this::processEvent);
+	 * stream.query(EventFilter.matchAll()).forEach(this::processEvent);
 	 * }</pre>
 	 *
 	 * A bookmark recording a read position only is removed too; the answer is then empty, since its reader

@@ -35,34 +35,34 @@
  *
  * <h3>Match All Events:</h3>
  * <pre>{@code
- * List<Event<CustomerEvent>> events = stream.query(EventQuery.of(EventFilter.matchAll()));
+ * List<Event<CustomerEvent>> events = stream.query(EventFilter.matchAll());
  * }</pre>
  *
  * <h3>Filter by Event Type:</h3>
  * <pre>{@code
  * // Two event types, or every event type under a sealed root: EventQuery.of(EventFilter.forTypes(CustomerEvent.class))
- * EventQuery query = EventQuery.of(EventFilter.forTypes(CustomerRegistered.class, CustomerNameChanged.class));
- * List<Event<CustomerEvent>> events = stream.query(query);
+ * EventFilter relevant = EventFilter.forTypes(CustomerRegistered.class, CustomerNameChanged.class);
+ * List<Event<CustomerEvent>> events = stream.query(relevant);
  * }</pre>
  *
  * <h3>Filter by Tags (DCB Pattern):</h3>
  * <pre>{@code
  * // Find all events related to a specific customer
- * EventQuery query = EventQuery.of(EventFilter.forTags(Tags.of("customer", "cust-123")));
- * List<Event<CustomerEvent>> events = stream.query(query);
+ * EventFilter relevant = EventFilter.forTags("customer", "cust-123");
+ * List<Event<CustomerEvent>> events = stream.query(relevant);
  * }</pre>
  *
  * <h3>Types and Tags:</h3>
  * <pre>{@code
  * // Find registration and name change events for EU customers: the types first, then the tags
  * // every matching event must carry
- * EventQuery query = EventQuery.of(EventFilter.forTypes(CustomerRegistered.class, CustomerNameChanged.class).tagged("region", "EU"));
+ * EventFilter relevant = EventFilter.forTypes(CustomerRegistered.class, CustomerNameChanged.class).tagged("region", "EU");
  *
  * // The same query built from its two halves at once
- * EventQuery same = EventQuery.of(EventFilter.of(
+ * EventFilter same = EventFilter.of(
  *     EventTypesFilter.of(CustomerRegistered.class, CustomerNameChanged.class),
  *     Tags.of("region", "EU")
- * ));
+ * );
  * }</pre>
  *
  * <h3>Bounded Reads:</h3>
@@ -70,7 +70,7 @@
  * // Read nothing recorded after a reference: the technical read bound, a property of the read
  * EventReference checkpoint = // ... last known reference
  * EventQuery query = EventQuery.of(EventFilter.matchAll()).notAfter(checkpoint);
- * List<Event<CustomerEvent>> events = stream.query(query);
+ * List<Event<CustomerEvent>> events = stream.query(relevant);
  *
  * // Bound what is relevant, per item: the business bounds, a property of the filter. Each item of a
  * // union keeps its own, so one read unites facts bounded at different points of the history
@@ -84,7 +84,7 @@
  * <h3>Union Queries:</h3>
  * <pre>{@code
  * // Events with tag1:value1 OR tag2:value2
- * EventQuery query = EventQuery.of(EventFilter.forTags(Tags.of("tag1", "value1")).or(EventFilter.forTags(Tags.of("tag2", "value2"))));
+ * EventFilter relevant = EventFilter.forTags("tag1", "value1").or(EventFilter.forTags("tag2", "value2"));
  * }</pre>
  *
  * <h2>DCB Integration:</h2>
@@ -96,16 +96,16 @@
  * <pre>{@code
  * // 1. Pin the boundary at the stream head, then query the relevant events up to it. An absent head
  * //    is an empty stream, and a valid boundary, so an account with no history needs no special case
- * EventQuery query = EventQuery.of(EventFilter.forTags(Tags.of("account", "acc-123")));
+ * EventFilter relevant = EventFilter.forTags("account", "acc-123");
  * EventReference head = stream.head().orElse(null);
- * List<Event<AccountEvent>> events = stream.query(query.notAfter(head));
+ * List<Event<AccountEvent>> events = stream.query(EventQuery.of(relevant).notAfter(head));
  *
  * // 2. Make business decision based on events
  * BigDecimal balance = calculateBalance(events);
  *
  * // 3. Append with the same query and the same boundary to detect conflicts
  * stream.append(
- *     AppendCriteria.of(query, head),
+ *     AppendCriteria.of(relevant, head),
  *     Event.of(new MoneyWithdrawn(amount), Tags.of("account", "acc-123"))
  * );
  * }</pre>

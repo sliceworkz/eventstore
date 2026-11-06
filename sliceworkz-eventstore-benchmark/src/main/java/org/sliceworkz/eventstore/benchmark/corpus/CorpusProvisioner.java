@@ -354,7 +354,7 @@ public final class CorpusProvisioner {
 		EventStream<InventoryEvent> inventory = target.store()
 				.getEventStream(EventStreamId.forContext("inventory").anyPurpose(), InventoryEvent.class);
 
-		long inventoryCount = inventory.query(EventQuery.of(EventFilter.matchAll())).size();
+		long inventoryCount = inventory.query(EventFilter.matchAll()).size();
 
 		String midCursor = referenceAt(inventory, Math.max(inventoryCount / 2, 1));
 		String replayUntil = referenceAt(inventory, Math.min(REPLAY_BOUND_EVENTS, Math.max(inventoryCount, 1)));

@@ -87,7 +87,7 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 	void testForwardQueryMatchAll() {
 		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
 
-		List<Event<CurrentEvent>> events = stream.query(EventQuery.of(EventFilter.matchAll()));
+		List<Event<CurrentEvent>> events = stream.query(EventFilter.matchAll());
 
 		// Position 1 → 2 events, Position 2 → 0 events, Position 3 → 1 event, Position 4 → 1 event = 4 total
 		assertEquals(4, events.size());
@@ -152,22 +152,19 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
 
 		// Query specifically for CustomerRegistered — should find it from the split
-		List<Event<CurrentEvent>> registered = stream.query(
-			EventQuery.of(EventFilter.of(EventTypesFilter.of(CurrentEvent.CustomerRegistered.class), Tags.none()))
+		List<Event<CurrentEvent>> registered = stream.query(EventFilter.forTypes(CurrentEvent.CustomerRegistered.class)
 		);
 		assertEquals(1, registered.size());
 		assertEquals("John", ((CurrentEvent.CustomerRegistered) registered.get(0).data()).name());
 
 		// Query specifically for AddressRecorded — should find it from the split
-		List<Event<CurrentEvent>> addresses = stream.query(
-			EventQuery.of(EventFilter.of(EventTypesFilter.of(CurrentEvent.AddressRecorded.class), Tags.none()))
+		List<Event<CurrentEvent>> addresses = stream.query(EventFilter.forTypes(CurrentEvent.AddressRecorded.class)
 		);
 		assertEquals(1, addresses.size());
 		assertEquals("Springfield", ((CurrentEvent.AddressRecorded) addresses.get(0).data()).city());
 
 		// Query for CustomerRenamed — should find the 1-to-1 upcast
-		List<Event<CurrentEvent>> renamed = stream.query(
-			EventQuery.of(EventFilter.of(EventTypesFilter.of(CurrentEvent.CustomerRenamed.class), Tags.none()))
+		List<Event<CurrentEvent>> renamed = stream.query(EventFilter.forTypes(CurrentEvent.CustomerRenamed.class)
 		);
 		assertEquals(1, renamed.size());
 		assertEquals("Jane", ((CurrentEvent.CustomerRenamed) renamed.get(0).data()).name());
@@ -186,7 +183,7 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
 
 		IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-				() -> stream.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(LegacyEvents.CustomerLegacyAuditLog.class), Tags.none()))));
+				() -> stream.query(EventFilter.forTypes(LegacyEvents.CustomerLegacyAuditLog.class)));
 		assertTrue(e.getMessage().endsWith("'CustomerLegacyAuditLog' (a legacy type upcasting into no current type, so no query on this stream can return it and no boundary can count it)"), e.getMessage());
 	}
 
@@ -194,7 +191,7 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 	void testSplitEventsHaveDistinctIndices() {
 		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
 
-		List<Event<CurrentEvent>> events = stream.query(EventQuery.of(EventFilter.matchAll()));
+		List<Event<CurrentEvent>> events = stream.query(EventFilter.matchAll());
 
 		// Events from position 1 (split): should have index 0 and 1
 		assertEquals(0, events.get(0).reference().index());
@@ -214,7 +211,7 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 	void testSplitEventsOrderCorrectlyViaHappenedBefore() {
 		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
 
-		List<Event<CurrentEvent>> events = stream.query(EventQuery.of(EventFilter.matchAll()));
+		List<Event<CurrentEvent>> events = stream.query(EventFilter.matchAll());
 
 		// index 0 happened before index 1
 		assertTrue(events.get(0).reference().happenedBefore(events.get(1).reference()));
@@ -436,7 +433,7 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
 
 		// Get the EventId of the split event (position 1)
-		List<Event<CurrentEvent>> allEvents = stream.query(EventQuery.of(EventFilter.matchAll()));
+		List<Event<CurrentEvent>> allEvents = stream.query(EventFilter.matchAll());
 		EventId splitEventId = allEvents.get(0).reference().id();
 
 		// getEventById should return both sub-events
@@ -458,7 +455,7 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 			Tags.of("customer", "1")));
 
 		// Get the EventId from the original stream
-		EventId auditEventId = originalStream.query(EventQuery.of(EventFilter.matchAll())).get(0).reference().id();
+		EventId auditEventId = originalStream.query(EventFilter.matchAll()).get(0).reference().id();
 
 		// Now read via the upcasted stream
 		EventStream<CurrentEvent> upcastedStream = eventStore().getEventStream(streamId, CurrentEvent.class, LegacyEvents.class);
@@ -480,7 +477,7 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
 
 		// Find the CustomerRenamed event
-		Event<CurrentEvent> renamedEvent = stream.query(EventQuery.of(EventFilter.matchAll())).stream()
+		Event<CurrentEvent> renamedEvent = stream.query(EventFilter.matchAll()).stream()
 			.filter(e -> e.data() instanceof CurrentEvent.CustomerRenamed)
 			.findFirst().orElseThrow();
 
@@ -495,7 +492,7 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
 
 		// Find the CustomerChurned event (appended as a current event, not upcasted)
-		Event<CurrentEvent> churnedEvent = stream.query(EventQuery.of(EventFilter.matchAll())).stream()
+		Event<CurrentEvent> churnedEvent = stream.query(EventFilter.matchAll()).stream()
 			.filter(e -> e.data() instanceof CurrentEvent.CustomerChurned)
 			.findFirst().orElseThrow();
 
@@ -522,7 +519,7 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 	void testFilteredEventsAreInvisibleInForwardQuery() {
 		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
 
-		List<Event<CurrentEvent>> events = stream.query(EventQuery.of(EventFilter.matchAll()));
+		List<Event<CurrentEvent>> events = stream.query(EventFilter.matchAll());
 
 		// The audit log event (position 2) should be completely absent
 		for ( Event<CurrentEvent> event : events ) {
@@ -551,7 +548,7 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 	void testStoredTypePreservedOnSplitEvents() {
 		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
 
-		List<Event<CurrentEvent>> events = stream.query(EventQuery.of(EventFilter.matchAll()));
+		List<Event<CurrentEvent>> events = stream.query(EventFilter.matchAll());
 
 		// Split events: stored type is the original, type is the upcasted
 		assertEquals(EventType.named("CustomerRegisteredWithAddress"), events.get(0).storedType());
@@ -565,7 +562,7 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 	void testStoredTypePreservedOnOneToOneUpcast() {
 		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
 
-		Event<CurrentEvent> renamed = stream.query(EventQuery.of(EventFilter.matchAll())).stream()
+		Event<CurrentEvent> renamed = stream.query(EventFilter.matchAll()).stream()
 			.filter(e -> e.data() instanceof CurrentEvent.CustomerRenamed)
 			.findFirst().orElseThrow();
 
@@ -591,7 +588,7 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 
 		EventStream<CurrentEvent> stream = eventStore().getEventStream(streamId, CurrentEvent.class, LegacyEvents.class);
 
-		List<Event<CurrentEvent>> events = stream.query(EventQuery.of(EventFilter.matchAll()));
+		List<Event<CurrentEvent>> events = stream.query(EventFilter.matchAll());
 		assertEquals(4, events.size()); // 2 splits × 2 events each
 
 		// First split (position 1): Alice
@@ -660,7 +657,7 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 
 		EventStream<CurrentEvent> stream = eventStore().getEventStream(streamId, CurrentEvent.class, LegacyEvents.class);
 
-		List<Event<CurrentEvent>> events = stream.query(EventQuery.of(EventFilter.matchAll()));
+		List<Event<CurrentEvent>> events = stream.query(EventFilter.matchAll());
 		assertEquals(0, events.size());
 
 		List<Event<CurrentEvent>> eventsBackward = stream.query(EventQuery.of(EventFilter.matchAll()).backwards());

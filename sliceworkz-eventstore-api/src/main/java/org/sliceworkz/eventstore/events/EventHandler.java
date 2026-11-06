@@ -34,7 +34,7 @@ package org.sliceworkz.eventstore.events;
  *
  *     @Override
  *     public EventQuery eventQuery() {
- *         return EventQuery.of(EventFilter.of(EventTypesFilter.any(), Tags.of("customer", customerId)));
+ *         return EventQuery.of(EventFilter.forTags("customer", customerId));
  *     }
  *
  *     @Override

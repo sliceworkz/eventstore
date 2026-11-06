@@ -100,7 +100,7 @@ import java.lang.annotation.Target;
  * );
  *
  * // When querying, legacy events are automatically upcasted
- * stream.query(EventQuery.of(EventFilter.matchAll()))
+ * stream.query(EventFilter.matchAll())
  *     .forEach(event -> {
  *         // All events are of type CustomerEvent, never LegacyCustomerEvent
  *         CustomerEvent currentEvent = event.data();
@@ -111,10 +111,7 @@ import java.lang.annotation.Target;
  * <pre>{@code
  * // Query for events that match the upcasted target type
  * // This finds both new CustomerRenamed events AND legacy CustomerNameChanged events
- * stream.query(EventQuery.of(EventFilter.of(
- *     EventTypesFilter.of(CustomerEvent.CustomerRenamed.class),
- *     Tags.none()
- * ))).forEach(event -> {
+ * stream.query(EventFilter.forTypes(CustomerEvent.CustomerRenamed.class)).forEach(event -> {
  *     CustomerEvent.CustomerRenamed renamed = (CustomerEvent.CustomerRenamed) event.data();
  *     System.out.println("Customer renamed to: " + renamed.name());
  * });

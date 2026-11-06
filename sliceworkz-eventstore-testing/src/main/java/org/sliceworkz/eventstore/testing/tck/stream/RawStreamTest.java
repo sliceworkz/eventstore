@@ -58,7 +58,7 @@ public class RawStreamTest extends AbstractEventStoreTest {
 		Event<MockDomainEvent> appended = typed.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("John"), Tags.of("a", "1"))).getFirst();
 
 		EventSource<String> raw = eventStore().getRawEventStream(streamId);
-		List<Event<String>> read = raw.query(EventQuery.of(EventFilter.matchAll()));
+		List<Event<String>> read = raw.query(EventFilter.matchAll());
 
 		assertEquals(1, read.size());
 		Event<String> event = read.getFirst();

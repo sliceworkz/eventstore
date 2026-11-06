@@ -68,7 +68,7 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  *
  * // every event carrying a tag, whatever its stream
  * EventStoreImporter.from(live).to(cold)
- *     .matching(EventFilter.of(EventTypesFilter.any(), Tags.of("period", "2024Q1")))
+ *     .matching(EventFilter.forTags("period", "2024Q1"))
  *     .run();
  * }</pre>
  * The alternative — dropping the unwanted events from the transformation — reads the whole source to

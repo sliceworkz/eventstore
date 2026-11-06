@@ -50,7 +50,7 @@ public class AppendAndQueryAllExample {
 		stream.append(AppendCriteria.none(), Event.of(new CustomerChurned(), Tags.none()));
 		
 		// query and print all events that are now in the stream, with their metadata
-		List<Event<CustomerEvent>> allEvents = stream.query(EventQuery.of(EventFilter.matchAll()));
+		List<Event<CustomerEvent>> allEvents = stream.query(EventFilter.matchAll());
 		EventHandler<CustomerEvent> withMetaData = System.out::println;
 		System.out.println("printing events with metadata...");
 		allEvents.forEach(withMetaData::when);

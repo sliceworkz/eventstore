@@ -58,7 +58,7 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  *
  * // Append events and query them
  * stream.append(AppendCriteria.none(), Event.of(new CustomerRegistered("John"), Tags.none()));
- * List<Event<CustomerEvent>> events = stream.query(EventQuery.of(EventFilter.matchAll()));
+ * List<Event<CustomerEvent>> events = stream.query(EventFilter.matchAll());
  * }</pre>
  *
  * <h2>Lifecycle:</h2>

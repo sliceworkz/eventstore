@@ -55,9 +55,9 @@
  *
  * // Conditional append with DCB pattern: pin the boundary at the head before reading. An absent
  * // head is an empty stream, and a valid boundary, so a new customer needs no special case
- * EventQuery customer = EventQuery.of(EventFilter.forTags(Tags.of("customer", "cust-123")));
+ * EventFilter customer = EventFilter.forTags("customer", "cust-123");
  * EventReference head = stream.head().orElse(null);
- * List<Event<CustomerEvent>> relevantEvents = stream.query(customer.notAfter(head));
+ * List<Event<CustomerEvent>> relevantEvents = stream.query(EventQuery.of(customer).notAfter(head));
  *
  * try {
  *     stream.append(

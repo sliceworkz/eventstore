@@ -129,7 +129,7 @@ class EventStreamSerdeSharingTest {
 			first.close();
 			second.append(AppendCriteria.none(),
 					Event.of(new CustomerEvent.CustomerRegistered("c1", "Jane"), Tags.none()));
-			assertEquals(1, second.query(EventQuery.of(EventFilter.matchAll())).size(),
+			assertEquals(1, second.query(EventFilter.matchAll()).size(),
 					"closing one stream disturbed another opened on the same id");
 		}
 	}
@@ -203,7 +203,7 @@ class EventStreamSerdeSharingTest {
 			EventStream<ShopEvent> shop = eventStore.getEventStream(streamId, ShopEvent.class);
 			shop.append(AppendCriteria.none(),
 					Event.of(new OrderEvent.OrderPlaced("o1", "c1"), Tags.none()));
-			assertEquals(1, shop.query(EventQuery.of(EventFilter.matchAll())).size());
+			assertEquals(1, shop.query(EventFilter.matchAll()).size());
 		}
 	}
 

@@ -91,7 +91,7 @@ public class ConcurrentOptimisticLockingTest extends AbstractEventStoreTest {
 				// each round gets its own tag, so the rounds are independent boundaries and a round's
 				// outcome cannot be explained by what an earlier round left behind
 				Tags boundaryTags = Tags.of("boundary", "round-%d".formatted(round));
-				EventQuery boundaryQuery = EventQuery.of(EventFilter.of(EventTypesFilter.any(), boundaryTags));
+				EventQuery boundaryQuery = EventQuery.of(EventFilter.forTags(boundaryTags));
 
 				// the fact everyone is about to decide on: one event, which everyone reads as the head
 				// of the boundary before appending against it. Its reference is taken from what append()

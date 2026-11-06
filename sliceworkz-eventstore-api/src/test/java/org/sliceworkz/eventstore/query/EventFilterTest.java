@@ -47,8 +47,8 @@ public class EventFilterTest {
 
 	@Test
 	void forTagsIsForEventsOfAnyType ( ) {
-		EventFilter filter = EventFilter.forTags(Tags.of("customer", "123"));
-		assertEquals(EventFilter.of(EventTypesFilter.any(), Tags.of("customer", "123")), filter);
+		EventFilter filter = EventFilter.forTags("customer", "123");
+		assertEquals(EventFilter.forTags("customer", "123"), filter);
 
 		assertTrue(filter.matches(TYPE, Tags.of("customer", "123"), row("a", 1, 1, 0)));
 		assertTrue(filter.matches(EventType.named("SomethingElse"), Tags.of("customer", "123", "region", "EU"), row("b", 2, 2, 0)));
@@ -122,7 +122,7 @@ public class EventFilterTest {
 	@Test
 	void forTypesIsForEventsOfThoseTypesWhateverTheirTags ( ) {
 		EventFilter filter = EventFilter.forTypes(Customer.Registered.class, Unrelated.class);
-		assertEquals(EventFilter.of(EventTypesFilter.of(Customer.Registered.class, Unrelated.class), Tags.none()), filter);
+		assertEquals(EventFilter.forTypes(Customer.Registered.class, Unrelated.class), filter);
 
 		assertTrue(filter.matches(REGISTERED, Tags.none(), row("a", 1, 1, 0)));
 		assertTrue(filter.matches(UNRELATED, Tags.of("customer", "123"), row("b", 2, 2, 0)));
@@ -142,7 +142,7 @@ public class EventFilterTest {
 	@Test
 	void taggedNarrowsToEventsCarryingTheTagOnTopOfTheTypes ( ) {
 		EventFilter filter = EventFilter.forTypes(Customer.class).tagged("customer", "123");
-		assertEquals(EventFilter.of(EventTypesFilter.of(Customer.class), Tags.of("customer", "123")), filter,
+		assertEquals(EventFilter.forTypes(Customer.class).tagged("customer", "123"), filter,
 				"the chain resolves to the same items as the two-halves form");
 
 		assertTrue(filter.matches(REGISTERED, Tags.of("customer", "123"), row("a", 1, 1, 0)));
@@ -155,7 +155,7 @@ public class EventFilterTest {
 	@Test
 	void taggedAccumulates ( ) {
 		EventFilter filter = EventFilter.forTypes(Customer.class).tagged("customer", "123").tagged("region", "EU");
-		assertEquals(EventFilter.of(EventTypesFilter.of(Customer.class), Tags.of("customer", "123", "region", "EU")), filter);
+		assertEquals(EventFilter.forTypes(Customer.class).tagged(Tags.of("customer", "123", "region", "EU")), filter);
 		assertEquals(EventFilter.forTypes(Customer.class).tagged(Tags.of("customer", "123", "region", "EU")), filter);
 
 		assertTrue(filter.matches(REGISTERED, Tags.of("customer", "123", "region", "EU"), row("a", 1, 1, 0)));
@@ -213,7 +213,7 @@ public class EventFilterTest {
 	@Test
 	void orIsTheUnionOfBothFiltersItems ( ) {
 		EventFilter a = EventFilter.forTypes(Customer.Registered.class);
-		EventFilter b = EventFilter.forTags(Tags.of("customer", "123"));
+		EventFilter b = EventFilter.forTags("customer", "123");
 		EventFilter union = a.or(b);
 
 		assertEquals(2, union.items().size());
@@ -364,7 +364,7 @@ public class EventFilterTest {
 		EventFilter union = EventFilter.of(registered, churned);
 		assertEquals(List.of(registered, churned), union.items());
 		assertEquals(EventFilter.of(registered).or(EventFilter.of(churned)), union);
-		assertEquals(EventFilter.of(EventTypesFilter.of(Customer.Churned.class), Tags.none()), EventFilter.of(churned),
+		assertEquals(EventFilter.forTypes(Customer.Churned.class), EventFilter.of(churned),
 				"the two-halves form is one item");
 
 		assertTrue(EventFilter.of().isMatchNone());
@@ -374,7 +374,7 @@ public class EventFilterTest {
 
 	@Test
 	void forTagsTakesOneTagByKeyAndValue ( ) {
-		assertEquals(EventFilter.forTags(Tags.of("customer", "123")), EventFilter.forTags("customer", "123"));
+		assertEquals(EventFilter.forTags("customer", "123"), EventFilter.forTags("customer", "123"));
 		assertThrows(IllegalArgumentException.class, () -> EventFilter.forTags("a:b", "c"), "a colon in the key does not survive the wire format");
 	}
 

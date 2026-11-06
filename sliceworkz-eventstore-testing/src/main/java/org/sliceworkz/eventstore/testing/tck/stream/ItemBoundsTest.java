@@ -83,7 +83,7 @@ public class ItemBoundsTest extends AbstractEventStoreTest {
 			};
 			stream.append(AppendCriteria.none(), Event.of(data, Tags.of("k", n % 2 == 0 ? "a" : "b", "g", String.valueOf(n % 5))));
 		}
-		this.all = stream.query(EventQuery.of(EventFilter.matchAll()));
+		this.all = stream.query(EventFilter.matchAll());
 		assertEquals(EVENTS, all.size(), "fixture");
 	}
 
@@ -94,8 +94,8 @@ public class ItemBoundsTest extends AbstractEventStoreTest {
 				EventFilter.forTypes(FirstDomainEvent.class).until(at(10))
 						.or(EventFilter.forTypes(SecondDomainEvent.class).after(at(20))));
 		filters.put("tag items bounded on both sides and on one",
-				EventFilter.forTags(Tags.of("k", "a")).after(at(5)).until(at(15))
-						.or(EventFilter.forTags(Tags.of("g", "1")).after(at(25))));
+				EventFilter.forTags("k", "a").after(at(5)).until(at(15))
+						.or(EventFilter.forTags("g", "1").after(at(25))));
 		filters.put("overlapping items of one type, and an unbounded one",
 				EventFilter.forTypes(ThirdDomainEvent.class).until(at(30))
 						.or(EventFilter.forTypes(ThirdDomainEvent.class).after(at(10)))
@@ -173,7 +173,7 @@ public class ItemBoundsTest extends AbstractEventStoreTest {
 		EventFilter filter = EventFilter.forTypes(FirstDomainEvent.class).until(at(10))
 				.or(EventFilter.forTypes(SecondDomainEvent.class).after(at(20)));
 
-		List<EventReference> afterTheFirstItem = references(stream.query(EventQuery.of(filter), at(15)));
+		List<EventReference> afterTheFirstItem = references(stream.query(filter, at(15)));
 		List<EventReference> expected = expected(filter, null).stream().filter(r -> r.storedEventHappenedAfter(at(15))).toList();
 		assertEquals(expected, afterTheFirstItem);
 		assertTrue(afterTheFirstItem.stream().allMatch(r -> r.storedEventHappenedAfter(at(20))));
@@ -183,8 +183,8 @@ public class ItemBoundsTest extends AbstractEventStoreTest {
 	void aFilterIsReadByItselfAsAForwardQuery ( ) {
 		EventFilter filter = EventFilter.forTypes(FirstDomainEvent.class).until(at(10))
 				.or(EventFilter.forTypes(SecondDomainEvent.class).after(at(20)));
-		assertEquals(references(stream.query(EventQuery.of(filter))), references(stream.query(filter)));
-		assertEquals(references(stream.query(EventQuery.of(filter), at(5))), references(stream.query(filter, at(5))));
+		assertEquals(references(stream.query(filter)), references(stream.query(filter)));
+		assertEquals(references(stream.query(filter, at(5))), references(stream.query(filter, at(5))));
 	}
 
 	// --- the consistency check -------------------------------------------------------------------

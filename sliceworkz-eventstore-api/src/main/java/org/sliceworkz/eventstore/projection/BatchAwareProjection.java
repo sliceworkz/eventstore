@@ -81,7 +81,7 @@ import org.sliceworkz.eventstore.events.EventReference;
  *
  *     @Override
  *     public EventQuery eventQuery() {
- *         return EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerRegistered.class), Tags.none()));
+ *         return EventQuery.of(EventFilter.forTypes(CustomerRegistered.class));
  *     }
  * }
  * }</pre>

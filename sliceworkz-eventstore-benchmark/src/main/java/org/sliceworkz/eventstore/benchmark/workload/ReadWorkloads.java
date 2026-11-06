@@ -201,8 +201,7 @@ public final class ReadWorkloads {
 		return simple("query-by-type",
 				"500 events of one type from inventory -- the btree path, no tags involved",
 				context -> context.inventory()
-						.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(InventoryEvent.StockReserved.class),
-								Tags.none())).limit(PAGE_SIZE)));
+						.query(EventQuery.of(EventFilter.forTypes(InventoryEvent.StockReserved.class)).limit(PAGE_SIZE)));
 	}
 
 	/**
@@ -213,8 +212,7 @@ public final class ReadWorkloads {
 		return simple("query-by-tag-needle",
 				"a tag matching ~10 events store-wide -- the selective end of tag filtering",
 				context -> context.inventory()
-						.query(EventQuery.of(EventFilter.of(EventTypesFilter.any(),
-								Tags.of(CorpusGenerator.MARKER_TAG_KEY, context.facts().needleTagValue())))));
+						.query(EventFilter.forTags(CorpusGenerator.MARKER_TAG_KEY, context.facts().needleTagValue())));
 	}
 
 	/**
@@ -225,8 +223,7 @@ public final class ReadWorkloads {
 		return simple("query-by-tag-swathe",
 				"a tag matching ~1% of the store -- where the planner starts preferring a seq scan",
 				context -> context.inventory()
-						.query(EventQuery.of(EventFilter.of(EventTypesFilter.any(),
-								Tags.of(CorpusGenerator.MARKER_TAG_KEY, context.facts().swatheTagValue())))
+						.query(EventQuery.of(EventFilter.forTags(CorpusGenerator.MARKER_TAG_KEY, context.facts().swatheTagValue()))
 								.limit(PAGE_SIZE)));
 	}
 
@@ -283,8 +280,7 @@ public final class ReadWorkloads {
 		return simple("query-by-multi-tag",
 				"three tags AND-ed in one filter item -- one containment test over a wider array",
 				context -> context.inventory()
-						.query(EventQuery.of(EventFilter.of(EventTypesFilter.any(),
-								Tags.of(
+						.query(EventQuery.of(EventFilter.forTags(Tags.of(
 										org.sliceworkz.eventstore.events.Tag.of(TagKeys.SKU, context.facts().hotEntity()),
 										org.sliceworkz.eventstore.events.Tag.of(TagKeys.CHANNEL, "web"),
 										org.sliceworkz.eventstore.events.Tag.of(TagKeys.COUNTRY, "BE"))))
@@ -353,7 +349,7 @@ public final class ReadWorkloads {
 		return simple("query-item-bounds-tag-only-narrow",
 				"a tag-only item bounded to 2% of the context, beside a selective item bounded early",
 				context -> {
-					EventFilter narrow = EventFilter.forTags(Tags.of(CorpusGenerator.MARKER_TAG_KEY, context.facts().swatheTagValue()))
+					EventFilter narrow = EventFilter.forTags(CorpusGenerator.MARKER_TAG_KEY, context.facts().swatheTagValue())
 							.after(referenceAt(context, 0.50)).until(referenceAt(context, 0.52));
 					EventFilter early = EventFilter.of(stockTypes(), Tags.of(TagKeys.SKU, context.facts().coldEntity()))
 							.until(referenceAt(context, 0.05));
@@ -418,7 +414,7 @@ public final class ReadWorkloads {
 	/** The savepoint query itself: one event type, newest first, one row. */
 	private static EventQuery savepointProbe ( Tags tags ) {
 		return EventQuery
-				.of(EventFilter.of(EventTypesFilter.of(InventoryEvent.StockCounted.class), tags))
+				.of(EventFilter.forTypes(InventoryEvent.StockCounted.class).tagged(tags))
 				.backwards()
 				.limit(1);
 	}
@@ -538,7 +534,7 @@ public final class ReadWorkloads {
 	/** One entity's whole history, isolated by tag: the only way to do it on a context-wide stream. */
 	private static List<Event<InventoryEvent>> byTag ( WorkloadContext context, String entity ) {
 		return context.inventory()
-				.query(EventQuery.of(EventFilter.of(EventTypesFilter.any(), Tags.of(TagKeys.SKU, entity))));
+				.query(EventFilter.forTags(TagKeys.SKU, entity));
 	}
 
 	/**
@@ -547,7 +543,7 @@ public final class ReadWorkloads {
 	 */
 	private static List<Event<InventoryEvent>> entityHistory ( WorkloadContext context, String entity ) {
 		if ( context.streamScopesEntity() ) {
-			return context.inventoryFor(entity).query(EventQuery.of(EventFilter.matchAll()));
+			return context.inventoryFor(entity).query(EventFilter.matchAll());
 		}
 		return byTag(context, entity);
 	}

@@ -174,7 +174,7 @@ public class PostgresOrderIndexAdmissionTest {
 		public void testTheNewestTaggedEventOfAQuietStreamIsNotFoundByWalkingAWiderOrderIndex ( ) throws Exception {
 			Fixture fixture = fixture(image);
 			List<Object> parameters = new ArrayList<>();
-			String sql = fixture.storage().querySql(EventFilter.forTags(Tags.of("entity", "7")),
+			String sql = fixture.storage().querySql(EventFilter.forTags("entity", "7"),
 					EventStreamId.forContext(QUIET_CONTEXT), null, null, Limit.to(1), Direction.BACKWARD, parameters);
 
 			List<Plan> plans = explain(fixture, sql, parameters);
@@ -194,7 +194,7 @@ public class PostgresOrderIndexAdmissionTest {
 		public void testTheConsistencyCheckOfAConditionalAppendIsNotServedByAWiderOrderIndex ( ) throws Exception {
 			Fixture fixture = fixture(image);
 			EventStreamId quiet = EventStreamId.forContext(QUIET_CONTEXT);
-			AppendCriteria criteria = AppendCriteria.of(EventFilter.forTags(Tags.of("entity", "7")), fixture.quietHead());
+			AppendCriteria criteria = AppendCriteria.of(EventFilter.forTags("entity", "7"), fixture.quietHead());
 
 			StringBuilder sql = new StringBuilder("SELECT 1 ");
 			List<Object> parameters = new ArrayList<>();

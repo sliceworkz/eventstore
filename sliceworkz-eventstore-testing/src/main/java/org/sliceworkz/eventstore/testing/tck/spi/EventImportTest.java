@@ -460,7 +460,7 @@ public class EventImportTest extends AbstractEventStoreTest {
 		StoredEvent third = sourceEvents.stream().filter(e -> "Third".equals(e.type().name())).findFirst().orElseThrow();
 
 		ImportReport report = EventStoreImporter.from(source).to(target)
-				.matching(EventFilter.of(EventTypesFilter.any(), Tags.of("kind", "Third")))
+				.matching(EventFilter.forTags("kind", "Third"))
 				.run();
 
 		assertEquals(1, report.read(), "only the tagged event is read");
@@ -490,14 +490,14 @@ public class EventImportTest extends AbstractEventStoreTest {
 		// kind:Third is on otherStream, so scoping to stream leaves nothing; kind:Second is on it
 		ImportReport none = EventStoreImporter.from(source).to(target)
 				.stream(stream)
-				.matching(EventFilter.of(EventTypesFilter.any(), Tags.of("kind", "Third")))
+				.matching(EventFilter.forTags("kind", "Third"))
 				.run();
 		assertEquals(0, none.read());
 		assertEquals(0, none.imported());
 
 		ImportReport one = EventStoreImporter.from(source).to(target)
 				.stream(stream)
-				.matching(EventFilter.of(EventTypesFilter.any(), Tags.of("kind", "Second")))
+				.matching(EventFilter.forTags("kind", "Second"))
 				.run();
 		assertEquals(1, one.read());
 		assertEquals(1, one.imported());

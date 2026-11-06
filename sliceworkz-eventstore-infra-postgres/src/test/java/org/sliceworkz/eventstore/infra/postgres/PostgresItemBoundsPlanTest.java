@@ -154,10 +154,10 @@ public class PostgresItemBoundsPlanTest {
 		@Test
 		public void testItemsSharingTheirBoundsKeepTheSingleStatement ( ) {
 			Fixture fixture = fixture(image);
-			EventFilter unbounded = EventFilter.of(types("StockAdded"), Tags.none()).or(EventFilter.forTags(Tags.of("sku", "SKU-1")));
+			EventFilter unbounded = EventFilter.of(types("StockAdded"), Tags.none()).or(EventFilter.forTags("sku", "SKU-1"));
 			EventFilter shared = unbounded.after(fixture.at(0.10)).until(fixture.at(0.20));
 
-			for ( EventFilter filter : List.of(unbounded, shared, EventFilter.matchAll(), EventFilter.forTags(Tags.of("sku", "SKU-1")).after(fixture.at(0.5))) ) {
+			for ( EventFilter filter : List.of(unbounded, shared, EventFilter.matchAll(), EventFilter.forTags("sku", "SKU-1").after(fixture.at(0.5))) ) {
 				String sql = fixture.storage().querySql(filter, EventStreamId.forContext(CONTEXT), null, null, Limit.to(PAGE), Direction.FORWARD, new ArrayList<>());
 				assertFalse(sql.contains("UNION"), () -> "one statement for " + filter + "\n" + sql);
 				assertTrue(PostgresEventStorageImpl.sharesItemBounds(filter));
@@ -167,9 +167,9 @@ public class PostgresItemBoundsPlanTest {
 		@Test
 		public void testABranchWhoseRangeIsEmptyIsLeftOutAndNothingLeftIsNoStatement ( ) {
 			Fixture fixture = fixture(image);
-			EventFilter live = EventFilter.forTags(Tags.of("sku", "SKU-1")).after(fixture.at(0.5));
-			EventFilter empty = EventFilter.forTags(Tags.of("sku", "SKU-2")).after(fixture.at(0.4)).until(fixture.at(0.3));
-			EventFilter behindTheCursor = EventFilter.forTags(Tags.of("sku", "SKU-3")).until(fixture.at(0.2));
+			EventFilter live = EventFilter.forTags("sku", "SKU-1").after(fixture.at(0.5));
+			EventFilter empty = EventFilter.forTags("sku", "SKU-2").after(fixture.at(0.4)).until(fixture.at(0.3));
+			EventFilter behindTheCursor = EventFilter.forTags("sku", "SKU-3").until(fixture.at(0.2));
 
 			String sql = fixture.storage().querySql(live.or(empty).or(behindTheCursor), EventStreamId.forContext(CONTEXT),
 					fixture.at(0.25), null, Limit.to(PAGE), Direction.FORWARD, new ArrayList<>());

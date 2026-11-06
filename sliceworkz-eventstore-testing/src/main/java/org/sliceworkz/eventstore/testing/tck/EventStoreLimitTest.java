@@ -66,18 +66,18 @@ public class EventStoreLimitTest extends AbstractEventStoreTest {
 		storeEvent(stream, new MockDomainEvent.ThirdDomainEvent("one"), Tags.of(Tag.of("mod2", "0"), Tag.of("mod3", "0")));
 		storeEvent(stream, new MockDomainEvent.ThirdDomainEvent("one"), Tags.of(Tag.of("mod2", "1"), Tag.of("mod3", "1")));
 
-		EventStorageException e = assertThrows(EventStorageException.class, ()->eventStore().getRawEventStream(stream).query(EventQuery.of(EventFilter.matchAll())));
+		EventStorageException e = assertThrows(EventStorageException.class, ()->eventStore().getRawEventStream(stream).query(EventFilter.matchAll()));
 		assertEquals("query returned more results than the configured absolute limit of 2", e.getMessage());
 
-		e = assertThrows(EventStorageException.class, ()->eventStore().getRawEventStream(stream).query(EventQuery.of(EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()))));
+		e = assertThrows(EventStorageException.class, ()->eventStore().getRawEventStream(stream).query(EventFilter.forTypes(FirstDomainEvent.class)));
 		assertEquals("query returned more results than the configured absolute limit of 2", e.getMessage());
 
-		e = assertThrows(EventStorageException.class, ()->eventStore().getRawEventStream(stream).query(EventQuery.of(EventFilter.of(EventTypesFilter.any(), Tags.of("mod2", "0")))));
+		e = assertThrows(EventStorageException.class, ()->eventStore().getRawEventStream(stream).query(EventFilter.forTags("mod2", "0")));
 		assertEquals("query returned more results than the configured absolute limit of 2", e.getMessage());
 
 		// these should all be ok
-		eventStore().getRawEventStream(stream).query(EventQuery.of(EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.of("mod2", "1"))));
-		eventStore().getRawEventStream(stream).query(EventQuery.of(EventFilter.of(EventTypesFilter.any(), Tags.of("mod2", "2"))));
+		eventStore().getRawEventStream(stream).query(EventFilter.forTypes(FirstDomainEvent.class).tagged("mod2", "1"));
+		eventStore().getRawEventStream(stream).query(EventFilter.forTags("mod2", "2"));
 	}
 
 	/**

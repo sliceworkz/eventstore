@@ -135,11 +135,11 @@ public class EventTypesFilterHierarchyTest extends AbstractEventStoreTest {
 	void theRootOfAHierarchyMatchesEveryEventUnderIt ( ) {
 		seedShop();
 
-		List<Event<Object>> shop = stream.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(ShopEvent.class), Tags.none())));
+		List<Event<Object>> shop = stream.query(EventFilter.forTypes(ShopEvent.class));
 		assertEquals(types(OrderPlaced.class, PaymentReceived.class, OrderPlaced.class, OrderShipped.class, ShopClosed.class), typesOf(shop));
 
 		// and not the other hierarchy's event, which "any type" would have included
-		List<Event<Object>> audit = stream.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(AuditEvent.class), Tags.none())));
+		List<Event<Object>> audit = stream.query(EventFilter.forTypes(AuditEvent.class));
 		assertEquals(types(AuditNoted.class), typesOf(audit));
 	}
 
@@ -147,14 +147,14 @@ public class EventTypesFilterHierarchyTest extends AbstractEventStoreTest {
 	void aNestedInterfaceMatchesItsOwnBranch ( ) {
 		seedShop();
 
-		List<Event<Object>> orders = stream.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(OrderEvent.class), Tags.none())));
+		List<Event<Object>> orders = stream.query(EventFilter.forTypes(OrderEvent.class));
 		assertEquals(types(OrderPlaced.class, OrderPlaced.class, OrderShipped.class), typesOf(orders));
 
-		List<Event<Object>> paymentsAndClosing = stream.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(PaymentEvent.class, ShopClosed.class), Tags.none())));
+		List<Event<Object>> paymentsAndClosing = stream.query(EventFilter.forTypes(PaymentEvent.class, ShopClosed.class));
 		assertEquals(types(PaymentReceived.class, ShopClosed.class), typesOf(paymentsAndClosing));
 
 		// tags narrow it exactly as they narrow a filter of records
-		List<Event<Object>> order1 = stream.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(OrderEvent.class), order("1"))));
+		List<Event<Object>> order1 = stream.query(EventFilter.forTypes(OrderEvent.class).tagged(order("1")));
 		assertEquals(types(OrderPlaced.class, OrderShipped.class), typesOf(order1));
 	}
 
@@ -166,7 +166,7 @@ public class EventTypesFilterHierarchyTest extends AbstractEventStoreTest {
 		Projection<Object> orderBook = new Projection<>() {
 			@Override
 			public EventQuery eventQuery ( ) {
-				return EventQuery.of(EventFilter.of(EventTypesFilter.of(OrderEvent.class), Tags.none()));
+				return EventQuery.of(EventFilter.forTypes(OrderEvent.class));
 			}
 
 			@Override
@@ -187,7 +187,7 @@ public class EventTypesFilterHierarchyTest extends AbstractEventStoreTest {
 		stream.append(AppendCriteria.none(), Event.of(new OrderPlaced("1"), order("1")));
 
 		EventReference head = stream.head().orElseThrow();
-		AppendCriteria everyShopFactAboutOrder1 = AppendCriteria.of(EventQuery.of(EventFilter.of(EventTypesFilter.of(ShopEvent.class), order("1"))), head);
+		AppendCriteria everyShopFactAboutOrder1 = AppendCriteria.of(EventQuery.of(EventFilter.forTypes(ShopEvent.class).tagged(order("1"))), head);
 
 		// an event of the other hierarchy is not a new fact for a boundary over this one -- which is
 		// what tells the hierarchy apart from "any type"
@@ -200,7 +200,7 @@ public class EventTypesFilterHierarchyTest extends AbstractEventStoreTest {
 
 		// and a boundary over one branch ignores the rest of the hierarchy
 		EventReference afterPayment = stream.head().orElseThrow();
-		AppendCriteria everyPaymentForOrder1 = AppendCriteria.of(EventQuery.of(EventFilter.of(EventTypesFilter.of(PaymentEvent.class), order("1"))), afterPayment);
+		AppendCriteria everyPaymentForOrder1 = AppendCriteria.of(EventQuery.of(EventFilter.forTypes(PaymentEvent.class).tagged(order("1"))), afterPayment);
 		stream.append(AppendCriteria.none(), Event.of(new OrderShipped("1"), order("1")));
 		stream.append(everyPaymentForOrder1, Event.of(new ShopClosed(), order("1")));
 	}
@@ -214,20 +214,20 @@ public class EventTypesFilterHierarchyTest extends AbstractEventStoreTest {
 		asRead.append(AppendCriteria.none(), Event.of(new OrderPlaced("2"), order("2")));
 		asRead.append(AppendCriteria.none(), Event.of(new PaymentReceived("2"), order("2")));
 
-		List<Event<ShopEvent>> orders = asRead.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(OrderEvent.class), Tags.none())));
+		List<Event<ShopEvent>> orders = asRead.query(EventFilter.forTypes(OrderEvent.class));
 		assertEquals(types(OrderPlaced.class, OrderPlaced.class), typesOf(orders));
 		assertEquals(EventType.named("OrderBooked"), orders.get(0).storedType());
 		assertEquals(EventType.named("OrderPlaced"), orders.get(1).storedType());
 
-		List<Event<ShopEvent>> everything = asRead.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(ShopEvent.class), Tags.none())));
+		List<Event<ShopEvent>> everything = asRead.query(EventFilter.forTypes(ShopEvent.class));
 		assertEquals(types(OrderPlaced.class, OrderPlaced.class, PaymentReceived.class), typesOf(everything));
 
-		List<Event<ShopEvent>> payments = asRead.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(PaymentEvent.class), Tags.none())));
+		List<Event<ShopEvent>> payments = asRead.query(EventFilter.forTypes(PaymentEvent.class));
 		assertEquals(types(PaymentReceived.class), typesOf(payments));
 
 		// and a boundary over the branch counts a legacy event upcasting into it, as the query does
 		EventReference head = asRead.head().orElseThrow();
-		AppendCriteria everyOrderFact = AppendCriteria.of(EventQuery.of(EventFilter.of(EventTypesFilter.of(OrderEvent.class), Tags.none())), head);
+		AppendCriteria everyOrderFact = AppendCriteria.of(EventQuery.of(EventFilter.forTypes(OrderEvent.class)), head);
 		asWritten.append(AppendCriteria.none(), Event.of(new OriginalShopEvent.OrderBooked("3"), order("3")));
 		assertThrows(OptimisticLockingException.class,
 				() -> asRead.append(everyOrderFact, Event.of(new OrderShipped("2"), order("2"))));

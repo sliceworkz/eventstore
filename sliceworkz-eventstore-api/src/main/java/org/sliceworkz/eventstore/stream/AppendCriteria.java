@@ -44,7 +44,7 @@ import org.sliceworkz.eventstore.query.EventQuery;
  * the decision is bounded {@link EventQuery#notAfter(EventReference) notAfter} the head, and the head is the
  * expected reference of the append. The criteria can be built from that very query:
  * <pre>{@code
- * EventFilter relevant = EventFilter.forTags(Tags.of("customer", "123"));
+ * EventFilter relevant = EventFilter.forTags("customer", "123");
  * EventReference head = stream.head().orElse(null);
  *
  * EventQuery read = EventQuery.of(relevant).notAfter(head);

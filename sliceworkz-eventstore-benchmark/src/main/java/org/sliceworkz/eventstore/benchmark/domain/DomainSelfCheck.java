@@ -146,7 +146,7 @@ public final class DomainSelfCheck {
 			stream.append(AppendCriteria.none(), Event.of(sample, Tags.of(context.entityTagKey(), "self-check")));
 		}
 
-		List<Event<T>> read = stream.query(EventQuery.of(EventFilter.matchAll()));
+		List<Event<T>> read = stream.query(EventFilter.matchAll());
 		System.out.println("  %-10s wrote %d, read back %d".formatted(context.streamContext(), samples.size(), read.size()));
 		read.forEach(e -> System.out.println("      %-24s %s".formatted(e.type().name(), e.data())));
 
@@ -189,7 +189,7 @@ public final class DomainSelfCheck {
 				EventStorage.ImportMode.FAIL_ON_EXISTING_ID);
 
 		EventStream<SalesEvent> reader = store.getEventStream(id, SalesEvent.class, LegacySalesEvent.class);
-		List<Event<SalesEvent>> upcasted = reader.query(EventQuery.of(EventFilter.matchAll()));
+		List<Event<SalesEvent>> upcasted = reader.query(EventFilter.matchAll());
 
 		System.out.println("  %-10s imported 2 legacy events, read back %d upcasted".formatted("sales/legacy", upcasted.size()));
 		upcasted.forEach(e -> System.out.println("      %-24s %s".formatted(e.type().name(), e.data())));

@@ -105,6 +105,7 @@ import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
@@ -132,9 +133,9 @@ public class HelloEventstore {
                 Event.of(new CustomerEvent.CustomerRegistered("124", "Jane"), Tags.of("customer", "124"))));
 
             // decide on what is known about customer 123, as of the stream head
-            EventQuery customer123 = EventQuery.of(EventFilter.forTypes(CustomerEvent.class).tagged("customer", "123"));
+            EventFilter customer123 = EventFilter.forTypes(CustomerEvent.class).tagged("customer", "123");
             EventReference head = customers.head().orElse(null);
-            List<Event<CustomerEvent>> history = customers.query(customer123.notAfter(head));
+            List<Event<CustomerEvent>> history = customers.query(EventQuery.of(customer123).notAfter(head));
 
             // append, unless a new fact about 123 landed after the head
             customers.append(AppendCriteria.of(customer123, head),
@@ -149,7 +150,7 @@ public class HelloEventstore {
             }
 
             // a change to customer 124 would not have conflicted: it is outside the boundary
-            customers.query(EventQuery.of(EventFilter.matchAll())).forEach(System.out::println);
+            customers.query(EventFilter.matchAll()).forEach(System.out::println);
         }
     }
 }

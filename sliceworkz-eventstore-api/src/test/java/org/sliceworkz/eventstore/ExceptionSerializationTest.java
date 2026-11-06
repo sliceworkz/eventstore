@@ -66,7 +66,7 @@ class ExceptionSerializationTest {
 	void anOptimisticLockingExceptionSurvivesSerializationWithItsReference ( ) throws Exception {
 		EventReference reference = new EventReference(new EventId("11111111-1111-1111-1111-111111111111"),
 				42L, 7L, 0);
-		EventFilter filter = EventFilter.of(EventTypesFilter.any(), Tags.of("sku", "SKU-1"));
+		EventFilter filter = EventFilter.forTags("sku", "SKU-1");
 
 		OptimisticLockingException original =
 				new OptimisticLockingException(filter, Optional.of(reference));

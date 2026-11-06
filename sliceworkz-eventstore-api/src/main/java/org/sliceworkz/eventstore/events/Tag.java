@@ -88,7 +88,7 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
  * Event.of(new CustomerRegistered("John"), Tags.of(customerTag, regionTag));
  *
  * // Using tags in queries to find related events
- * EventFilter relevant = EventFilter.forTags(Tags.of(Tag.of("customer", "123")));
+ * EventFilter relevant = EventFilter.forTags(Tag.of("customer", "123"));
  * }</pre>
  *
  * <h2>DCB Pattern Integration:</h2>
@@ -98,7 +98,7 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
  *
  * // Pin the boundary at the stream head, then query events with the customer tag up to it to
  * // make a business decision. An absent head is an empty stream, and a valid boundary
- * EventFilter relevant = EventFilter.forTags(Tags.of(customerTag));
+ * EventFilter relevant = EventFilter.forTags(customerTag);
  * EventReference head = stream.head().orElse(null);
  * List<Event<CustomerEvent>> events = stream.query(EventQuery.of(relevant).notAfter(head));
  *

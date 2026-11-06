@@ -19,13 +19,16 @@ package org.sliceworkz.eventstore.query;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
 
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
+import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 
@@ -186,6 +189,21 @@ public record EventFilter ( List<EventFilterItem> items ) {
 	}
 
 	/**
+	 * Narrows this filter to events carrying every one of the given tags; {@link #tagged(Tags)} with
+	 * {@link Tags#of(Tag...)}. The form for tags made elsewhere, such as an entity's tag or a rule tag:
+	 * <pre>{@code
+	 * EventFilter pending = EventFilter.forTypes(MoneyWithdrawn.class).tagged(RuleTags.justificationPending(rule));
+	 * }</pre>
+	 *
+	 * @param tags the tags every matching event must carry
+	 * @return a new EventFilter narrowed to events carrying the tags
+	 * @throws IllegalArgumentException if one of the tags is {@code null}
+	 */
+	public EventFilter tagged ( Tag... tags ) {
+		return tagged(Tags.of(tags));
+	}
+
+	/**
 	 * Sets the lower bound of every item: only events recorded after {@code after} match (exclusive).
 	 * <p>
 	 * It <em>replaces</em> whatever lower bound an item had, and {@code null} removes it;
@@ -336,6 +354,35 @@ public record EventFilter ( List<EventFilterItem> items ) {
 	}
 
 	/**
+	 * Creates a filter for events of the types with the given stored names, whatever tags they carry:
+	 * the form for a reader that names types without having their classes, such as a raw stream, an
+	 * import or a tool browsing a store.
+	 * <pre>{@code
+	 * EventFilter registrations = EventFilter.forTypes(EventType.named("CustomerRegistered"));
+	 * }</pre>
+	 * The names are taken literally, as {@link EventTypesFilter#of(Set)} takes them: nothing is
+	 * resolved, so a name is matched against the name an event is stored under. It is
+	 * {@link #of(EventTypesFilter, Tags)} with {@link Tags#none()}, and equivalent to it in every respect.
+	 *
+	 * @param eventTypes the event types to match, by their stored names
+	 * @return an EventFilter matching events of the types, whatever their tags
+	 * @throws IllegalArgumentException if {@code eventTypes} or one of them is {@code null}
+	 */
+	public static EventFilter forTypes ( EventType... eventTypes ) {
+		if ( eventTypes == null ) {
+			throw new IllegalArgumentException("event types are required (EventFilter.matchAll() for every type)");
+		}
+		Set<EventType> types = new HashSet<>();
+		for ( EventType eventType : eventTypes ) {
+			if ( eventType == null ) {
+				throw new IllegalArgumentException("an event type of a filter cannot be null");
+			}
+			types.add(eventType);
+		}
+		return of(EventTypesFilter.of(types), Tags.none());
+	}
+
+	/**
 	 * Creates a filter for events of any type carrying the specified tags: every fact about one entity,
 	 * which is what a consistency boundary is usually spelled with.
 	 * <p>
@@ -363,6 +410,22 @@ public record EventFilter ( List<EventFilterItem> items ) {
 	 */
 	public static EventFilter forTags ( String key, String value ) {
 		return forTags(Tags.of(key, value));
+	}
+
+	/**
+	 * Creates a filter for events of any type carrying every one of the given tags; {@link #forTags(Tags)}
+	 * with {@link Tags#of(Tag...)}. The form for tags made elsewhere, such as the tags of two entities a
+	 * decision is about:
+	 * <pre>{@code
+	 * EventFilter statement = EventFilter.forTags(ACCOUNT.tag(accountId), MONTH.tag(monthId));
+	 * }</pre>
+	 *
+	 * @param tags the tags that events must contain (all tags must be present)
+	 * @return an EventFilter matching events of any type carrying the tags
+	 * @throws IllegalArgumentException if one of the tags is {@code null}
+	 */
+	public static EventFilter forTags ( Tag... tags ) {
+		return forTags(Tags.of(tags));
 	}
 
 	/**

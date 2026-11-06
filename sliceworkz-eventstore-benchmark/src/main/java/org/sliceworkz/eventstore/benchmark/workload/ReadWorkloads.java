@@ -32,6 +32,7 @@ import org.sliceworkz.eventstore.benchmark.domain.WebshopContext;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
+import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.projection.Projection;
 import org.sliceworkz.eventstore.projection.Projector;
@@ -280,10 +281,10 @@ public final class ReadWorkloads {
 		return simple("query-by-multi-tag",
 				"three tags AND-ed in one filter item -- one containment test over a wider array",
 				context -> context.inventory()
-						.query(EventQuery.of(EventFilter.forTags(Tags.of(
-										org.sliceworkz.eventstore.events.Tag.of(TagKeys.SKU, context.facts().hotEntity()),
-										org.sliceworkz.eventstore.events.Tag.of(TagKeys.CHANNEL, "web"),
-										org.sliceworkz.eventstore.events.Tag.of(TagKeys.COUNTRY, "BE"))))
+						.query(EventQuery.of(EventFilter.forTags(
+										Tag.of(TagKeys.SKU, context.facts().hotEntity()),
+										Tag.of(TagKeys.CHANNEL, "web"),
+										Tag.of(TagKeys.COUNTRY, "BE")))
 								.limit(PAGE_SIZE)));
 	}
 

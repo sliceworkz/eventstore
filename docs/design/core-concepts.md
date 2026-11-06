@@ -276,15 +276,22 @@ The rules in brief are in the root `CLAUDE.md`, under "Core Concepts". This file
   any type carrying the tags, or as a chain: `EventFilter.forTypes(CustomerEvent.class).tagged("customer", id)`
 - Used by `AppendCriteria` for optimistic locking (where direction/limit are irrelevant)
 - **The fluent form and the two-halves form build the same filter.** `forTypes(classes...)` is
-  `of(EventTypesFilter.of(classes...), Tags.none())`, and `tagged(key, value)` narrows what is
-  there: every item gets the tag on top of the tags it already requires, chained calls accumulate, and
+  `of(EventTypesFilter.of(classes...), Tags.none())`, `forTypes(eventTypes...)` the same for stored
+  names (`EventType.named(...)`, taken literally, for a reader without the classes: a raw stream, an
+  import, a browsing tool), `forTags(tag...)` and `tagged(tag...)` the `Tags.of(tag...)` forms of
+  `forTags(tags)` and `tagged(tags)` for tags made elsewhere (an entity's, a rule's), and
+  `tagged(key, value)` narrows what is there: every item gets the tag on top of the tags it already requires, chained calls accumulate, and
   every item keeps its bounds. Narrowing distributes over a union — `a.or(b).tagged(t)` is
   `a.tagged(t).or(b.tagged(t))` — which is what makes it well-defined on a filter of several items;
   a match-all narrowed is `forTags(t)`, a match-none stays match-none. The bounds distribute the same
   way: `after`/`until` replace every item's bound, `afterIfLater`/`untilIfEarlier` narrow each item's
   own. `or` is the union: the items of both side by side, each with its own bounds, match-all on either
   side making the union match-all. Both spellings resolve to the same `EventFilterItem`s, so a filter
-  built one way compares equal to the same filter built the other way. `EventFilterTest` pins each rule
+  built one way compares equal to the same filter built the other way. `EventFilterTest` pins each rule.
+  The by-name form is a `forTypes` overload rather than `forTypeNames(String...)` because
+  `EventType.named` is the one place a string becomes a stored type name, and a `String...` factory
+  would be a second one; the cost is that a bare `forTypes()` no longer compiles, which nothing needs —
+  no types at all is `matchNone()`
 - **A sealed interface in a type filter stands for every event type under it.** An event is stored
   under the simple name of its record, never under an interface it implements, so
   `EventTypesFilter.of(Class...)` resolves a sealed interface into the event types it permits,

@@ -28,6 +28,7 @@ import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
+import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
 
 /**
@@ -48,7 +49,7 @@ public class EventFilterTest {
 	@Test
 	void forTagsIsForEventsOfAnyType ( ) {
 		EventFilter filter = EventFilter.forTags("customer", "123");
-		assertEquals(EventFilter.forTags("customer", "123"), filter);
+		assertEquals(EventFilter.of(EventTypesFilter.any(), Tags.of("customer", "123")), filter);
 
 		assertTrue(filter.matches(TYPE, Tags.of("customer", "123"), row("a", 1, 1, 0)));
 		assertTrue(filter.matches(EventType.named("SomethingElse"), Tags.of("customer", "123", "region", "EU"), row("b", 2, 2, 0)));
@@ -122,7 +123,7 @@ public class EventFilterTest {
 	@Test
 	void forTypesIsForEventsOfThoseTypesWhateverTheirTags ( ) {
 		EventFilter filter = EventFilter.forTypes(Customer.Registered.class, Unrelated.class);
-		assertEquals(EventFilter.forTypes(Customer.Registered.class, Unrelated.class), filter);
+		assertEquals(EventFilter.of(EventTypesFilter.of(Customer.Registered.class, Unrelated.class), Tags.none()), filter);
 
 		assertTrue(filter.matches(REGISTERED, Tags.none(), row("a", 1, 1, 0)));
 		assertTrue(filter.matches(UNRELATED, Tags.of("customer", "123"), row("b", 2, 2, 0)));
@@ -142,7 +143,7 @@ public class EventFilterTest {
 	@Test
 	void taggedNarrowsToEventsCarryingTheTagOnTopOfTheTypes ( ) {
 		EventFilter filter = EventFilter.forTypes(Customer.class).tagged("customer", "123");
-		assertEquals(EventFilter.forTypes(Customer.class).tagged("customer", "123"), filter,
+		assertEquals(EventFilter.of(EventTypesFilter.of(Customer.class), Tags.of("customer", "123")), filter,
 				"the chain resolves to the same items as the two-halves form");
 
 		assertTrue(filter.matches(REGISTERED, Tags.of("customer", "123"), row("a", 1, 1, 0)));
@@ -156,7 +157,7 @@ public class EventFilterTest {
 	void taggedAccumulates ( ) {
 		EventFilter filter = EventFilter.forTypes(Customer.class).tagged("customer", "123").tagged("region", "EU");
 		assertEquals(EventFilter.forTypes(Customer.class).tagged(Tags.of("customer", "123", "region", "EU")), filter);
-		assertEquals(EventFilter.forTypes(Customer.class).tagged(Tags.of("customer", "123", "region", "EU")), filter);
+		assertEquals(EventFilter.of(EventTypesFilter.of(Customer.class), Tags.of("customer", "123", "region", "EU")), filter);
 
 		assertTrue(filter.matches(REGISTERED, Tags.of("customer", "123", "region", "EU"), row("a", 1, 1, 0)));
 		assertFalse(filter.matches(REGISTERED, Tags.of("customer", "123"), row("b", 2, 2, 0)), "both tags are required");
@@ -374,8 +375,41 @@ public class EventFilterTest {
 
 	@Test
 	void forTagsTakesOneTagByKeyAndValue ( ) {
-		assertEquals(EventFilter.forTags("customer", "123"), EventFilter.forTags("customer", "123"));
+		assertEquals(EventFilter.forTags(Tags.of("customer", "123")), EventFilter.forTags("customer", "123"));
 		assertThrows(IllegalArgumentException.class, () -> EventFilter.forTags("a:b", "c"), "a colon in the key does not survive the wire format");
+	}
+
+	@Test
+	void forTypesTakesStoredNamesLiterally ( ) {
+		EventFilter filter = EventFilter.forTypes(EventType.named("Registered"), EventType.named("SomethingElse"));
+		assertEquals(EventFilter.of(EventTypesFilter.of(java.util.Set.of(EventType.named("Registered"), EventType.named("SomethingElse"))), Tags.none()), filter);
+		assertEquals(EventFilter.forTypes(EventType.named("Registered")), EventFilter.forTypes(EventType.named("Registered"), EventType.named("Registered")),
+				"a name given twice is one type");
+
+		assertTrue(filter.matches(EventType.named("SomethingElse"), Tags.of("customer", "123"), row("a", 1, 1, 0)));
+		assertFalse(filter.matches(CHURNED, Tags.none(), row("b", 2, 2, 0)));
+		assertEquals(EventFilter.forTypes(Customer.Registered.class), EventFilter.forTypes(REGISTERED),
+				"a class and its stored name select the same events");
+		assertEquals(EventFilter.forTypes(EventType.named("Registered")).tagged("customer", "123"),
+				EventFilter.of(EventTypesFilter.of(java.util.Set.of(EventType.named("Registered"))), Tags.of("customer", "123")));
+	}
+
+	@Test
+	void forTypesRefusesANullName ( ) {
+		assertThrows(IllegalArgumentException.class, () -> EventFilter.forTypes((EventType[]) null));
+		assertThrows(IllegalArgumentException.class, () -> EventFilter.forTypes(EventType.named("Registered"), null));
+	}
+
+	@Test
+	void forTagsAndTaggedTakeTagsMadeElsewhere ( ) {
+		Tag customer = Tag.of("customer", "123");
+		Tag region = Tag.of("region", "EU");
+		assertEquals(EventFilter.forTags(Tags.of(customer, region)), EventFilter.forTags(customer, region));
+		assertEquals(EventFilter.of(EventTypesFilter.any(), Tags.of("customer", "123")), EventFilter.forTags(customer));
+		assertEquals(EventFilter.forTypes(Customer.class).tagged(Tags.of(customer, region)), EventFilter.forTypes(Customer.class).tagged(customer, region));
+		assertEquals(EventFilter.forTypes(Customer.class).tagged("customer", "123"), EventFilter.forTypes(Customer.class).tagged(customer));
+		assertThrows(IllegalArgumentException.class, () -> EventFilter.forTags(customer, null));
+		assertThrows(IllegalArgumentException.class, () -> EventFilter.forTypes(Customer.class).tagged(customer, null));
 	}
 
 	@Test

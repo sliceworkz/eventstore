@@ -88,7 +88,7 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
  * Event.of(new CustomerRegistered("John"), Tags.of(customerTag, regionTag));
  *
  * // Using tags in queries to find related events
- * EventQuery query = EventQuery.of(EventFilter.forEvents(
+ * EventQuery query = EventQuery.of(EventFilter.of(
  *     EventTypesFilter.any(),
  *     Tags.of(Tag.of("customer", "123"))
  * ));

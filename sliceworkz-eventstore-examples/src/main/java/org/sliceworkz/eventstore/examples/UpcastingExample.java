@@ -70,13 +70,13 @@ public class UpcastingExample {
 		System.out.println("querying filtered on a specific new Event type, the result will include (upcasted) legacy Event types:");
 		
 		// we can even query old Event types with their upcasted counterparts ...
-		streamNew.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(CustomerRenamed.class), Tags.none()))).stream().map(e->(CustomerEvent)e.data())
+		streamNew.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerRenamed.class), Tags.none()))).stream().map(e->(CustomerEvent)e.data())
 			.forEach(System.out::println);
 
 		System.out.println("querying filtered on multiple new Event types, the result will include (upcasted) legacy Event types:");
 
 		// ... or multiple new event types, and have old events upcasted on the fly! ...
-		streamNew.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(CustomerRegisteredV2.class, CustomerRenamed.class, CustomerChurned.class), Tags.none()))).stream().map(e->(CustomerEvent)e.data())
+		streamNew.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerRegisteredV2.class, CustomerRenamed.class, CustomerChurned.class), Tags.none()))).stream().map(e->(CustomerEvent)e.data())
 			.forEach(System.out::println);
 
 		// ... while appending a legacy event type is not possible thanks to string typing!

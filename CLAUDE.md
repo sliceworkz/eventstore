@@ -179,7 +179,7 @@ a backend answers either.** The rules:
 **EventFilter:**
 - Which events are relevant: a union of `EventFilterItem`s, each event types, tags and optional bounds
   `after` (exclusive) and `until` (inclusive). No direction, no limit, no read bound.
-- Built by `matchAll()`, `matchNone()`, `forEvents(types, tags)`, `forTags(tags)`,
+- Built by `matchAll()`, `matchNone()`, `of(types, tags)`, `of(items...)`, `forTags(tags)`, `forTags(key, value)`,
   `forTypes(classes...)`, `.tagged(key, value)`, `.after(ref)`, `.until(ref)`, `.afterIfLater(ref)`,
   `.untilIfEarlier(ref)`, `.or(...)`. Every narrowing method applies to every item; `after`/`until`
   replace a bound (`null` removes it), the `IfLater`/`IfEarlier` forms narrow it. A bound on match-all
@@ -920,7 +920,7 @@ List<Event<CustomerEvent>> events = stream.query(EventQuery.of(EventFilter.match
 
 // 5. Query with filters
 List<Event<CustomerEvent>> filtered = stream.query(
-    EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(CustomerRegistered.class), Tags.of("region", "EU")))
+    EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerRegistered.class), Tags.of("region", "EU")))
 );
 
 // 6. Conditional append with optimistic locking: pin the boundary at the head BEFORE reading.
@@ -960,7 +960,7 @@ class StockLevelProjection implements Projection<StockEvent> {
     @Override
     public EventQuery initQuery() {
         // Find the last stock count (savepoint) — backwards, limit 1
-        return EventQuery.of(EventFilter.forEvents(
+        return EventQuery.of(EventFilter.of(
             EventTypesFilter.of(StockCounted.class),
             Tags.of("product", product)
         )).backwards().limit(1);
@@ -969,7 +969,7 @@ class StockLevelProjection implements Projection<StockEvent> {
     @Override
     public EventQuery eventQuery() {
         // Only process movements — savepoints are handled exclusively by initQuery
-        return EventQuery.of(EventFilter.forEvents(
+        return EventQuery.of(EventFilter.of(
             EventTypesFilter.of(StockAdded.class, StockPicked.class),
             Tags.of("product", product)
         ));
@@ -1002,7 +1002,7 @@ Projector.from(stream).into(projection).build().run();
 ImportReport report = EventStoreImporter.from(sourceStorage).to(targetStorage)
     .mode(ImportMode.SKIP_EXISTING_ID)                       // default is FAIL_ON_EXISTING_ID
     .stream(EventStreamId.forContext("ledger").withPurpose("2024Q1"))   // optional: one stream only
-    .matching(EventFilter.forEvents(EventTypesFilter.any(), Tags.of("period", "2024Q1")))  // optional: types/tags
+    .matching(EventFilter.of(EventTypesFilter.any(), Tags.of("period", "2024Q1")))  // optional: types/tags
     .after(previousReport.sourceTo())                        // optional: catch-up run
     .transform(src -> Optional.of(EventToImport.from(src)    // optional: remap / rewrite / drop
                         .withStream(archiveStream)))

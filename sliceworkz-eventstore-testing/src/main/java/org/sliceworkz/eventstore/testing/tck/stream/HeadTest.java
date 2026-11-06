@@ -84,7 +84,7 @@ public class HeadTest extends AbstractEventStoreTest {
 
 	private final EventStreamId streamId = EventStreamId.forContext("app").withPurpose("head");
 
-	private static final EventFilter FIRSTS = EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none());
+	private static final EventFilter FIRSTS = EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.none());
 
 	private EventStream<MockDomainEvent> stream ( ) {
 		return eventStore().getEventStream(streamId, MockDomainEvent.class);

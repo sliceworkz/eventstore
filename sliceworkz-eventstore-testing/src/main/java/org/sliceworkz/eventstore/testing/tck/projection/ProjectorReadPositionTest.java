@@ -376,7 +376,7 @@ public class ProjectorReadPositionTest extends AbstractEventStoreTest {
 
 		@Override
 		public EventQuery eventQuery ( ) {
-			return EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()));
+			return EventQuery.of(EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()));
 		}
 
 		@Override
@@ -405,7 +405,7 @@ public class ProjectorReadPositionTest extends AbstractEventStoreTest {
 
 		@Override
 		public EventQuery eventQuery ( ) {
-			return EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()));
+			return EventQuery.of(EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()));
 		}
 
 		@Override
@@ -424,7 +424,7 @@ public class ProjectorReadPositionTest extends AbstractEventStoreTest {
 
 		@Override
 		public EventQuery eventQuery ( ) {
-			return EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class, SecondDomainEvent.class), Tags.none()));
+			return EventQuery.of(EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class, SecondDomainEvent.class), Tags.none()));
 		}
 
 		@Override

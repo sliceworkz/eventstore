@@ -59,7 +59,7 @@
  * EventQuery query = EventQuery.of(EventFilter.forTypes(CustomerRegistered.class, CustomerNameChanged.class).tagged("region", "EU"));
  *
  * // The same query built from its two halves at once
- * EventQuery same = EventQuery.of(EventFilter.forEvents(
+ * EventQuery same = EventQuery.of(EventFilter.of(
  *     EventTypesFilter.of(CustomerRegistered.class, CustomerNameChanged.class),
  *     Tags.of("region", "EU")
  * ));

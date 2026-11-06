@@ -175,25 +175,25 @@ public class EventNameTest extends AbstractEventStoreTest {
 
 		// by class: the filter is built from EventType.of(Class), so it carries the declared name
 		List<Event<CustomerEvent>> byClass = stream.query(
-				EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(CustomerEvent.CustomerSignedUp.class), Tags.of("customer", "c1"))));
+				EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerEvent.CustomerSignedUp.class), Tags.of("customer", "c1"))));
 		assertEquals(1, byClass.size());
 		assertInstanceOf(CustomerEvent.CustomerSignedUp.class, byClass.getFirst().data());
 
 		// by name: the declared name is the stored name
 		List<Event<CustomerEvent>> byName = stream.query(
-				EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(Set.of(EventType.named("CustomerRegistered"))), Tags.none())));
+				EventQuery.of(EventFilter.of(EventTypesFilter.of(Set.of(EventType.named("CustomerRegistered"))), Tags.none())));
 		assertEquals(1, byName.size());
 
 		// the class's simple name is not a stored name of anything
 		List<Event<CustomerEvent>> bySimpleName = stream.query(
-				EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(Set.of(EventType.named("CustomerSignedUp"))), Tags.none())));
+				EventQuery.of(EventFilter.of(EventTypesFilter.of(Set.of(EventType.named("CustomerSignedUp"))), Tags.none())));
 		assertTrue(bySimpleName.isEmpty());
 
 		// and the filter is honoured by the lock check as well as by the read
 		Event<CustomerEvent> last = byClass.getFirst();
 		stream.append(AppendCriteria.none(), Event.of(new CustomerEvent.CustomerSignedUp("c2", "Bob"), Tags.of("customer", "c1")));
 		assertThrows(org.sliceworkz.eventstore.stream.OptimisticLockingException.class, () -> stream.append(
-				AppendCriteria.of(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(CustomerEvent.CustomerSignedUp.class), Tags.of("customer", "c1"))), last.reference()),
+				AppendCriteria.of(EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerEvent.CustomerSignedUp.class), Tags.of("customer", "c1"))), last.reference()),
 				Event.of(new CustomerEvent.CustomerChurned("c1"), Tags.of("customer", "c1"))));
 	}
 
@@ -213,7 +213,7 @@ public class EventNameTest extends AbstractEventStoreTest {
 
 		// a filter on the current type reaches the legacy name through the upcaster's mapping
 		List<Event<CustomerEventV3>> byCurrentType = stream.query(
-				EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(CustomerEventV3.CustomerRegisteredV3.class), Tags.none())));
+				EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerEventV3.CustomerRegisteredV3.class), Tags.none())));
 		assertEquals(1, byCurrentType.size());
 	}
 
@@ -239,8 +239,8 @@ public class EventNameTest extends AbstractEventStoreTest {
 		assertEquals("Created", vacancy.type().name());
 
 		// each read through its own class finds its own context's events, and only those
-		assertEquals(1, everything.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(OrderEvent.Created.class), Tags.none()))).size());
-		assertEquals(1, everything.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(VacancyEvent.Created.class), Tags.none()))).size());
+		assertEquals(1, everything.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(OrderEvent.Created.class), Tags.none()))).size());
+		assertEquals(1, everything.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(VacancyEvent.Created.class), Tags.none()))).size());
 	}
 
 	@ForEachBackend

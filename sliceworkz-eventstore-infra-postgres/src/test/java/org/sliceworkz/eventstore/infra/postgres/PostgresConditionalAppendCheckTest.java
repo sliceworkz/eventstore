@@ -139,7 +139,7 @@ public class PostgresConditionalAppendCheckTest {
 		private void appendWithCursorsThreadedForward ( EventStorage storage ) {
 			EventStreamId stream = EventStreamId.forContext("inventory").withPurpose("sku-1");
 			Tags tags = Tags.of("sku", "SKU-1");
-			EventQuery boundary = EventQuery.of(EventFilter.forEvents(EventTypesFilter.any(), tags));
+			EventQuery boundary = EventQuery.of(EventFilter.of(EventTypesFilter.any(), tags));
 
 			// The first append has no history and so no reference: it deliberately takes the no-cursor
 			// branch, exactly as a real entity's first event does. Every one after it carries a cursor.
@@ -172,7 +172,7 @@ public class PostgresConditionalAppendCheckTest {
 			EventStreamId stream = EventStreamId.forContext("inventory").withPurpose("default");
 			for ( int i = 0; i < APPENDS; i++ ) {
 				Tags tags = Tags.of("basket", "B-%03d".formatted(i));
-				EventQuery boundary = EventQuery.of(EventFilter.forEvents(EventTypesFilter.any(), tags));
+				EventQuery boundary = EventQuery.of(EventFilter.of(EventTypesFilter.any(), tags));
 				List<StoredEvent> written = storage.append(
 						AppendCriteria.of(boundary, null), stream,
 						List.of(event(stream, "OrderPlaced", tags)));
@@ -182,7 +182,7 @@ public class PostgresConditionalAppendCheckTest {
 			Tags taken = Tags.of("basket", "B-000");
 			assertThrows(OptimisticLockingException.class,
 					() -> storage.append(
-							AppendCriteria.of(EventQuery.of(EventFilter.forEvents(EventTypesFilter.any(), taken)), null),
+							AppendCriteria.of(EventQuery.of(EventFilter.of(EventTypesFilter.any(), taken)), null),
 							stream, List.of(event(stream, "OrderPlaced", taken))),
 					"the same empty-boundary criteria must conflict once its boundary holds an event");
 		}

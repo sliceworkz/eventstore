@@ -201,7 +201,7 @@ public final class ReadWorkloads {
 		return simple("query-by-type",
 				"500 events of one type from inventory -- the btree path, no tags involved",
 				context -> context.inventory()
-						.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(InventoryEvent.StockReserved.class),
+						.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(InventoryEvent.StockReserved.class),
 								Tags.none())).limit(PAGE_SIZE)));
 	}
 
@@ -213,7 +213,7 @@ public final class ReadWorkloads {
 		return simple("query-by-tag-needle",
 				"a tag matching ~10 events store-wide -- the selective end of tag filtering",
 				context -> context.inventory()
-						.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.any(),
+						.query(EventQuery.of(EventFilter.of(EventTypesFilter.any(),
 								Tags.of(CorpusGenerator.MARKER_TAG_KEY, context.facts().needleTagValue())))));
 	}
 
@@ -225,7 +225,7 @@ public final class ReadWorkloads {
 		return simple("query-by-tag-swathe",
 				"a tag matching ~1% of the store -- where the planner starts preferring a seq scan",
 				context -> context.inventory()
-						.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.any(),
+						.query(EventQuery.of(EventFilter.of(EventTypesFilter.any(),
 								Tags.of(CorpusGenerator.MARKER_TAG_KEY, context.facts().swatheTagValue())))
 								.limit(PAGE_SIZE)));
 	}
@@ -283,7 +283,7 @@ public final class ReadWorkloads {
 		return simple("query-by-multi-tag",
 				"three tags AND-ed in one filter item -- one containment test over a wider array",
 				context -> context.inventory()
-						.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.any(),
+						.query(EventQuery.of(EventFilter.of(EventTypesFilter.any(),
 								Tags.of(
 										org.sliceworkz.eventstore.events.Tag.of(TagKeys.SKU, context.facts().hotEntity()),
 										org.sliceworkz.eventstore.events.Tag.of(TagKeys.CHANNEL, "web"),
@@ -335,9 +335,9 @@ public final class ReadWorkloads {
 				context -> {
 					EventReference early = referenceAt(context, 0.05);
 					EventReference late = referenceAt(context, 0.90);
-					EventFilter filter = EventFilter.forEvents(stockTypes(), Tags.none()).after(late);
+					EventFilter filter = EventFilter.of(stockTypes(), Tags.none()).after(late);
 					for ( int i = 0; i < items - 1; i++ ) {
-						EventFilter item = EventFilter.forEvents(stockTypes(),
+						EventFilter item = EventFilter.of(stockTypes(),
 								Tags.of(TagKeys.SKU, "SKU-%06d".formatted(i % context.spec().entityCount())));
 						filter = filter.or(i % 2 == 0 ? item.until(early) : item.after(late));
 					}
@@ -355,7 +355,7 @@ public final class ReadWorkloads {
 				context -> {
 					EventFilter narrow = EventFilter.forTags(Tags.of(CorpusGenerator.MARKER_TAG_KEY, context.facts().swatheTagValue()))
 							.after(referenceAt(context, 0.50)).until(referenceAt(context, 0.52));
-					EventFilter early = EventFilter.forEvents(stockTypes(), Tags.of(TagKeys.SKU, context.facts().coldEntity()))
+					EventFilter early = EventFilter.of(stockTypes(), Tags.of(TagKeys.SKU, context.facts().coldEntity()))
 							.until(referenceAt(context, 0.05));
 					return context.inventory().query(EventQuery.of(narrow.or(early)).limit(PAGE_SIZE));
 				});
@@ -418,7 +418,7 @@ public final class ReadWorkloads {
 	/** The savepoint query itself: one event type, newest first, one row. */
 	private static EventQuery savepointProbe ( Tags tags ) {
 		return EventQuery
-				.of(EventFilter.forEvents(EventTypesFilter.of(InventoryEvent.StockCounted.class), tags))
+				.of(EventFilter.of(EventTypesFilter.of(InventoryEvent.StockCounted.class), tags))
 				.backwards()
 				.limit(1);
 	}
@@ -538,7 +538,7 @@ public final class ReadWorkloads {
 	/** One entity's whole history, isolated by tag: the only way to do it on a context-wide stream. */
 	private static List<Event<InventoryEvent>> byTag ( WorkloadContext context, String entity ) {
 		return context.inventory()
-				.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.any(), Tags.of(TagKeys.SKU, entity))));
+				.query(EventQuery.of(EventFilter.of(EventTypesFilter.any(), Tags.of(TagKeys.SKU, entity))));
 	}
 
 	/**

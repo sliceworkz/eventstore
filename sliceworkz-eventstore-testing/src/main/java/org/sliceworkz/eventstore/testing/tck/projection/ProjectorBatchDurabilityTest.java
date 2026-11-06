@@ -262,7 +262,7 @@ public class ProjectorBatchDurabilityTest extends AbstractEventStoreTest {
 
 		@Override
 		public EventQuery eventQuery ( ) {
-			return EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()));
+			return EventQuery.of(EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()));
 		}
 
 		@Override

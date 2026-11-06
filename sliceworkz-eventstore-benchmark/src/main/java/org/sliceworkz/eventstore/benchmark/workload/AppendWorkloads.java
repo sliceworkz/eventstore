@@ -185,7 +185,7 @@ public final class AppendWorkloads {
 
 			@Override
 			EventFilter filterFor ( WorkloadContext context, String sku ) {
-				return EventFilter.forEvents(
+				return EventFilter.of(
 						EventTypesFilter.of(InventoryEvent.StockReserved.class, InventoryEvent.StockPicked.class),
 						Tags.none());
 			}
@@ -202,7 +202,7 @@ public final class AppendWorkloads {
 
 			@Override
 			EventFilter filterFor ( WorkloadContext context, String sku ) {
-				return EventFilter.forEvents(stockTypes(), Tags.of(TagKeys.SKU, sku));
+				return EventFilter.of(stockTypes(), Tags.of(TagKeys.SKU, sku));
 			}
 		};
 	}
@@ -214,7 +214,7 @@ public final class AppendWorkloads {
 
 			@Override
 			EventFilter filterFor ( WorkloadContext context, String sku ) {
-				return EventFilter.forEvents(stockTypes(), Tags.of(
+				return EventFilter.of(stockTypes(), Tags.of(
 						org.sliceworkz.eventstore.events.Tag.of(TagKeys.SKU, sku),
 						org.sliceworkz.eventstore.events.Tag.of(TagKeys.CHANNEL, "web"),
 						org.sliceworkz.eventstore.events.Tag.of(TagKeys.WAREHOUSE, "WH-1")));
@@ -277,7 +277,7 @@ public final class AppendWorkloads {
 			Object append ( WorkloadContext context, String ignored ) {
 				String fresh = context.freshEntity();
 				AppendCriteria criteria = AppendCriteria.of(
-						EventFilter.forEvents(stockTypes(), Tags.of(TagKeys.SKU, fresh)), null);
+						EventFilter.of(stockTypes(), Tags.of(TagKeys.SKU, fresh)), null);
 				try {
 					return context.inventoryToAppendTo(fresh).append(criteria, reservation(context, fresh)).size();
 				} catch ( OptimisticLockingException e ) {
@@ -321,7 +321,7 @@ public final class AppendWorkloads {
 						() -> new IllegalStateException("this corpus's facts carry no midCursor;"
 								+ " re-provision it before measuring boundary staleness"));
 				AppendCriteria criteria = AppendCriteria.of(
-						EventFilter.forEvents(stockTypes(), Tags.of(TagKeys.SKU, "SKU-STALE-PROBE")),
+						EventFilter.of(stockTypes(), Tags.of(TagKeys.SKU, "SKU-STALE-PROBE")),
 						midCursor);
 				return context.inventoryToAppendTo(sku).append(criteria, reservation(context, sku)).size();
 			}
@@ -424,7 +424,7 @@ public final class AppendWorkloads {
 			@Override
 			public Object invoke ( WorkloadContext context ) {
 				String sku = context.nextEntity();
-				EventQuery boundary = EventQuery.of(EventFilter.forEvents(stockTypes(), Tags.of(TagKeys.SKU, sku)));
+				EventQuery boundary = EventQuery.of(EventFilter.of(stockTypes(), Tags.of(TagKeys.SKU, sku)));
 
 				List<Event<InventoryEvent>> history = context.inventory().query(boundary);
 				EventReference last = history.isEmpty() ? null : history.getLast().reference();
@@ -492,7 +492,7 @@ public final class AppendWorkloads {
 			@Override
 			public Object invoke ( WorkloadContext context ) {
 				String sku = context.nextEntity();
-				EventQuery boundary = EventQuery.of(EventFilter.forEvents(stockTypes(), Tags.of(TagKeys.SKU, sku)));
+				EventQuery boundary = EventQuery.of(EventFilter.of(stockTypes(), Tags.of(TagKeys.SKU, sku)));
 
 				// head FIRST, boundary second -- the order is the safety. Presenting the head claims
 				// "no matching events after it that I have not seen", and only this order makes that

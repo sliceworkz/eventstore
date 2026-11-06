@@ -181,7 +181,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 		eventStream.append(AppendCriteria.none(), Collections.singletonList(secondEvent));
 
 		// Query only for FirstDomainEvent types
-		EventQuery firstEventQuery = EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()));
+		EventQuery firstEventQuery = EventQuery.of(EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()));
 		EventReference idOfFirstEvent = eventStream.query(firstEventQuery).stream()
 			.map(Event::reference)
 			.reduce((first, second) -> second).orElse(null);
@@ -206,7 +206,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 		eventStream.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FirstDomainEvent("e3"), Tags.none())));
 
 		// Use a backwards query with limit 1 to get the most recent FirstDomainEvent
-		EventQuery backwardsQuery = EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())).backwards().limit(1);
+		EventQuery backwardsQuery = EventQuery.of(EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())).backwards().limit(1);
 		Event<MockDomainEvent> mostRecent = eventStream.query(backwardsQuery).stream().findFirst().orElse(null);
 
 		assertNotNull(mostRecent, "Should find the most recent FirstDomainEvent");
@@ -219,7 +219,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 
 		// Verify the append succeeded
 		assertEquals(4, eventStream.query(EventQuery.of(EventFilter.matchAll())).size());
-		assertEquals(3, eventStream.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()))).size());
+		assertEquals(3, eventStream.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()))).size());
 	}
 
 	@ForEachBackend
@@ -231,7 +231,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 		eventStream.append(AppendCriteria.none(), Collections.singletonList(Event.of(new SecondDomainEvent("e2"), Tags.none())));
 
 		// Query the most recent FirstDomainEvent using backwards + limit 1
-		EventQuery backwardsQuery = EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())).backwards().limit(1);
+		EventQuery backwardsQuery = EventQuery.of(EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())).backwards().limit(1);
 		Event<MockDomainEvent> mostRecent = eventStream.query(backwardsQuery).stream().findFirst().orElse(null);
 
 		assertNotNull(mostRecent);
@@ -262,7 +262,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 		eventStream.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FirstDomainEvent("e5"), Tags.none())));
 
 		// Use backwards query with limit 3 — gets the 3 most recent FirstDomainEvents (e5, e3, e1)
-		EventQuery backwardsQuery = EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())).backwards().limit(3);
+		EventQuery backwardsQuery = EventQuery.of(EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())).backwards().limit(3);
 		var recentEvents = eventStream.query(backwardsQuery);
 
 		assertEquals(3, recentEvents.size());
@@ -280,7 +280,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 
 		// Verify the append succeeded
 		assertEquals(6, eventStream.query(EventQuery.of(EventFilter.matchAll())).size());
-		assertEquals(4, eventStream.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()))).size());
+		assertEquals(4, eventStream.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()))).size());
 	}
 
 	@ForEachBackend
@@ -293,7 +293,7 @@ public class OptimisticLockingTest extends AbstractEventStoreTest {
 		eventStream.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FirstDomainEvent("e3"), Tags.none())));
 
 		// Query the 5 most recent FirstDomainEvents backwards (only 2 exist: e3, e1)
-		EventQuery backwardsQuery = EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())).backwards().limit(5);
+		EventQuery backwardsQuery = EventQuery.of(EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())).backwards().limit(5);
 		var recentEvents = eventStream.query(backwardsQuery);
 
 		assertEquals(2, recentEvents.size());

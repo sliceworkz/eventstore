@@ -59,7 +59,7 @@ import org.sliceworkz.eventstore.query.EventFilter;
  * EventStream<AccountEvent> stream = eventStore.getEventStream(streamId, AccountEvent.class);
  *
  * // Define query for relevant events (account transactions)
- * EventQuery query = EventQuery.of(EventFilter.forEvents(
+ * EventQuery query = EventQuery.of(EventFilter.of(
  *     EventTypesFilter.of(MoneyDeposited.class, MoneyWithdrawn.class),
  *     Tags.of("account", "123")
  * ));

@@ -148,7 +148,7 @@ public class PostgresCursorBoundaryTest {
 			try {
 				EventStreamId stream = EventStreamId.forContext("account").withPurpose("42");
 				Tags tags = Tags.of("account", "42");
-				EventQuery boundary = EventQuery.of(EventFilter.forEvents(EventTypesFilter.any(), tags));
+				EventQuery boundary = EventQuery.of(EventFilter.of(EventTypesFilter.any(), tags));
 
 				invert(storage, dataSource, prefix, stream, tags);
 				List<StoredEvent> replay = read(storage, stream, null, Limit.none(), Direction.FORWARD, null);

@@ -75,7 +75,7 @@ public class EventQueryTest {
 	@Test
 	void testForTagsIsForEventsOfAnyType ( ) {
 		EventQuery q = EventQuery.of(EventFilter.forTags(Tags.of("A", "1")));
-		assertEquals(EventQuery.of(EventFilter.forEvents(EventTypesFilter.any(), Tags.of("A", "1"))), q);
+		assertEquals(EventQuery.of(EventFilter.of(EventTypesFilter.any(), Tags.of("A", "1"))), q);
 
 		assertFalse(q.filter().matches(e1_event1NoTags));
 		assertFalse(q.filter().matches(e2_event2NoTags));
@@ -96,7 +96,7 @@ public class EventQueryTest {
 
 	@Test
 	void testMatchByType ( ) {
-		EventQuery q = EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()));
+		EventQuery q = EventQuery.of(EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()));
 		assertTrue(q.filter().matches(e1_event1NoTags));
 		assertFalse(q.filter().matches(e2_event2NoTags));
 		assertTrue(q.filter().matches(e3_event1TagsA1));
@@ -107,8 +107,8 @@ public class EventQueryTest {
 
 	@Test
 	void testMatchCombined ( ) {
-		EventFilter f1 = EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none());
-		EventFilter f2 = EventFilter.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1"));
+		EventFilter f1 = EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.none());
+		EventFilter f2 = EventFilter.of(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1"));
 		EventQuery q = EventQuery.of(f1.or(f2));
 
 		assertTrue(q.filter().matches(e1_event1NoTags));

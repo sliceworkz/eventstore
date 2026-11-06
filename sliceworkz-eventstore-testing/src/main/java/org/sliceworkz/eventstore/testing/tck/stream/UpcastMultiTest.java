@@ -153,21 +153,21 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 
 		// Query specifically for CustomerRegistered — should find it from the split
 		List<Event<CurrentEvent>> registered = stream.query(
-			EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(CurrentEvent.CustomerRegistered.class), Tags.none()))
+			EventQuery.of(EventFilter.of(EventTypesFilter.of(CurrentEvent.CustomerRegistered.class), Tags.none()))
 		);
 		assertEquals(1, registered.size());
 		assertEquals("John", ((CurrentEvent.CustomerRegistered) registered.get(0).data()).name());
 
 		// Query specifically for AddressRecorded — should find it from the split
 		List<Event<CurrentEvent>> addresses = stream.query(
-			EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(CurrentEvent.AddressRecorded.class), Tags.none()))
+			EventQuery.of(EventFilter.of(EventTypesFilter.of(CurrentEvent.AddressRecorded.class), Tags.none()))
 		);
 		assertEquals(1, addresses.size());
 		assertEquals("Springfield", ((CurrentEvent.AddressRecorded) addresses.get(0).data()).city());
 
 		// Query for CustomerRenamed — should find the 1-to-1 upcast
 		List<Event<CurrentEvent>> renamed = stream.query(
-			EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(CurrentEvent.CustomerRenamed.class), Tags.none()))
+			EventQuery.of(EventFilter.of(EventTypesFilter.of(CurrentEvent.CustomerRenamed.class), Tags.none()))
 		);
 		assertEquals(1, renamed.size());
 		assertEquals("Jane", ((CurrentEvent.CustomerRenamed) renamed.get(0).data()).name());
@@ -186,7 +186,7 @@ public class UpcastMultiTest extends AbstractEventStoreTest {
 		EventStream<CurrentEvent> stream = storeOriginalAndGetUpcastedStream();
 
 		IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-				() -> stream.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(LegacyEvents.CustomerLegacyAuditLog.class), Tags.none()))));
+				() -> stream.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(LegacyEvents.CustomerLegacyAuditLog.class), Tags.none()))));
 		assertTrue(e.getMessage().endsWith("'CustomerLegacyAuditLog' (a legacy type upcasting into no current type, so no query on this stream can return it and no boundary can count it)"), e.getMessage());
 	}
 

@@ -157,7 +157,7 @@ class EventStoreFixtureTest {
 		}
 
 		boolean subscribe ( String studentId, String courseId ) {
-			EventQuery relevant = EventQuery.of(EventFilter.forEvents(EventTypesFilter.any(), Tags.of("course", courseId)));
+			EventQuery relevant = EventQuery.of(EventFilter.of(EventTypesFilter.any(), Tags.of("course", courseId)));
 			List<Event<LearningEvent>> facts = stream.query(relevant);
 
 			if ( facts.stream().noneMatch(e -> e.data() instanceof CourseDefined) ) {
@@ -189,7 +189,7 @@ class EventStoreFixtureTest {
 
 		@Override
 		public EventQuery eventQuery ( ) {
-			return EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(StudentSubscribed.class), Tags.of("course", courseId)));
+			return EventQuery.of(EventFilter.of(EventTypesFilter.of(StudentSubscribed.class), Tags.of("course", courseId)));
 		}
 
 		@Override

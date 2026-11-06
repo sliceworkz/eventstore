@@ -82,7 +82,7 @@ public class AggregateAndDCBExample {
 	// read: the consistency boundary then silently narrows and the store reports success on an append
 	// that should have conflicted. Nothing -- no type, no test, no runtime check -- catches that
 	EventQuery studentQuery ( String studentId ) {
-	    return EventQuery.of(EventFilter.forEvents(
+	    return EventQuery.of(EventFilter.of(
 	        EventTypesFilter.of(StudentDomainEvent.class),
 	        Tags.of("student", studentId)
 	    ));
@@ -110,7 +110,7 @@ public class AggregateAndDCBExample {
 
 	// Likewise for a course: one query, read by loadCourse and checked by saveCourse
 	EventQuery courseQuery ( String courseId ) {
-	    return EventQuery.of(EventFilter.forEvents(
+	    return EventQuery.of(EventFilter.of(
 	        EventTypesFilter.of(CourseDomainEvent.class),
 	        Tags.of("course", courseId)
 	    ));

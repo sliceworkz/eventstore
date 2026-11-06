@@ -105,7 +105,7 @@ import org.sliceworkz.eventstore.query.EventQuery;
  *
  * // Query with filters
  * List<Event<CustomerEvent>> filtered = stream.query(
- *     EventQuery.of(EventFilter.forEvents(
+ *     EventQuery.of(EventFilter.of(
  *         EventTypesFilter.of(CustomerRegistered.class, CustomerNameChanged.class),
  *         Tags.of("region", "EU")
  *     ))

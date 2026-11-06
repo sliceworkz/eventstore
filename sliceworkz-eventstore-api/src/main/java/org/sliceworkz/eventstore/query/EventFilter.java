@@ -56,7 +56,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
  * Every operation that narrows — {@link #tagged(Tags)}, {@link #after(EventReference)},
  * {@link #until(EventReference)} and their {@code IfLater}/{@code IfEarlier} forms — applies to every
  * item of the filter it is called on, so a bound set before a union stays with the items it was set on.
- * {@link #forEvents(EventTypesFilter, Tags)} is the same filter built from its two halves at once.
+ * {@link #of(EventTypesFilter, Tags)} is the same filter built from its two halves at once.
  *
  * <p><strong>Match Semantics:</strong>
  * <ul>
@@ -283,14 +283,36 @@ public record EventFilter ( List<EventFilterItem> items ) {
 	}
 
 	/**
-	 * Creates a filter for events matching the specified event types and tags.
+	 * Creates a filter of one item: events of the given types carrying the given tags. The two halves of
+	 * what {@code forTypes(...).tagged(...)} builds as a chain, given at once; both spellings make equal
+	 * filters.
 	 *
 	 * @param eventTypes the filter specifying which event types to match
 	 * @param tags the tags that events must contain (all tags must be present)
 	 * @return an EventFilter matching the specified criteria
 	 */
-	public static EventFilter forEvents ( EventTypesFilter eventTypes, Tags tags ) {
-		return forEvents(new EventFilterItem(eventTypes, tags));
+	public static EventFilter of ( EventTypesFilter eventTypes, Tags tags ) {
+		return of(new EventFilterItem(eventTypes, tags));
+	}
+
+	/**
+	 * Creates a filter from its items: the union of them, each with its own types, tags and bounds. No
+	 * items is a filter that matches nothing, as {@link #matchNone()}.
+	 *
+	 * @param items the items defining the match criteria
+	 * @return an EventFilter of the items
+	 * @throws IllegalArgumentException if {@code items} or one of them is {@code null}
+	 */
+	public static EventFilter of ( EventFilterItem... items ) {
+		if ( items == null ) {
+			throw new IllegalArgumentException("items is required (none for a filter that matches nothing)");
+		}
+		for ( EventFilterItem item : items ) {
+			if ( item == null ) {
+				throw new IllegalArgumentException("an item of a filter cannot be null");
+			}
+		}
+		return new EventFilter(List.of(items));
 	}
 
 	/**
@@ -302,7 +324,7 @@ public record EventFilter ( List<EventFilterItem> items ) {
 	 * }</pre>
 	 * The classes are resolved as {@link EventTypesFilter#of(Class...)} resolves them, so a sealed
 	 * interface stands for every event type under it and the root of a hierarchy names all of it. It is
-	 * {@link #forEvents(EventTypesFilter, Tags)} with {@link Tags#none()}, and equivalent to it in every
+	 * {@link #of(EventTypesFilter, Tags)} with {@link Tags#none()}, and equivalent to it in every
 	 * respect.
 	 *
 	 * @param eventClasses the event classes to match; a sealed interface stands for every event type under it
@@ -310,31 +332,37 @@ public record EventFilter ( List<EventFilterItem> items ) {
 	 * @throws IllegalArgumentException for an interface that is not sealed
 	 */
 	public static EventFilter forTypes ( Class<?>... eventClasses ) {
-		return forEvents(EventTypesFilter.of(eventClasses), Tags.none());
+		return of(EventTypesFilter.of(eventClasses), Tags.none());
 	}
 
 	/**
 	 * Creates a filter for events of any type carrying the specified tags: every fact about one entity,
 	 * which is what a consistency boundary is usually spelled with.
 	 * <p>
-	 * {@link #forEvents(EventTypesFilter, Tags)} with {@link EventTypesFilter#any()}, and
-	 * equivalent to it in every respect.
+	 * {@link #of(EventTypesFilter, Tags)} with {@link EventTypesFilter#any()}, and equivalent to it in
+	 * every respect.
 	 *
 	 * @param tags the tags that events must contain (all tags must be present)
 	 * @return an EventFilter matching events of any type carrying the tags
 	 */
 	public static EventFilter forTags ( Tags tags ) {
-		return forEvents(EventTypesFilter.any(), tags);
+		return of(EventTypesFilter.any(), tags);
 	}
 
 	/**
-	 * Creates a filter from a single item.
+	 * Creates a filter for events of any type carrying the given tag; {@link #forTags(Tags)} with
+	 * {@link Tags#of(String, String)}.
+	 * <pre>{@code
+	 * EventFilter customer = EventFilter.forTags("customer", "123");
+	 * }</pre>
 	 *
-	 * @param item the item defining the match criteria
-	 * @return an EventFilter containing the single item
+	 * @param key the tag's key
+	 * @param value the tag's value
+	 * @return an EventFilter matching events of any type carrying the tag
+	 * @throws IllegalArgumentException for a tag that cannot be constructed, see {@link org.sliceworkz.eventstore.events.Tag#of(String, String)}
 	 */
-	public static EventFilter forEvents ( EventFilterItem item ) {
-		return new EventFilter(Collections.singletonList(item));
+	public static EventFilter forTags ( String key, String value ) {
+		return forTags(Tags.of(key, value));
 	}
 
 	/**

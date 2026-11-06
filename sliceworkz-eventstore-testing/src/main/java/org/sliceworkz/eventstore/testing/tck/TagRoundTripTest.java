@@ -82,7 +82,7 @@ public class TagRoundTripTest extends AbstractEventStoreTest {
 	}
 
 	private static List<Event<MockDomainEvent>> queryFor ( EventStream<MockDomainEvent> stream, Tag tag ) {
-		return stream.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.any(), Tags.of(tag))));
+		return stream.query(EventQuery.of(EventFilter.of(EventTypesFilter.any(), Tags.of(tag))));
 	}
 
 	@ForEachBackend

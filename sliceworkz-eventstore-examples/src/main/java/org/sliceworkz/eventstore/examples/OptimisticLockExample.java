@@ -51,13 +51,13 @@ public class OptimisticLockExample {
 
 		// Two registration events of different customers, queried by Event Type
 		List<Event<CustomerEvent>> registrations = 
-				stream.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(CustomerRegistered.class), Tags.none())));
+				stream.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerRegistered.class), Tags.none())));
 		registrations.forEach(System.out::println);
 		
 		
 		// One churn event, queried by Event Type
 		List<Event<CustomerEvent>> churns = 
-				stream.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(CustomerChurned.class), Tags.none())));
+				stream.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerChurned.class), Tags.none())));
 		churns.forEach(System.out::println);
 		
 		

@@ -111,7 +111,7 @@ public class EventPageTest extends AbstractEventStoreTest {
 		for ( EventQuery q : List.of(
 				EventQuery.of(EventFilter.matchAll()).limit(3),
 				EventQuery.of(EventFilter.matchAll()).backwards().limit(3),
-				EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())).limit(2),
+				EventQuery.of(EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())).limit(2),
 				EventQuery.of(EventFilter.matchAll()) ) ) {
 			assertEquals(stream.query(q, cursor), stream.page(q, cursor).events(), q.toString());
 			assertEquals(stream.query(q, null), stream.page(q, null).events(), q.toString());

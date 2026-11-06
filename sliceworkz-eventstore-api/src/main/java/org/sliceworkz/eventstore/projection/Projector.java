@@ -60,7 +60,7 @@ import org.sliceworkz.eventstore.stream.AppendListener;
  *
  *     @Override
  *     public EventQuery eventQuery() {
- *         return EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(CustomerRegistered.class), Tags.none()));
+ *         return EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerRegistered.class), Tags.none()));
  *     }
  *
  *     @Override

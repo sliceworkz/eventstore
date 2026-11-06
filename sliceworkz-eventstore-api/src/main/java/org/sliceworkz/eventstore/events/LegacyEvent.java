@@ -111,7 +111,7 @@ import java.lang.annotation.Target;
  * <pre>{@code
  * // Query for events that match the upcasted target type
  * // This finds both new CustomerRenamed events AND legacy CustomerNameChanged events
- * stream.query(EventQuery.of(EventFilter.forEvents(
+ * stream.query(EventQuery.of(EventFilter.of(
  *     EventTypesFilter.of(CustomerEvent.CustomerRenamed.class),
  *     Tags.none()
  * ))).forEach(event -> {

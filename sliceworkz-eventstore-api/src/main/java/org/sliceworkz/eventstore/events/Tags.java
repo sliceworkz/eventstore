@@ -84,7 +84,7 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
  * EventQuery query = EventQuery.of(EventFilter.forTags(Tags.of("region", "EU", "priority", "high")));
  *
  * // Restrict the types as well
- * EventQuery query = EventQuery.of(EventFilter.forEvents(
+ * EventQuery query = EventQuery.of(EventFilter.of(
  *     EventTypesFilter.of(CustomerRegistered.class),
  *     Tags.of("region", "EU")
  * ));

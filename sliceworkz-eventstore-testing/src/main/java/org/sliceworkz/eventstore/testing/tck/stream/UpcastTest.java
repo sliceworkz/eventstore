@@ -68,12 +68,12 @@ public class UpcastTest extends AbstractEventStoreTest {
 		assertEquals(6, newEvents.size());
 
 		// make sure we can query both old and new events on the new (potentially upcasted) type
-		assertEquals(2, streamWithUpcasts.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(CustomerEvent.CustomerRegisteredV2.class), Tags.none()))).size());
-		assertEquals(2, streamWithUpcasts.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(CustomerEvent.CustomerRenamed.class), Tags.none()))).size());
-		assertEquals(2, streamWithUpcasts.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(CustomerEvent.CustomerChurned.class), Tags.none()))).size());
+		assertEquals(2, streamWithUpcasts.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerEvent.CustomerRegisteredV2.class), Tags.none()))).size());
+		assertEquals(2, streamWithUpcasts.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerEvent.CustomerRenamed.class), Tags.none()))).size());
+		assertEquals(2, streamWithUpcasts.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerEvent.CustomerChurned.class), Tags.none()))).size());
 
 		// verify data on the Register events
-		List<Event<CustomerEvent>> registers = streamWithUpcasts.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(CustomerEvent.CustomerRegisteredV2.class), Tags.none())));
+		List<Event<CustomerEvent>> registers = streamWithUpcasts.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerEvent.CustomerRegisteredV2.class), Tags.none())));
 		assertEquals(EventType.named("CustomerRegisteredV2"), registers.get(0).type());
 		assertEquals(EventType.named("CustomerRegistered"), registers.get(0).storedType());
 		assertEquals("John", ((CustomerRegisteredV2)(registers.get(0).data())).name().value());
@@ -86,7 +86,7 @@ public class UpcastTest extends AbstractEventStoreTest {
 		assertEquals(4, registers.get(1).reference().position());
 
 		// verify data on the Rename events
-		List<Event<CustomerEvent>> renames = streamWithUpcasts.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(CustomerEvent.CustomerRenamed.class), Tags.none())));
+		List<Event<CustomerEvent>> renames = streamWithUpcasts.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerEvent.CustomerRenamed.class), Tags.none())));
 		assertEquals(EventType.named("CustomerRenamed"), renames.get(0).type());
 		assertEquals(EventType.named("CustomerNameChanged"), renames.get(0).storedType());
 		assertEquals("Jane", ((CustomerRenamed)(renames.get(0).data())).name().value());
@@ -156,13 +156,13 @@ public class UpcastTest extends AbstractEventStoreTest {
 		// decided on the renames of this customer; a legacy registration is not one of them, so it is no
 		// new relevant fact and the append is admitted
 		EventReference head = current.head().orElseThrow();
-		AppendCriteria decidedOnRenames = AppendCriteria.of(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(CustomerRenamed.class), customer)), head);
+		AppendCriteria decidedOnRenames = AppendCriteria.of(EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerRenamed.class), customer)), head);
 		asWritten.append(AppendCriteria.none(), Event.of(new OriginalEvent.CustomerRegistered("John"), customer));
 		current.append(decidedOnRenames, Event.of(new CustomerEvent.CustomerRenamed(Name.of("Robin")), customer));
 
 		// a legacy rename is one of them
 		EventReference laterHead = current.head().orElseThrow();
-		AppendCriteria decidedOnRenamesAgain = AppendCriteria.of(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(CustomerRenamed.class), customer)), laterHead);
+		AppendCriteria decidedOnRenamesAgain = AppendCriteria.of(EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerRenamed.class), customer)), laterHead);
 		asWritten.append(AppendCriteria.none(), Event.of(new OriginalEvent.CustomerNameChanged("Batman"), customer));
 		OptimisticLockingException e = assertThrows(OptimisticLockingException.class,
 				() -> current.append(decidedOnRenamesAgain, Event.of(new CustomerEvent.CustomerRenamed(Name.of("Joker")), customer)));
@@ -171,7 +171,7 @@ public class UpcastTest extends AbstractEventStoreTest {
 		assertEquals(Optional.of(laterHead), e.getExpectedLastEventReference());
 
 		// which is what the query path says too: the legacy rename is a rename
-		assertEquals(2, current.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(CustomerRenamed.class), customer))).size());
+		assertEquals(2, current.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerRenamed.class), customer))).size());
 	}
 
 	/**
@@ -190,14 +190,14 @@ public class UpcastTest extends AbstractEventStoreTest {
 		EventStream<CustomerEvent> current = eventStore().getEventStream(streamId, CustomerEvent.class, LegacyCustomerEvent.class);
 
 		// by class and by the stored name alike: the filter carries the name either way
-		EventQuery byClass = EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(LegacyCustomerEvent.CustomerNameChanged.class), customer));
-		EventQuery byName = EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(Set.of(EventType.named("CustomerNameChanged"))), customer));
+		EventQuery byClass = EventQuery.of(EventFilter.of(EventTypesFilter.of(LegacyCustomerEvent.CustomerNameChanged.class), customer));
+		EventQuery byName = EventQuery.of(EventFilter.of(EventTypesFilter.of(Set.of(EventType.named("CustomerNameChanged"))), customer));
 		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> current.query(byClass));
 		assertEquals("a query or a consistency boundary on this stream names the current event types, and it returns and counts the legacy events that upcast into them; it cannot name a legacy type: 'CustomerNameChanged' (a legacy type, read as 'CustomerRenamed')", e.getMessage());
 		assertEquals(e.getMessage(), assertThrows(IllegalArgumentException.class, () -> current.query(byName)).getMessage());
 		// beside a current type it is refused just the same: the filter as a whole cannot be answered
 		assertEquals(e.getMessage(), assertThrows(IllegalArgumentException.class,
-				() -> current.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(LegacyCustomerEvent.CustomerNameChanged.class, CustomerRenamed.class), customer)))).getMessage());
+				() -> current.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(LegacyCustomerEvent.CustomerNameChanged.class, CustomerRenamed.class), customer)))).getMessage());
 
 		// refused as a boundary too, with nothing stored
 		EventReference head = current.head().orElseThrow();
@@ -207,13 +207,13 @@ public class UpcastTest extends AbstractEventStoreTest {
 		assertEquals(1, current.query(EventQuery.of(EventFilter.matchAll())).size());
 
 		// the current type is what the legacy rename is read as, and a filter over it returns it
-		assertEquals(1, current.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(CustomerRenamed.class), customer))).size());
+		assertEquals(1, current.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(CustomerRenamed.class), customer))).size());
 
 		// a raw stream registers no legacy types: the stored name is read as stored
 		EventSource<?> raw = eventStore().getRawEventStream(streamId);
-		assertEquals(1, raw.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(Set.of(EventType.named("CustomerNameChanged"))), customer))).size());
+		assertEquals(1, raw.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(Set.of(EventType.named("CustomerNameChanged"))), customer))).size());
 		// and on a typed stream where the name is a current type, the filter is an ordinary one
-		assertEquals(1, asWritten.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(OriginalEvent.CustomerNameChanged.class), customer))).size());
+		assertEquals(1, asWritten.query(EventQuery.of(EventFilter.of(EventTypesFilter.of(OriginalEvent.CustomerNameChanged.class), customer))).size());
 	}
 
 	@ForEachBackend

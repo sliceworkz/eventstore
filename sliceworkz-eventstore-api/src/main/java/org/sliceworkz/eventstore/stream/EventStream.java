@@ -49,7 +49,7 @@ package org.sliceworkz.eventstore.stream;
  *
  * // Query with filters
  * List<Event<CustomerEvent>> euCustomers = stream.query(
- *     EventQuery.of(EventFilter.forEvents(EventTypesFilter.any(), Tags.of("region", "EU")))
+ *     EventQuery.of(EventFilter.of(EventTypesFilter.any(), Tags.of("region", "EU")))
  * );
  *
  * // Conditional append with optimistic locking (DCB pattern): pin the boundary at the head

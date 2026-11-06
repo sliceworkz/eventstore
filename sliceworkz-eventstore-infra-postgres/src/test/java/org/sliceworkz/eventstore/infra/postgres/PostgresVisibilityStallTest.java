@@ -201,7 +201,7 @@ public class PostgresVisibilityStallTest {
 
 				EventStreamId stream = EventStreamId.forContext("account").withPurpose("42");
 				Tags boundaryTags = Tags.of("account", "42");
-				EventQuery boundary = EventQuery.of(EventFilter.forEvents(EventTypesFilter.any(), boundaryTags));
+				EventQuery boundary = EventQuery.of(EventFilter.of(EventTypesFilter.any(), boundaryTags));
 				execute(dataSource, "CREATE TABLE IF NOT EXISTS " + prefix + "unrelated_workload (id int)");
 
 				storage.append(AppendCriteria.none(), stream, List.of(event(stream, "MoneyDeposited", boundaryTags)));

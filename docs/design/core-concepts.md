@@ -272,11 +272,11 @@ The rules in brief are in the root `CLAUDE.md`, under "Core Concepts". This file
   (exclusive) and `until` (inclusive), the part of the history the item is about
 - Does not carry traversal semantics (direction, limit, the read bound) — those belong to `EventQuery`
 - Can match all (`EventFilter.matchAll()`), none (`EventFilter.matchNone()`), or specific criteria
-- Created via `EventFilter.forEvents(eventTypesFilter, tags)`, or `EventFilter.forTags(tags)` for events of
+- Created via `EventFilter.of(eventTypesFilter, tags)`, or `EventFilter.forTags(tags)` for events of
   any type carrying the tags, or as a chain: `EventFilter.forTypes(CustomerEvent.class).tagged("customer", id)`
 - Used by `AppendCriteria` for optimistic locking (where direction/limit are irrelevant)
 - **The fluent form and the two-halves form build the same filter.** `forTypes(classes...)` is
-  `forEvents(EventTypesFilter.of(classes...), Tags.none())`, and `tagged(key, value)` narrows what is
+  `of(EventTypesFilter.of(classes...), Tags.none())`, and `tagged(key, value)` narrows what is
   there: every item gets the tag on top of the tags it already requires, chained calls accumulate, and
   every item keeps its bounds. Narrowing distributes over a union — `a.or(b).tagged(t)` is
   `a.tagged(t).or(b.tagged(t))` — which is what makes it well-defined on a filter of several items;

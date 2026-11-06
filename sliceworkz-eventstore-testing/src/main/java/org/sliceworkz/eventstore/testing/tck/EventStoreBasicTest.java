@@ -142,7 +142,7 @@ public class EventStoreBasicTest extends AbstractEventStoreTest {
 	void testQueryByEventTypeMatch ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
 		assertEquals(1, eventStore().getRawEventStream(EventStreamId.anyContext().anyPurpose()).query(
-				EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()))
+				EventQuery.of(EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()))
 		).size());
 	}
 
@@ -150,7 +150,7 @@ public class EventStoreBasicTest extends AbstractEventStoreTest {
 	void testQueryByEventTypeNoMatch ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
 		assertEquals(0, eventStore().getRawEventStream(EventStreamId.anyContext().anyPurpose()).query(
-				EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.none()))
+				EventQuery.of(EventFilter.of(EventTypesFilter.of(SecondDomainEvent.class), Tags.none()))
 		).size());
 	}
 
@@ -158,7 +158,7 @@ public class EventStoreBasicTest extends AbstractEventStoreTest {
 	void testQueryBySingleTagNoMatch ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
 		assertEquals(0, eventStore().getRawEventStream(EventStreamId.anyContext().anyPurpose()).query(
-				EventQuery.of(EventFilter.forEvents(EventTypesFilter.any(), Tags.parse("a:2")))
+				EventQuery.of(EventFilter.of(EventTypesFilter.any(), Tags.parse("a:2")))
 		).size());
 	}
 
@@ -166,7 +166,7 @@ public class EventStoreBasicTest extends AbstractEventStoreTest {
 	void testQueryBySingleTagMatch ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
 		assertEquals(1, eventStore().getRawEventStream(EventStreamId.anyContext().anyPurpose()).query(
-				EventQuery.of(EventFilter.forEvents(EventTypesFilter.any(), Tags.parse("b:2")))
+				EventQuery.of(EventFilter.of(EventTypesFilter.any(), Tags.parse("b:2")))
 		).size());
 	}
 
@@ -174,7 +174,7 @@ public class EventStoreBasicTest extends AbstractEventStoreTest {
 	void testQueryByMultipleTagsNoMatch ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
 		assertEquals(0, eventStore().getRawEventStream(EventStreamId.anyContext().anyPurpose()).query(
-				EventQuery.of(EventFilter.forEvents(EventTypesFilter.any(), Tags.parse("a:1", "b:2", "c:4")))
+				EventQuery.of(EventFilter.of(EventTypesFilter.any(), Tags.parse("a:1", "b:2", "c:4")))
 		).size());
 	}
 
@@ -182,7 +182,7 @@ public class EventStoreBasicTest extends AbstractEventStoreTest {
 	void testQueryByMultipleTagsMatch ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
 		assertEquals(1, eventStore().getRawEventStream(EventStreamId.anyContext().anyPurpose()).query(
-				EventQuery.of(EventFilter.forEvents(EventTypesFilter.any(), Tags.parse("a:1", "c:3")))
+				EventQuery.of(EventFilter.of(EventTypesFilter.any(), Tags.parse("a:1", "c:3")))
 		).size());
 	}
 
@@ -190,7 +190,7 @@ public class EventStoreBasicTest extends AbstractEventStoreTest {
 	void testQueryByAllTagsMatch ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
 		assertEquals(1, eventStore().getRawEventStream(EventStreamId.anyContext().anyPurpose()).query(
-				EventQuery.of(EventFilter.forEvents(EventTypesFilter.any(), Tags.parse("a:1", "b:2", "c:3")))
+				EventQuery.of(EventFilter.of(EventTypesFilter.any(), Tags.parse("a:1", "b:2", "c:3")))
 		).size());
 	}
 
@@ -198,7 +198,7 @@ public class EventStoreBasicTest extends AbstractEventStoreTest {
 	void testQueryByEventTypeAndAllTagsMatch ( ) {
 		storeTestEvent(EventStreamId.forContext("a").withPurpose("domain"));
 		assertEquals(1, eventStore().getRawEventStream(EventStreamId.anyContext().anyPurpose()).query(
-				EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.parse("a:1", "b:2", "c:3")))
+				EventQuery.of(EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.parse("a:1", "b:2", "c:3")))
 		).size());
 	}
 

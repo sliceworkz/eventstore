@@ -120,9 +120,9 @@ public class PostgresItemBoundsPlanTest {
 		@Test
 		public void testDifferentlyBoundedItemsEachReadTheirOwnRange ( ) throws Exception {
 			Fixture fixture = fixture(image);
-			EventFilter filter = EventFilter.forEvents(types("StockCounted"), Tags.of("sku", "SKU-42"))
+			EventFilter filter = EventFilter.of(types("StockCounted"), Tags.of("sku", "SKU-42"))
 					.until(fixture.at(0.05))
-					.or(EventFilter.forEvents(types("StockAdded", "StockPicked"), Tags.of("warehouse", "W-3"))
+					.or(EventFilter.of(types("StockAdded", "StockPicked"), Tags.of("warehouse", "W-3"))
 							.after(fixture.at(0.90)));
 
 			String plan = explain(fixture, filter, null, Direction.FORWARD);
@@ -136,9 +136,9 @@ public class PostgresItemBoundsPlanTest {
 		@Test
 		public void testABackwardReadOfDifferentlyBoundedItemsReadsEachRangeFromItsEnd ( ) throws Exception {
 			Fixture fixture = fixture(image);
-			EventFilter filter = EventFilter.forEvents(types("StockCounted"), Tags.none())
+			EventFilter filter = EventFilter.of(types("StockCounted"), Tags.none())
 					.until(fixture.at(0.20))
-					.or(EventFilter.forEvents(types("PriceChanged"), Tags.none()).until(fixture.at(0.60)));
+					.or(EventFilter.of(types("PriceChanged"), Tags.none()).until(fixture.at(0.60)));
 
 			String plan = explain(fixture, filter, fixture.at(0.95), Direction.BACKWARD);
 
@@ -154,7 +154,7 @@ public class PostgresItemBoundsPlanTest {
 		@Test
 		public void testItemsSharingTheirBoundsKeepTheSingleStatement ( ) {
 			Fixture fixture = fixture(image);
-			EventFilter unbounded = EventFilter.forEvents(types("StockAdded"), Tags.none()).or(EventFilter.forTags(Tags.of("sku", "SKU-1")));
+			EventFilter unbounded = EventFilter.of(types("StockAdded"), Tags.none()).or(EventFilter.forTags(Tags.of("sku", "SKU-1")));
 			EventFilter shared = unbounded.after(fixture.at(0.10)).until(fixture.at(0.20));
 
 			for ( EventFilter filter : List.of(unbounded, shared, EventFilter.matchAll(), EventFilter.forTags(Tags.of("sku", "SKU-1")).after(fixture.at(0.5))) ) {

@@ -460,7 +460,7 @@ public class EventImportTest extends AbstractEventStoreTest {
 		StoredEvent third = sourceEvents.stream().filter(e -> "Third".equals(e.type().name())).findFirst().orElseThrow();
 
 		ImportReport report = EventStoreImporter.from(source).to(target)
-				.matching(EventFilter.forEvents(EventTypesFilter.any(), Tags.of("kind", "Third")))
+				.matching(EventFilter.of(EventTypesFilter.any(), Tags.of("kind", "Third")))
 				.run();
 
 		assertEquals(1, report.read(), "only the tagged event is read");
@@ -475,7 +475,7 @@ public class EventImportTest extends AbstractEventStoreTest {
 		List<StoredEvent> wanted = sourceEvents.stream().filter(e -> !"Second".equals(e.type().name())).toList();
 
 		ImportReport report = EventStoreImporter.from(source).to(target)
-				.matching(EventFilter.forEvents(EventTypesFilter.of(Set.of(EventType.named("First"), EventType.named("Third"))), Tags.none()))
+				.matching(EventFilter.of(EventTypesFilter.of(Set.of(EventType.named("First"), EventType.named("Third"))), Tags.none()))
 				.run();
 
 		assertEquals(2, report.read());
@@ -490,14 +490,14 @@ public class EventImportTest extends AbstractEventStoreTest {
 		// kind:Third is on otherStream, so scoping to stream leaves nothing; kind:Second is on it
 		ImportReport none = EventStoreImporter.from(source).to(target)
 				.stream(stream)
-				.matching(EventFilter.forEvents(EventTypesFilter.any(), Tags.of("kind", "Third")))
+				.matching(EventFilter.of(EventTypesFilter.any(), Tags.of("kind", "Third")))
 				.run();
 		assertEquals(0, none.read());
 		assertEquals(0, none.imported());
 
 		ImportReport one = EventStoreImporter.from(source).to(target)
 				.stream(stream)
-				.matching(EventFilter.forEvents(EventTypesFilter.any(), Tags.of("kind", "Second")))
+				.matching(EventFilter.of(EventTypesFilter.any(), Tags.of("kind", "Second")))
 				.run();
 		assertEquals(1, one.read());
 		assertEquals(1, one.imported());
@@ -520,7 +520,7 @@ public class EventImportTest extends AbstractEventStoreTest {
 	@ForEachBackend(requires = Capability.IMPORT)
 	void testImporterSelectionCatchesUpAfterAnEarlierRun ( ) {
 		seedSource();
-		EventFilter onStreamFirstOrFourth = EventFilter.forEvents(EventTypesFilter.of(Set.of(EventType.named("First"), EventType.named("Fourth"))), Tags.none());
+		EventFilter onStreamFirstOrFourth = EventFilter.of(EventTypesFilter.of(Set.of(EventType.named("First"), EventType.named("Fourth"))), Tags.none());
 
 		ImportReport first = EventStoreImporter.from(source).to(target).matching(onStreamFirstOrFourth).run();
 		assertEquals(1, first.imported());

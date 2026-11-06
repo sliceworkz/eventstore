@@ -90,8 +90,8 @@ public class NotAfterBoundaryTest extends AbstractEventStoreTest {
 	void notAfterSelectsTheSameEventsInBothDirections ( ) {
 		List<EventQuery> shapes = List.of(
 				EventQuery.of(EventFilter.matchAll()),
-				EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())),
-				EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(ThirdDomainEvent.class), Tags.none())));
+				EventQuery.of(EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())),
+				EventQuery.of(EventFilter.of(EventTypesFilter.of(ThirdDomainEvent.class), Tags.none())));
 
 		for ( EventQuery shape : shapes ) {
 			for ( Event<MockDomainEvent> boundary : all ) {
@@ -118,7 +118,7 @@ public class NotAfterBoundaryTest extends AbstractEventStoreTest {
 	 */
 	@ForEachBackend
 	void backwardsWithLimitFindsTheNewestMatchAtOrBeforeTheBoundary ( ) {
-		EventQuery savepoint = EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(ThirdDomainEvent.class), Tags.none()))
+		EventQuery savepoint = EventQuery.of(EventFilter.of(EventTypesFilter.of(ThirdDomainEvent.class), Tags.none()))
 				.backwards().limit(1);
 
 		assertEquals(List.of("savepoint:b"), values(stream.query(savepoint)));
@@ -139,7 +139,7 @@ public class NotAfterBoundaryTest extends AbstractEventStoreTest {
 
 	@ForEachBackend
 	void backwardsWithoutLimitStopsAtTheBoundary ( ) {
-		EventQuery savepoints = EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(ThirdDomainEvent.class), Tags.none())).backwards();
+		EventQuery savepoints = EventQuery.of(EventFilter.of(EventTypesFilter.of(ThirdDomainEvent.class), Tags.none())).backwards();
 
 		assertEquals(List.of("savepoint:b", "savepoint:a"), values(stream.query(savepoints)));
 		assertEquals(List.of("savepoint:b", "savepoint:a"), values(stream.query(savepoints.notAfter(at(7)))));
@@ -149,7 +149,7 @@ public class NotAfterBoundaryTest extends AbstractEventStoreTest {
 
 	@ForEachBackend
 	void forwardIsUnaffected ( ) {
-		EventQuery firsts = EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()));
+		EventQuery firsts = EventQuery.of(EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()));
 
 		assertEquals(List.of("1", "2", "3", "4"), values(stream.query(firsts)));
 		assertEquals(List.of("1", "2", "3", "4"), values(stream.query(firsts.notAfter(at(7)))));
@@ -164,7 +164,7 @@ public class NotAfterBoundaryTest extends AbstractEventStoreTest {
 	 */
 	@ForEachBackend
 	void notAfterComposesWithACursor ( ) {
-		EventQuery firsts = EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()));
+		EventQuery firsts = EventQuery.of(EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()));
 
 		// forward: after position 1, up to position 4
 		assertEquals(List.of("2", "3"), values(stream.query(firsts.notAfter(at(4)), at(1))));
@@ -187,7 +187,7 @@ public class NotAfterBoundaryTest extends AbstractEventStoreTest {
 
 		append(new FirstDomainEvent("5"));
 
-		EventQuery firsts = EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()));
+		EventQuery firsts = EventQuery.of(EventFilter.of(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()));
 
 		// "5" was appended after the other stream's event, so the boundary excludes it, in both directions
 		assertEquals(List.of("1", "2", "3", "4"), values(stream.query(firsts.notAfter(elsewhere))));

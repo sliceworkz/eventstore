@@ -131,7 +131,7 @@ public class SavepointProjectionExample {
 		@Override
 		public EventQuery initQuery ( ) {
 			// Find the last stock count (savepoint) for this product
-			return EventQuery.of(EventFilter.forEvents(
+			return EventQuery.of(EventFilter.of(
 				EventTypesFilter.of(StockCounted.class),
 				Tags.of("product", product)
 			)).backwards().limit(1);
@@ -140,7 +140,7 @@ public class SavepointProjectionExample {
 		@Override
 		public EventQuery eventQuery ( ) {
 			// Only process movements — savepoints are handled exclusively by initQuery
-			return EventQuery.of(EventFilter.forEvents(
+			return EventQuery.of(EventFilter.of(
 				EventTypesFilter.of(StockAdded.class, StockPicked.class),
 				Tags.of("product", product)
 			));

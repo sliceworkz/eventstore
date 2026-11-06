@@ -35,7 +35,6 @@ import org.sliceworkz.eventstore.projection.Projection;
 import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.projection.ProjectorException;
 import org.sliceworkz.eventstore.query.EventFilter;
-import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -375,8 +374,8 @@ public class ProjectorReadPositionTest extends AbstractEventStoreTest {
 		final List<String> seen = new ArrayList<>();
 
 		@Override
-		public EventQuery eventQuery ( ) {
-			return EventQuery.of(EventFilter.forTypes(FirstDomainEvent.class));
+		public EventFilter eventFilter ( ) {
+			return EventFilter.forTypes(FirstDomainEvent.class);
 		}
 
 		@Override
@@ -404,8 +403,8 @@ public class ProjectorReadPositionTest extends AbstractEventStoreTest {
 	static class FirstEvents implements Projection<MockDomainEvent> {
 
 		@Override
-		public EventQuery eventQuery ( ) {
-			return EventQuery.of(EventFilter.forTypes(FirstDomainEvent.class));
+		public EventFilter eventFilter ( ) {
+			return EventFilter.forTypes(FirstDomainEvent.class);
 		}
 
 		@Override
@@ -423,8 +422,8 @@ public class ProjectorReadPositionTest extends AbstractEventStoreTest {
 		final List<String> seen = new ArrayList<>();
 
 		@Override
-		public EventQuery eventQuery ( ) {
-			return EventQuery.of(EventFilter.forTypes(FirstDomainEvent.class, SecondDomainEvent.class));
+		public EventFilter eventFilter ( ) {
+			return EventFilter.forTypes(FirstDomainEvent.class, SecondDomainEvent.class);
 		}
 
 		@Override

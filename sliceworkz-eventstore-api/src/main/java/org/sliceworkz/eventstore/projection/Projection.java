@@ -32,6 +32,17 @@ import org.sliceworkz.eventstore.query.EventQuery;
  * Projections are typically processed by a {@link Projector}, which efficiently streams matching events from an
  * {@link org.sliceworkz.eventstore.stream.EventSource} and applies them to the projection handler in batches.
  *
+ * <h2>A filter, and a query only where the read needs one:</h2>
+ * <p>
+ * A projection says which events it depends on with {@link #eventFilter()}, and that is all most
+ * projections say: the {@link Projector} reads that filter forward, which is what a projection reading
+ * history in order wants. {@link #eventQuery()} is built from it and is overridden only by a projection
+ * whose read is something else — the newest event backwards with a limit of one, say — and then on top
+ * of {@link #eventFilter()}, so the two never describe different events. The alternative — the query as
+ * the one abstract method — loses because it makes every projection wrap its filter in
+ * {@code EventQuery.of(...)} for the few that read differently, and a filter is what the rest of this API
+ * (an append's consistency boundary, a translator, a dispatcher) already asks for.
+ *
  * <h2>Initialization Query (Savepoint Pattern):</h2>
  * <p>
  * Projections can optionally define an {@link #initQuery()} that is executed before the main {@link #eventQuery()}.
@@ -54,9 +65,9 @@ import org.sliceworkz.eventstore.query.EventQuery;
  *     private final Map<String, Long> countByRegion = new HashMap<>();
  *
  *     @Override
- *     public EventQuery eventQuery() {
+ *     public EventFilter eventFilter() {
  *         // Only process CustomerRegistered events with a region tag
- *         return EventQuery.of(EventFilter.forTypes(CustomerRegistered.class).tagged("region", "EU"));
+ *         return EventFilter.forTypes(CustomerRegistered.class).tagged("region", "EU");
  *     }
  *
  *     @Override
@@ -106,9 +117,9 @@ import org.sliceworkz.eventstore.query.EventQuery;
  *     }
  *
  *     @Override
- *     public EventQuery eventQuery() {
+ *     public EventFilter eventFilter() {
  *         // Only process movements — savepoints are handled by initQuery
- *         return EventQuery.of(EventFilter.forTypes(StockAdded.class, StockPicked.class).tagged("product", product));
+ *         return EventFilter.forTypes(StockAdded.class, StockPicked.class).tagged("product", product);
  *     }
  *
  *     @Override
@@ -157,17 +168,36 @@ public interface Projection<CONSUMED_EVENT_TYPE> extends EventHandler<CONSUMED_E
 	}
 
 	/**
-	 * Returns the event query that defines which events this projection depends on.
+	 * Returns the filter that defines which events this projection depends on.
 	 * <p>
-	 * The query specifies both the event types and tags that are relevant for this projection.
-	 * Only events matching this query will be passed to the {@link #when(org.sliceworkz.eventstore.events.Event)} method.
+	 * The filter names the event types and tags that are relevant for this projection; only events
+	 * matching it are passed to the {@link #when(org.sliceworkz.eventstore.events.Event)} method. It is
+	 * read forward, through {@link #eventQuery()}, unless that is overridden.
+	 *
+	 * @return the filter defining the events this projection processes, never null
+	 */
+	EventFilter eventFilter ( );
+
+	/**
+	 * Returns how this projection's events are read: {@link #eventFilter()} read forward, with no limit
+	 * and no read bound.
+	 * <p>
+	 * Override it only for a read that is something else — backwards, limited, or bounded — and build
+	 * it on {@link #eventFilter()}: {@code EventQuery.of(eventFilter()).backwards().limit(1)}.
 	 * <p>
 	 * A {@link Projector} reads it once per run: the query storage is asked with is the query every
 	 * event of that run is matched against, so an answer that changes between calls takes effect on
 	 * the next run, never in the middle of one.
 	 *
-	 * @return the EventQuery defining the events this projection processes, never null
+	 * @return the EventQuery defining how the events this projection processes are read, never null
+	 * @throws IllegalStateException if {@link #eventFilter()} answers {@code null}
 	 */
-	EventQuery eventQuery ( );
+	default EventQuery eventQuery ( ) {
+		EventFilter filter = eventFilter();
+		if ( filter == null ) {
+			throw new IllegalStateException("projection %s answered null to eventFilter(); a projection has to say which events it depends on (EventFilter.matchAll() or EventFilter.matchNone() to say so)".formatted(this));
+		}
+		return EventQuery.of(filter);
+	}
 
 }

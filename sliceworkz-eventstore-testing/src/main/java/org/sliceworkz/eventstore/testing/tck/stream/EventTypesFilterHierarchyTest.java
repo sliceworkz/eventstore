@@ -34,7 +34,6 @@ import org.sliceworkz.eventstore.projection.Projection;
 import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.projection.Projector.ProjectorMetrics;
 import org.sliceworkz.eventstore.query.EventFilter;
-import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -164,8 +163,8 @@ public class EventTypesFilterHierarchyTest extends AbstractEventStoreTest {
 		List<Event<Object>> seen = new ArrayList<>();
 		Projection<Object> orderBook = new Projection<>() {
 			@Override
-			public EventQuery eventQuery ( ) {
-				return EventQuery.of(EventFilter.forTypes(OrderEvent.class));
+			public EventFilter eventFilter ( ) {
+				return EventFilter.forTypes(OrderEvent.class);
 			}
 
 			@Override

@@ -362,8 +362,8 @@ public class PostgresVisibilityStallTest {
 					AtomicInteger projected = new AtomicInteger();
 					Projector.from(stream).into(new Projection<AccountEvent>() {
 						@Override
-						public EventQuery eventQuery ( ) {
-							return EventQuery.of(EventFilter.matchAll());
+						public EventFilter eventFilter ( ) {
+							return EventFilter.matchAll();
 						}
 						@Override
 						public void when ( Event<AccountEvent> event ) {

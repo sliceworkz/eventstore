@@ -188,8 +188,8 @@ class EventStoreFixtureTest {
 		}
 
 		@Override
-		public EventQuery eventQuery ( ) {
-			return EventQuery.of(EventFilter.forTypes(StudentSubscribed.class).tagged("course", courseId));
+		public EventFilter eventFilter ( ) {
+			return EventFilter.forTypes(StudentSubscribed.class).tagged("course", courseId);
 		}
 
 		@Override

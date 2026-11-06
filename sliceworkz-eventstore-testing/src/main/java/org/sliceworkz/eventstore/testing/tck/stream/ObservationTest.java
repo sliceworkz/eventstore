@@ -428,6 +428,11 @@ public class ObservationTest extends AbstractEventStoreTest {
 		}
 
 		@Override
+		public EventFilter eventFilter ( ) {
+			return query.filter();
+		}
+
+		@Override
 		public EventQuery eventQuery ( ) {
 			return query;
 		}

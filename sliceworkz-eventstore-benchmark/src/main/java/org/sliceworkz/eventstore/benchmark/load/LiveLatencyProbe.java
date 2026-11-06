@@ -34,7 +34,6 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.projection.BatchAwareProjection;
 import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.query.EventFilter;
-import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.AppendListener;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -245,8 +244,8 @@ final class LiveLatencyProbe implements AutoCloseable {
 		}
 
 		@Override
-		public EventQuery eventQuery ( ) {
-			return EventQuery.of(EventFilter.matchAll());
+		public EventFilter eventFilter ( ) {
+			return EventFilter.matchAll();
 		}
 
 		@Override

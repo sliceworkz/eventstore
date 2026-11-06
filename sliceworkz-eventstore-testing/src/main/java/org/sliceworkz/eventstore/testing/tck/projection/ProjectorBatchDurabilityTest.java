@@ -36,7 +36,6 @@ import org.sliceworkz.eventstore.projection.BatchAwareProjection;
 import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.projection.ProjectorException;
 import org.sliceworkz.eventstore.query.EventFilter;
-import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
@@ -261,8 +260,8 @@ public class ProjectorBatchDurabilityTest extends AbstractEventStoreTest {
 		}
 
 		@Override
-		public EventQuery eventQuery ( ) {
-			return EventQuery.of(EventFilter.forTypes(FirstDomainEvent.class));
+		public EventFilter eventFilter ( ) {
+			return EventFilter.forTypes(FirstDomainEvent.class);
 		}
 
 		@Override

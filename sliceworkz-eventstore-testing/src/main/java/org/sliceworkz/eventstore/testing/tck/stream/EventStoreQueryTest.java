@@ -396,20 +396,20 @@ class MockReadModel implements Projection<MockDomainEvent> {
 	private int eventCount = 0;
 	private ThreadLocal<Integer> eventCountPerThread = new ThreadLocal<>();
 
-	private EventQuery eventQuery;
+	private EventFilter eventFilter;
 
 	public MockReadModel ( String name, List<Class<?>> queriedClasses ) {
 		this.name = name;
-		this.eventQuery = EventQuery.of(EventFilter.forTypes(queriedClasses.toArray(Class<?>[]::new)));
+		this.eventFilter = EventFilter.forTypes(queriedClasses.toArray(Class<?>[]::new));
 	}
 
 	public MockReadModel ( String name ) {
 		this.name = name;
-		this.eventQuery = EventQuery.of(EventFilter.matchAll());
+		this.eventFilter = EventFilter.matchAll();
 	}
 	@Override
-	public EventQuery eventQuery() {
-		return eventQuery;
+	public EventFilter eventFilter() {
+		return eventFilter;
 	}
 
 	@Override

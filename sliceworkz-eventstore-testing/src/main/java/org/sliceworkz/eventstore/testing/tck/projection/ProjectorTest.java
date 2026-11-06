@@ -884,8 +884,8 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		}
 
 		@Override
-		public EventQuery eventQuery() {
-			return EventQuery.of(EventFilter.forTypes(FirstDomainEvent.class, ThirdDomainEvent.class));
+		public EventFilter eventFilter() {
+			return EventFilter.forTypes(FirstDomainEvent.class, ThirdDomainEvent.class);
 		}
 
 		public int counter ( ) {
@@ -907,8 +907,8 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		}
 
 		@Override
-		public EventQuery eventQuery() {
-			return EventQuery.of(EventFilter.forTypes(FirstDomainEvent.class, ThirdDomainEvent.class));
+		public EventFilter eventFilter() {
+			return EventFilter.forTypes(FirstDomainEvent.class, ThirdDomainEvent.class);
 		}
 
 		@Override
@@ -960,8 +960,8 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		}
 
 		@Override
-		public EventQuery eventQuery() {
-			return EventQuery.of(EventFilter.forTypes(FirstDomainEvent.class, ThirdDomainEvent.class));
+		public EventFilter eventFilter() {
+			return EventFilter.forTypes(FirstDomainEvent.class, ThirdDomainEvent.class);
 		}
 
 		@Override
@@ -1007,8 +1007,13 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		}
 
 		@Override
+		public EventFilter eventFilter() {
+			return EventFilter.forTypes(FirstDomainEvent.class, ThirdDomainEvent.class);
+		}
+
+		@Override
 		public EventQuery eventQuery() {
-			return EventQuery.of(EventFilter.forTypes(FirstDomainEvent.class, ThirdDomainEvent.class)).backwards().limit(3);
+			return EventQuery.of(eventFilter()).backwards().limit(3);
 		}
 
 		public int counter ( ) {
@@ -1031,8 +1036,13 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		}
 
 		@Override
+		public EventFilter eventFilter() {
+			return EventFilter.forTypes(FirstDomainEvent.class);
+		}
+
+		@Override
 		public EventQuery eventQuery() {
-			return EventQuery.of(EventFilter.forTypes(FirstDomainEvent.class)).backwards().limit(1);
+			return EventQuery.of(eventFilter()).backwards().limit(1);
 		}
 
 		public int counter ( ) {
@@ -1056,8 +1066,8 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		}
 
 		@Override
-		public EventQuery eventQuery() {
-			return EventQuery.of(EventFilter.forTypes(FirstDomainEvent.class));
+		public EventFilter eventFilter() {
+			return EventFilter.forTypes(FirstDomainEvent.class);
 		}
 
 		@Override
@@ -1087,9 +1097,9 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		private int eventsSeen = 0;
 
 		@Override
-		public EventQuery eventQuery ( ) {
+		public EventFilter eventFilter ( ) {
 			eventQueryReads++;
-			return EventQuery.of(EventFilter.matchAll());
+			return EventFilter.matchAll();
 		}
 
 		@Override
@@ -1115,8 +1125,8 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		}
 
 		@Override
-		public EventQuery eventQuery() {
-			return EventQuery.of(EventFilter.forTypes(FirstDomainEvent.class));
+		public EventFilter eventFilter() {
+			return EventFilter.forTypes(FirstDomainEvent.class);
 		}
 
 		@Override
@@ -1155,8 +1165,8 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		private volatile int counter;
 
 		@Override
-		public EventQuery eventQuery() {
-			return EventQuery.of(EventFilter.forTypes(FirstDomainEvent.class, ThirdDomainEvent.class));
+		public EventFilter eventFilter() {
+			return EventFilter.forTypes(FirstDomainEvent.class, ThirdDomainEvent.class);
 		}
 
 		@Override

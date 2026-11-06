@@ -30,7 +30,6 @@ import org.sliceworkz.eventstore.projection.BatchAwareProjection;
 import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.projection.ProjectorException;
 import org.sliceworkz.eventstore.query.EventFilter;
-import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.AppendListener;
@@ -101,8 +100,8 @@ public class NotifiedProjectionExample implements AppendListener {
 		private int counterInBatch;
 		
 		@Override
-		public EventQuery eventQuery() {
-			return EventQuery.of(EventFilter.matchAll());
+		public EventFilter eventFilter() {
+			return EventFilter.matchAll();
 		}
 	
 	

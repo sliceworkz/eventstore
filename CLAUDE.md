@@ -180,7 +180,8 @@ a backend answers either.** The rules:
 - Which events are relevant: a union of `EventFilterItem`s, each event types, tags and optional bounds
   `after` (exclusive) and `until` (inclusive). No direction, no limit, no read bound.
 - Built by `matchAll()`, `matchNone()`, `of(types, tags)`, `of(items...)`, `forTags(tags)`, `forTags(key, value)`,
-  `forTypes(classes...)`, `.tagged(key, value)`, `.after(ref)`, `.until(ref)`, `.afterIfLater(ref)`,
+  `forTags(tag...)`, `forTypes(classes...)`, `forTypes(eventTypes...)` (stored names, literal), `.tagged(key, value)`,
+  `.tagged(tag...)`, `.after(ref)`, `.until(ref)`, `.afterIfLater(ref)`,
   `.untilIfEarlier(ref)`, `.or(...)`. Every narrowing method applies to every item; `after`/`until`
   replace a bound (`null` removes it), the `IfLater`/`IfEarlier` forms narrow it. A bound on match-all
   makes one item of any type. `.or(...)` has no restrictions: items keep their own bounds. Both spellings

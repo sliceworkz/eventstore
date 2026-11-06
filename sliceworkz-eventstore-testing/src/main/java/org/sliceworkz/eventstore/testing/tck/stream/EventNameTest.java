@@ -32,7 +32,6 @@ import org.sliceworkz.eventstore.events.LegacyEvent;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.events.Upcaster;
 import org.sliceworkz.eventstore.query.EventFilter;
-import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventSource;
 import org.sliceworkz.eventstore.stream.EventStream;
@@ -178,11 +177,11 @@ public class EventNameTest extends AbstractEventStoreTest {
 		assertInstanceOf(CustomerEvent.CustomerSignedUp.class, byClass.getFirst().data());
 
 		// by name: the declared name is the stored name
-		List<Event<CustomerEvent>> byName = stream.query(EventFilter.of(EventTypesFilter.of(Set.of(EventType.named("CustomerRegistered"))), Tags.none()));
+		List<Event<CustomerEvent>> byName = stream.query(EventFilter.forTypes(EventType.named("CustomerRegistered")));
 		assertEquals(1, byName.size());
 
 		// the class's simple name is not a stored name of anything
-		List<Event<CustomerEvent>> bySimpleName = stream.query(EventFilter.of(EventTypesFilter.of(Set.of(EventType.named("CustomerSignedUp"))), Tags.none()));
+		List<Event<CustomerEvent>> bySimpleName = stream.query(EventFilter.forTypes(EventType.named("CustomerSignedUp")));
 		assertTrue(bySimpleName.isEmpty());
 
 		// and the filter is honoured by the lock check as well as by the read

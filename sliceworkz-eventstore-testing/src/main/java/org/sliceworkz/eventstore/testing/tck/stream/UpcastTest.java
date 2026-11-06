@@ -23,7 +23,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
@@ -32,7 +31,6 @@ import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.events.Upcaster;
 import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
-import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.testing.tck.stream.UpcastTest.CustomerEvent.CustomerRegisteredV2;
 import org.sliceworkz.eventstore.testing.tck.stream.UpcastTest.CustomerEvent.CustomerRenamed;
 import org.sliceworkz.eventstore.testing.tck.stream.UpcastTest.CustomerEvent.Name;
@@ -191,7 +189,7 @@ public class UpcastTest extends AbstractEventStoreTest {
 
 		// by class and by the stored name alike: the filter carries the name either way
 		EventQuery byClass = EventQuery.of(EventFilter.forTypes(LegacyCustomerEvent.CustomerNameChanged.class).tagged(customer));
-		EventQuery byName = EventQuery.of(EventFilter.of(EventTypesFilter.of(Set.of(EventType.named("CustomerNameChanged"))), customer));
+		EventQuery byName = EventQuery.of(EventFilter.forTypes(EventType.named("CustomerNameChanged")).tagged(customer));
 		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> current.query(byClass));
 		assertEquals("a query or a consistency boundary on this stream names the current event types, and it returns and counts the legacy events that upcast into them; it cannot name a legacy type: 'CustomerNameChanged' (a legacy type, read as 'CustomerRenamed')", e.getMessage());
 		assertEquals(e.getMessage(), assertThrows(IllegalArgumentException.class, () -> current.query(byName)).getMessage());
@@ -211,7 +209,7 @@ public class UpcastTest extends AbstractEventStoreTest {
 
 		// a raw stream registers no legacy types: the stored name is read as stored
 		EventSource<?> raw = eventStore().getRawEventStream(streamId);
-		assertEquals(1, raw.query(EventFilter.of(EventTypesFilter.of(Set.of(EventType.named("CustomerNameChanged"))), customer)).size());
+		assertEquals(1, raw.query(EventFilter.forTypes(EventType.named("CustomerNameChanged")).tagged(customer)).size());
 		// and on a typed stream where the name is a current type, the filter is an ordinary one
 		assertEquals(1, asWritten.query(EventFilter.forTypes(OriginalEvent.CustomerNameChanged.class).tagged(customer)).size());
 	}

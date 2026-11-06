@@ -183,8 +183,8 @@ public class ItemBoundsTest extends AbstractEventStoreTest {
 	void aFilterIsReadByItselfAsAForwardQuery ( ) {
 		EventFilter filter = EventFilter.forTypes(FirstDomainEvent.class).until(at(10))
 				.or(EventFilter.forTypes(SecondDomainEvent.class).after(at(20)));
-		assertEquals(references(stream.query(filter)), references(stream.query(filter)));
-		assertEquals(references(stream.query(filter, at(5))), references(stream.query(filter, at(5))));
+		assertEquals(references(stream.query(EventQuery.of(filter))), references(stream.query(filter)));
+		assertEquals(references(stream.query(EventQuery.of(filter), at(5))), references(stream.query(filter, at(5))));
 	}
 
 	// --- the consistency check -------------------------------------------------------------------

@@ -27,7 +27,6 @@ import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
-import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -82,7 +81,7 @@ public class TagRoundTripTest extends AbstractEventStoreTest {
 	}
 
 	private static List<Event<MockDomainEvent>> queryFor ( EventStream<MockDomainEvent> stream, Tag tag ) {
-		return stream.query(EventFilter.forTags(Tags.of(tag)));
+		return stream.query(EventFilter.forTags(tag));
 	}
 
 	@ForEachBackend

@@ -30,7 +30,6 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 import org.sliceworkz.eventstore.events.EventId;
@@ -41,7 +40,6 @@ import org.sliceworkz.eventstore.migration.EventStoreImporter;
 import org.sliceworkz.eventstore.migration.ImportReport;
 import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery.Direction;
-import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.spi.EventStorage.AppendsToEventStoreNotification;
 import org.sliceworkz.eventstore.spi.EventStorage.BookmarkPlacedNotification;
@@ -475,7 +473,7 @@ public class EventImportTest extends AbstractEventStoreTest {
 		List<StoredEvent> wanted = sourceEvents.stream().filter(e -> !"Second".equals(e.type().name())).toList();
 
 		ImportReport report = EventStoreImporter.from(source).to(target)
-				.matching(EventFilter.of(EventTypesFilter.of(Set.of(EventType.named("First"), EventType.named("Third"))), Tags.none()))
+				.matching(EventFilter.forTypes(EventType.named("First"), EventType.named("Third")))
 				.run();
 
 		assertEquals(2, report.read());
@@ -520,7 +518,7 @@ public class EventImportTest extends AbstractEventStoreTest {
 	@ForEachBackend(requires = Capability.IMPORT)
 	void testImporterSelectionCatchesUpAfterAnEarlierRun ( ) {
 		seedSource();
-		EventFilter onStreamFirstOrFourth = EventFilter.of(EventTypesFilter.of(Set.of(EventType.named("First"), EventType.named("Fourth"))), Tags.none());
+		EventFilter onStreamFirstOrFourth = EventFilter.forTypes(EventType.named("First"), EventType.named("Fourth"));
 
 		ImportReport first = EventStoreImporter.from(source).to(target).matching(onStreamFirstOrFourth).run();
 		assertEquals(1, first.imported());

@@ -33,6 +33,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
@@ -102,7 +103,7 @@ public class ConcurrentAppendVisibilityTest extends AbstractEventStoreTest {
 			long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
 			boolean writersDone = false;
 			while ( seen.size() < TOTAL && System.nanoTime() < deadline ) {
-				List<Event<MockDomainEvent>> batch = stream.query(EventQuery.matchAll(), cursor);
+				List<Event<MockDomainEvent>> batch = stream.query(EventQuery.of(EventFilter.matchAll()), cursor);
 				for ( Event<MockDomainEvent> event : batch ) {
 					String id = event.reference().id().value();
 					assertTrue(seen.add(id), "the same event was observed twice while tailing: " + event.data());
@@ -124,7 +125,7 @@ public class ConcurrentAppendVisibilityTest extends AbstractEventStoreTest {
 			assertEquals(TOTAL, seen.size(),
 					"a tailing reader missed %d of %d concurrently appended events".formatted(TOTAL - seen.size(), TOTAL));
 			assertEquals(TOTAL, inObservedOrder.size(), "an event was observed more than once");
-			assertEquals(TOTAL, stream.query(EventQuery.matchAll()).size(), "not every append reached the store");
+			assertEquals(TOTAL, stream.query(EventQuery.of(EventFilter.matchAll())).size(), "not every append reached the store");
 		} finally {
 			writers.shutdownNow();
 			writers.awaitTermination(10, TimeUnit.SECONDS);

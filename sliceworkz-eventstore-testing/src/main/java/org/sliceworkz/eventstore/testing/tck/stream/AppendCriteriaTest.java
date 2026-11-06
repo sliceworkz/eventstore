@@ -69,8 +69,8 @@ public class AppendCriteriaTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void testEveryConstructionPathNormalisesNullToEmpty() {
 		// the of(...) factories already used Optional.ofNullable
-		assertNotNull(AppendCriteria.of(EventQuery.matchAll(), null).expectedLastEventReference());
-		assertTrue(AppendCriteria.of(EventQuery.matchAll(), null).expectedLastEventReference().isEmpty());
+		assertNotNull(AppendCriteria.of(EventQuery.of(EventFilter.matchAll()), null).expectedLastEventReference());
+		assertTrue(AppendCriteria.of(EventQuery.of(EventFilter.matchAll()), null).expectedLastEventReference().isEmpty());
 		assertNotNull(AppendCriteria.of(EventFilter.matchAll(), null).expectedLastEventReference());
 		assertTrue(AppendCriteria.of(EventFilter.matchAll(), null).expectedLastEventReference().isEmpty());
 
@@ -81,7 +81,7 @@ public class AppendCriteriaTest extends AbstractEventStoreTest {
 
 		// a reference that is given survives untouched
 		EventReference reference = EventReference.create(42, 42);
-		assertEquals(Optional.of(reference), AppendCriteria.of(EventQuery.matchAll(), reference).expectedLastEventReference());
+		assertEquals(Optional.of(reference), AppendCriteria.of(EventQuery.of(EventFilter.matchAll()), reference).expectedLastEventReference());
 	}
 
 	@ForEachBackend
@@ -110,7 +110,7 @@ public class AppendCriteriaTest extends AbstractEventStoreTest {
 		EphemeralEvent<SecondDomainEvent> second = Event.of(new SecondDomainEvent("test2"), Tags.none());
 		eventStream.append(AppendCriteria.none(), Collections.singletonList(second));
 
-		assertEquals(2, eventStream.query(EventQuery.matchAll()).size(), "both events should be appended with none()");
+		assertEquals(2, eventStream.query(EventQuery.of(EventFilter.matchAll())).size(), "both events should be appended with none()");
 	}
 
 	@ForEachBackend
@@ -121,15 +121,15 @@ public class AppendCriteriaTest extends AbstractEventStoreTest {
 		Event<MockDomainEvent> stored = eventStream.append(AppendCriteria.none(), Collections.singletonList(first)).get(0);
 
 		// up-to-date reference: append goes through
-		AppendCriteria upToDate = AppendCriteria.of(EventQuery.matchAll(), stored.reference());
+		AppendCriteria upToDate = AppendCriteria.of(EventQuery.of(EventFilter.matchAll()), stored.reference());
 		eventStream.append(upToDate, Collections.singletonList(Event.of(new SecondDomainEvent("test2"), Tags.none())));
-		assertEquals(2, eventStream.query(EventQuery.matchAll()).size());
+		assertEquals(2, eventStream.query(EventQuery.of(EventFilter.matchAll())).size());
 
 		// the same reference is now stale — a new relevant fact sits after it
 		assertThrows(OptimisticLockingException.class,
 				() -> eventStream.append(upToDate, Collections.singletonList(Event.of(new SecondDomainEvent("test3"), Tags.none()))),
 				"a stale reference must still raise an OptimisticLockingException");
-		assertEquals(2, eventStream.query(EventQuery.matchAll()).size(), "the failed append must not have stored anything");
+		assertEquals(2, eventStream.query(EventQuery.of(EventFilter.matchAll())).size(), "the failed append must not have stored anything");
 	}
 
 	@ForEachBackend
@@ -137,15 +137,15 @@ public class AppendCriteriaTest extends AbstractEventStoreTest {
 		EventStream<MockDomainEvent> eventStream = createEventStream();
 
 		// an empty Optional is not 'no criteria': against an empty stream the append succeeds ...
-		AppendCriteria expectingEmpty = AppendCriteria.of(EventQuery.matchAll(), null);
+		AppendCriteria expectingEmpty = AppendCriteria.of(EventQuery.of(EventFilter.matchAll()), null);
 		eventStream.append(expectingEmpty, Collections.singletonList(Event.of(new FirstDomainEvent("test1"), Tags.none())));
-		assertEquals(1, eventStream.query(EventQuery.matchAll()).size());
+		assertEquals(1, eventStream.query(EventQuery.of(EventFilter.matchAll())).size());
 
 		// ... and against a stream that is no longer empty it must not
 		assertThrows(OptimisticLockingException.class,
 				() -> eventStream.append(expectingEmpty, Collections.singletonList(Event.of(new SecondDomainEvent("test2"), Tags.none()))),
 				"criteria with an empty reference expect an empty stream, and must lock when it is not");
-		assertEquals(1, eventStream.query(EventQuery.matchAll()).size(), "the failed append must not have stored anything");
+		assertEquals(1, eventStream.query(EventQuery.of(EventFilter.matchAll())).size(), "the failed append must not have stored anything");
 	}
 
 	private EventStream<MockDomainEvent> createEventStream() {

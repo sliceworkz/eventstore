@@ -53,7 +53,7 @@ public class StreamScopeTest extends AbstractEventStoreTest {
 	}
 
 	private List<StoredEvent> read ( EventStreamId scope ) {
-		return eventStorage().query(EventFilter.matchAll(), scope, null, Limit.none(), Direction.FORWARD);
+		return eventStorage().query(EventFilter.matchAll(), scope, null, null, Limit.none(), Direction.FORWARD);
 	}
 
 	@ForEachBackend
@@ -61,7 +61,7 @@ public class StreamScopeTest extends AbstractEventStoreTest {
 		EventStorage storage = eventStorage();
 
 		assertThrows(IllegalArgumentException.class,
-				() -> storage.query(EventFilter.matchAll(), null, null, Limit.none(), Direction.FORWARD));
+				() -> storage.query(EventFilter.matchAll(), null, null, null, Limit.none(), Direction.FORWARD));
 		assertThrows(IllegalArgumentException.class,
 				() -> storage.append(AppendCriteria.none(), null, List.of(event(ORDERS, "OrderPlaced"))));
 		assertThrows(IllegalArgumentException.class, () -> storage.head(null));

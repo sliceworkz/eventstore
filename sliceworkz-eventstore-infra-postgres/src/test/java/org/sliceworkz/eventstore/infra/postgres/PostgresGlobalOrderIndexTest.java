@@ -121,7 +121,7 @@ public class PostgresGlobalOrderIndexTest {
 				seed(storage);
 				analyze(dataSource, prefix);
 
-				List<StoredEvent> all = storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, Limit.none(), Direction.FORWARD);
+				List<StoredEvent> all = storage.query(EventFilter.matchAll(), EventStreamId.anyContext(), null, null, Limit.none(), Direction.FORWARD);
 				String plan = explainPage(storage, dataSource, EventStreamId.anyContext(), all.get(all.size() / 2).reference());
 
 				assertTrue(plan.contains("Index Scan using " + prefix + "idx_events_global_order"), () ->
@@ -163,7 +163,7 @@ public class PostgresGlobalOrderIndexTest {
 				analyze(dataSource, prefix);
 
 				EventStreamId context = EventStreamId.forContext(CONTEXT).anyPurpose();
-				List<StoredEvent> all = storage.query(EventFilter.matchAll(), context, null, Limit.none(), Direction.FORWARD);
+				List<StoredEvent> all = storage.query(EventFilter.matchAll(), context, null, null, Limit.none(), Direction.FORWARD);
 				String plan = explainPage(storage, dataSource, context, all.get(all.size() / 2).reference());
 
 				assertTrue(plan.contains("Index Scan using " + prefix + "idx_events_context_order"), () ->
@@ -381,7 +381,7 @@ public class PostgresGlobalOrderIndexTest {
 		private String explainPage ( PostgresEventStorageImpl storage, DataSource dataSource,
 				EventStreamId stream, EventReference cursor ) throws SQLException {
 			List<Object> parameters = new ArrayList<>();
-			String sql = storage.querySql(EventFilter.matchAll(), stream, cursor, Limit.to(PAGE), Direction.FORWARD, parameters);
+			String sql = storage.querySql(EventFilter.matchAll(), stream, cursor, null, Limit.to(PAGE), Direction.FORWARD, parameters);
 			return explain(dataSource, "EXPLAIN (COSTS OFF) " + sql, parameters);
 		}
 

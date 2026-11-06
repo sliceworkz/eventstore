@@ -257,7 +257,7 @@ public final class AppendWorkloads {
 					items.add(new EventFilterItem(stockTypes(),
 							Tags.of(TagKeys.SKU, context.companionEntity(i))));
 				}
-				return new EventFilter(items, null);
+				return new EventFilter(items);
 			}
 		};
 	}
@@ -424,7 +424,7 @@ public final class AppendWorkloads {
 			@Override
 			public Object invoke ( WorkloadContext context ) {
 				String sku = context.nextEntity();
-				EventQuery boundary = EventQuery.forEvents(stockTypes(), Tags.of(TagKeys.SKU, sku));
+				EventQuery boundary = EventQuery.of(EventFilter.forEvents(stockTypes(), Tags.of(TagKeys.SKU, sku)));
 
 				List<Event<InventoryEvent>> history = context.inventory().query(boundary);
 				EventReference last = history.isEmpty() ? null : history.getLast().reference();
@@ -492,7 +492,7 @@ public final class AppendWorkloads {
 			@Override
 			public Object invoke ( WorkloadContext context ) {
 				String sku = context.nextEntity();
-				EventQuery boundary = EventQuery.forEvents(stockTypes(), Tags.of(TagKeys.SKU, sku));
+				EventQuery boundary = EventQuery.of(EventFilter.forEvents(stockTypes(), Tags.of(TagKeys.SKU, sku)));
 
 				// head FIRST, boundary second -- the order is the safety. Presenting the head claims
 				// "no matching events after it that I have not seen", and only this order makes that
@@ -511,7 +511,7 @@ public final class AppendWorkloads {
 				// claims -- a matching event landing between the two reads is left for the check to
 				// raise rather than folded into a decision the check then rejects
 				context.inventory()
-						.query(boundary.until(head).backwards().limit(1));
+						.query(boundary.notAfter(head).backwards().limit(1));
 
 				try {
 					return context.inventoryToAppendTo(sku).append(
@@ -642,7 +642,7 @@ public final class AppendWorkloads {
 		private EventReference readBoundary ( WorkloadContext context, EventFilter filter ) {
 			return context.inventory()
 					.query(new EventQuery(filter, EventQuery.Direction.BACKWARD,
-							org.sliceworkz.eventstore.query.Limit.to(1)))
+							org.sliceworkz.eventstore.query.Limit.to(1), null))
 					.stream()
 					.map(Event::reference)
 					.findFirst()

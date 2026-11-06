@@ -25,6 +25,7 @@ import java.util.List;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -81,7 +82,7 @@ public class TagRoundTripTest extends AbstractEventStoreTest {
 	}
 
 	private static List<Event<MockDomainEvent>> queryFor ( EventStream<MockDomainEvent> stream, Tag tag ) {
-		return stream.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of(tag)));
+		return stream.query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.any(), Tags.of(tag))));
 	}
 
 	@ForEachBackend
@@ -136,7 +137,7 @@ public class TagRoundTripTest extends AbstractEventStoreTest {
 			assertEquals(1, queryFor(stream, tag).size(), "the event should be found by its tag " + tag);
 		}
 
-		Tags readBack = stream.query(EventQuery.matchAll()).getFirst().tags();
+		Tags readBack = stream.query(EventQuery.of(EventFilter.matchAll())).getFirst().tags();
 		assertEquals(tags, readBack, "four distinct tags must not collapse on the way through storage");
 	}
 

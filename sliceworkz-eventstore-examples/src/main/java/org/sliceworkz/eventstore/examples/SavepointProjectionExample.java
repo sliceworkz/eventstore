@@ -27,6 +27,7 @@ import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.projection.Projection;
 import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.projection.Projector.ProjectorMetrics;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -130,19 +131,19 @@ public class SavepointProjectionExample {
 		@Override
 		public EventQuery initQuery ( ) {
 			// Find the last stock count (savepoint) for this product
-			return EventQuery.forEvents(
+			return EventQuery.of(EventFilter.forEvents(
 				EventTypesFilter.of(StockCounted.class),
 				Tags.of("product", product)
-			).backwards().limit(1);
+			)).backwards().limit(1);
 		}
 
 		@Override
 		public EventQuery eventQuery ( ) {
 			// Only process movements — savepoints are handled exclusively by initQuery
-			return EventQuery.forEvents(
+			return EventQuery.of(EventFilter.forEvents(
 				EventTypesFilter.of(StockAdded.class, StockPicked.class),
 				Tags.of("product", product)
-			);
+			));
 		}
 
 		@Override

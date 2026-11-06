@@ -148,7 +148,7 @@ public class PostgresCursorBoundaryTest {
 			try {
 				EventStreamId stream = EventStreamId.forContext("account").withPurpose("42");
 				Tags tags = Tags.of("account", "42");
-				EventQuery boundary = EventQuery.forEvents(EventTypesFilter.any(), tags);
+				EventQuery boundary = EventQuery.of(EventFilter.forEvents(EventTypesFilter.any(), tags));
 
 				invert(storage, dataSource, prefix, stream, tags);
 				List<StoredEvent> replay = read(storage, stream, null, Limit.none(), Direction.FORWARD, null);
@@ -253,11 +253,10 @@ public class PostgresCursorBoundaryTest {
 			insertAtPosition(dataSource, prefix, reserved, stream, "StockPicked", tags);
 		}
 
-		/** Reads through the store, with the given cursor, limit, direction and {@code until}. */
+		/** Reads through the store, with the given cursor, limit, direction and read bound. */
 		private List<StoredEvent> read ( PostgresEventStorageImpl storage, EventStreamId stream,
 				EventReference cursor, Limit limit, Direction direction, EventReference until ) {
-			EventFilter filter = until == null ? EventFilter.matchAll() : EventFilter.matchAll().until(until);
-			return storage.query(filter, stream, cursor, limit, direction);
+			return storage.query(EventFilter.matchAll(), stream, cursor, until, limit, direction);
 		}
 
 		/** Pages the whole stream, carrying a cursor, and answers what it visited. */

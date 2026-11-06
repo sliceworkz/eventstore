@@ -191,7 +191,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		assertFalse(retrieved.isEmpty());
 		assertEquals(eventId, retrieved.getFirst().reference().id());
 		// or from a query on the same
-		assertTrue(es.query(EventQuery.matchAll()).stream().map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());
+		assertTrue(es.query(EventQuery.of(EventFilter.matchAll())).stream().map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());
 
 		// check we can find it via getEvent on a generic stream
 		EventStreamId generic = EventStreamId.anyContext().anyPurpose();
@@ -200,7 +200,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		assertFalse(retrieved.isEmpty());
 		assertEquals(eventId, retrieved.getFirst().reference().id());
 		// or from a query on the same
-		assertTrue(genericStream.query(EventQuery.matchAll()).stream().map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());
+		assertTrue(genericStream.query(EventQuery.of(EventFilter.matchAll())).stream().map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());
 
 		// check we can't get it via another stream: absent there, not present-and-empty
 		EventStreamId other = EventStreamId.forContext("test2").withPurpose("test2");
@@ -208,7 +208,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		Optional<List<Event<MockDomainEvent>>> notRetrieved = otherStream.getEventById(eventId);
 		assertTrue(notRetrieved.isEmpty());
 		// and neither from a query on the same
-		assertFalse(otherStream.query(EventQuery.matchAll()).stream().map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());
+		assertFalse(otherStream.query(EventQuery.of(EventFilter.matchAll())).stream().map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());
 
 	}
 
@@ -259,7 +259,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		assertFalse(retrieved.isEmpty());
 		assertEquals(eventId, retrieved.getFirst().reference().id());
 		// or from a query on the same
-		assertTrue(es.query(EventQuery.matchAll()).stream().map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());
+		assertTrue(es.query(EventQuery.of(EventFilter.matchAll())).stream().map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());
 
 		// check we can find it via getEvent on a generic stream
 		EventStreamId generic = EventStreamId.anyContext().anyPurpose();
@@ -268,7 +268,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		assertFalse(retrieved.isEmpty());
 		assertEquals(eventId, retrieved.getFirst().reference().id());
 		// or from a query on the same
-		assertTrue(genericStream.query(EventQuery.matchAll()).stream().map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());
+		assertTrue(genericStream.query(EventQuery.of(EventFilter.matchAll())).stream().map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());
 
 		// check we can't get it via another stream: absent there, not present-and-empty
 		EventStreamId other = EventStreamId.forContext("test2").withPurpose("test2");
@@ -276,7 +276,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		Optional<List<Event<MockDomainEvent>>> notRetrieved = otherStream.getEventById(eventId);
 		assertTrue(notRetrieved.isEmpty());
 		// and neither from a query on the same
-		assertFalse(otherStream.query(EventQuery.matchAll()).stream().map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());
+		assertFalse(otherStream.query(EventQuery.of(EventFilter.matchAll())).stream().map(e->e.reference().id()).filter(id->id.equals(eventId)).findAny().isPresent());
 
 	}
 
@@ -382,15 +382,15 @@ public class EventStreamTest extends AbstractEventStoreTest {
 
 		assertEquals(
 			List.of(single.getFirst().reference(), batch.getFirst().reference(), batch.getLast().reference()),
-			es.query(EventQuery.matchAll()).stream().map(Event::reference).toList());
+			es.query(EventQuery.of(EventFilter.matchAll())).stream().map(Event::reference).toList());
 
 		// no criteria means no boundary: an append that would be refused against a stale boundary is
 		// admitted without one, on a stream that has moved under it
 		EventReference stale = single.getFirst().reference();
 		assertThrows(org.sliceworkz.eventstore.stream.OptimisticLockingException.class,
-			()->es.append(AppendCriteria.of(EventQuery.matchAll(), stale), Event.of(new FirstDomainEvent("refused"), Tags.none())));
+			()->es.append(AppendCriteria.of(EventQuery.of(EventFilter.matchAll()), stale), Event.of(new FirstDomainEvent("refused"), Tags.none())));
 		assertEquals(1, es.append(Event.of(new FirstDomainEvent("4"), Tags.none())).size());
-		assertEquals(4, es.query(EventQuery.matchAll()).size());
+		assertEquals(4, es.query(EventQuery.of(EventFilter.matchAll())).size());
 
 		// and the idempotency rules are those of the criteria-taking append
 		assertEquals(1, es.append(Event.of(new FirstDomainEvent("5"), Tags.none()).withIdempotencyKey("once")).size());
@@ -398,7 +398,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		assertThrows(IllegalArgumentException.class, ()->es.append(List.of(
 			Event.of(new FirstDomainEvent("6"), Tags.none()).withIdempotencyKey("twice"),
 			Event.of(new FirstDomainEvent("7"), Tags.none()).withIdempotencyKey("twice"))));
-		assertEquals(5, es.query(EventQuery.matchAll()).size());
+		assertEquals(5, es.query(EventQuery.of(EventFilter.matchAll())).size());
 	}
 
 	@ForEachBackend
@@ -407,7 +407,7 @@ public class EventStreamTest extends AbstractEventStoreTest {
 			() -> es.append(AppendCriteria.none(), Collections.emptyList())
 		);
 		assertEquals(0, events.size());
-		assertEquals(0, es.query(EventQuery.matchAll()).size());
+		assertEquals(0, es.query(EventQuery.of(EventFilter.matchAll())).size());
 	}
 
 	@ForEachBackend
@@ -427,10 +427,10 @@ public class EventStreamTest extends AbstractEventStoreTest {
 		EventStream<MockDomainEvent> wholeContext = eventStore().getEventStream(stream.anyPurpose(), MockDomainEvent.class);
 		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> wholeContext.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none())));
 		assertEquals("cannot append to non-specific eventstream app", e.getMessage());
-		assertEquals(0, wholeContext.query(EventQuery.matchAll()).size());
+		assertEquals(0, wholeContext.query(EventQuery.of(EventFilter.matchAll())).size());
 
 		es.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("1"), Tags.none()));
-		assertEquals(1, wholeContext.query(EventQuery.matchAll()).size());
+		assertEquals(1, wholeContext.query(EventQuery.of(EventFilter.matchAll())).size());
 	}
 
 	@ForEachBackend

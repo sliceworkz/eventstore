@@ -29,6 +29,7 @@ import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventDeserializationException;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -76,7 +77,7 @@ public class EventPageTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void aPageCarriesItsEventsTheStoredCountAndTheLastStoredReference ( ) {
 		EventStream<MockDomainEvent> stream = seed(5);
-		EventQuery twoAtATime = EventQuery.matchAll().limit(2);
+		EventQuery twoAtATime = EventQuery.of(EventFilter.matchAll()).limit(2);
 
 		EventPage<MockDomainEvent> first = stream.page(twoAtATime, null);
 		assertEquals(List.of("1", "2"), values(first.events()));
@@ -105,13 +106,13 @@ public class EventPageTest extends AbstractEventStoreTest {
 	void aPageHoldsWhatAQueryWithTheSameArgumentsReturns ( ) {
 		EventStream<MockDomainEvent> stream = seed(6);
 		stream.append(AppendCriteria.none(), Event.of(new SecondDomainEvent("other"), Tags.none()));
-		EventReference cursor = stream.query(EventQuery.matchAll().limit(1)).getFirst().reference();
+		EventReference cursor = stream.query(EventQuery.of(EventFilter.matchAll()).limit(1)).getFirst().reference();
 
 		for ( EventQuery q : List.of(
-				EventQuery.matchAll().limit(3),
-				EventQuery.matchAll().backwards().limit(3),
-				EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).limit(2),
-				EventQuery.matchAll() ) ) {
+				EventQuery.of(EventFilter.matchAll()).limit(3),
+				EventQuery.of(EventFilter.matchAll()).backwards().limit(3),
+				EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())).limit(2),
+				EventQuery.of(EventFilter.matchAll()) ) ) {
 			assertEquals(stream.query(q, cursor), stream.page(q, cursor).events(), q.toString());
 			assertEquals(stream.query(q, null), stream.page(q, null).events(), q.toString());
 		}
@@ -121,7 +122,7 @@ public class EventPageTest extends AbstractEventStoreTest {
 	void aQueryWithNoLimitReadsToTheEndAsOnePage ( ) {
 		EventStream<MockDomainEvent> stream = seed(4);
 
-		EventPage<MockDomainEvent> whole = stream.page(EventQuery.matchAll(), null);
+		EventPage<MockDomainEvent> whole = stream.page(EventQuery.of(EventFilter.matchAll()), null);
 		assertEquals(List.of("1", "2", "3", "4"), values(whole.events()));
 		assertEquals(4, whole.storedEventCount());
 	}
@@ -129,7 +130,7 @@ public class EventPageTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void aBackwardsPageContinuesTowardsTheOldest ( ) {
 		EventStream<MockDomainEvent> stream = seed(5);
-		EventQuery newestFirst = EventQuery.matchAll().backwards().limit(2);
+		EventQuery newestFirst = EventQuery.of(EventFilter.matchAll()).backwards().limit(2);
 
 		EventPage<MockDomainEvent> first = stream.page(newestFirst, null);
 		assertEquals(List.of("5", "4"), values(first.events()));
@@ -159,7 +160,7 @@ public class EventPageTest extends AbstractEventStoreTest {
 		EventStream<CurrentEvent> stream = eventStore().getEventStream(streamId, CurrentEvent.class, LegacyEvents.class);
 		stream.append(AppendCriteria.none(), Event.of(new CurrentEvent.CustomerChurned(), Tags.none()));
 
-		EventQuery threeAtATime = EventQuery.matchAll().limit(3);
+		EventQuery threeAtATime = EventQuery.of(EventFilter.matchAll()).limit(3);
 
 		EventPage<CurrentEvent> vanished = stream.page(threeAtATime, null);
 		assertTrue(vanished.events().isEmpty(), "three audit logs, each upcasting into nothing");
@@ -167,7 +168,7 @@ public class EventPageTest extends AbstractEventStoreTest {
 		assertFalse(vanished.isExhausted());
 		EventReference cursor = vanished.lastStoredEventReference().orElseThrow();
 		assertEquals(0, cursor.index(), "a stored event, whole");
-		EventReference thirdAuditLog = eventStore().getRawEventStream(streamId).query(EventQuery.matchAll().limit(3)).getLast().reference();
+		EventReference thirdAuditLog = eventStore().getRawEventStream(streamId).query(EventQuery.of(EventFilter.matchAll()).limit(3)).getLast().reference();
 		assertEquals(thirdAuditLog, cursor, "the third audit log, read raw: the last stored event of the page");
 
 		EventPage<CurrentEvent> next = stream.page(threeAtATime, cursor);
@@ -187,7 +188,7 @@ public class EventPageTest extends AbstractEventStoreTest {
 		original.append(AppendCriteria.none(), Event.of(new OriginalEvent.CustomerNameChanged("Jane"), Tags.none()));
 		EventStream<CurrentEvent> stream = eventStore().getEventStream(streamId, CurrentEvent.class, LegacyEvents.class);
 
-		EventPage<CurrentEvent> split = stream.page(EventQuery.matchAll().limit(1), null);
+		EventPage<CurrentEvent> split = stream.page(EventQuery.of(EventFilter.matchAll()).limit(1), null);
 		assertEquals(2, split.events().size(), "one stored event, two events");
 		assertEquals(1, split.storedEventCount());
 		EventReference cursor = split.lastStoredEventReference().orElseThrow();
@@ -195,7 +196,7 @@ public class EventPageTest extends AbstractEventStoreTest {
 		assertEquals(split.events().get(0).reference().position(), cursor.position());
 		assertEquals(1, split.events().get(1).reference().index(), "the events carry their index, the cursor does not");
 
-		EventPage<CurrentEvent> rest = stream.page(EventQuery.matchAll().limit(1), cursor);
+		EventPage<CurrentEvent> rest = stream.page(EventQuery.of(EventFilter.matchAll()).limit(1), cursor);
 		assertEquals(1, rest.events().size());
 		assertEquals(CurrentEvent.CustomerRenamed.class, rest.events().get(0).data().getClass());
 	}
@@ -213,7 +214,7 @@ public class EventPageTest extends AbstractEventStoreTest {
 			original.append(AppendCriteria.none(), Event.of(new OriginalEvent.CustomerNameChanged("Jane " + i), Tags.none()));
 		}
 		EventStream<CurrentEvent> stream = eventStore().getEventStream(streamId, CurrentEvent.class, LegacyEvents.class);
-		EventQuery q = EventQuery.matchAll().limit(5);
+		EventQuery q = EventQuery.of(EventFilter.matchAll()).limit(5);
 
 		List<EventReference> seen = new ArrayList<>();
 		int pages = 0;
@@ -227,7 +228,7 @@ public class EventPageTest extends AbstractEventStoreTest {
 		} while ( page.storedEventCount() == 5 );
 
 		assertEquals(3, pages, "12 stored events in pages of 5: 5, 5, 2");
-		assertEquals(stream.query(EventQuery.matchAll()).stream().map(Event::reference).toList(), seen,
+		assertEquals(stream.query(EventQuery.of(EventFilter.matchAll())).stream().map(Event::reference).toList(), seen,
 				"every event once, in order: the three events per round, less the audit log");
 		assertEquals(12, seen.size());
 	}
@@ -244,15 +245,15 @@ public class EventPageTest extends AbstractEventStoreTest {
 				.append(AppendCriteria.none(), Event.of(new CurrentEvent.CustomerChurned(), Tags.none()));
 
 		EventDeserializationException fromPage = assertThrows(EventDeserializationException.class,
-				() -> stream.page(EventQuery.matchAll(), null));
+				() -> stream.page(EventQuery.of(EventFilter.matchAll()), null));
 		assertEquals(stream.head().orElseThrow(), fromPage.getReference().orElseThrow(), "the poison event is named");
 
 		EventDeserializationException fromQuery = assertThrows(EventDeserializationException.class,
-				() -> stream.query(EventQuery.matchAll()));
+				() -> stream.query(EventQuery.of(EventFilter.matchAll())));
 		assertEquals(fromPage.getReference(), fromQuery.getReference());
 
 		// a page that stops short of the poison event is unaffected
-		assertEquals(List.of("1", "2"), values(stream.page(EventQuery.matchAll().limit(2), null).events()));
+		assertEquals(List.of("1", "2"), values(stream.page(EventQuery.of(EventFilter.matchAll()).limit(2), null).events()));
 	}
 
 }

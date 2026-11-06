@@ -33,6 +33,7 @@ import org.sliceworkz.eventstore.infra.inmem.fs.InMemoryFsEventStorage;
 import org.sliceworkz.eventstore.observability.EventStoreObserver;
 import org.sliceworkz.eventstore.observability.Observation;
 import org.sliceworkz.eventstore.infra.inmem.shredding.InMemoryShreddingKeyStore;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.shredding.DataSubject;
 import org.sliceworkz.eventstore.shredding.Shreddable;
@@ -126,7 +127,7 @@ public class EventStoreBuilderTest {
 			  EventStore store = EventStore.on(storage).build() ) {
 			recordContact(store, "Alice Martin");
 
-			ContactRecorded read = (ContactRecorded) contacts(store).query(EventQuery.matchAll()).getFirst().data();
+			ContactRecorded read = (ContactRecorded) contacts(store).query(EventQuery.of(EventFilter.matchAll())).getFirst().data();
 			assertEquals(Optional.of("Alice Martin"), read.name().toOptional(), "the store did not read through the storage's codec");
 			assertTrue(store.shreddingAudit().isPresent(), "the store has no audit, so the storage's codec never reached it");
 		}
@@ -149,7 +150,7 @@ public class EventStoreBuilderTest {
 			  EventStore reader = EventStore.on(storage).shredding(ShreddingCodec.withholdingAll()).build() ) {
 			recordContact(writer, "Alice Martin");
 
-			ContactRecorded read = (ContactRecorded) contacts(reader).query(EventQuery.matchAll()).getFirst().data();
+			ContactRecorded read = (ContactRecorded) contacts(reader).query(EventQuery.of(EventFilter.matchAll())).getFirst().data();
 			assertInstanceOf(Shreddable.Withheld.class, read.name(), "the reader read with the storage's codec rather than its own");
 			assertEquals(Optional.empty(), reader.shreddingAudit(), "the withholding codec has no audit, so this one came from the storage's codec");
 		}
@@ -163,7 +164,7 @@ public class EventStoreBuilderTest {
 			store.close();
 
 			assertThrows(EventStorageClosedException.class, () -> appendOne(store, "c-1"), "the closed store still serves");
-			assertEquals(1, storage.query(org.sliceworkz.eventstore.query.EventFilter.matchAll(), EventStreamId.anyContext(), null,
+			assertEquals(1, storage.query(org.sliceworkz.eventstore.query.EventFilter.matchAll(), EventStreamId.anyContext(), null, null,
 					org.sliceworkz.eventstore.query.Limit.none(), org.sliceworkz.eventstore.query.EventQuery.Direction.FORWARD).size(),
 					"closing the store closed the storage it was built on");
 
@@ -183,7 +184,7 @@ public class EventStoreBuilderTest {
 			first.close();
 
 			appendOne(second, "c-1");
-			assertEquals(1, stock(second, "c-1").query(EventQuery.matchAll()).size(), "closing one store affected another built by the same builder");
+			assertEquals(1, stock(second, "c-1").query(EventQuery.of(EventFilter.matchAll())).size(), "closing one store affected another built by the same builder");
 			assertNull(second.shreddingAudit().orElse(null));
 			second.close();
 		}

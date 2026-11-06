@@ -152,7 +152,7 @@ public class PostgresOrderIndexAdmissionTest {
 			Fixture fixture = fixture(image);
 			List<Object> parameters = new ArrayList<>();
 			String sql = fixture.storage().querySql(EventFilter.matchAll(), EventStreamId.forContext(QUIET_CONTEXT),
-					fixture.quietMidpoint(), Limit.to(PAGE), Direction.FORWARD, parameters);
+					fixture.quietMidpoint(), null, Limit.to(PAGE), Direction.FORWARD, parameters);
 
 			List<Plan> plans = explain(fixture, sql, parameters);
 
@@ -175,7 +175,7 @@ public class PostgresOrderIndexAdmissionTest {
 			Fixture fixture = fixture(image);
 			List<Object> parameters = new ArrayList<>();
 			String sql = fixture.storage().querySql(EventFilter.forTags(Tags.of("entity", "7")),
-					EventStreamId.forContext(QUIET_CONTEXT), null, Limit.to(1), Direction.BACKWARD, parameters);
+					EventStreamId.forContext(QUIET_CONTEXT), null, null, Limit.to(1), Direction.BACKWARD, parameters);
 
 			List<Plan> plans = explain(fixture, sql, parameters);
 
@@ -334,7 +334,7 @@ public class PostgresOrderIndexAdmissionTest {
 			seed(storage);
 			analyze(dataSource);
 			List<StoredEvent> quiet = storage.query(EventFilter.matchAll(), EventStreamId.forContext(QUIET_CONTEXT),
-					null, Limit.none(), Direction.FORWARD);
+					null, null, Limit.none(), Direction.FORWARD);
 			return new Fixture(storage, dataSource,
 					quiet.get(quiet.size() - 1).reference(), quiet.get(quiet.size() / 2).reference());
 		});

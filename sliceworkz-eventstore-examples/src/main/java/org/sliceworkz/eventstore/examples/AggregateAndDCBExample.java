@@ -28,6 +28,7 @@ import org.sliceworkz.eventstore.examples.CourseDomainEvent.CourseCapacityUpdate
 import org.sliceworkz.eventstore.examples.CourseDomainEvent.CourseDefined;
 import org.sliceworkz.eventstore.examples.RegistrationDomainEvent.StudentSubscribedToCourse;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -81,10 +82,10 @@ public class AggregateAndDCBExample {
 	// read: the consistency boundary then silently narrows and the store reports success on an append
 	// that should have conflicted. Nothing -- no type, no test, no runtime check -- catches that
 	EventQuery studentQuery ( String studentId ) {
-	    return EventQuery.forEvents(
+	    return EventQuery.of(EventFilter.forEvents(
 	        EventTypesFilter.of(StudentDomainEvent.class),
 	        Tags.of("student", studentId)
-	    );
+	    ));
 	}
 
 	// Load aggregate from events. The sealed interface stands for every event type under it, and the
@@ -109,10 +110,10 @@ public class AggregateAndDCBExample {
 
 	// Likewise for a course: one query, read by loadCourse and checked by saveCourse
 	EventQuery courseQuery ( String courseId ) {
-	    return EventQuery.forEvents(
+	    return EventQuery.of(EventFilter.forEvents(
 	        EventTypesFilter.of(CourseDomainEvent.class),
 	        Tags.of("course", courseId)
-	    );
+	    ));
 	}
 
 	// Load aggregate from events
@@ -140,10 +141,9 @@ public class AggregateAndDCBExample {
     	// pin the consistency boundary before reading: absent for an empty stream, which is a valid boundary,
     	// so a student or course without any history yet needs no special case
     	EventReference head = stream.head().orElse(null);
-    	// the read is bounded at the head; the append below hands the criteria the same query UNBOUNDED,
-    	// with the head as its expected last event. Passing the until form to AppendCriteria instead reads
-    	// as the more careful of the two and is the one that turns optimistic locking off outright
-    	stream.query(dm.getEventQuery().until(head)).forEach(dm::when);
+    	// the read is bounded at the head; the append below hands the criteria the same query, whose filter
+    	// is all it takes, with the head as its expected last event
+    	stream.query(dm.getEventQuery().notAfter(head)).forEach(dm::when);
 
         if ( dm.canSubscribe() ) {
             stream.append(
@@ -333,13 +333,13 @@ class RegistrationDecisionModel implements EventHandler<LearningDomainEvent> {
 	
 	public EventQuery getEventQuery ( ) {
 		// this query will deliver all events linked to the student at hand, including subscriptions to other courses
-		EventQuery studentQuery = EventQuery.forTypes(StudentSubscribedToCourse.class).tagged("student", studentId);
+		EventQuery studentQuery = EventQuery.of(EventFilter.forTypes(StudentSubscribedToCourse.class).tagged("student", studentId));
 		
 		// this query will deliver all events linked to the course at hand, including subscriptions from other students
-		EventQuery courseQuery = EventQuery.forTypes(CourseDefined.class, CourseCapacityUpdated.class, StudentSubscribedToCourse.class).tagged("course", courseId);
+		EventQuery courseQuery = EventQuery.of(EventFilter.forTypes(CourseDefined.class, CourseCapacityUpdated.class, StudentSubscribedToCourse.class).tagged("course", courseId));
 		
 		// ask for all matching events (union query)
-		return studentQuery.or(courseQuery);
+		return EventQuery.of(studentQuery.filter().or(courseQuery.filter()));
 	}
 	
 

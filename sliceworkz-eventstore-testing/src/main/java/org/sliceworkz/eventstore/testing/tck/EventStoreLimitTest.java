@@ -26,6 +26,7 @@ import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.spi.EventStorageException;
@@ -65,18 +66,18 @@ public class EventStoreLimitTest extends AbstractEventStoreTest {
 		storeEvent(stream, new MockDomainEvent.ThirdDomainEvent("one"), Tags.of(Tag.of("mod2", "0"), Tag.of("mod3", "0")));
 		storeEvent(stream, new MockDomainEvent.ThirdDomainEvent("one"), Tags.of(Tag.of("mod2", "1"), Tag.of("mod3", "1")));
 
-		EventStorageException e = assertThrows(EventStorageException.class, ()->eventStore().getRawEventStream(stream).query(EventQuery.matchAll()));
+		EventStorageException e = assertThrows(EventStorageException.class, ()->eventStore().getRawEventStream(stream).query(EventQuery.of(EventFilter.matchAll())));
 		assertEquals("query returned more results than the configured absolute limit of 2", e.getMessage());
 
-		e = assertThrows(EventStorageException.class, ()->eventStore().getRawEventStream(stream).query(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())));
+		e = assertThrows(EventStorageException.class, ()->eventStore().getRawEventStream(stream).query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()))));
 		assertEquals("query returned more results than the configured absolute limit of 2", e.getMessage());
 
-		e = assertThrows(EventStorageException.class, ()->eventStore().getRawEventStream(stream).query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("mod2", "0"))));
+		e = assertThrows(EventStorageException.class, ()->eventStore().getRawEventStream(stream).query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.any(), Tags.of("mod2", "0")))));
 		assertEquals("query returned more results than the configured absolute limit of 2", e.getMessage());
 
 		// these should all be ok
-		eventStore().getRawEventStream(stream).query(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.of("mod2", "1")));
-		eventStore().getRawEventStream(stream).query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("mod2", "2")));
+		eventStore().getRawEventStream(stream).query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.of("mod2", "1"))));
+		eventStore().getRawEventStream(stream).query(EventQuery.of(EventFilter.forEvents(EventTypesFilter.any(), Tags.of("mod2", "2"))));
 	}
 
 	/**
@@ -103,16 +104,16 @@ public class EventStoreLimitTest extends AbstractEventStoreTest {
 
 		EventStream<MockDomainEvent> eventStream = eventStore().getEventStream(stream, MockDomainEvent.class);
 
-		EventReference cursor = eventStream.query(EventQuery.matchAll().limit(1)).stream()
+		EventReference cursor = eventStream.query(EventQuery.of(EventFilter.matchAll()).limit(1)).stream()
 				.findFirst().orElseThrow().reference();
 
-		assertEquals(2, eventStream.query(EventQuery.matchAll().limit(2)).size(),
+		assertEquals(2, eventStream.query(EventQuery.of(EventFilter.matchAll()).limit(2)).size(),
 				"limit carried by the query itself");
 
-		assertEquals(2, eventStream.query(EventQuery.matchAll().limit(2), cursor).size(),
+		assertEquals(2, eventStream.query(EventQuery.of(EventFilter.matchAll()).limit(2), cursor).size(),
 				"limit carried by the query, with a cursor -- the paging idiom");
 
-		assertEquals(2, eventStream.page(EventQuery.matchAll().limit(2), cursor).storedEventCount(),
+		assertEquals(2, eventStream.page(EventQuery.of(EventFilter.matchAll()).limit(2), cursor).storedEventCount(),
 				"limit carried by the query, read as a page");
 	}
 

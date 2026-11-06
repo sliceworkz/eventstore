@@ -81,7 +81,7 @@ import org.sliceworkz.eventstore.events.EventReference;
  * Subscription subscription = stream.subscribe((EventReference atLeastUntil) -> {
  *     // Query new events since the last processed position, up to the reference notified
  *     EventReference startAfter = lastProcessed.get();
- *     stream.query(EventQuery.matchAll().until(atLeastUntil), startAfter).forEach(event -> {
+ *     stream.query(EventQuery.of(EventFilter.matchAll()).notAfter(atLeastUntil), startAfter).forEach(event -> {
  *         System.out.println("Processing: " + event.type());
  *         processEventAsync(event);
  *     });

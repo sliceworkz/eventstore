@@ -36,7 +36,7 @@ import org.sliceworkz.eventstore.events.Event;
  * get back, because a stored event yields exactly one. Upcasting is where the two part company: an
  * {@link org.sliceworkz.eventstore.events.Upcaster upcaster} may turn one stored event into
  * several, or into none, and the limit is spent before any of that happens. So
- * {@code EventQuery.matchAll().limit(1)} over a stored event that upcasts into two returns two
+ * {@code EventQuery.of(EventFilter.matchAll()).limit(1)} over a stored event that upcasts into two returns two
  * events, and over one that upcasts into none returns zero — while having read exactly one stored
  * event either way, which is what was asked for. Trimming the surplus would hand back a fragment of
  * a stored event and leave a cursor pointing into its middle, so the count read is what the limit

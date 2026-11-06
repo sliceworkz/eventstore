@@ -718,11 +718,11 @@ public class EventStoreImpl implements EventStore {
 			// widened before the observation starts: a filter naming a legacy type is refused here, as an
 			// argument, not reported as a read that failed
 			EventFilter storageFilter = includeLegacyEventTypes(query.filter());
-			return observed(new Observation.Query(info, query.filter(), query.limit(), query.direction(), Optional.ofNullable(cursor)), reporter -> {
+			return observed(new Observation.Query(info, query.filter(), query.limit(), query.direction(), Optional.ofNullable(cursor), Optional.ofNullable(query.notAfter())), reporter -> {
 				long start = System.nanoTime();
-				List<StoredEvent> storedEvents = eventStorage.query(storageFilter, eventStreamId, cursor, query.limit(), query.direction());
+				List<StoredEvent> storedEvents = eventStorage.query(storageFilter, eventStreamId, cursor, query.notAfter(), query.limit(), query.direction());
 				Duration storageTime = since(start);
-				List<Event<EVENT_TYPE>> events = enrichAfterQuery(storedEvents, query.filter(), query.direction());
+				List<Event<EVENT_TYPE>> events = enrichAfterQuery(storedEvents, query.filter(), query.notAfter(), query.direction());
 				reporter.completed(new Outcome.Read(storageTime, storedEvents.size(),
 						observing() ? countPerType(storedEvents, StoredEvent::type) : Map.of(), events.size()));
 				Optional<EventReference> lastStored = storedEvents.isEmpty() ? Optional.empty() : Optional.of(storedEvents.getLast().reference());
@@ -737,11 +737,11 @@ public class EventStoreImpl implements EventStore {
 		 * query or the page itself rather than whichever terminal operation a caller happens to write
 		 * over the result.
 		 */
-		private List<Event<EVENT_TYPE>> enrichAfterQuery ( List<StoredEvent> storedEvents, EventFilter originalFilter, Direction direction ) {
+		private List<Event<EVENT_TYPE>> enrichAfterQuery ( List<StoredEvent> storedEvents, EventFilter originalFilter, EventReference notAfter, Direction direction ) {
 			List<Event<EVENT_TYPE>> events = new ArrayList<>(storedEvents.size());
 			for ( StoredEvent storedEvent : storedEvents ) {
 				for ( Event<EVENT_TYPE> event : enrich(storedEvent, direction) ) {
-					if ( originalFilter.matches(event) ) {
+					if ( ( notAfter == null || !event.reference().storedEventHappenedAfter(notAfter) ) && originalFilter.matches(event) ) {
 						events.add(event);
 					}
 				}
@@ -918,7 +918,7 @@ public class EventStoreImpl implements EventStore {
 			if ( filter.isMatchAll() ) {
 				return filter; // match-all has no items to trace back
 			}
-			return new EventFilter(filter.items().stream().map(this::includeLegacyEventTypes).toList(), filter.until());
+			return new EventFilter(filter.items().stream().map(this::includeLegacyEventTypes).toList());
 		}
 
 		/**
@@ -938,7 +938,7 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		private EventFilterItem includeLegacyEventTypes ( EventFilterItem queryItem ) {
-			return new EventFilterItem(includeLegacyEventTypes(queryItem.eventTypes()), queryItem.tags());
+			return new EventFilterItem(includeLegacyEventTypes(queryItem.eventTypes()), queryItem.tags(), queryItem.after(), queryItem.until());
 		}
 
 		private EventTypesFilter includeLegacyEventTypes ( EventTypesFilter typesFilter ) {

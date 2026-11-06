@@ -1,0 +1,37 @@
+name: item-bounds
+description: >
+  What a read costs when its filter's items carry different bounds, against the same read with no bounds.
+  The corpus and the targets are read-shapes', so `compare` between the two attributes a difference to the
+  bounds and nothing else, and query-by-or-groups is measured here too as the control.
+
+  On PostgreSQL a filter whose items share their bounds keeps the single statement; one whose items differ
+  is read as a branch per item, merged in order, and planned from its values on every execution. The
+  workloads are 2, 5 and 10 items, early and late, one of them broad, and a tag-only item whose range,
+  not its tag, is what is selective.
+
+corpus:
+  volume: 100000
+  streamDesign: TAGGED
+  composition: CLEAN
+  payload: REALISTIC
+  entityCount: 2000
+  seed: 20260823
+
+targets:
+  - backend: INMEM
+  - backend: POSTGRES
+    server: TESTCONTAINERS
+    image: "postgres:18"
+
+jmh:
+  workloads:
+    - query-by-or-groups
+    - query-item-bounds-2
+    - query-item-bounds-5
+    - query-item-bounds-10
+    - query-item-bounds-tag-only-narrow
+  threads: [ 1 ]
+  forks: 3
+  warmupIterations: 2
+  measurementIterations: 4
+  iterationSeconds: 5

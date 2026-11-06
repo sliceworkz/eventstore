@@ -131,7 +131,7 @@ class StorageHealthValuesTest {
 	/** a storage written before {@link EventStorage#health(Duration)} existed: it implements only what was abstract */
 	private static final class SilentStorage implements EventStorage {
 		@Override public String name ( ) { return "silent"; }
-		@Override public List<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit, Direction direction ) { return List.of(); }
+		@Override public List<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, EventReference notAfter, Limit limit, Direction direction ) { return List.of(); }
 		@Override public List<StoredEvent> append ( AppendCriteria appendCriteria, EventStreamId stream, List<EventToStore> events ) { return List.of(); }
 		@Override public Optional<StoredEvent> getEventById ( EventId eventId ) { return Optional.empty(); }
 		@Override public void subscribe ( EventStoreListener listener ) { }

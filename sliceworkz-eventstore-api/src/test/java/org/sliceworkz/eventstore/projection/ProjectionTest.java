@@ -37,6 +37,7 @@ import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.projection.ProjectionTest.MockDomainEvent.FirstDomainEvent;
 import org.sliceworkz.eventstore.projection.ProjectionTest.MockDomainEvent.SecondDomainEvent;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
@@ -115,7 +116,7 @@ public class ProjectionTest {
 
 		@Override
 		public EventQuery eventQuery ( ) {
-			return EventQuery.matchAll();
+			return EventQuery.of(EventFilter.matchAll());
 		}
 		
 		List<Event<MockDomainEvent>> handled ( ) {

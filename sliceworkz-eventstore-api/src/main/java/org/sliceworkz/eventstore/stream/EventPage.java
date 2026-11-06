@@ -46,7 +46,7 @@ import org.sliceworkz.eventstore.query.EventQuery;
  * <p>
  * Paging to the end of a stream by hand:
  * <pre>{@code
- * EventQuery q = EventQuery.matchAll().limit(500);
+ * EventQuery q = EventQuery.of(EventFilter.matchAll()).limit(500);
  * EventReference cursor = null;
  * EventPage<CustomerEvent> page;
  * do {

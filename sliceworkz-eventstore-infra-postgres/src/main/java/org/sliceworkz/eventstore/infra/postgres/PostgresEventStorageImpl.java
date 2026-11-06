@@ -1767,7 +1767,7 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 	}
 
 	@Override
-	public List<StoredEvent> query(EventFilter filter, EventStreamId stream, EventReference after, Limit limit, Direction direction ) {
+	public List<StoredEvent> query(EventFilter filter, EventStreamId stream, EventReference after, EventReference notAfter, Limit limit, Direction direction ) {
 		checkNotClosed();
 		requireStream(stream);
 		// Handle the case where the filter matches none - return empty stream
@@ -1776,11 +1776,18 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 		}
 
 		List<Object> parameters = new ArrayList<>();
-		String sql = querySql(filter, stream, after, limit, direction, parameters);
+		String sql = querySql(filter, stream, after, notAfter, limit, direction, parameters);
+		if ( sql == null ) {
+			return List.of(); // every item's range is empty: nothing can match, so nothing is asked
+		}
 
 		try ( Connection readConnection = dataSource.getConnection() ) {
 			readConnection.setAutoCommit(true);
 			try (PreparedStatement stmt = readConnection.prepareStatement(sql)) {
+				if ( !sharesItemBounds(filter) ) {
+					// one branch per item: planned from its bound values on every execution, see perItemSql
+					disableServerPreparation(stmt);
+				}
 				// Set parameters
 				for (int i = 0; i < parameters.size(); i++) {
 					stmt.setObject(i + 1, parameters.get(i));
@@ -1804,16 +1811,56 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 
 	/**
 	 * The statement behind {@link #query}, with the values it binds collected into {@code parameters} in
-	 * the order the placeholders take them.
+	 * the order the placeholders take them, or {@code null} when the bounds leave nothing to read.
 	 * <p>
-	 * Package-private, not private: {@code PostgresGlobalOrderIndexTest} and
-	 * {@code PostgresOrderIndexAdmissionTest} build an {@code EXPLAIN} around what this produces, so
-	 * that the plans they pin are the store's own read statement rather than a copy of it kept in step
-	 * by hand. The scope this is given decides which order index the statement is admitted to; see
-	 * {@link #addStreamScope} and {@link #GLOBAL_ORDER_ADMISSION}.
+	 * Two shapes, chosen by the filter:
+	 * <ul>
+	 *   <li><b>Every item has the same bounds</b> — which is every filter without item bounds — and the
+	 *       statement is the one statement it has always been ({@link #sharedBoundsSql}): the bounds are
+	 *       conjoined at the top level, where they are index start conditions.</li>
+	 *   <li><b>The items' bounds differ</b>, and every item gets an ordered branch of its own
+	 *       ({@link #perItemSql}).</li>
+	 * </ul>
+	 * <p>
+	 * Package-private, not private: {@code PostgresGlobalOrderIndexTest},
+	 * {@code PostgresOrderIndexAdmissionTest} and {@code PostgresItemBoundsPlanTest} build an
+	 * {@code EXPLAIN} around what this produces, so that the plans they pin are the store's own read
+	 * statement rather than a copy of it kept in step by hand. The scope this is given decides which
+	 * order index the statement is admitted to; see {@link #addStreamScope} and
+	 * {@link #GLOBAL_ORDER_ADMISSION}.
 	 */
-	String querySql ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit,
-			Direction direction, List<Object> parameters ) {
+	String querySql ( EventFilter filter, EventStreamId stream, EventReference after, EventReference notAfter,
+			Limit limit, Direction direction, List<Object> parameters ) {
+		return sharesItemBounds(filter)
+				? sharedBoundsSql(filter, stream, after, notAfter, limit, direction, parameters)
+				: perItemSql(filter, stream, after, notAfter, limit, direction, parameters);
+	}
+
+	/**
+	 * Whether every item of the filter carries the same bounds, so they can be applied once, to the
+	 * whole statement. A match-all filter has no items, and so no bounds.
+	 */
+	static boolean sharesItemBounds ( EventFilter filter ) {
+		if ( filter.isMatchAll() || filter.items().size() < 2 ) {
+			return true;
+		}
+		EventFilterItem first = filter.items().getFirst();
+		return filter.items().stream().allMatch(item -> Objects.equals(item.after(), first.after()) && Objects.equals(item.until(), first.until()));
+	}
+
+	/**
+	 * One statement, every bound conjoined at the top level: the read bound, the cursor and the bounds
+	 * the items share. Each lands where {@link #appendTupleBoundary} explains it has to be, as an index
+	 * start condition, and the items' types and tags form one disjunction beside them.
+	 */
+	private String sharedBoundsSql ( EventFilter filter, EventStreamId stream, EventReference after, EventReference notAfter,
+			Limit limit, Direction direction, List<Object> parameters ) {
+
+		EventFilterItem shared = filter.isMatchAll() || filter.items().isEmpty() ? null : filter.items().getFirst();
+		Range range = Range.of(shared, after, notAfter, direction);
+		if ( range.isEmpty() ) {
+			return null;
+		}
 
 		StringBuilder sqlBuilder = new StringBuilder();
 		sqlBuilder.append(
@@ -1827,17 +1874,15 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 		// after ones that are still running (race condition which would drop some events otherwise)
 		// great insight found in the blogpost by Oskar Dudycz (https://event-driven.io/en/ordering_in_postgres_outbox/)
 
-		// Seek past the reference if one is provided (exclusive)
-		addCursorBoundary(sqlBuilder, parameters, after, direction);
-
-		addUntilBoundary(sqlBuilder, parameters, filter.until());
+		// the cursor (exclusive), the read bound and the shared item bounds
+		range.appendTo(this, sqlBuilder, parameters);
 
 		// Add stream filtering: a wildcard component binds nothing, so the wildcard stream reads the whole table
 		addStreamScope(sqlBuilder, parameters, stream);
 
-		// Add EventFilter filtering (event types and tags)
+		// Add EventFilter filtering (event types and tags; the bounds are above)
 		if (!filter.isMatchAll()) {
-			addEventFilterFiltering(sqlBuilder, parameters, filter);
+			addEventFilterFiltering(sqlBuilder, parameters, filter, false);
 		}
 
 		// Order by position
@@ -1857,6 +1902,137 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 		}
 
 		return sqlBuilder.toString();
+	}
+
+	/**
+	 * One ordered branch per item, merged in order: the shape for a filter whose items carry different
+	 * bounds.
+	 * <pre>
+	 * SELECT e.… FROM (
+	 *     SELECT DISTINCT event_tx, event_position FROM (
+	 *         (SELECT event_tx, event_position FROM events WHERE &lt;item 1's range&gt; AND &lt;item 1&gt; ORDER BY … LIMIT n)
+	 *         UNION ALL
+	 *         (SELECT event_tx, event_position FROM events WHERE &lt;item 2's range&gt; AND &lt;item 2&gt; ORDER BY … LIMIT n)
+	 *     ) u ORDER BY … LIMIT n
+	 * ) p JOIN events e ON e.event_position = p.event_position ORDER BY …
+	 * </pre>
+	 * <p>
+	 * <b>Why a branch per item.</b> A range inside a disjunction is no index start condition, so the
+	 * single-statement form — every item's range inside its own OR group — leaves PostgreSQL the choice
+	 * between walking the stream from the widest of the ranges and filtering every row, and collecting
+	 * every row of every item and sorting them. Measured on a million-event stream, an item bounded to
+	 * the first 5% beside a broad item bounded to the last 10%: the walk discarded 905.792 rows to return
+	 * 500, about half a second, on 16, 17 and 18 alike. Each branch here is an ordered read of its own
+	 * range, which PostgreSQL starts at the range's lower bound and stops at its limit — 4 to 5 ms on
+	 * the same corpus. An event matching two items comes out of two branches, and {@code DISTINCT}
+	 * keeps it once; the payloads are fetched afterwards, by position, for the page alone. A branch
+	 * whose range is empty is left out, and a statement left with none is not issued ({@code null}).
+	 * <p>
+	 * <b>Planned on every execution.</b> The caller keeps the statement off the plan cache
+	 * ({@link #disableServerPreparation}): a generic plan cannot know how narrow each branch's range is,
+	 * and for a branch over a broad tag it collects every row carrying the tag and sorts them — about
+	 * 100 ms on that corpus, against 5 planned from the values. Planning costs about half a millisecond,
+	 * paid only by a filter whose items differ in their bounds.
+	 */
+	private String perItemSql ( EventFilter filter, EventStreamId stream, EventReference after, EventReference notAfter,
+			Limit limit, Direction direction, List<Object> parameters ) {
+
+		String order = direction == Direction.BACKWARD ? " DESC" : "";
+		Limit effectiveLimit = effectiveLimit(limit);
+		boolean limited = effectiveLimit != null && effectiveLimit.isSet();
+
+		List<String> branches = new ArrayList<>();
+		for ( EventFilterItem item : filter.items() ) {
+			Range range = Range.of(item, after, notAfter, direction);
+			if ( range.isEmpty() ) {
+				continue;
+			}
+			StringBuilder branch = new StringBuilder();
+			branch.append("(SELECT event_tx, event_position FROM %sevents WHERE event_tx < pg_snapshot_xmin(pg_current_snapshot())".formatted(prefix));
+			range.appendTo(this, branch, parameters);
+			addStreamScope(branch, parameters, stream);
+			branch.append(" AND ").append(itemCondition(item, parameters, false));
+			branch.append(" ORDER BY event_tx").append(order).append(", event_position").append(order);
+			if ( limited ) {
+				branch.append(" LIMIT ?");
+				parameters.add(effectiveLimit.value());
+			}
+			branch.append(")");
+			branches.add(branch.toString());
+		}
+		if ( branches.isEmpty() ) {
+			return null;
+		}
+
+		StringBuilder sqlBuilder = new StringBuilder();
+		sqlBuilder.append("SELECT e.event_position, e.event_tx::text, e.event_id, e.stream_context, e.stream_purpose, e.event_type,"
+				+ " e.event_timestamp, e.event_data, e.event_tags, e.idempotency_key FROM (SELECT DISTINCT event_tx, event_position FROM (");
+		sqlBuilder.append(String.join(" UNION ALL ", branches));
+		sqlBuilder.append(") u ORDER BY event_tx").append(order).append(", event_position").append(order);
+		if ( limited ) {
+			sqlBuilder.append(" LIMIT ?");
+			parameters.add(effectiveLimit.value());
+		}
+		sqlBuilder.append(") p JOIN %sevents e ON e.event_position = p.event_position".formatted(prefix));
+		sqlBuilder.append(" ORDER BY e.event_tx").append(order).append(", e.event_position").append(order);
+		return sqlBuilder.toString();
+	}
+
+	/**
+	 * The part of the log one read covers, as the bounds a statement conjoins: an exclusive lower
+	 * bound, an exclusive upper bound (a backward cursor) and an inclusive upper bound.
+	 * <p>
+	 * A forward cursor and an item's {@code after} are both exclusive lower bounds, so only the later
+	 * of the two is written — one row comparison, which is what the index can start at. The read bound
+	 * and an item's {@code until} are both inclusive upper bounds, and the earlier is written. A
+	 * backward cursor stays as it is: it is an upper bound of a different kind.
+	 */
+	private record Range ( EventReference lower, EventReference before, EventReference upper ) {
+
+		static Range of ( EventFilterItem item, EventReference cursor, EventReference notAfter, Direction direction ) {
+			EventReference lower = item == null ? null : item.after();
+			EventReference upper = earlier(notAfter, item == null ? null : item.until());
+			EventReference before = null;
+			if ( direction == Direction.FORWARD ) {
+				lower = later(lower, cursor);
+			} else {
+				before = cursor;
+			}
+			return new Range(lower, before, upper);
+		}
+
+		/**
+		 * Whether nothing can lie in this range: an upper bound at or before the lower one.
+		 */
+		boolean isEmpty ( ) {
+			if ( lower == null ) {
+				return false;
+			}
+			return ( upper != null && !upper.storedEventHappenedAfter(lower) )
+					|| ( before != null && !before.storedEventHappenedAfter(lower) );
+		}
+
+		void appendTo ( PostgresEventStorageImpl storage, StringBuilder sqlBuilder, List<Object> parameters ) {
+			if ( lower != null ) {
+				storage.addCursorBoundary(sqlBuilder, parameters, lower, Direction.FORWARD);
+			}
+			if ( before != null ) {
+				storage.addCursorBoundary(sqlBuilder, parameters, before, Direction.BACKWARD);
+			}
+			storage.addUntilBoundary(sqlBuilder, parameters, upper);
+		}
+
+		private static EventReference later ( EventReference a, EventReference b ) {
+			if ( a == null ) return b;
+			if ( b == null ) return a;
+			return b.storedEventHappenedAfter(a) ? b : a;
+		}
+
+		private static EventReference earlier ( EventReference a, EventReference b ) {
+			if ( a == null ) return b;
+			if ( b == null ) return a;
+			return a.storedEventHappenedAfter(b) ? b : a;
+		}
 	}
 
 	/**
@@ -1952,9 +2128,10 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 	}
 
 	/**
-	 * Appends the {@code until} boundary of an {@link EventFilter} to a statement being built.
+	 * Appends an inclusive upper bound to a statement being built: the read bound of a query, an item's
+	 * {@code until}, or the earlier of the two.
 	 * <p>
-	 * The boundary is a matching criterion, not a traversal one: it is the inclusive upper bound over
+	 * The bound is a matching criterion, not a traversal one: it is the inclusive upper bound over
 	 * the same {@code (tx, position)} order the cursor uses, and it means the same thing whether the
 	 * query runs forward or backward. Reading it as "traverse until you reach it" -- a lower bound when
 	 * going backward -- returns the events on the wrong side of the boundary.
@@ -1981,66 +2158,79 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 		appendTupleBoundary(sqlBuilder, parameters, until, "<=");
 	}
 
-	private void addEventFilterFiltering(StringBuilder sqlBuilder, List<Object> parameters, EventFilter filter) {
+	/**
+	 * Appends the disjunction of a filter's items: {@code AND (item OR item …)}, each item its types and
+	 * its tags and, with {@code withItemBounds}, its own bounds.
+	 * <p>
+	 * A read leaves the bounds out, having applied them where they can be index start conditions — once
+	 * for the statement when the items share them, once per branch when they do not. The consistency
+	 * check keeps them in: its probe starts at the expected reference, and an item's bounds only narrow
+	 * which rows after it count.
+	 */
+	private void addEventFilterFiltering(StringBuilder sqlBuilder, List<Object> parameters, EventFilter filter, boolean withItemBounds) {
 		if (filter.items() == null || filter.items().isEmpty()) {
 			return; // matchAll case is already handled
 		}
 
 		sqlBuilder.append(" AND (");
 		boolean first = true;
-
 		for (EventFilterItem item : filter.items()) {
 			if (!first) {
 				sqlBuilder.append(" OR ");
 			}
-			
-			sqlBuilder.append("(");
-			boolean hasEventTypeFilter = false;
-			boolean hasTagFilter = false;
-			
-			// Add event type filtering
-			if (item.eventTypes() != null && !item.eventTypes().eventTypes().isEmpty()) {
-				sqlBuilder.append("event_type IN (");
-				
-				Iterator<EventType> itTypes = item.eventTypes().eventTypes().iterator();
-				for (int i = 0; i < item.eventTypes().eventTypes().size(); i++) {
-					if (i > 0) sqlBuilder.append(", ");
-					sqlBuilder.append("?");
-					parameters.add(itTypes.next().name());
-				}
-				sqlBuilder.append(")");
-				hasEventTypeFilter = true;
-			}
-			
-			// Add tag filtering
-			if (item.tags() != null && !item.tags().tags().isEmpty()) {
-				if (hasEventTypeFilter) {
-					sqlBuilder.append(" AND ");
-				}
-				
-				// Check that all required tags are present in the event's tags array
-				sqlBuilder.append("event_tags @> ARRAY[");
-				boolean firstTag = true;
-				for (Tag tag : item.tags().tags()) {
-					if (!firstTag) sqlBuilder.append(", ");
-					sqlBuilder.append("?");
-					parameters.add(tag.toString());
-					firstTag = false;
-				}
-				sqlBuilder.append("]::text[]");
-				hasTagFilter = true;
-			}
-			
-			// If no specific filters, match all for this item (shouldn't happen in practice)
-			if (!hasEventTypeFilter && !hasTagFilter) {
-				sqlBuilder.append("1=1");
-			}
-			
-			sqlBuilder.append(")");
+			sqlBuilder.append(itemCondition(item, parameters, withItemBounds));
 			first = false;
 		}
-		
 		sqlBuilder.append(")");
+	}
+
+	/**
+	 * One item as a parenthesised condition: {@code event_type IN (…)}, {@code event_tags @> ARRAY[…]}
+	 * and, with {@code withBounds}, its own {@code after} and {@code until} as row comparisons.
+	 */
+	private String itemCondition ( EventFilterItem item, List<Object> parameters, boolean withBounds ) {
+		List<String> conditions = new ArrayList<>(4);
+
+		// Add event type filtering
+		if (item.eventTypes() != null && !item.eventTypes().eventTypes().isEmpty()) {
+			StringBuilder types = new StringBuilder("event_type IN (");
+			Iterator<EventType> itTypes = item.eventTypes().eventTypes().iterator();
+			for (int i = 0; i < item.eventTypes().eventTypes().size(); i++) {
+				if (i > 0) types.append(", ");
+				types.append("?");
+				parameters.add(itTypes.next().name());
+			}
+			types.append(")");
+			conditions.add(types.toString());
+		}
+
+		// Add tag filtering: all required tags must be present in the event's tags array
+		if (item.tags() != null && !item.tags().tags().isEmpty()) {
+			StringBuilder tags = new StringBuilder("event_tags @> ARRAY[");
+			boolean firstTag = true;
+			for (Tag tag : item.tags().tags()) {
+				if (!firstTag) tags.append(", ");
+				tags.append("?");
+				parameters.add(tag.toString());
+				firstTag = false;
+			}
+			tags.append("]::text[]");
+			conditions.add(tags.toString());
+		}
+
+		if ( withBounds && item.after() != null ) {
+			conditions.add("(event_tx, event_position) > (?::xid8, ?)");
+			parameters.add(Long.toUnsignedString(item.after().tx()));
+			parameters.add(item.after().position());
+		}
+		if ( withBounds && item.until() != null ) {
+			conditions.add("(event_tx, event_position) <= (?::xid8, ?)");
+			parameters.add(Long.toUnsignedString(item.until().tx()));
+			parameters.add(item.until().position());
+		}
+
+		// An item without types, tags or bounds matches everything
+		return conditions.isEmpty() ? "(1=1)" : "(" + String.join(" AND ", conditions) + ")";
 	}
 	
 	/**
@@ -2226,14 +2416,12 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 		// Add EventFilter filtering for the consistency boundary
 		EventFilter lockingFilter = appendCriteria.eventFilter();
 
-		// A consistency boundary is whatever its EventFilter matches, and a filter carrying an
-		// "until" does not match past it -- so an event beyond the boundary is not a new relevant
-		// fact and must not raise a conflict. Leaving this out made this backend lock where the
-		// in-memory one, which runs the criteria through query(), did not.
-		addUntilBoundary(sqlBuilder, parameters, lockingFilter.until());
-
+		// A consistency boundary is whatever its EventFilter matches, item bounds included: an item
+		// bounded until a reference matches nothing past it, so an event beyond it is not a new relevant
+		// fact and must not raise a conflict. AppendCriteria has already left out every item bounded
+		// at or before the expected reference; the bounds that remain go into their own OR group.
 		if (!lockingFilter.isMatchAll()) {
-			addEventFilterFiltering(sqlBuilder, parameters, lockingFilter);
+			addEventFilterFiltering(sqlBuilder, parameters, lockingFilter, true);
 		}
 
 		// The ORDER BY is the (event_tx, event_position) tuple order every read and the cursor
@@ -2246,8 +2434,9 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 	}
 
 	/**
-	 * Keeps a no-cursor consistency check off the plan cache, so PostgreSQL plans it from the values
-	 * bound to it on every execution.
+	 * Keeps a statement off the plan cache, so PostgreSQL plans it from the values bound to it on every
+	 * execution: a no-cursor consistency check, and a read whose filter items carry different bounds
+	 * (see {@link #perItemSql}).
 	 *
 	 * <p>pgjdbc only makes a statement server-prepared after {@code prepareThreshold} executions
 	 * (five by default), and a statement that never becomes server-prepared has no cached plan to be
@@ -2266,9 +2455,10 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 			statement.unwrap(org.postgresql.PGStatement.class).setPrepareThreshold(0);
 		} catch ( SQLException | RuntimeException e ) {
 			if ( preparationWarningLogged.compareAndSet(false, true) ) {
-				LOGGER.warn("a no-cursor consistency check should be planned from its bound values, but"
-						+ " this DataSource does not expose a PostgreSQL statement to say so; PostgreSQL"
-						+ " will keep choosing between its custom and generic plans", e);
+				LOGGER.warn("a statement that should be planned from its bound values (a no-cursor consistency"
+						+ " check, or a read whose filter items carry different bounds) cannot say so, since"
+						+ " this DataSource does not expose a PostgreSQL statement; PostgreSQL will keep"
+						+ " choosing between its custom and generic plans", e);
 			}
 		}
 	}

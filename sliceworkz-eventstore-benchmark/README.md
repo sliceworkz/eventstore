@@ -81,6 +81,7 @@ the rejected uniform-`NOT EXISTS` alternative keeps its committed baselines unde
 | `stream-design-tagged` ⇄ `stream-design-per-entity` | which stream design to pick | ~40 min each |
 | `shredding-cost` | what crypto-shredding costs per event and per new data subject | ~8 min |
 | `upcasting-cost` ⇄ `read-shapes` | what reading history through upcasters costs | ~10 min |
+| `item-bounds` ⇄ `read-shapes` | what a read whose filter items carry different bounds costs, against the same reads unbounded | ~8 min |
 | `replay-throughput` | what a read-model rebuild costs | ~10 min |
 | `live-latency` | append → subscriber, and append → committed read-model row | ~5 min |
 | `ingest-saturation` | sustained appends against a store that is growing | ~10 min |

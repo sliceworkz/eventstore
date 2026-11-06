@@ -128,7 +128,7 @@ The rules in brief are in the root `CLAUDE.md`, under "Core Concepts". This file
   way to process a large stream incrementally
 - **`head()` is the reference of the newest stored event of the stream, answered without reading it.**
   It exists to pin a consistency boundary *before* a decision is read: take the head, bound every read
-  with `until(head)` or `Projector.runUntil(head)`, and hand the same reference to `AppendCriteria`.
+  with `notAfter(head)` or `Projector.runUntil(head)`, and hand the same reference to `AppendCriteria`.
   Several reads then share one boundary, so nothing lands between them unseen, and the lock check gets
   a cursor at the stream head instead of at the boundary's own newest event — which on Postgres turns
   a walk over every stream event since that event into a walk over the few appended during the
@@ -150,7 +150,7 @@ The rules in brief are in the root `CLAUDE.md`, under "Core Concepts". This file
     by an estimate — and no payload (`PostgresHeadStatementTest`, `PostgresGlobalOrderIndexTest`,
     `PostgresOrderIndexAdmissionTest`)
   - **It names a stored event, whole**: `index` 0, and a boundary at it includes every event the stored
-    event upcasts into — see the `until` note under EventFilter
+    event upcasts into — see the note on whole stored events under EventFilter
   - The event at the head need not match the boundary's filter: the reference is a cursor for the check,
     and only matching events after it count. An absent head is an empty stream and must stay an absent
     reference — "I decided on an empty boundary" — never be substituted with some other reference.
@@ -268,8 +268,9 @@ The rules in brief are in the root `CLAUDE.md`, under "Core Concepts". This file
   syntax, 1000-character values)
 
 **EventFilter:**
-- Pure matching criteria: event types, tags, and an optional "until" temporal boundary
-- Does not carry traversal semantics (direction, limit) — those belong to `EventQuery`
+- Which events are relevant: a union of items, each event types, tags and optional bounds — `after`
+  (exclusive) and `until` (inclusive), the part of the history the item is about
+- Does not carry traversal semantics (direction, limit, the read bound) — those belong to `EventQuery`
 - Can match all (`EventFilter.matchAll()`), none (`EventFilter.matchNone()`), or specific criteria
 - Created via `EventFilter.forEvents(eventTypesFilter, tags)`, or `EventFilter.forTags(tags)` for events of
   any type carrying the tags, or as a chain: `EventFilter.forTypes(CustomerEvent.class).tagged("customer", id)`
@@ -277,12 +278,13 @@ The rules in brief are in the root `CLAUDE.md`, under "Core Concepts". This file
 - **The fluent form and the two-halves form build the same filter.** `forTypes(classes...)` is
   `forEvents(EventTypesFilter.of(classes...), Tags.none())`, and `tagged(key, value)` narrows what is
   there: every item gets the tag on top of the tags it already requires, chained calls accumulate, and
-  the `until` boundary is kept. Narrowing distributes over a union — `a.or(b).tagged(t)` is
+  every item keeps its bounds. Narrowing distributes over a union — `a.or(b).tagged(t)` is
   `a.tagged(t).or(b.tagged(t))` — which is what makes it well-defined on a filter of several items;
-  a match-all narrowed is `forTags(t)`, a match-none stays match-none. `or` is the union: the items of
-  both side by side, match-all on either side making the union match-all, and the same `until` on both
-  or `IllegalArgumentException`. Both spellings resolve to the same `EventFilterItem`s, so a query
-  built one way compares equal to the same query built the other way. `EventFilterTest` pins each rule, `EventQueryTest` the mirror on the query
+  a match-all narrowed is `forTags(t)`, a match-none stays match-none. The bounds distribute the same
+  way: `after`/`until` replace every item's bound, `afterIfLater`/`untilIfEarlier` narrow each item's
+  own. `or` is the union: the items of both side by side, each with its own bounds, match-all on either
+  side making the union match-all. Both spellings resolve to the same `EventFilterItem`s, so a filter
+  built one way compares equal to the same filter built the other way. `EventFilterTest` pins each rule
 - **A sealed interface in a type filter stands for every event type under it.** An event is stored
   under the simple name of its record, never under an interface it implements, so
   `EventTypesFilter.of(Class...)` resolves a sealed interface into the event types it permits,
@@ -299,26 +301,16 @@ The rules in brief are in the root `CLAUDE.md`, under "Core Concepts". This file
   a root. A filter built from `EventType`s is literal: `EventType.of(SomeInterface.class)` names a
   stored type no record has. `EventTypesFilterTest` pins the resolution,
   `EventTypesFilterHierarchyTest` in the TCK pins the four paths per backend, legacy upcasts included
-- **`until` is an inclusive upper bound over *stored* events, in the `(tx, position)` order, and is
-  direction-independent**: `.backwards()` returns the same events as forward, newest first. It is part of
-  the filter, so it also bounds a consistency boundary — an event past it is not a new relevant fact and
-  raises no `OptimisticLockingException`. Backends must compare it as the tuple, exactly as they compare
-  the cursor; comparing positions alone drops events whose transaction and position were assigned in
-  different orders. `EventQueryUntilBoundaryTest` pins all of this down per backend
-- **So an `AppendCriteria`'s filter must carry no `until`.** One that does deems nothing after it
-  relevant, so the check finds no new fact whatever lands: every append is admitted and nothing is
-  raised — the check off, not merely narrowed. The head idiom puts both forms of one query in a
-  caller's hands — `relevant.until(head)` for the read, `relevant` plus `head` for the criteria — and
-  `AppendCriteria.of(relevant.until(head), head)`, which is what reusing "the query I read with"
-  produces and reads as the more careful of the two, is the one that turns optimistic locking off. The
-  head is a boundary as the criteria's *reference*, where the matching events after it are what
-  conflict; in the filter it bounds the check away. Nothing catches it — the append reports success —
-  so it is documented at all three places a caller meets it: `AppendCriteria` (both `of` factories),
-  `EventFilter.until` and `EventSource.head()`
+- **Item bounds are inclusive (`until`) and exclusive (`after`) bounds over *stored* events, in the
+  `(tx, position)` order, and are direction-independent**: `.backwards()` returns the same events as
+  forward, newest first. They are part of the filter, so they also bound a consistency boundary — an
+  event outside an item's bounds is not a new relevant fact for that item. Backends must compare them as
+  the tuple, exactly as they compare the cursor. Why each item carries its own, what the backends do with
+  them and how an `AppendCriteria` prunes them is `item-bounds.md`; `ItemBoundsTest` pins it per backend
 - **A boundary names a stored event, whole — never a fragment of one.** The `index` on a reference
   distinguishes the events one stored event upcasts into, and a storage never sees it: it compares
   stored events, whose index is always 0. So the read side compares the same way
-  (`EventReference.storedEventHappenedAfter`, used by `EventFilter.matches` and `Projector.runUntil`),
+  (`EventReference.storedEventHappenedAfter`, used by `EventFilter.matches`, the read bound and `Projector.runUntil`),
   and every event the stored event at the boundary upcasts into is at or before it, whatever its index.
   This is what lets a reference obtained without upcasting — `head()`, a bookmark read back from
   Postgres, which stores no index — bound a typed read without cutting the newest stored event in
@@ -329,29 +321,24 @@ The rules in brief are in the root `CLAUDE.md`, under "Core Concepts". This file
   `HeadTest.theHeadNamesTheWholeStoredEventWhenItUpcastsIntoSeveral` the read and the projector
 
 **EventQuery:**
-- Wraps an `EventFilter` together with traversal semantics (direction and limit)
-- Use `EventQuery.filter()` to extract the pure matching criteria
-- Can match all (`EventQuery.matchAll()`), none (`EventQuery.matchNone()`), or specific criteria
-- Supports backward direction (`.backwards()`) and result limits (`.limit(n)`)
-- Created via `EventQuery.forEvents(eventTypesFilter, tags)`, or `EventQuery.forTags(tags)` for events of
-  any type carrying the tags — the usual shape of a consistency boundary — or as a chain,
-  `EventQuery.forTypes(CustomerEvent.class).tagged("customer", id)`, where a sealed root names its
-  whole hierarchy. `EventQuery` re-exposes the `EventFilter` builders and none of its readers:
-  `forTypes`, `forTags`, `forEvents`, `tagged`, `or`, `until` and `untilIfEarlier` behave as they do
-  on the filter (see EventFilter above), `tagged` keeping the query's direction and limit, `or`
-  refusing two directions or a limit on either side, since a shared limit over a union does not mean
-  "the last of each". Whether an event matches, whether the query matches everything or nothing, its
-  items and its `until` boundary are the filter's to answer, through `filter()`:
-  `query.filter().matches(event)`, `query.filter().isMatchNone()` — which is how `Projector` asks
-  them. The readers of the query's own are the two it adds, `isBackwards()` and `limit()`. The
-  alternative — the query delegating each filter reader through a method of its own — loses because it
-  hands every caller two spellings of one question and makes the filter's read surface something to
-  keep in step on the query. In the same spirit, the query names no `EventFilterItem`: its constructor
-  takes an `EventFilter`, and `forEvents(types, tags)` builds one. `EventFilterItem` stays public
-  because it is the component type of `EventFilter.items()`, which the impl (the legacy-type
-  trace-back), the Postgres backend (the SQL it builds from each item) and the fixture read; it is a
-  filter's item, and nothing application code needs to construct. `EventQueryTest` pins the surface
-  reflectively
+- How a filter is read: `EventQuery.of(filter)`, plus a direction (`.backwards()`), a limit (`.limit(n)`)
+  and the read bound (`.notAfter(ref)`) — and nothing else. It has no filter builders, no union and no
+  static shortcut, so even a full read is `EventQuery.of(EventFilter.matchAll())`, and what is relevant is
+  always spelled on the filter. The alternative — a query re-exposing the filter's builders, as it once
+  did — loses because the two halves then share a vocabulary they mean different things by: an `until`
+  set on a query read like a business bound and behaved like a read bound, and a read bound set on a
+  filter travelled into the consistency check, where it turned optimistic locking off. Split, a bound on
+  the filter is about what is relevant and a bound on the query is about where the read stops, and only
+  the first ever reaches an `AppendCriteria`. Whether an event matches, whether the query matches
+  everything or nothing, its items and their bounds are the filter's to answer, through `filter()`. In
+  the same spirit the query names no `EventFilterItem`. `EventQueryTest` pins the surface reflectively
+- **`notAfter` is the technical bound a decider pins its reads at**, inclusive over stored events and
+  direction-independent, and the SPI is handed it as a parameter of its own. `AppendCriteria.of(query,
+  ref)` takes the query's filter only, so the criteria built from the query a decider read with is the
+  safe one. `NotAfterBoundaryTest` pins it per backend
+- There is no union of queries. Two `backwards().limit(1)` savepoint queries united into one would
+  return the newest event of either, not the newest of each, and a union of two read bounds has no
+  single bound; unite the filters with `EventFilter.or` and read the union once
 - **`.limit(n)` means "read n stored events", and it is pushed into the storage query** — a SQL
   `LIMIT` on Postgres, a short-circuiting `Stream.limit` in memory — not applied to the result. That
   is what makes it bound memory as well as output: a storage query materialises its whole result set
@@ -364,8 +351,9 @@ The rules in brief are in the root `CLAUDE.md`, under "Core Concepts". This file
   limits for one read is one more than a caller can keep straight, and the projector's page size is
   just `eventQuery().limit(n)`
 - **The SPI is asked with an `EventFilter`, never with an `EventQuery`.** `EventStorage.query` takes
-  the filter, the stream, the cursor, the limit and the direction as five parameters, so direction and
-  limit reach a backend exactly once: the stream layer derives all three from the query it was given,
+  the filter, the stream, the cursor, the read bound, the limit and the direction as six parameters, so
+  direction, limit and read bound reach a backend exactly once: the stream layer derives them from the
+  query it was given,
   the `Projector`'s page size included, since that is the limit of the query it pages with. The
   alternative — an `EventQuery` parameter beside a `Limit` and a `Direction` — loses because a
   backend is then handed two limits and two directions and nothing says which wins; the in-tree
@@ -504,7 +492,7 @@ The rules in brief are in the root `CLAUDE.md`, under "Core Concepts". This file
   answer differently in one run, and is not asked once per event. `ProjectorTest` pins both per backend
 
 **Projection initQuery (Savepoint Pattern):**
-- Projections can define an optional `initQuery()` (default returns `EventQuery.matchNone()`; a `null` is tolerated and means the same) that runs before the main `eventQuery()`
+- Projections can define an optional `initQuery()` (default returns `EventQuery.of(EventFilter.matchNone())`; a `null` is tolerated and means the same) that runs before the main `eventQuery()`
 - Enables the savepoint pattern: a backward query with limit 1 finds the most recent savepoint event that summarizes prior state
 - The `Projector` executes `initQuery()` first, passes results to `when()`, then uses the last event's reference as the cursor for `eventQuery()`
 - Savepoint events are pure domain events — no special framework support needed

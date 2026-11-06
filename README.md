@@ -17,12 +17,13 @@ append succeeds only if none of those facts changed in the meantime. The consist
 decision, not per class.
 
 ```java
-EventQuery customer = EventQuery.forTypes(CustomerEvent.class).tagged("customer", "123");
+EventFilter customer = EventFilter.forTypes(CustomerEvent.class).tagged("customer", "123");
 
 EventReference head = stream.head().orElse(null);               // 1. pin the moment you decide on
-var history = stream.query(customer.until(head));               // 2. read the relevant facts
+EventQuery read = EventQuery.of(customer).notAfter(head);
+var history = stream.query(read);                               // 2. read the relevant facts
 // ... decide ...
-stream.append(AppendCriteria.of(customer, head),                // 3. append, unless a new fact about
+stream.append(AppendCriteria.of(read, head),                    // 3. append, unless a new fact about
     Event.of(new CustomerNameChanged("123", "Jon"), Tags.of("customer", "123")));   //    customer 123 landed since
 ```
 
@@ -131,9 +132,9 @@ public class HelloEventstore {
                 Event.of(new CustomerEvent.CustomerRegistered("124", "Jane"), Tags.of("customer", "124"))));
 
             // decide on what is known about customer 123, as of the stream head
-            EventQuery customer123 = EventQuery.forTypes(CustomerEvent.class).tagged("customer", "123");
+            EventQuery customer123 = EventQuery.of(EventFilter.forTypes(CustomerEvent.class).tagged("customer", "123"));
             EventReference head = customers.head().orElse(null);
-            List<Event<CustomerEvent>> history = customers.query(customer123.until(head));
+            List<Event<CustomerEvent>> history = customers.query(customer123.notAfter(head));
 
             // append, unless a new fact about 123 landed after the head
             customers.append(AppendCriteria.of(customer123, head),
@@ -148,15 +149,15 @@ public class HelloEventstore {
             }
 
             // a change to customer 124 would not have conflicted: it is outside the boundary
-            customers.query(EventQuery.matchAll()).forEach(System.out::println);
+            customers.query(EventQuery.of(EventFilter.matchAll())).forEach(System.out::println);
         }
     }
 }
 ```
 
-One rule to keep from this: **bound the read with `until(head)`, but hand `AppendCriteria` the query
-unbounded.** `AppendCriteria.of(customer123.until(head), head)` deems nothing after the head relevant, so it
-would admit every append and never raise a conflict.
+One thing to see in this: **the read bound `notAfter(head)` belongs to the query, not to what is
+relevant.** `AppendCriteria.of(query, head)` takes only the query's filter, so the criteria built from the
+query you read with checks every matching event appended after the head.
 
 The [quickstart guide](https://sliceworkz.github.io/posts/eventstore-quickstart/) builds a complete
 application step by step.
@@ -171,11 +172,15 @@ application step by step.
   and what consistency boundaries are drawn around.
 - **Stream** — `EventStreamId.forContext("customer")`, optionally split with `.withPurpose("123")`. A stream
   scopes reads and writes; keep event names unique across the whole store all the same.
-- **Query** — `EventQuery.forTypes(...).tagged(...)`, combined with `.or(...)`, bounded with `.until(ref)`
-  and `.limit(n)`. `query()` returns a `List`, read in full: bound a large read, page it with
-  `page(query, cursor)`, or let a `Projector` do it.
+- **Filter** — which events are relevant: `EventFilter.forTypes(...).tagged(...)`, united with `.or(...)`. Each
+  item may be bounded to part of the history, `.after(ref)` (exclusive) and `.until(ref)` (inclusive), so one
+  filter unites facts bounded at different points.
+- **Query** — how a filter is read: `EventQuery.of(filter)`, with `.backwards()`, `.limit(n)` and the read
+  bound `.notAfter(ref)`. `query()` returns a `List`, read in full: bound a large read, page it with
+  `page(query, cursor)`, or let a `Projector` do it. `stream.query(filter)` reads a filter forward.
 - **Conditional append** — `AppendCriteria.of(query, reference)`: refused with `OptimisticLockingException`
-  when an event matching the query landed after the reference.
+  when an event matching the query's filter landed after the reference. An item bounded `until` the reference
+  or earlier is left out of the check: nothing appended later can match it.
 
 
 # Choosing a backend

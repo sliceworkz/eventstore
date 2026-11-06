@@ -268,15 +268,16 @@ class InMemoryEventStorageImpl implements EventStorage {
 	 * The query processes events in the specified direction (forward or backward) and applies:
 	 * <ul>
 	 *   <li>Stream filtering (if a stream ID is provided)</li>
-	 *   <li>Event query matching (type and tag filters)</li>
+	 *   <li>Event filter matching (per item: type, tag and bound filters)</li>
 	 *   <li>Reference-based positioning (starting after the specified reference, in the {@code (tx, position)} order)</li>
-	 *   <li>Optional "until" reference from the query</li>
+	 *   <li>The optional {@code notAfter} read bound</li>
 	 *   <li>Result limits (both soft and absolute)</li>
 	 * </ul>
 	 *
 	 * @param filter the event filter specifying which events to retrieve
 	 * @param stream the stream to read; a wildcard component reads across it, and the wildcard stream reads the whole log
 	 * @param after the reference to start after; events after this position are included
+	 * @param notAfter the read bound; nothing after it is returned, or null for none
 	 * @param limit soft limit on the number of results; may be overridden by absolute limit
 	 * @param direction the direction to traverse the event log (FORWARD or BACKWARD)
 	 * @return the StoredEvent instances matching the criteria
@@ -286,7 +287,7 @@ class InMemoryEventStorageImpl implements EventStorage {
 	 * @see Direction
 	 */
 	@Override
-	public synchronized List<StoredEvent> query(EventFilter filter, EventStreamId stream, EventReference after, Limit limit, Direction direction ) {
+	public synchronized List<StoredEvent> query(EventFilter filter, EventStreamId stream, EventReference after, EventReference notAfter, Limit limit, Direction direction ) {
 		checkNotClosed();
 		requireStream(stream);
 		Stream<StoredEvent> on;
@@ -317,18 +318,16 @@ class InMemoryEventStorageImpl implements EventStorage {
 			}
 		}
 		
-		// If we only need to read until a certain event, we can cut the traversal short. "until" is a
-		// matching criterion, not a traversal one: it is an inclusive upper bound over the total
-		// (tx, position, index) order and means the same thing in both directions. So the events beyond
-		// it are a suffix of a forward traversal and a prefix of a backward one -- hence takeWhile vs
-		// dropWhile. This is purely a short-circuit; the boundary itself is enforced by filter::matches
-		// below, which is where the exact comparison lives.
-		if ( filter.until() != null ) {
-			EventReference until = filter.until();
+		// If we only need to read up to a certain event, we can cut the traversal short. The read bound is
+		// a matching criterion, not a traversal one: an inclusive upper bound over stored events in the
+		// (tx, position) order, meaning the same thing in both directions. So the events beyond it are a
+		// suffix of a forward traversal and a prefix of a backward one -- hence takeWhile vs dropWhile.
+		// The items' own bounds are judged per event by filter::matches below, since each item has its own.
+		if ( notAfter != null ) {
 			if ( direction == Direction.BACKWARD ) {
-				on = on.dropWhile(e->e.reference().happenedAfter(until));
+				on = on.dropWhile(e->e.reference().storedEventHappenedAfter(notAfter));
 			} else {
-				on = on.takeWhile(e->!e.reference().happenedAfter(until));
+				on = on.takeWhile(e->!e.reference().storedEventHappenedAfter(notAfter));
 			}
 		}
 		
@@ -419,7 +418,7 @@ class InMemoryEventStorageImpl implements EventStorage {
 			
 			// we query the stream with the event filter from the last event known as our reference
 			// we only need to fetch max 1 event to prove a locking issue
-			List<StoredEvent> newEvents = query(appendCriteria.eventFilter(), streamId, appendCriteria.expectedLastEventReference().orElse(null), Limit.to(1), Direction.FORWARD);
+			List<StoredEvent> newEvents = query(appendCriteria.eventFilter(), streamId, appendCriteria.expectedLastEventReference().orElse(null), null, Limit.to(1), Direction.FORWARD);
 
 			// if there are no new events in the stream ...
 			if ( newEvents.isEmpty() ) {

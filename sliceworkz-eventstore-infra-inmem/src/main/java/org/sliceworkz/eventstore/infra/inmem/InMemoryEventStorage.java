@@ -73,7 +73,7 @@ import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
  *     Event.of(new CustomerRegistered("John"), Tags.of("region", "EU"))
  * );
  *
- * List<Event<CustomerEvent>> events = stream.query(EventQuery.matchAll());
+ * List<Event<CustomerEvent>> events = stream.query(EventQuery.of(EventFilter.matchAll()));
  * }</pre>
  *
  * <h2>Thread Safety:</h2>

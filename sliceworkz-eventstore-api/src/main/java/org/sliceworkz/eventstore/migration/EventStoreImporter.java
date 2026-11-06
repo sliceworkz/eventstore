@@ -214,12 +214,13 @@ public final class EventStoreImporter {
 	 * indexes rather than reading everything and discarding the rest. Event types are matched by their
 	 * stored name, so a legacy type is selected by its legacy name — nothing is upcast on this path.
 	 * <p>
-	 * A filter carrying an {@link EventFilter#until() until} reference bounds the run at that reference
-	 * when it is earlier than the source head, and {@link ImportReport#sourceTo()} then reports it, so a
-	 * later run started {@link #after(EventReference)} that report continues correctly. A filter matching
-	 * nothing reads nothing.
+	 * The bounds of its items are applied by the storage too, so a filter
+	 * {@link EventFilter#until(EventReference) until} the close of a period selects that period's events.
+	 * The run itself is always bounded at the source head, which {@link ImportReport#sourceTo()} reports,
+	 * so a later run started {@link #after(EventReference)} that report continues correctly. A filter
+	 * matching nothing reads nothing.
 	 *
-	 * @param filter the types, tags and optional boundary to select on (required)
+	 * @param filter the types, tags and optional item bounds to select on (required)
 	 * @return this importer
 	 * @throws IllegalArgumentException if filter is null
 	 */
@@ -322,9 +323,9 @@ public final class EventStoreImporter {
 		long startedAt = System.nanoTime();
 
 		// Fix the range before writing anything. Without this an import into its own source would keep
-		// finding the events it just wrote and never terminate. A filter carrying its own, earlier
-		// boundary narrows the range further; it never widens it past the head.
-		EventReference boundary = boundedBy(filter, headOf(source));
+		// finding the events it just wrote and never terminate. The filter's own item bounds narrow what
+		// is selected within that range; they never widen it past the head.
+		EventReference boundary = headOf(source);
 		EventStreamId scope = stream == null ? EventStreamId.anyContext() : stream;
 		EventReference cursor = after;
 
@@ -337,10 +338,8 @@ public final class EventStoreImporter {
 
 		if ( boundary != null && ( cursor == null || cursor.happenedBefore(boundary) ) ) {
 
-			EventFilter pageFilter = filter.until(boundary);
-
 			while ( true ) {
-				List<StoredEvent> page = source.query(pageFilter, scope, cursor, Limit.to(batchSize), Direction.FORWARD);
+				List<StoredEvent> page = source.query(filter, scope, cursor, boundary, Limit.to(batchSize), Direction.FORWARD);
 				if ( page.isEmpty() ) {
 					break;
 				}
@@ -382,18 +381,6 @@ public final class EventStoreImporter {
 	 */
 	private static EventReference headOf ( EventStorage storage ) {
 		return storage.head(EventStreamId.anyContext()).orElse(null);
-	}
-
-	/**
-	 * Returns the boundary a run is bounded by: the source head, or the filter's own {@code until} when
-	 * that is earlier. Null when the source holds nothing, whatever the filter says — there is nothing
-	 * to read then, and the report should say so rather than name a boundary the source never reached.
-	 */
-	private static EventReference boundedBy ( EventFilter filter, EventReference head ) {
-		if ( head == null ) {
-			return null;
-		}
-		return filter.untilIfEarlier(head).until();
 	}
 
 	private static Duration elapsedSince ( long startedAtNanos ) {

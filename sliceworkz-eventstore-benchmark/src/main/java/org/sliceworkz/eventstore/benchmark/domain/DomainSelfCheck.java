@@ -31,6 +31,7 @@ import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.infra.inmem.shredding.InMemoryShreddingKeyStore;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.shredding.AesGcmShreddingCodec;
 import org.sliceworkz.eventstore.shredding.DataSubject;
@@ -145,7 +146,7 @@ public final class DomainSelfCheck {
 			stream.append(AppendCriteria.none(), Event.of(sample, Tags.of(context.entityTagKey(), "self-check")));
 		}
 
-		List<Event<T>> read = stream.query(EventQuery.matchAll());
+		List<Event<T>> read = stream.query(EventFilter.matchAll());
 		System.out.println("  %-10s wrote %d, read back %d".formatted(context.streamContext(), samples.size(), read.size()));
 		read.forEach(e -> System.out.println("      %-24s %s".formatted(e.type().name(), e.data())));
 
@@ -188,7 +189,7 @@ public final class DomainSelfCheck {
 				EventStorage.ImportMode.FAIL_ON_EXISTING_ID);
 
 		EventStream<SalesEvent> reader = store.getEventStream(id, SalesEvent.class, LegacySalesEvent.class);
-		List<Event<SalesEvent>> upcasted = reader.query(EventQuery.matchAll());
+		List<Event<SalesEvent>> upcasted = reader.query(EventFilter.matchAll());
 
 		System.out.println("  %-10s imported 2 legacy events, read back %d upcasted".formatted("sales/legacy", upcasted.size()));
 		upcasted.forEach(e -> System.out.println("      %-24s %s".formatted(e.type().name(), e.data())));

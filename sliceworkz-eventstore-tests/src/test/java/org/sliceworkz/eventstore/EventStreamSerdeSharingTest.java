@@ -32,6 +32,7 @@ import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -128,7 +129,7 @@ class EventStreamSerdeSharingTest {
 			first.close();
 			second.append(AppendCriteria.none(),
 					Event.of(new CustomerEvent.CustomerRegistered("c1", "Jane"), Tags.none()));
-			assertEquals(1, second.query(EventQuery.matchAll()).size(),
+			assertEquals(1, second.query(EventFilter.matchAll()).size(),
 					"closing one stream disturbed another opened on the same id");
 		}
 	}
@@ -202,7 +203,7 @@ class EventStreamSerdeSharingTest {
 			EventStream<ShopEvent> shop = eventStore.getEventStream(streamId, ShopEvent.class);
 			shop.append(AppendCriteria.none(),
 					Event.of(new OrderEvent.OrderPlaced("o1", "c1"), Tags.none()));
-			assertEquals(1, shop.query(EventQuery.matchAll()).size());
+			assertEquals(1, shop.query(EventFilter.matchAll()).size());
 		}
 	}
 

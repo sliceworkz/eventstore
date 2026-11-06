@@ -77,6 +77,10 @@ public final class ReadWorkloads {
 				byStreamCold(),
 				byMultiTag(),
 				byOrGroups(),
+				itemBounds(2),
+				itemBounds(5),
+				itemBounds(10),
+				itemBoundsTagOnlyNarrow(),
 				lastEvent(),
 				lastEventByStream(),
 				cursorWalk(),
@@ -117,7 +121,7 @@ public final class ReadWorkloads {
 			@Override
 			public Object invoke ( WorkloadContext context ) {
 				List<Event<CrmEvent>> page = context.crm()
-						.query(EventQuery.matchAll().limit(PAGE_SIZE));
+						.query(EventQuery.of(EventFilter.matchAll()).limit(PAGE_SIZE));
 
 				// Touching the value is not ceremony. A Shreddable holds its plaintext once unsealed, and
 				// the unseal happens during deserialization -- but reading it here is what stops a future
@@ -166,7 +170,7 @@ public final class ReadWorkloads {
 			public Object invoke ( WorkloadContext context ) {
 				return context.target().store()
 						.getRawEventStream(EventStreamId.forContext(WebshopContext.CRM.streamContext()).anyPurpose())
-						.query(EventQuery.matchAll().limit(PAGE_SIZE));
+						.query(EventQuery.of(EventFilter.matchAll()).limit(PAGE_SIZE));
 			}
 		};
 	}
@@ -185,7 +189,7 @@ public final class ReadWorkloads {
 	private static Workload streamPage ( ) {
 		return simple("query-stream-page",
 				"one page of 500 events from the inventory stream, unfiltered -- the read baseline",
-				context -> context.inventory().query(EventQuery.matchAll().limit(PAGE_SIZE)));
+				context -> context.inventory().query(EventQuery.of(EventFilter.matchAll()).limit(PAGE_SIZE)));
 	}
 
 	/**
@@ -197,8 +201,7 @@ public final class ReadWorkloads {
 		return simple("query-by-type",
 				"500 events of one type from inventory -- the btree path, no tags involved",
 				context -> context.inventory()
-						.query(EventQuery.forEvents(EventTypesFilter.of(InventoryEvent.StockReserved.class),
-								Tags.none()).limit(PAGE_SIZE)));
+						.query(EventQuery.of(EventFilter.forTypes(InventoryEvent.StockReserved.class)).limit(PAGE_SIZE)));
 	}
 
 	/**
@@ -209,8 +212,7 @@ public final class ReadWorkloads {
 		return simple("query-by-tag-needle",
 				"a tag matching ~10 events store-wide -- the selective end of tag filtering",
 				context -> context.inventory()
-						.query(EventQuery.forEvents(EventTypesFilter.any(),
-								Tags.of(CorpusGenerator.MARKER_TAG_KEY, context.facts().needleTagValue()))));
+						.query(EventFilter.forTags(CorpusGenerator.MARKER_TAG_KEY, context.facts().needleTagValue())));
 	}
 
 	/**
@@ -221,8 +223,7 @@ public final class ReadWorkloads {
 		return simple("query-by-tag-swathe",
 				"a tag matching ~1% of the store -- where the planner starts preferring a seq scan",
 				context -> context.inventory()
-						.query(EventQuery.forEvents(EventTypesFilter.any(),
-								Tags.of(CorpusGenerator.MARKER_TAG_KEY, context.facts().swatheTagValue()))
+						.query(EventQuery.of(EventFilter.forTags(CorpusGenerator.MARKER_TAG_KEY, context.facts().swatheTagValue()))
 								.limit(PAGE_SIZE)));
 	}
 
@@ -279,11 +280,10 @@ public final class ReadWorkloads {
 		return simple("query-by-multi-tag",
 				"three tags AND-ed in one filter item -- one containment test over a wider array",
 				context -> context.inventory()
-						.query(EventQuery.forEvents(EventTypesFilter.any(),
-								Tags.of(
+						.query(EventQuery.of(EventFilter.forTags(Tags.of(
 										org.sliceworkz.eventstore.events.Tag.of(TagKeys.SKU, context.facts().hotEntity()),
 										org.sliceworkz.eventstore.events.Tag.of(TagKeys.CHANNEL, "web"),
-										org.sliceworkz.eventstore.events.Tag.of(TagKeys.COUNTRY, "BE")))
+										org.sliceworkz.eventstore.events.Tag.of(TagKeys.COUNTRY, "BE"))))
 								.limit(PAGE_SIZE)));
 	}
 
@@ -315,6 +315,66 @@ public final class ReadWorkloads {
 				return context.inventory().query(orGroupQuery(context, 5).limit(PAGE_SIZE));
 			}
 		};
+	}
+
+	/**
+	 * n OR-ed items bounded at different points of the history: the even items selective (one entity
+	 * each) and bounded to the first 5% of the inventory context, the odd items selective too and
+	 * bounded after 90% of it, and one broad item (every stock movement) bounded after 90%. The read
+	 * shape a command takes once each decision model's forward read is bounded after its own savepoint,
+	 * and the one PostgreSQL answers with a branch per item. Compare with {@code query-by-or-groups},
+	 * the same kind of read with no bounds.
+	 */
+	private static Workload itemBounds ( int items ) {
+		return simple("query-item-bounds-" + items,
+				items + " OR-ed items with different bounds, early and late, one of them broad",
+				context -> {
+					EventReference early = referenceAt(context, 0.05);
+					EventReference late = referenceAt(context, 0.90);
+					EventFilter filter = EventFilter.of(stockTypes(), Tags.none()).after(late);
+					for ( int i = 0; i < items - 1; i++ ) {
+						EventFilter item = EventFilter.of(stockTypes(),
+								Tags.of(TagKeys.SKU, "SKU-%06d".formatted(i % context.spec().entityCount())));
+						filter = filter.or(i % 2 == 0 ? item.until(early) : item.after(late));
+					}
+					return context.inventory().query(EventQuery.of(filter).limit(PAGE_SIZE));
+				});
+	}
+
+	/**
+	 * A tag-only item (any type) bounded to a narrow range in the middle of the context, beside an
+	 * item bounded differently: the case where the item's own range, not its tag, is what is selective.
+	 */
+	private static Workload itemBoundsTagOnlyNarrow ( ) {
+		return simple("query-item-bounds-tag-only-narrow",
+				"a tag-only item bounded to 2% of the context, beside a selective item bounded early",
+				context -> {
+					EventFilter narrow = EventFilter.forTags(CorpusGenerator.MARKER_TAG_KEY, context.facts().swatheTagValue())
+							.after(referenceAt(context, 0.50)).until(referenceAt(context, 0.52));
+					EventFilter early = EventFilter.of(stockTypes(), Tags.of(TagKeys.SKU, context.facts().coldEntity()))
+							.until(referenceAt(context, 0.05));
+					return context.inventory().query(EventQuery.of(narrow.or(early)).limit(PAGE_SIZE));
+				});
+	}
+
+	private static EventTypesFilter stockTypes ( ) {
+		return EventTypesFilter.of(InventoryEvent.StockReserved.class, InventoryEvent.StockPicked.class);
+	}
+
+	/**
+	 * The reference of the inventory event at a share of the context, found once per context and kept:
+	 * a real reference, for the reason {@link #startCursor} gives, read outside every later invocation.
+	 */
+	private static EventReference referenceAt ( WorkloadContext context, double share ) {
+		WorkloadContext.BoundaryKey key = new WorkloadContext.BoundaryKey("item-bounds@" + share, EventFilter.matchAll());
+		return context.cachedBoundary(key).orElseGet(() -> {
+			long events = context.inventory().query(EventQuery.of(EventFilter.matchAll()).backwards().limit(1)).getFirst().reference().position();
+			long n = Math.max(1, (long) ( Math.min(events, context.spec().volume()) * share ));
+			List<Event<InventoryEvent>> read = context.inventory().query(EventQuery.of(EventFilter.matchAll()).limit(n));
+			EventReference reference = read.getLast().reference();
+			context.rememberBoundary(key, reference);
+			return reference;
+		});
 	}
 
 	/**
@@ -354,7 +414,7 @@ public final class ReadWorkloads {
 	/** The savepoint query itself: one event type, newest first, one row. */
 	private static EventQuery savepointProbe ( Tags tags ) {
 		return EventQuery
-				.forEvents(EventTypesFilter.of(InventoryEvent.StockCounted.class), tags)
+				.of(EventFilter.forTypes(InventoryEvent.StockCounted.class).tagged(tags))
 				.backwards()
 				.limit(1);
 	}
@@ -375,7 +435,7 @@ public final class ReadWorkloads {
 					int walked = 0;
 					for ( int page = 0; page < CURSOR_WALK_PAGES; page++ ) {
 						lastPage = context.inventory()
-								.query(EventQuery.matchAll().limit(PAGE_SIZE), cursor);
+								.query(EventQuery.of(EventFilter.matchAll()).limit(PAGE_SIZE), cursor);
 						if ( lastPage.isEmpty() ) {
 							break;
 						}
@@ -403,7 +463,7 @@ public final class ReadWorkloads {
 				context -> {
 					EventSource<String> raw = context.target().store()
 							.getRawEventStream(EventStreamId.anyContext().anyPurpose());
-					return raw.query(EventQuery.matchAll().limit(PAGE_SIZE));
+					return raw.query(EventQuery.of(EventFilter.matchAll()).limit(PAGE_SIZE));
 				});
 	}
 
@@ -464,7 +524,7 @@ public final class ReadWorkloads {
 						SalesEvent.class, LegacySalesEvent.class);
 				// note: limit counts *stored* events, and a BasketCheckedOut upcasts into two, so this
 				// returns more than PAGE_SIZE. That is the documented behaviour, not a miscount.
-				return stream.query(EventQuery.matchAll().limit(PAGE_SIZE));
+				return stream.query(EventQuery.of(EventFilter.matchAll()).limit(PAGE_SIZE));
 			}
 		};
 	}
@@ -474,7 +534,7 @@ public final class ReadWorkloads {
 	/** One entity's whole history, isolated by tag: the only way to do it on a context-wide stream. */
 	private static List<Event<InventoryEvent>> byTag ( WorkloadContext context, String entity ) {
 		return context.inventory()
-				.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of(TagKeys.SKU, entity)));
+				.query(EventFilter.forTags(TagKeys.SKU, entity));
 	}
 
 	/**
@@ -483,7 +543,7 @@ public final class ReadWorkloads {
 	 */
 	private static List<Event<InventoryEvent>> entityHistory ( WorkloadContext context, String entity ) {
 		if ( context.streamScopesEntity() ) {
-			return context.inventoryFor(entity).query(EventQuery.matchAll());
+			return context.inventoryFor(entity).query(EventFilter.matchAll());
 		}
 		return byTag(context, entity);
 	}
@@ -496,8 +556,8 @@ public final class ReadWorkloads {
 					EventTypesFilter.of(InventoryEvent.StockReserved.class, InventoryEvent.StockPicked.class),
 					Tags.of(TagKeys.SKU, "SKU-%06d".formatted(i % context.spec().entityCount()))));
 		}
-		return new EventQuery(new EventFilter(items, null), EventQuery.Direction.FORWARD,
-				org.sliceworkz.eventstore.query.Limit.none());
+		return new EventQuery(new EventFilter(items), EventQuery.Direction.FORWARD,
+				org.sliceworkz.eventstore.query.Limit.none(), null);
 	}
 
 	/**
@@ -558,7 +618,7 @@ public final class ReadWorkloads {
 
 		@Override
 		public EventQuery eventQuery ( ) {
-			return EventQuery.matchAll();
+			return EventQuery.of(EventFilter.matchAll());
 		}
 
 		@Override

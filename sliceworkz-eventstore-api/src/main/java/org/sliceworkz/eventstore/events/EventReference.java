@@ -44,9 +44,9 @@ package org.sliceworkz.eventstore.events;
  * // The stream head is the reference of its newest stored event: take it before reading, bound
  * // the read with it, and use the same reference for optimistic locking. It is absent for an
  * // empty stream, which is a valid boundary
- * EventQuery customer = EventQuery.forTags(Tags.of("customer", "123"));
+ * EventFilter customer = EventFilter.forTags("customer", "123");
  * EventReference head = stream.head().orElse(null);
- * List<Event<CustomerEvent>> events = stream.query(customer.until(head));
+ * List<Event<CustomerEvent>> events = stream.query(EventQuery.of(customer).notAfter(head));
  *
  * stream.append(
  *     AppendCriteria.of(customer, head),
@@ -60,7 +60,7 @@ package org.sliceworkz.eventstore.events;
  * <h2>The absent reference</h2>
  * An absent reference has two spellings in this API, one per direction. Wherever a reference is
  * <em>given</em> — {@link org.sliceworkz.eventstore.stream.AppendCriteria#of(org.sliceworkz.eventstore.query.EventFilter, EventReference)},
- * {@link org.sliceworkz.eventstore.query.EventQuery#until(EventReference)},
+ * {@link org.sliceworkz.eventstore.query.EventQuery#notAfter(EventReference)},
  * {@link org.sliceworkz.eventstore.query.EventFilter#until(EventReference)}, a cursor — absent is
  * {@code null}. Wherever a reference is <em>answered</em> —
  * {@link org.sliceworkz.eventstore.stream.EventSource#head()},
@@ -73,7 +73,7 @@ package org.sliceworkz.eventstore.events;
  * the type was not designed for. An {@code Optional} <em>overload</em> beside each of them, so that
  * {@code head()} flows through unchanged while a held reference is still given as it is, loses
  * differently: {@code EventReference} and {@code Optional} are unrelated types, so
- * {@code until(null)}, {@code AppendCriteria.of(query, null)} and {@code query(query, null)} become
+ * {@code notAfter(null)}, {@code AppendCriteria.of(query, null)} and {@code query(query, null)} become
  * ambiguous and stop compiling for every caller that spells an empty boundary, or a read from the
  * start, as a literal {@code null} — the TCK does, throughout — and the only spelling left to them is
  * a cast, {@code (EventReference) null}, which is worse than the {@code orElse(null)} the overload
@@ -176,7 +176,7 @@ public record EventReference ( EventId id, long position, long tx, int index )
 	 * event upcasts into, and those all belong to the same stored event. So two references into the same
 	 * stored event are never after each other here, whatever their indexes, while
 	 * {@link #happenedAfter(EventReference)} orders them. This is the comparison a boundary over stored
-	 * events wants — the {@code until} of an {@link org.sliceworkz.eventstore.query.EventFilter}, which
+	 * events wants — the bounds of an {@link org.sliceworkz.eventstore.query.EventFilterItem} and the read bound of an {@link org.sliceworkz.eventstore.query.EventQuery}, which
 	 * a storage can only ever apply to stored events and which a reference obtained without upcasting
 	 * (a stream's head, a bookmark read back) can therefore bound without cutting a stored event in
 	 * pieces.

@@ -39,6 +39,7 @@ import org.sliceworkz.eventstore.observability.Outcome;
 import org.sliceworkz.eventstore.observability.StreamInfo;
 import org.sliceworkz.eventstore.projection.Projection;
 import org.sliceworkz.eventstore.projection.Projector;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.shredding.AesGcmShreddingCodec;
 import org.sliceworkz.eventstore.shredding.DataSubject;
@@ -125,7 +126,7 @@ public class ObservationTest extends AbstractEventStoreTest {
 	@ForEachBackend
 	void aConflictAtTheBoundaryCompletesAsConflictedAndIsNotAFailure ( ) {
 		EventStream<MockDomainEvent> stream = stream();
-		EventQuery boundary = EventQuery.forTypes(FirstDomainEvent.class);
+		EventQuery boundary = EventQuery.of(EventFilter.forTypes(FirstDomainEvent.class));
 		Optional<org.sliceworkz.eventstore.events.EventReference> head = stream.head();
 		stream.append(Event.of(new FirstDomainEvent("meanwhile"), Tags.none()));
 
@@ -152,7 +153,7 @@ public class ObservationTest extends AbstractEventStoreTest {
 				Event.of(new FirstDomainEvent("c"), Tags.none())));
 		observer.clear();
 
-		EventQuery firsts = EventQuery.forTypes(FirstDomainEvent.class);
+		EventQuery firsts = EventQuery.of(EventFilter.forTypes(FirstDomainEvent.class));
 		assertEquals(2, stream.query(firsts).size());
 		Recording query = observer.last(Observation.Query.class);
 		assertEquals(firsts.filter(), query.observation(Observation.Query.class).filter(), "the caller's own filter");
@@ -162,7 +163,7 @@ public class ObservationTest extends AbstractEventStoreTest {
 		assertEquals(Map.of(EventType.of(FirstDomainEvent.class), 2), read.readPerStoredType());
 		assertEquals(2, read.eventsReturned());
 
-		EventPage<MockDomainEvent> page = stream.page(EventQuery.matchAll().limit(2), appended.getFirst().reference());
+		EventPage<MockDomainEvent> page = stream.page(EventQuery.of(EventFilter.matchAll()).limit(2), appended.getFirst().reference());
 		assertEquals(2, page.events().size());
 		Recording paged = observer.last(Observation.Query.class);
 		assertEquals(Optional.of(appended.getFirst().reference()), paged.observation(Observation.Query.class).after());
@@ -215,7 +216,7 @@ public class ObservationTest extends AbstractEventStoreTest {
 		stream().append(Event.of(new FirstDomainEvent("a"), Tags.none()));
 		EventStream<OtherEvent> other = observedStore.getEventStream(STREAM, OtherEvent.class);
 
-		RuntimeException thrown = assertThrows(RuntimeException.class, () -> other.query(EventQuery.matchAll()));
+		RuntimeException thrown = assertThrows(RuntimeException.class, () -> other.query(EventFilter.matchAll()));
 		Recording query = observer.last(Observation.Query.class);
 		assertSame(thrown, query.failure().orElseThrow());
 		assertTrue(query.outcome().isEmpty());
@@ -237,7 +238,7 @@ public class ObservationTest extends AbstractEventStoreTest {
 				Event.of(new FirstDomainEvent("c"), Tags.none())));
 		observer.clear();
 
-		CountingProjection projection = new CountingProjection(EventQuery.forTypes(FirstDomainEvent.class));
+		CountingProjection projection = new CountingProjection(EventQuery.of(EventFilter.forTypes(FirstDomainEvent.class)));
 		Projector.from(stream).into(projection).bookmarkAs("counter").inBatchesOf(2).build().run();
 		assertEquals(2, projection.handled.get());
 
@@ -276,10 +277,10 @@ public class ObservationTest extends AbstractEventStoreTest {
 		stream.append(Event.of(new FirstDomainEvent("a"), Tags.none()));
 		observer.clear();
 
-		Projector.from(stream).into(new CountingProjection(EventQuery.forTypes(FirstDomainEvent.class))).named("account-balances").build().run();
+		Projector.from(stream).into(new CountingProjection(EventQuery.of(EventFilter.forTypes(FirstDomainEvent.class)))).named("account-balances").build().run();
 		assertEquals("account-balances", observer.last(Observation.ProjectorBatch.class).observation(Observation.ProjectorBatch.class).projection());
 
-		CountingProjection anonymous = new CountingProjection(EventQuery.forTypes(FirstDomainEvent.class)) { };
+		CountingProjection anonymous = new CountingProjection(EventQuery.of(EventFilter.forTypes(FirstDomainEvent.class))) { };
 		Projector.from(stream).into(anonymous).build().run();
 		assertEquals(anonymous.getClass().getName(), observer.last(Observation.ProjectorBatch.class).observation(Observation.ProjectorBatch.class).projection());
 		assertNoViolations();
@@ -293,10 +294,10 @@ public class ObservationTest extends AbstractEventStoreTest {
 				Event.of(new FirstDomainEvent("after"), Tags.none())));
 		observer.clear();
 
-		CountingProjection projection = new CountingProjection(EventQuery.forTypes(FirstDomainEvent.class)) {
+		CountingProjection projection = new CountingProjection(EventQuery.of(EventFilter.forTypes(FirstDomainEvent.class))) {
 			@Override
 			public EventQuery initQuery ( ) {
-				return EventQuery.forTypes(SecondDomainEvent.class).backwards().limit(1);
+				return EventQuery.of(EventFilter.forTypes(SecondDomainEvent.class)).backwards().limit(1);
 			}
 		};
 		Projector.from(stream).into(projection).build().run();
@@ -314,7 +315,7 @@ public class ObservationTest extends AbstractEventStoreTest {
 		stream.append(Event.of(new FirstDomainEvent("a"), Tags.none()));
 		observer.clear();
 
-		Projection<MockDomainEvent> failing = new CountingProjection(EventQuery.matchAll()) {
+		Projection<MockDomainEvent> failing = new CountingProjection(EventQuery.of(EventFilter.matchAll())) {
 			@Override
 			public void when ( Event<MockDomainEvent> event ) {
 				throw new IllegalStateException("projection bug");
@@ -399,7 +400,7 @@ public class ObservationTest extends AbstractEventStoreTest {
 		try ( EventStore store = EventStore.on(eventStorage()).observer(throwing).build() ) {
 			EventStream<MockDomainEvent> stream = store.getEventStream(STREAM, MockDomainEvent.class);
 			stream.append(Event.of(new FirstDomainEvent("a"), Tags.none()));
-			assertEquals(1, stream.query(EventQuery.matchAll()).size());
+			assertEquals(1, stream.query(EventFilter.matchAll()).size());
 		}
 	}
 

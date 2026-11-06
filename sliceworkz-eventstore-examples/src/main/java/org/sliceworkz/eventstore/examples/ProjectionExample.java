@@ -26,6 +26,7 @@ import org.sliceworkz.eventstore.examples.ProjectionExample.CustomerEvent.Custom
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.projection.Projection;
 import org.sliceworkz.eventstore.projection.Projector;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
@@ -87,7 +88,7 @@ public class ProjectionExample {
 
 		@Override
 		public EventQuery eventQuery() {
-			return EventQuery.forTags(Tags.of("customer", customerId));
+			return EventQuery.of(EventFilter.forTags("customer", customerId));
 		}
 		
 		public record CustomerSummary ( String name, boolean churned ) {

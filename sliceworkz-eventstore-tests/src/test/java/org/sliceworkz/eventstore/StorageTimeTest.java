@@ -30,6 +30,7 @@ import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.observability.Observation;
 import org.sliceworkz.eventstore.observability.Outcome;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -72,7 +73,7 @@ class StorageTimeTest {
 
 			stream.append(AppendCriteria.none(), Event.of(new TestEvent.Ping("1"), Tags.none()));
 
-			List<Event<TestEvent>> events = stream.query(EventQuery.matchAll());
+			List<Event<TestEvent>> events = stream.query(EventFilter.matchAll());
 			assertTrue(events.size() == 1, "expected the one appended event, got " + events.size());
 
 			List<RecordingObserver.Recording> reads = observer.recordings(Observation.Query.class);

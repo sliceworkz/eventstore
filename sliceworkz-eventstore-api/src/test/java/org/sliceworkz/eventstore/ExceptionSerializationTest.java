@@ -66,7 +66,7 @@ class ExceptionSerializationTest {
 	void anOptimisticLockingExceptionSurvivesSerializationWithItsReference ( ) throws Exception {
 		EventReference reference = new EventReference(new EventId("11111111-1111-1111-1111-111111111111"),
 				42L, 7L, 0);
-		EventFilter filter = EventFilter.forEvents(EventTypesFilter.any(), Tags.of("sku", "SKU-1"));
+		EventFilter filter = EventFilter.forTags("sku", "SKU-1");
 
 		OptimisticLockingException original =
 				new OptimisticLockingException(filter, Optional.of(reference));
@@ -86,7 +86,7 @@ class ExceptionSerializationTest {
 		// the getter is documented as never null; holding the reference unwrapped is what keeps that
 		// true on the far side, where a serialized Optional would have arrived as null
 		OptimisticLockingException restored = roundTrip(new OptimisticLockingException(
-				EventFilter.forEvents(EventTypesFilter.any(), Tags.none()), Optional.empty()));
+				EventFilter.of(EventTypesFilter.any(), Tags.none()), Optional.empty()));
 
 		assertNotNull(restored.getExpectedLastEventReference());
 		assertTrue(restored.getExpectedLastEventReference().isEmpty());

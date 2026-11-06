@@ -28,6 +28,7 @@ import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.projection.Projection;
 import org.sliceworkz.eventstore.projection.Projector;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
@@ -112,7 +113,7 @@ public class AggregateExample {
 				// DCB-style optimistic locking : only append the events ...
 				AppendCriteria.of(
 						// ... if no other event of any type exists by now for this customer ...
-						EventQuery.forTags(Tags.of("customer", customerId)),
+						EventFilter.forTags("customer", customerId),
 						// ... since we last read this customer
 						lastEventReference),
 				
@@ -227,7 +228,7 @@ public class AggregateExample {
 
 		@Override
 		public EventQuery eventQuery() {
-			return EventQuery.forTags(Tags.of("customer", customerId));
+			return EventQuery.of(EventFilter.forTags("customer", customerId));
 		}
 
 		public CustomerAggregate customerAggregate ( ) {

@@ -96,7 +96,7 @@ public class PostgresLockCheckOrderingTest {
 			try {
 				EventStreamId stream = EventStreamId.forContext("account").withPurpose("42");
 				Tags boundaryTags = Tags.of("account", "42");
-				EventFilter boundary = EventFilter.forEvents(EventTypesFilter.any(), boundaryTags);
+				EventFilter boundary = EventFilter.forTags(boundaryTags);
 
 				// 1. Reserve a position out of band. Nothing has consumed it yet, so every event the
 				//    library appends from here on carries a HIGHER position than this one.
@@ -108,7 +108,7 @@ public class PostgresLockCheckOrderingTest {
 
 				// 3. Read the boundary the way a decider would, and take the reference it would use.
 				List<StoredEvent> seen = storage
-					.query(boundary, stream, null, Limit.none(), Direction.FORWARD);
+					.query(boundary, stream, null, null, Limit.none(), Direction.FORWARD);
 				assertEquals(1, seen.size(), "expected the appended event to be readable");
 				EventReference reference = seen.get(0).reference();
 				assertTrue(reference.position() > reservedPosition,
@@ -121,7 +121,7 @@ public class PostgresLockCheckOrderingTest {
 				// 5. Every reader sorts that event AFTER the reference, despite the lower position —
 				//    the read path orders by (event_tx, event_position).
 				List<StoredEvent> replay = storage
-					.query(boundary, stream, null, Limit.none(), Direction.FORWARD);
+					.query(boundary, stream, null, null, Limit.none(), Direction.FORWARD);
 				assertEquals(2, replay.size(), "expected both events to be readable");
 				EventReference inverted = replay.get(1).reference();
 				assertEquals(reservedPosition, inverted.position(),

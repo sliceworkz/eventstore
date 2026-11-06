@@ -25,6 +25,7 @@ import java.util.List;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -57,7 +58,7 @@ public class RawStreamTest extends AbstractEventStoreTest {
 		Event<MockDomainEvent> appended = typed.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("John"), Tags.of("a", "1"))).getFirst();
 
 		EventSource<String> raw = eventStore().getRawEventStream(streamId);
-		List<Event<String>> read = raw.query(EventQuery.matchAll());
+		List<Event<String>> read = raw.query(EventFilter.matchAll());
 
 		assertEquals(1, read.size());
 		Event<String> event = read.getFirst();

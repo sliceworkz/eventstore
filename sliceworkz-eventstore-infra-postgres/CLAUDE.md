@@ -42,7 +42,7 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     the convention on several managed offerings, serves the index with no `search_path` change and no
     `USAGE` grant on that schema — default operator class resolution is not `search_path`-filtered.
   - `PostgresBtreeGinPrivilegeTest` pins all four down per backend (16, 17, 18).
-- **Ordering is the `(event_tx, event_position)` tuple everywhere — reads, the `until` boundary, and the
+- **Ordering is the `(event_tx, event_position)` tuple everywhere — reads, every bound (the read bound and the item bounds), and the
   optimistic-locking check.** `event_position` is a `bigserial` taken at insert time and `event_tx` is
   `pg_current_xact_id()`, assigned independently, so the two orders genuinely disagree: a transaction can
   carry a lower position and a higher tx than one that committed before it. The read path's
@@ -305,6 +305,20 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     because it bounds every statement of every caller sharing the pool, and only for pools this library
     builds. `PostgresLockTimeoutTest` pins the bound on appends and leases, its scope, the zero case
     and the default.
+- **A read whose filter items carry different bounds is one ordered branch per item, merged in order,
+  and planned from its values on every execution** (`perItemSql`, kept off the plan cache through
+  `disableServerPreparation`). Items sharing their bounds — every filter without any — keep the single
+  statement (`sharedBoundsSql`), with the shared bounds, the cursor and the read bound conjoined at the top
+  level as index start conditions, the cursor and an item's `after` written as one comparison (the later)
+  and the read bound and an item's `until` as one (the earlier). The rejected alternative — one statement
+  with each item's range inside its own OR group — leaves the planner a walk over the widest range with
+  every row filtered: measured on a million-event stream, 905.792 rows discarded to return 500 (~0.5 s on
+  16, 17 and 18), against 4–5 ms for the branches; a generic plan of the branch statement collects a broad
+  branch's every row and sorts them (~100 ms), which is why it is kept off the plan cache. A branch whose
+  range is empty is left out, and a read with none left is not issued. In the consistency check the item
+  bounds go into their own OR group, where the probe already starts at the expected reference.
+  `PostgresItemBoundsPlanTest` pins the shape on 16/17/18; `docs/design/item-bounds.md` holds the
+  measurements.
 - **The DCB check's SQL shape is derived per append from the criteria — there is no mode, and the
   measurements behind that choice are recorded in the benchmark module's `CLAUDE.md`, with the
   rejected alternative's baselines under its `results/`.** The check asks one question — any event

@@ -42,6 +42,7 @@ import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.serialization.json.JsonBookmarkCodec;
 import org.sliceworkz.eventstore.spi.EventStorage;
@@ -104,7 +105,7 @@ public class InMemoryFsEventStorageImplTest {
 					.buildStore();
 
 			EventStream<TestEvent> stream = store.getEventStream(streamId, TestEvent.class);
-			List<Event<TestEvent>> events = stream.query(EventQuery.matchAll());
+			List<Event<TestEvent>> events = stream.query(EventFilter.matchAll());
 
 			assertEquals(2, events.size());
 			assertEquals("CustomerRegistered", events.get(0).type().name());
@@ -141,7 +142,7 @@ public class InMemoryFsEventStorageImplTest {
 
 		EventStore reloaded = InMemoryFsEventStorage.newBuilder().directory(tempDir).name("second").buildStore();
 
-		assertEquals(1, reloaded.getEventStream(streamId, TestEvent.class).query(EventQuery.matchAll()).size(), "the write never completed, so it is not there");
+		assertEquals(1, reloaded.getEventStream(streamId, TestEvent.class).query(EventFilter.matchAll()).size(), "the write never completed, so it is not there");
 		assertFalse(Files.exists(leftOver), "removed, so it cannot pile up");
 		assertFalse(Files.exists(leftOverBookmark));
 		reloaded.close();
@@ -188,7 +189,7 @@ public class InMemoryFsEventStorageImplTest {
 				.buildStore();
 
 		EventStream<TestEvent> stream2 = store2.getEventStream(streamId, TestEvent.class);
-		List<Event<TestEvent>> events = stream2.query(EventQuery.matchAll());
+		List<Event<TestEvent>> events = stream2.query(EventFilter.matchAll());
 		assertEquals(1, events.size());
 		assertEquals("CustomerRegistered", events.get(0).type().name());
 	}
@@ -211,7 +212,7 @@ public class InMemoryFsEventStorageImplTest {
 					Event.of(new TestEvent.CustomerRegistered("Alice"), Tags.none())
 			));
 
-			List<Event<TestEvent>> events = stream.query(EventQuery.matchAll());
+			List<Event<TestEvent>> events = stream.query(EventFilter.matchAll());
 			bookmarkRef = events.get(0).reference();
 			storage.bookmark("my-projection", bookmarkRef, Tags.none());
 		}
@@ -312,7 +313,7 @@ public class InMemoryFsEventStorageImplTest {
 			EventStore store = EventStoreFactory.get().eventStore(storage);
 			EventStream<TestEvent> stream = store.getEventStream(streamId, TestEvent.class);
 			stream.append(AppendCriteria.none(), List.of(Event.of(new TestEvent.CustomerRegistered("Alice"), Tags.none())));
-			real = stream.query(EventQuery.matchAll()).get(0).reference();
+			real = stream.query(EventFilter.matchAll()).get(0).reference();
 		}
 
 		EventReference stale = EventReference.of(real.id(), real.position() + 1_000_000, real.tx() + 1_000_000);
@@ -342,7 +343,7 @@ public class InMemoryFsEventStorageImplTest {
 				Event.of(new TestEvent.CustomerRegistered("Bob"), Tags.none())
 		));
 
-		List<Event<TestEvent>> events = stream.query(EventQuery.matchAll());
+		List<Event<TestEvent>> events = stream.query(EventFilter.matchAll());
 		storage.bookmark("temp-reader", events.get(0).reference(), Tags.none());
 
 		assertTrue(Files.exists(tempDir.resolve("bookmarks/temp-reader.json")));
@@ -369,7 +370,7 @@ public class InMemoryFsEventStorageImplTest {
 
 		EventStreamId streamId = EventStreamId.forContext("ctx").withPurpose("p");
 		EventStream<TestEvent> stream = store.getEventStream(streamId, TestEvent.class);
-		List<Event<TestEvent>> events = stream.query(EventQuery.matchAll());
+		List<Event<TestEvent>> events = stream.query(EventFilter.matchAll());
 		assertTrue(events.isEmpty());
 	}
 
@@ -386,7 +387,7 @@ public class InMemoryFsEventStorageImplTest {
 				Event.of(new TestEvent.CustomerRegistered("Test"), Tags.none())
 		));
 
-		assertEquals(1, stream.query(EventQuery.matchAll()).size());
+		assertEquals(1, stream.query(EventFilter.matchAll()).size());
 	}
 
 	@Test
@@ -418,7 +419,7 @@ public class InMemoryFsEventStorageImplTest {
 				.buildStore();
 
 		EventStream<TestEvent> stream2 = store2.getEventStream(streamId, TestEvent.class);
-		List<Event<TestEvent>> events = stream2.query(EventQuery.matchAll());
+		List<Event<TestEvent>> events = stream2.query(EventFilter.matchAll());
 		assertEquals(1, events.size());
 
 		TestEvent data = events.get(0).data();
@@ -455,7 +456,7 @@ public class InMemoryFsEventStorageImplTest {
 				Collections.singletonList(Event.of(new TestEvent.CustomerRegistered("John"), Tags.none()).withIdempotencyKey("k-1")));
 
 		assertTrue(duplicate.isEmpty(), "an idempotency key used before the reload must still deduplicate");
-		assertEquals(1, stream2.query(EventQuery.matchAll()).size());
+		assertEquals(1, stream2.query(EventFilter.matchAll()).size());
 	}
 
 	@Test
@@ -516,7 +517,7 @@ public class InMemoryFsEventStorageImplTest {
 
 		assertEquals(5L, appended.reference().position(), "position 4 is taken, whatever the size of the reloaded log");
 		assertTrue(eventFileExists(eventsDir, "0000000005-000005-0-"));
-		List<Event<TestEvent>> since = stream.query(EventQuery.matchAll(), lastBeforeTheCrash);
+		List<Event<TestEvent>> since = stream.query(EventFilter.matchAll(), lastBeforeTheCrash);
 		assertEquals(1, since.size());
 		assertEquals(appended.reference(), since.get(0).reference());
 	}

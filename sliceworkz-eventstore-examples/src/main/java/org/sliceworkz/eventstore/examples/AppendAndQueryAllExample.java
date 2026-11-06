@@ -27,6 +27,7 @@ import org.sliceworkz.eventstore.examples.AppendAndQueryAllExample.CustomerEvent
 import org.sliceworkz.eventstore.examples.AppendAndQueryAllExample.CustomerEvent.CustomerNameChanged;
 import org.sliceworkz.eventstore.examples.AppendAndQueryAllExample.CustomerEvent.CustomerRegistered;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
@@ -49,7 +50,7 @@ public class AppendAndQueryAllExample {
 		stream.append(AppendCriteria.none(), Event.of(new CustomerChurned(), Tags.none()));
 		
 		// query and print all events that are now in the stream, with their metadata
-		List<Event<CustomerEvent>> allEvents = stream.query(EventQuery.matchAll());
+		List<Event<CustomerEvent>> allEvents = stream.query(EventFilter.matchAll());
 		EventHandler<CustomerEvent> withMetaData = System.out::println;
 		System.out.println("printing events with metadata...");
 		allEvents.forEach(withMetaData::when);

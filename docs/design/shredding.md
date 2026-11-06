@@ -218,7 +218,7 @@ audit.keys(KeyAuditQuery.forKeys(keysOnAnEvent));               // are the keys 
   five-argument constructor stays, meaning "any key".
 - **Which *events* hold data under a key is not answered here** — the key store has never seen an event.
   That is an ordinary tag query, since each event carries its keys as `dek:` tags:
-  `EventQuery.forEvents(EventTypesFilter.any(), Tags.of(KeyId.TAG_KEY, record.id().value()))`.
+  `EventQuery.of(EventFilter.forTags(KeyId.TAG_KEY, record.id().value()))`.
 - **Optional, like leases.** A key store fronting a KMS that does not enumerate returns empty and
   callers do without; all three shipped key stores implement it.
 

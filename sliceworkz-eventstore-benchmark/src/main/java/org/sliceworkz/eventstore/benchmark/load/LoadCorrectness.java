@@ -30,6 +30,7 @@ import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.sliceworkz.eventstore.benchmark.env.BenchmarkTarget;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.stream.EventStreamId;
 
@@ -181,7 +182,7 @@ public final class LoadCorrectness {
 		try {
 			return target.store()
 					.getRawEventStream(EventStreamId.anyContext().anyPurpose())
-					.query(EventQuery.matchAll())
+					.query(EventFilter.matchAll())
 					.size();
 		} catch ( RuntimeException e ) {
 			LOGGER.warn("could not count events through a wildcard stream", e);

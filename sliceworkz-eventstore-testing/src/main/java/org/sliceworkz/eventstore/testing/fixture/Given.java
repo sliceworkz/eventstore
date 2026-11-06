@@ -29,6 +29,7 @@ import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.projection.Projection;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
@@ -76,7 +77,7 @@ public final class Given<DOMAIN_EVENT_TYPE> {
 	 * @return the last event's reference, or {@code null} if the store is empty
 	 */
 	public EventReference lastReference ( ) {
-		return fixture.stream().query(EventQuery.matchAll().backwards().limit(1)).stream()
+		return fixture.stream().query(EventQuery.of(EventFilter.matchAll()).backwards().limit(1)).stream()
 				.findFirst().map(Event::reference).orElse(null);
 	}
 

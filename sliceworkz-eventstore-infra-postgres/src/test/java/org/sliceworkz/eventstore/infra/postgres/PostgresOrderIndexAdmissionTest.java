@@ -152,7 +152,7 @@ public class PostgresOrderIndexAdmissionTest {
 			Fixture fixture = fixture(image);
 			List<Object> parameters = new ArrayList<>();
 			String sql = fixture.storage().querySql(EventFilter.matchAll(), EventStreamId.forContext(QUIET_CONTEXT),
-					fixture.quietMidpoint(), Limit.to(PAGE), Direction.FORWARD, parameters);
+					fixture.quietMidpoint(), null, Limit.to(PAGE), Direction.FORWARD, parameters);
 
 			List<Plan> plans = explain(fixture, sql, parameters);
 
@@ -174,8 +174,8 @@ public class PostgresOrderIndexAdmissionTest {
 		public void testTheNewestTaggedEventOfAQuietStreamIsNotFoundByWalkingAWiderOrderIndex ( ) throws Exception {
 			Fixture fixture = fixture(image);
 			List<Object> parameters = new ArrayList<>();
-			String sql = fixture.storage().querySql(EventFilter.forTags(Tags.of("entity", "7")),
-					EventStreamId.forContext(QUIET_CONTEXT), null, Limit.to(1), Direction.BACKWARD, parameters);
+			String sql = fixture.storage().querySql(EventFilter.forTags("entity", "7"),
+					EventStreamId.forContext(QUIET_CONTEXT), null, null, Limit.to(1), Direction.BACKWARD, parameters);
 
 			List<Plan> plans = explain(fixture, sql, parameters);
 
@@ -194,7 +194,7 @@ public class PostgresOrderIndexAdmissionTest {
 		public void testTheConsistencyCheckOfAConditionalAppendIsNotServedByAWiderOrderIndex ( ) throws Exception {
 			Fixture fixture = fixture(image);
 			EventStreamId quiet = EventStreamId.forContext(QUIET_CONTEXT);
-			AppendCriteria criteria = AppendCriteria.of(EventFilter.forTags(Tags.of("entity", "7")), fixture.quietHead());
+			AppendCriteria criteria = AppendCriteria.of(EventFilter.forTags("entity", "7"), fixture.quietHead());
 
 			StringBuilder sql = new StringBuilder("SELECT 1 ");
 			List<Object> parameters = new ArrayList<>();
@@ -334,7 +334,7 @@ public class PostgresOrderIndexAdmissionTest {
 			seed(storage);
 			analyze(dataSource);
 			List<StoredEvent> quiet = storage.query(EventFilter.matchAll(), EventStreamId.forContext(QUIET_CONTEXT),
-					null, Limit.none(), Direction.FORWARD);
+					null, null, Limit.none(), Direction.FORWARD);
 			return new Fixture(storage, dataSource,
 					quiet.get(quiet.size() - 1).reference(), quiet.get(quiet.size() / 2).reference());
 		});

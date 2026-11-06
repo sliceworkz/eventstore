@@ -185,9 +185,7 @@ public final class AppendWorkloads {
 
 			@Override
 			EventFilter filterFor ( WorkloadContext context, String sku ) {
-				return EventFilter.forEvents(
-						EventTypesFilter.of(InventoryEvent.StockReserved.class, InventoryEvent.StockPicked.class),
-						Tags.none());
+				return EventFilter.forTypes(InventoryEvent.StockReserved.class, InventoryEvent.StockPicked.class);
 			}
 		};
 	}
@@ -202,7 +200,7 @@ public final class AppendWorkloads {
 
 			@Override
 			EventFilter filterFor ( WorkloadContext context, String sku ) {
-				return EventFilter.forEvents(stockTypes(), Tags.of(TagKeys.SKU, sku));
+				return EventFilter.of(stockTypes(), Tags.of(TagKeys.SKU, sku));
 			}
 		};
 	}
@@ -214,7 +212,7 @@ public final class AppendWorkloads {
 
 			@Override
 			EventFilter filterFor ( WorkloadContext context, String sku ) {
-				return EventFilter.forEvents(stockTypes(), Tags.of(
+				return EventFilter.of(stockTypes(), Tags.of(
 						org.sliceworkz.eventstore.events.Tag.of(TagKeys.SKU, sku),
 						org.sliceworkz.eventstore.events.Tag.of(TagKeys.CHANNEL, "web"),
 						org.sliceworkz.eventstore.events.Tag.of(TagKeys.WAREHOUSE, "WH-1")));
@@ -257,7 +255,7 @@ public final class AppendWorkloads {
 					items.add(new EventFilterItem(stockTypes(),
 							Tags.of(TagKeys.SKU, context.companionEntity(i))));
 				}
-				return new EventFilter(items, null);
+				return new EventFilter(items);
 			}
 		};
 	}
@@ -277,7 +275,7 @@ public final class AppendWorkloads {
 			Object append ( WorkloadContext context, String ignored ) {
 				String fresh = context.freshEntity();
 				AppendCriteria criteria = AppendCriteria.of(
-						EventFilter.forEvents(stockTypes(), Tags.of(TagKeys.SKU, fresh)), null);
+						EventFilter.of(stockTypes(), Tags.of(TagKeys.SKU, fresh)), null);
 				try {
 					return context.inventoryToAppendTo(fresh).append(criteria, reservation(context, fresh)).size();
 				} catch ( OptimisticLockingException e ) {
@@ -321,7 +319,7 @@ public final class AppendWorkloads {
 						() -> new IllegalStateException("this corpus's facts carry no midCursor;"
 								+ " re-provision it before measuring boundary staleness"));
 				AppendCriteria criteria = AppendCriteria.of(
-						EventFilter.forEvents(stockTypes(), Tags.of(TagKeys.SKU, "SKU-STALE-PROBE")),
+						EventFilter.of(stockTypes(), Tags.of(TagKeys.SKU, "SKU-STALE-PROBE")),
 						midCursor);
 				return context.inventoryToAppendTo(sku).append(criteria, reservation(context, sku)).size();
 			}
@@ -424,7 +422,7 @@ public final class AppendWorkloads {
 			@Override
 			public Object invoke ( WorkloadContext context ) {
 				String sku = context.nextEntity();
-				EventQuery boundary = EventQuery.forEvents(stockTypes(), Tags.of(TagKeys.SKU, sku));
+				EventQuery boundary = EventQuery.of(EventFilter.of(stockTypes(), Tags.of(TagKeys.SKU, sku)));
 
 				List<Event<InventoryEvent>> history = context.inventory().query(boundary);
 				EventReference last = history.isEmpty() ? null : history.getLast().reference();
@@ -492,7 +490,7 @@ public final class AppendWorkloads {
 			@Override
 			public Object invoke ( WorkloadContext context ) {
 				String sku = context.nextEntity();
-				EventQuery boundary = EventQuery.forEvents(stockTypes(), Tags.of(TagKeys.SKU, sku));
+				EventQuery boundary = EventQuery.of(EventFilter.of(stockTypes(), Tags.of(TagKeys.SKU, sku)));
 
 				// head FIRST, boundary second -- the order is the safety. Presenting the head claims
 				// "no matching events after it that I have not seen", and only this order makes that
@@ -511,7 +509,7 @@ public final class AppendWorkloads {
 				// claims -- a matching event landing between the two reads is left for the check to
 				// raise rather than folded into a decision the check then rejects
 				context.inventory()
-						.query(boundary.until(head).backwards().limit(1));
+						.query(boundary.notAfter(head).backwards().limit(1));
 
 				try {
 					return context.inventoryToAppendTo(sku).append(
@@ -642,7 +640,7 @@ public final class AppendWorkloads {
 		private EventReference readBoundary ( WorkloadContext context, EventFilter filter ) {
 			return context.inventory()
 					.query(new EventQuery(filter, EventQuery.Direction.BACKWARD,
-							org.sliceworkz.eventstore.query.Limit.to(1)))
+							org.sliceworkz.eventstore.query.Limit.to(1), null))
 					.stream()
 					.map(Event::reference)
 					.findFirst()

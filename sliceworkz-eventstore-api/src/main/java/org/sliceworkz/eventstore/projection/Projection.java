@@ -18,6 +18,7 @@
 package org.sliceworkz.eventstore.projection;
 
 import org.sliceworkz.eventstore.events.EventHandler;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 
 /**
@@ -55,10 +56,7 @@ import org.sliceworkz.eventstore.query.EventQuery;
  *     @Override
  *     public EventQuery eventQuery() {
  *         // Only process CustomerRegistered events with a region tag
- *         return EventQuery.forEvents(
- *             EventTypesFilter.of(CustomerRegistered.class),
- *             Tags.of("region", "*")
- *         );
+ *         return EventQuery.of(EventFilter.forTypes(CustomerRegistered.class).tagged("region", "EU"));
  *     }
  *
  *     @Override
@@ -103,19 +101,14 @@ import org.sliceworkz.eventstore.query.EventQuery;
  *     @Override
  *     public EventQuery initQuery() {
  *         // Find the last stock count (savepoint) for this product
- *         return EventQuery.forEvents(
- *             EventTypesFilter.of(StockCounted.class),
- *             Tags.of("product", product)
- *         ).backwards().limit(1);
+ *         return EventQuery.of(EventFilter.forTypes(StockCounted.class).tagged("product", product))
+ *                          .backwards().limit(1);
  *     }
  *
  *     @Override
  *     public EventQuery eventQuery() {
  *         // Only process movements — savepoints are handled by initQuery
- *         return EventQuery.forEvents(
- *             EventTypesFilter.of(StockAdded.class, StockPicked.class),
- *             Tags.of("product", product)
- *         );
+ *         return EventQuery.of(EventFilter.forTypes(StockAdded.class, StockPicked.class).tagged("product", product));
  *     }
  *
  *     @Override
@@ -151,16 +144,16 @@ public interface Projection<CONSUMED_EVENT_TYPE> extends EventHandler<CONSUMED_E
 	 * <strong>Note:</strong> This query is ignored when bookmarking is enabled on the {@link Projector},
 	 * because bookmarked projections require processing every event. A warning is logged at build time.
 	 *
-	 * "No initialization query" is {@link EventQuery#matchNone()}, the same spelling an absent filter has
+	 * "No initialization query" is {@code EventQuery.of(EventFilter.matchNone())}, the same spelling an absent filter has
 	 * everywhere else in this API ({@link org.sliceworkz.eventstore.stream.AppendCriteria#none()} is built
 	 * on {@link org.sliceworkz.eventstore.query.EventFilter#matchNone()}), and it is what this default
 	 * answers. A projection written before that default may still answer {@code null}; the
 	 * {@link Projector} treats the two identically.
 	 *
-	 * @return the initialization EventQuery, or {@link EventQuery#matchNone()} (the default) to skip
+	 * @return the initialization EventQuery, or a query over {@link org.sliceworkz.eventstore.query.EventFilter#matchNone()} (the default) to skip
 	 */
 	default EventQuery initQuery ( ) {
-		return EventQuery.matchNone();
+		return EventQuery.of(EventFilter.matchNone());
 	}
 
 	/**

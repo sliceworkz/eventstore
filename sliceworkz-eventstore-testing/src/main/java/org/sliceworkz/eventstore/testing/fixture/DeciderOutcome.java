@@ -23,6 +23,7 @@ import java.util.function.Predicate;
 
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.stream.OptimisticLockingException;
 
@@ -68,7 +69,7 @@ public final class DeciderOutcome<DOMAIN_EVENT_TYPE, R> {
 	 */
 	public List<Event<DOMAIN_EVENT_TYPE>> appended ( ) {
 		if ( appended == null ) {
-			appended = fixture.stream().query(EventQuery.matchAll(), before);
+			appended = fixture.stream().query(EventFilter.matchAll(), before);
 		}
 		return appended;
 	}

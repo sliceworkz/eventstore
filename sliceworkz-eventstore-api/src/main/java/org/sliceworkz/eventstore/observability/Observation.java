@@ -102,8 +102,9 @@ public sealed interface Observation<O extends Outcome> {
 	 * @param limit how many stored events the read may return
 	 * @param direction the direction of the read
 	 * @param after the cursor the read starts after, if any
+	 * @param notAfter the read bound, if any: nothing after it is read
 	 */
-	record Query ( StreamInfo stream, EventFilter filter, Limit limit, EventQuery.Direction direction, Optional<EventReference> after ) implements OnStream<Outcome.Read> { }
+	record Query ( StreamInfo stream, EventFilter filter, Limit limit, EventQuery.Direction direction, Optional<EventReference> after, Optional<EventReference> notAfter ) implements OnStream<Outcome.Read> { }
 
 	/**
 	 * A lookup of one stored event by its id.

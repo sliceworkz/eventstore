@@ -33,6 +33,7 @@ import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.postgres.PostgresEventStorage;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.shredding.DataSubject;
 import org.sliceworkz.eventstore.shredding.ErasureReason;
@@ -82,7 +83,7 @@ public class PostgresShreddingBuilderTest {
 				EventStream<ContactEvent> contacts = store.getEventStream(STREAM, ContactEvent.class);
 				contacts.append(AppendCriteria.none(), Event.of(new ContactRecorded("c-1", Shreddable.of("Alice Martin", ALICE)), Tags.none()));
 
-				ContactRecorded before = (ContactRecorded) contacts.query(EventQuery.matchAll()).stream().findFirst().orElseThrow().data();
+				ContactRecorded before = (ContactRecorded) contacts.query(EventFilter.matchAll()).stream().findFirst().orElseThrow().data();
 				assertEquals("Alice Martin", before.name().map(n -> n).orElse("[erased]"));
 
 				// the key landed in this store's own table, which is what the no-arg shredding() promises
@@ -91,7 +92,7 @@ public class PostgresShreddingBuilderTest {
 
 				assertEquals(1, store.eraseCategory(ALICE, ErasureReason.of("GDPR art.17 request #4711")).keysShredded());
 
-				ContactRecorded after = (ContactRecorded) contacts.query(EventQuery.matchAll()).stream().findFirst().orElseThrow().data();
+				ContactRecorded after = (ContactRecorded) contacts.query(EventFilter.matchAll()).stream().findFirst().orElseThrow().data();
 				Shreddable.Shredded<String> shredded = assertInstanceOf(Shreddable.Shredded.class, after.name());
 				assertEquals(ALICE, shredded.subject());
 				assertEquals(1, audit.totals().shreddedKeys());

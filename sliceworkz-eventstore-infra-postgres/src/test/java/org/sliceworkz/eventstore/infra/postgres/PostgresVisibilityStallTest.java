@@ -47,6 +47,7 @@ import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.postgres.util.PostgresContainer;
 import org.sliceworkz.eventstore.projection.Projection;
 import org.sliceworkz.eventstore.projection.Projector;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
@@ -200,7 +201,7 @@ public class PostgresVisibilityStallTest {
 
 				EventStreamId stream = EventStreamId.forContext("account").withPurpose("42");
 				Tags boundaryTags = Tags.of("account", "42");
-				EventQuery boundary = EventQuery.forEvents(EventTypesFilter.any(), boundaryTags);
+				EventQuery boundary = EventQuery.of(EventFilter.forTags(boundaryTags));
 				execute(dataSource, "CREATE TABLE IF NOT EXISTS " + prefix + "unrelated_workload (id int)");
 
 				storage.append(AppendCriteria.none(), stream, List.of(event(stream, "MoneyDeposited", boundaryTags)));
@@ -362,7 +363,7 @@ public class PostgresVisibilityStallTest {
 					Projector.from(stream).into(new Projection<AccountEvent>() {
 						@Override
 						public EventQuery eventQuery ( ) {
-							return EventQuery.matchAll();
+							return EventQuery.of(EventFilter.matchAll());
 						}
 						@Override
 						public void when ( Event<AccountEvent> event ) {
@@ -438,11 +439,11 @@ public class PostgresVisibilityStallTest {
 		}
 
 		private List<StoredEvent> query ( EventStorage storage, EventQuery query, EventStreamId stream ) {
-			return storage.query(query.filter(), stream, null, Limit.none(), Direction.FORWARD);
+			return storage.query(query.filter(), stream, null, null, Limit.none(), Direction.FORWARD);
 		}
 
 		private int visibleCount ( EventStorage storage, EventStreamId stream ) {
-			return query(storage, EventQuery.matchAll(), stream).size();
+			return query(storage, EventQuery.of(EventFilter.matchAll()), stream).size();
 		}
 
 		private EventReference lastReference ( EventStorage storage, EventQuery boundary, EventStreamId stream ) {

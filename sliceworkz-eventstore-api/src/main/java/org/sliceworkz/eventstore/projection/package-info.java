@@ -41,7 +41,7 @@
  *
  *     @Override
  *     public EventQuery eventQuery() {
- *         return EventQuery.forEvents(EventTypesFilter.of(CustomerRegistered.class), Tags.none());
+ *         return EventQuery.of(EventFilter.forTypes(CustomerRegistered.class));
  *     }
  *
  *     @Override
@@ -72,7 +72,7 @@
  *
  *     @Override
  *     public EventQuery eventQuery() {
- *         return EventQuery.matchAll();
+ *         return EventQuery.of(EventFilter.matchAll());
  *     }
  *
  *     @Override

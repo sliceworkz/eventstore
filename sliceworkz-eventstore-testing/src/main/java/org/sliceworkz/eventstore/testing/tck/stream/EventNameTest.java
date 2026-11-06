@@ -31,6 +31,7 @@ import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.LegacyEvent;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.events.Upcaster;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -140,7 +141,7 @@ public class EventNameTest extends AbstractEventStoreTest {
 
 		// and so does the stored row, seen without any type mapping at all
 		EventSource<String> raw = eventStore().getRawEventStream(customers);
-		List<Event<String>> stored = raw.query(EventQuery.matchAll());
+		List<Event<String>> stored = raw.query(EventFilter.matchAll());
 		assertEquals(1, stored.size());
 		assertEquals("CustomerRegistered", stored.getFirst().type().name());
 		assertEquals("CustomerRegistered", stored.getFirst().storedType().name());
@@ -151,7 +152,7 @@ public class EventNameTest extends AbstractEventStoreTest {
 		writeHistoryUnderTheOldClassName();
 
 		EventStream<CustomerEvent> stream = eventStore().getEventStream(customers, CustomerEvent.class);
-		List<Event<CustomerEvent>> events = stream.query(EventQuery.matchAll());
+		List<Event<CustomerEvent>> events = stream.query(EventFilter.matchAll());
 
 		assertEquals(1, events.size());
 		CustomerEvent.CustomerSignedUp signedUp = assertInstanceOf(CustomerEvent.CustomerSignedUp.class, events.getFirst().data());
@@ -173,26 +174,23 @@ public class EventNameTest extends AbstractEventStoreTest {
 		stream.append(AppendCriteria.none(), Event.of(new CustomerEvent.CustomerChurned("c1"), Tags.of("customer", "c1")));
 
 		// by class: the filter is built from EventType.of(Class), so it carries the declared name
-		List<Event<CustomerEvent>> byClass = stream.query(
-				EventQuery.forEvents(EventTypesFilter.of(CustomerEvent.CustomerSignedUp.class), Tags.of("customer", "c1")));
+		List<Event<CustomerEvent>> byClass = stream.query(EventFilter.forTypes(CustomerEvent.CustomerSignedUp.class).tagged("customer", "c1"));
 		assertEquals(1, byClass.size());
 		assertInstanceOf(CustomerEvent.CustomerSignedUp.class, byClass.getFirst().data());
 
 		// by name: the declared name is the stored name
-		List<Event<CustomerEvent>> byName = stream.query(
-				EventQuery.forEvents(EventTypesFilter.of(Set.of(EventType.named("CustomerRegistered"))), Tags.none()));
+		List<Event<CustomerEvent>> byName = stream.query(EventFilter.of(EventTypesFilter.of(Set.of(EventType.named("CustomerRegistered"))), Tags.none()));
 		assertEquals(1, byName.size());
 
 		// the class's simple name is not a stored name of anything
-		List<Event<CustomerEvent>> bySimpleName = stream.query(
-				EventQuery.forEvents(EventTypesFilter.of(Set.of(EventType.named("CustomerSignedUp"))), Tags.none()));
+		List<Event<CustomerEvent>> bySimpleName = stream.query(EventFilter.of(EventTypesFilter.of(Set.of(EventType.named("CustomerSignedUp"))), Tags.none()));
 		assertTrue(bySimpleName.isEmpty());
 
 		// and the filter is honoured by the lock check as well as by the read
 		Event<CustomerEvent> last = byClass.getFirst();
 		stream.append(AppendCriteria.none(), Event.of(new CustomerEvent.CustomerSignedUp("c2", "Bob"), Tags.of("customer", "c1")));
 		assertThrows(org.sliceworkz.eventstore.stream.OptimisticLockingException.class, () -> stream.append(
-				AppendCriteria.of(EventQuery.forEvents(EventTypesFilter.of(CustomerEvent.CustomerSignedUp.class), Tags.of("customer", "c1")), last.reference()),
+				AppendCriteria.of(EventQuery.of(EventFilter.forTypes(CustomerEvent.CustomerSignedUp.class).tagged("customer", "c1")), last.reference()),
 				Event.of(new CustomerEvent.CustomerChurned("c1"), Tags.of("customer", "c1"))));
 	}
 
@@ -201,7 +199,7 @@ public class EventNameTest extends AbstractEventStoreTest {
 		writeHistoryUnderTheOldClassName();
 
 		EventStream<CustomerEventV3> stream = eventStore().getEventStream(customers, CustomerEventV3.class, CustomerLegacyEvent.class);
-		List<Event<CustomerEventV3>> events = stream.query(EventQuery.matchAll());
+		List<Event<CustomerEventV3>> events = stream.query(EventFilter.matchAll());
 
 		assertEquals(1, events.size());
 		CustomerEventV3.CustomerRegisteredV3 upcast = assertInstanceOf(CustomerEventV3.CustomerRegisteredV3.class, events.getFirst().data());
@@ -211,8 +209,7 @@ public class EventNameTest extends AbstractEventStoreTest {
 		assertEquals("CustomerRegistered", events.getFirst().storedType().name());
 
 		// a filter on the current type reaches the legacy name through the upcaster's mapping
-		List<Event<CustomerEventV3>> byCurrentType = stream.query(
-				EventQuery.forEvents(EventTypesFilter.of(CustomerEventV3.CustomerRegisteredV3.class), Tags.none()));
+		List<Event<CustomerEventV3>> byCurrentType = stream.query(EventFilter.forTypes(CustomerEventV3.CustomerRegisteredV3.class));
 		assertEquals(1, byCurrentType.size());
 	}
 
@@ -227,7 +224,7 @@ public class EventNameTest extends AbstractEventStoreTest {
 
 		// both hierarchies register on one stream: no duplicate name, since only one of them stores 'Created'
 		EventStream<Object> everything = eventStore().getEventStream(EventStreamId.anyContext(), Set.of(OrderEvent.class, VacancyEvent.class));
-		List<Event<Object>> events = everything.query(EventQuery.matchAll());
+		List<Event<Object>> events = everything.query(EventFilter.matchAll());
 
 		assertEquals(2, events.size());
 		Event<Object> order = events.stream().filter(e -> e.stream().context().equals("order")).findFirst().orElseThrow();
@@ -238,8 +235,8 @@ public class EventNameTest extends AbstractEventStoreTest {
 		assertEquals("Created", vacancy.type().name());
 
 		// each read through its own class finds its own context's events, and only those
-		assertEquals(1, everything.query(EventQuery.forEvents(EventTypesFilter.of(OrderEvent.Created.class), Tags.none())).size());
-		assertEquals(1, everything.query(EventQuery.forEvents(EventTypesFilter.of(VacancyEvent.Created.class), Tags.none())).size());
+		assertEquals(1, everything.query(EventFilter.forTypes(OrderEvent.Created.class)).size());
+		assertEquals(1, everything.query(EventFilter.forTypes(VacancyEvent.Created.class)).size());
 	}
 
 	@ForEachBackend

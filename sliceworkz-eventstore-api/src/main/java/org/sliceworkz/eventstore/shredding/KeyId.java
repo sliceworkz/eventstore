@@ -45,7 +45,7 @@ public record KeyId ( String value ) {
 	 * holds data protected by a given key is an ordinary tag query served by the existing index, with no
 	 * extra column and no table scan:
 	 * <pre>{@code
-	 * stream.query(EventQuery.forEvents(EventTypesFilter.any(), Tags.of(KeyId.TAG_KEY, key.value())))
+	 * stream.query(EventFilter.forTags(KeyId.TAG_KEY, key.value()))
 	 * }</pre>
 	 * The tags are left in place when the key is destroyed. A {@code dek:} tag naming a key that no
 	 * longer exists is a useful tombstone: it says an erasure touched this event, without saying what

@@ -22,6 +22,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
@@ -29,11 +31,11 @@ import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 
 /**
- * The {@code until} boundary of an {@link EventFilter} bounds <em>stored</em> events: a reference
- * names a stored event, and every event that stored event upcasts into is at or before it. That is
- * how every storage compares it -- a storage only ever sees stored events, whose index is 0 -- and it
- * is what lets a reference obtained without upcasting (a stream's head, a bookmark read back from a
- * store that keeps no index) bound a typed read without cutting the newest stored event in pieces.
+ * The bounds of an {@link EventFilterItem} bound <em>stored</em> events: a reference names a stored
+ * event, and every event that stored event upcasts into is on the same side of a bound. That is how
+ * every storage compares them -- a storage only ever sees stored events, whose index is 0 -- and it is
+ * what lets a reference obtained without upcasting (a stream's head, a bookmark read back from a store
+ * that keeps no index) bound a typed read without cutting a stored event in pieces.
  */
 public class EventFilterTest {
 
@@ -45,8 +47,8 @@ public class EventFilterTest {
 
 	@Test
 	void forTagsIsForEventsOfAnyType ( ) {
-		EventFilter filter = EventFilter.forTags(Tags.of("customer", "123"));
-		assertEquals(EventFilter.forEvents(EventTypesFilter.any(), Tags.of("customer", "123")), filter);
+		EventFilter filter = EventFilter.forTags("customer", "123");
+		assertEquals(EventFilter.forTags("customer", "123"), filter);
 
 		assertTrue(filter.matches(TYPE, Tags.of("customer", "123"), row("a", 1, 1, 0)));
 		assertTrue(filter.matches(EventType.named("SomethingElse"), Tags.of("customer", "123", "region", "EU"), row("b", 2, 2, 0)));
@@ -120,7 +122,7 @@ public class EventFilterTest {
 	@Test
 	void forTypesIsForEventsOfThoseTypesWhateverTheirTags ( ) {
 		EventFilter filter = EventFilter.forTypes(Customer.Registered.class, Unrelated.class);
-		assertEquals(EventFilter.forEvents(EventTypesFilter.of(Customer.Registered.class, Unrelated.class), Tags.none()), filter);
+		assertEquals(EventFilter.forTypes(Customer.Registered.class, Unrelated.class), filter);
 
 		assertTrue(filter.matches(REGISTERED, Tags.none(), row("a", 1, 1, 0)));
 		assertTrue(filter.matches(UNRELATED, Tags.of("customer", "123"), row("b", 2, 2, 0)));
@@ -140,7 +142,7 @@ public class EventFilterTest {
 	@Test
 	void taggedNarrowsToEventsCarryingTheTagOnTopOfTheTypes ( ) {
 		EventFilter filter = EventFilter.forTypes(Customer.class).tagged("customer", "123");
-		assertEquals(EventFilter.forEvents(EventTypesFilter.of(Customer.class), Tags.of("customer", "123")), filter,
+		assertEquals(EventFilter.forTypes(Customer.class).tagged("customer", "123"), filter,
 				"the chain resolves to the same items as the two-halves form");
 
 		assertTrue(filter.matches(REGISTERED, Tags.of("customer", "123"), row("a", 1, 1, 0)));
@@ -153,7 +155,7 @@ public class EventFilterTest {
 	@Test
 	void taggedAccumulates ( ) {
 		EventFilter filter = EventFilter.forTypes(Customer.class).tagged("customer", "123").tagged("region", "EU");
-		assertEquals(EventFilter.forEvents(EventTypesFilter.of(Customer.class), Tags.of("customer", "123", "region", "EU")), filter);
+		assertEquals(EventFilter.forTypes(Customer.class).tagged(Tags.of("customer", "123", "region", "EU")), filter);
 		assertEquals(EventFilter.forTypes(Customer.class).tagged(Tags.of("customer", "123", "region", "EU")), filter);
 
 		assertTrue(filter.matches(REGISTERED, Tags.of("customer", "123", "region", "EU"), row("a", 1, 1, 0)));
@@ -190,10 +192,10 @@ public class EventFilterTest {
 	}
 
 	@Test
-	void taggedKeepsTheUntilBoundary ( ) {
+	void taggedKeepsTheItemBounds ( ) {
 		EventReference head = row("head", 10, 42, 0);
 		EventFilter filter = EventFilter.forTypes(Customer.class).until(head).tagged("customer", "123");
-		assertEquals(head, filter.until());
+		assertEquals(head, filter.items().getFirst().until());
 		assertEquals(EventFilter.forTypes(Customer.class).tagged("customer", "123").until(head), filter);
 
 		assertTrue(filter.matches(REGISTERED, Tags.of("customer", "123"), head));
@@ -211,7 +213,7 @@ public class EventFilterTest {
 	@Test
 	void orIsTheUnionOfBothFiltersItems ( ) {
 		EventFilter a = EventFilter.forTypes(Customer.Registered.class);
-		EventFilter b = EventFilter.forTags(Tags.of("customer", "123"));
+		EventFilter b = EventFilter.forTags("customer", "123");
 		EventFilter union = a.or(b);
 
 		assertEquals(2, union.items().size());
@@ -226,9 +228,6 @@ public class EventFilterTest {
 		assertTrue(EventFilter.matchAll().or(some).isMatchAll(), "a union with everything is everything");
 		assertTrue(some.or(EventFilter.matchAll()).isMatchAll());
 		assertTrue(some.or(EventFilter.matchAll()).matches(UNRELATED, Tags.none(), row("a", 1, 1, 0)));
-
-		EventReference head = row("head", 10, 42, 0);
-		assertEquals(EventFilter.matchAll().until(head), some.until(head).or(EventFilter.matchAll().until(head)), "the shared boundary is kept");
 	}
 
 	@Test
@@ -239,12 +238,151 @@ public class EventFilterTest {
 		assertTrue(EventFilter.matchNone().or(EventFilter.matchNone()).isMatchNone());
 	}
 
+	// --- the bounds of an item: after (exclusive), until (inclusive) -----------------------------
+
 	@Test
-	void orRefusesTwoDifferentBoundaries ( ) {
+	void orKeepsEachItemsOwnBounds ( ) {
 		EventFilter a = EventFilter.forTypes(Customer.Registered.class).until(row("x", 1, 1, 0));
-		EventFilter b = EventFilter.forTypes(Customer.Churned.class).until(row("y", 2, 2, 0));
-		assertThrows(IllegalArgumentException.class, () -> a.or(b));
-		assertThrows(IllegalArgumentException.class, () -> a.or(EventFilter.forTypes(Customer.Churned.class)), "a boundary on one side only");
+		EventFilter b = EventFilter.forTypes(Customer.Churned.class).after(row("y", 2, 2, 0));
+		EventFilter union = a.or(b);
+
+		assertEquals(List.of(a.items().getFirst(), b.items().getFirst()), union.items(), "differently bounded items unite, each with its own bounds");
+		assertTrue(union.matches(REGISTERED, Tags.none(), row("x", 1, 1, 0)));
+		assertFalse(union.matches(REGISTERED, Tags.none(), row("z", 3, 3, 0)), "past the first item's until");
+		assertFalse(union.matches(CHURNED, Tags.none(), row("y", 2, 2, 0)), "the second item's after is exclusive");
+		assertTrue(union.matches(CHURNED, Tags.none(), row("z", 3, 3, 0)));
+		assertTrue(a.or(EventFilter.forTypes(Customer.Churned.class)).isBounded(), "a bound on one side only is fine too");
+	}
+
+	@Test
+	void afterExcludesItsOwnStoredEventAndEverythingBefore ( ) {
+		EventFilter bounded = EventFilter.matchAll().after(row("count", 10, 42, 0));
+
+		assertFalse(bounded.matches(TYPE, Tags.none(), row("count", 10, 42, 0)), "exclusive");
+		assertFalse(bounded.matches(TYPE, Tags.none(), row("count", 10, 42, 3)), "not a piece of the stored event at the bound either");
+		assertFalse(bounded.matches(TYPE, Tags.none(), row("earlier", 9, 42, 0)));
+		assertFalse(bounded.matches(TYPE, Tags.none(), row("earlier-tx", 100, 41, 0)), "an earlier transaction, whatever its position");
+		assertTrue(bounded.matches(TYPE, Tags.none(), row("next", 11, 42, 0)));
+		assertTrue(bounded.matches(TYPE, Tags.none(), row("later-tx", 3, 43, 0)), "a later transaction, whatever its position");
+	}
+
+	@Test
+	void afterAndUntilTogetherBoundAnItemOnBothSides ( ) {
+		EventFilter bounded = EventFilter.forTypes(Customer.class).after(row("a", 10, 10, 0)).until(row("b", 20, 20, 0));
+
+		assertFalse(bounded.matches(REGISTERED, Tags.none(), row("a", 10, 10, 0)));
+		assertTrue(bounded.matches(REGISTERED, Tags.none(), row("in", 15, 15, 0)));
+		assertTrue(bounded.matches(REGISTERED, Tags.none(), row("b", 20, 20, 0)));
+		assertFalse(bounded.matches(REGISTERED, Tags.none(), row("c", 21, 21, 0)));
+	}
+
+	@Test
+	void anItemWhoseBoundsLeaveNoRoomMatchesNothing ( ) {
+		EventFilter empty = EventFilter.matchAll().after(row("b", 20, 20, 0)).until(row("a", 10, 10, 0));
+		assertFalse(empty.matches(TYPE, Tags.none(), row("in", 15, 15, 0)));
+		assertFalse(empty.matches(TYPE, Tags.none(), row("later", 25, 25, 0)));
+	}
+
+	@Test
+	void untilAndAfterReplaceAndNullRemoves ( ) {
+		EventReference early = row("early", 5, 5, 0);
+		EventReference late = row("late", 50, 50, 0);
+		EventFilter filter = EventFilter.forTypes(Customer.class);
+
+		assertEquals(late, filter.until(early).until(late).items().getFirst().until(), "the later call wins, even when it widens");
+		assertEquals(early, filter.after(late).after(early).items().getFirst().after(), "the later call wins, even when it widens");
+		assertEquals(filter, filter.until(early).until(null), "null removes the bound");
+		assertEquals(filter, filter.after(early).after(null));
+	}
+
+	@Test
+	void untilIfEarlierAndAfterIfLaterNarrow ( ) {
+		EventReference early = row("early", 5, 5, 0);
+		EventReference late = row("late", 50, 50, 0);
+		EventFilter filter = EventFilter.forTypes(Customer.class);
+
+		assertEquals(early, filter.untilIfEarlier(early).items().getFirst().until(), "no bound yet: it is set");
+		assertEquals(early, filter.until(early).untilIfEarlier(late).items().getFirst().until(), "a later one does not widen");
+		assertEquals(early, filter.until(late).untilIfEarlier(early).items().getFirst().until(), "an earlier one narrows");
+		assertEquals(late, filter.afterIfLater(late).items().getFirst().after(), "no bound yet: it is set");
+		assertEquals(late, filter.after(late).afterIfLater(early).items().getFirst().after(), "an earlier one does not widen");
+		assertEquals(late, filter.after(early).afterIfLater(late).items().getFirst().after(), "a later one narrows");
+
+		EventFilter bounded = filter.until(early).after(early);
+		assertEquals(bounded, bounded.untilIfEarlier(null), "null changes nothing");
+		assertEquals(bounded, bounded.afterIfLater(null));
+	}
+
+	@Test
+	void theNarrowingMethodsJudgeStoredEventsSoAPieceIsNoNarrower ( ) {
+		EventReference stored = row("head", 10, 42, 0);
+		EventFilter filter = EventFilter.matchAll().until(stored);
+		assertEquals(stored, filter.untilIfEarlier(stored.withIndex(3)).items().getFirst().until(),
+				"a reference into the same stored event is not earlier");
+	}
+
+	@Test
+	void boundsApplyToEveryItemAndEachItemNarrowsOnItsOwn ( ) {
+		EventReference early = row("early", 5, 5, 0);
+		EventReference late = row("late", 50, 50, 0);
+		EventFilter union = EventFilter.forTypes(Customer.Registered.class).until(early)
+				.or(EventFilter.forTypes(Customer.Churned.class));
+
+		EventFilter narrowed = union.untilIfEarlier(late);
+		assertEquals(early, narrowed.items().get(0).until(), "the first item keeps its earlier bound");
+		assertEquals(late, narrowed.items().get(1).until(), "the second item gets the bound");
+
+		EventFilter replaced = union.until(late);
+		assertEquals(late, replaced.items().get(0).until());
+		assertEquals(late, replaced.items().get(1).until());
+	}
+
+	@Test
+	void aBoundOnMatchAllIsOneItemOfAnyTypeAndOnMatchNoneNothing ( ) {
+		EventReference ref = row("ref", 5, 5, 0);
+		assertEquals(EventFilter.of(new EventFilterItem(EventTypesFilter.any(), Tags.none(), ref, null)), EventFilter.matchAll().after(ref));
+		assertEquals(EventFilter.of(new EventFilterItem(EventTypesFilter.any(), Tags.none(), null, ref)), EventFilter.matchAll().until(ref));
+		assertTrue(EventFilter.matchNone().after(ref).isMatchNone());
+		assertTrue(EventFilter.matchNone().until(ref).isMatchNone());
+	}
+
+	@Test
+	void isBoundedSaysWhetherAnyItemHasABound ( ) {
+		EventReference ref = row("ref", 5, 5, 0);
+		assertFalse(EventFilter.matchAll().isBounded());
+		assertFalse(EventFilter.matchNone().isBounded());
+		assertFalse(EventFilter.forTypes(Customer.class).isBounded());
+		assertTrue(EventFilter.forTypes(Customer.class).after(ref).isBounded());
+		assertTrue(EventFilter.forTypes(Customer.class).or(EventFilter.forTypes(Unrelated.class).until(ref)).isBounded());
+	}
+
+	@Test
+	void ofItemsIsTheUnionOfThemAndOfNoneMatchesNothing ( ) {
+		EventFilterItem registered = new EventFilterItem(EventTypesFilter.of(Customer.Registered.class), Tags.none(), null, row("x", 5, 5, 0));
+		EventFilterItem churned = new EventFilterItem(EventTypesFilter.of(Customer.Churned.class), Tags.none());
+
+		EventFilter union = EventFilter.of(registered, churned);
+		assertEquals(List.of(registered, churned), union.items());
+		assertEquals(EventFilter.of(registered).or(EventFilter.of(churned)), union);
+		assertEquals(EventFilter.forTypes(Customer.Churned.class), EventFilter.of(churned),
+				"the two-halves form is one item");
+
+		assertTrue(EventFilter.of().isMatchNone());
+		assertThrows(IllegalArgumentException.class, () -> EventFilter.of((EventFilterItem) null));
+		assertThrows(IllegalArgumentException.class, () -> EventFilter.of((EventFilterItem[]) null));
+	}
+
+	@Test
+	void forTagsTakesOneTagByKeyAndValue ( ) {
+		assertEquals(EventFilter.forTags("customer", "123"), EventFilter.forTags("customer", "123"));
+		assertThrows(IllegalArgumentException.class, () -> EventFilter.forTags("a:b", "c"), "a colon in the key does not survive the wire format");
+	}
+
+	@Test
+	void theTwoArgumentItemIsUnbounded ( ) {
+		EventFilterItem item = new EventFilterItem(EventTypesFilter.any(), Tags.none());
+		assertEquals(new EventFilterItem(EventTypesFilter.any(), Tags.none(), null, null), item);
+		assertFalse(item.isBounded());
 	}
 
 }

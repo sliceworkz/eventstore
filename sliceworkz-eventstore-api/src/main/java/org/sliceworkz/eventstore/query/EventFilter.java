@@ -20,6 +20,7 @@ package org.sliceworkz.eventstore.query;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
 
 import org.sliceworkz.eventstore.events.Event;
@@ -31,28 +32,31 @@ import org.sliceworkz.eventstore.spi.EventStorage.StoredEvent;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
 /**
- * Pure matching criteria for selecting events from the event store.
+ * Which events are relevant: the business half of a read or a consistency boundary.
  *
- * <p>EventFilter encapsulates the predicate logic for event matching: which event types and tags
- * to match, and an optional temporal boundary ({@code until}) that limits how far into the event
- * history to look. It does <em>not</em> carry traversal semantics such as direction or limit —
- * those belong to {@link EventQuery}, which wraps an EventFilter.
- *
- * <p>EventFilter is the correct type to use wherever only matching semantics are needed,
- * most notably in {@link org.sliceworkz.eventstore.stream.AppendCriteria} for optimistic locking,
- * where direction and limit are irrelevant.
+ * <p>An EventFilter is a union of {@link EventFilterItem}s, each naming event types, the tags an event
+ * must carry, and optionally the part of the history it is about — events recorded
+ * {@link #after(EventReference) after} one reference, {@link #until(EventReference) until} another.
+ * It carries no traversal semantics: direction, limit and the technical read bound
+ * ({@link EventQuery#notAfter(EventReference)}) belong to {@link EventQuery}, which wraps a filter for
+ * reading. A filter is also what an {@link org.sliceworkz.eventstore.stream.AppendCriteria} checks, which
+ * is why the read bound has no place here: a consistency boundary says which facts are relevant, never
+ * up to where they were read.
  *
  * <p><strong>Building a filter.</strong> The common case is one type, or one sealed hierarchy, narrowed
  * to one entity, and it is spelled as a chain: the types first, then the tags every matching event must
- * carry, then a union where the decision spans several boundaries.
+ * carry, then its bounds, then a union where the decision spans several boundaries.
  * <pre>{@code
- * EventFilter customer = EventFilter.forTypes(CustomerEvent.class).tagged("customer", id);
- * EventFilter either   = EventFilter.forTypes(OrderPlaced.class).tagged("order", orderId)
- *                                   .or(EventFilter.forTags(Tags.of("customer", id)));
+ * EventFilter customer  = EventFilter.forTypes(CustomerEvent.class).tagged("customer", id);
+ * EventFilter movements = EventFilter.forTypes(StockAdded.class, StockPicked.class)
+ *                                    .tagged("product", product)
+ *                                    .after(lastCount);
+ * EventFilter either    = movements.or(EventFilter.forTypes(PriceChanged.class).tagged("product", product));
  * }</pre>
- * {@link #forEvents(EventTypesFilter, Tags)} is the same filter built from its two halves at once, and
- * every chain resolves to the same {@link EventFilterItem}s, so the two spellings are interchangeable
- * wherever a filter is compared or matched.
+ * Every operation that narrows — {@link #tagged(Tags)}, {@link #after(EventReference)},
+ * {@link #until(EventReference)} and their {@code IfLater}/{@code IfEarlier} forms — applies to every
+ * item of the filter it is called on, so a bound set before a union stays with the items it was set on.
+ * {@link #of(EventTypesFilter, Tags)} is the same filter built from its two halves at once.
  *
  * <p><strong>Match Semantics:</strong>
  * <ul>
@@ -62,15 +66,13 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
  *       events matching any item will match (OR condition)</li>
  * </ul>
  *
- * @param items the list of query items to match against (null for match-all, empty for match-none, populated for specific criteria)
- * @param until the reference to match up to (null for no boundary, or a specific reference to stop at that point in history);
- *              a boundary over stored events, so every event the stored event at the boundary upcasts into is at or before it
+ * @param items the list of items to match against (null for match-all, empty for match-none, populated for specific criteria)
  *
  * @see EventQuery
  * @see EventFilterItem
  * @see org.sliceworkz.eventstore.stream.AppendCriteria
  */
-public record EventFilter ( List<EventFilterItem> items, EventReference until ) {
+public record EventFilter ( List<EventFilterItem> items ) {
 
 	/**
 	 * Tests whether the given event matches this filter.
@@ -93,20 +95,12 @@ public record EventFilter ( List<EventFilterItem> items, EventReference until ) 
 	}
 
 	/**
-	 * Tests whether an event with the given attributes matches this filter.
-	 * An event matches if:
-	 * <ul>
-	 *   <li>Its stored event is before or at the "until" reference (if specified)</li>
-	 *   <li>It matches at least one of the query items (or all items if match-all)</li>
-	 * </ul>
+	 * Tests whether an event with the given attributes matches this filter: whether it matches at least
+	 * one of its items, bounds included, or the filter matches everything.
 	 * <p>
-	 * The "until" boundary is over <em>stored</em> events, compared through
-	 * {@link EventReference#storedEventHappenedAfter(EventReference)}: a reference names a stored event,
-	 * and every event that stored event upcasts into is at or before it, whatever its index. That is
-	 * the only comparison a storage can make — it sees stored events, never the events they upcast
-	 * into — and it is what lets a reference obtained without upcasting (a stream's head, a bookmark
-	 * read back from a store that keeps no index) bound a typed read without cutting the stored event
-	 * at the boundary in pieces.
+	 * An item's bounds are over <em>stored</em> events, compared through
+	 * {@link EventReference#storedEventHappenedAfter(EventReference)}: every event a stored event upcasts
+	 * into is on the same side of a bound, whatever its index.
 	 *
 	 * @param eventType the type of the event
 	 * @param tags the tags of the event
@@ -114,20 +108,15 @@ public record EventFilter ( List<EventFilterItem> items, EventReference until ) 
 	 * @return true if the event matches this filter, false otherwise
 	 */
 	public boolean matches ( EventType eventType, Tags tags, EventReference reference ) {
-		boolean match = true;
-		if ( until == null || !reference.storedEventHappenedAfter(until) ) {
-			if ( items != null ) {
-				if ( !items.isEmpty() ) { // null items = all match, empty items is none match
-					// if any query item matches the event, we keep it
-					match = items.stream().filter(i->i.matches(eventType, tags)).findAny().isPresent();
-				} else {
-					match = false; // no match since we have items (empty collection) but no criteria to adhere to
-				}
-			}
-		} else {
-			match = false;
+		if ( items == null ) {
+			return true;
 		}
-		return match;
+		for ( EventFilterItem item : items ) {
+			if ( item.matches(eventType, tags, reference) ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
@@ -151,46 +140,13 @@ public record EventFilter ( List<EventFilterItem> items, EventReference until ) 
 	}
 
 	/**
-	 * Creates a new EventFilter with the specified "until" reference.
-	 * The resulting filter will only match events up to and including the specified reference.
-	 * <p>
-	 * <b>This bounds a consistency boundary as well as a query</b>, because an
-	 * {@link org.sliceworkz.eventstore.stream.AppendCriteria} carries a filter and the optimistic-locking
-	 * check asks the same {@link #matches(org.sliceworkz.eventstore.events.Event)}. A filter given an
-	 * {@code until} therefore deems no event after it a new relevant fact: as a query it reads history up
-	 * to that point, which is the intent, and as a criteria it admits every append without ever raising
-	 * {@link org.sliceworkz.eventstore.stream.OptimisticLockingException}, which is almost never the
-	 * intent. When pinning a boundary at {@link org.sliceworkz.eventstore.stream.EventSource#head() head},
-	 * put the {@code until} on the read and hand the criteria the unbounded filter plus the head as its
-	 * expected last event.
+	 * Whether any item of this filter carries a bound.
 	 *
-	 * @param until the reference to match up to (events after this reference will not match), or null for no boundary
-	 * @return a new EventFilter with the "until" reference set
+	 * @return true if at least one item has an {@code after} or an {@code until}
 	 */
-	public EventFilter until ( EventReference until ) {
-		return new EventFilter(items, until);
-	}
-
-	/**
-	 * Creates a new EventFilter with the "until" reference set to the earlier of the current "until" and the new reference.
-	 * If the new reference is earlier than the current "until" (or if no "until" is set), the new reference is used.
-	 * Otherwise, the current "until" reference is retained.
-	 *
-	 * @param newUntil the new reference to potentially use as the "until" boundary
-	 * @return a new EventFilter with the "until" reference potentially updated
-	 */
-	public EventFilter untilIfEarlier ( EventReference newUntil ) {
-		if ( newUntil != null ) {
-			if ( this.until == null ) {
-				return new EventFilter(items, newUntil);
-			} else if ( newUntil.happenedBefore(until) ) {
-				return new EventFilter(items, newUntil);
-			} else {
-				return this;
-			}
-		} else {
-			return this;
-		}
+	@JsonIgnore
+	public boolean isBounded ( ) {
+		return items != null && items.stream().anyMatch(EventFilterItem::isBounded);
 	}
 
 	/**
@@ -203,7 +159,7 @@ public record EventFilter ( List<EventFilterItem> items, EventReference until ) 
 	 * which is what makes the operation well-defined on a filter of several items — every item gets
 	 * the tags, and no item is singled out. A match-all filter narrowed this way is
 	 * {@link #forTags(Tags)}; a match-none filter stays match-none, since there is nothing to narrow.
-	 * The {@code until} boundary is kept as it is.
+	 * Each item keeps its bounds.
 	 *
 	 * @param tags the tags every matching event must carry, on top of the tags its item already requires
 	 * @return a new EventFilter narrowed to events carrying the tags
@@ -213,13 +169,7 @@ public record EventFilter ( List<EventFilterItem> items, EventReference until ) 
 		if ( tags == null ) {
 			throw new IllegalArgumentException("tags is required to narrow a filter (Tags.none() narrows nothing)");
 		}
-		if ( isMatchNone() ) {
-			return this;
-		}
-		if ( isMatchAll() ) {
-			return new EventFilter(Collections.singletonList(new EventFilterItem(EventTypesFilter.any(), tags)), until);
-		}
-		return new EventFilter(items.stream().map(item -> new EventFilterItem(item.eventTypes(), item.tags().merge(tags))).toList(), until);
+		return eachItem(item -> new EventFilterItem(item.eventTypes(), item.tags().merge(tags), item.after(), item.until()));
 	}
 
 	/**
@@ -236,37 +186,82 @@ public record EventFilter ( List<EventFilterItem> items, EventReference until ) 
 	}
 
 	/**
-	 * Creates a new EventFilter that is the union of this filter and another: the result matches every
-	 * event that matches either. The items of both are kept side by side, so the union of two filters
-	 * narrowed to different entities is a filter over both entities, and a match-all on either side
-	 * makes the union match-all. Match-none on either side contributes nothing.
+	 * Sets the lower bound of every item: only events recorded after {@code after} match (exclusive).
+	 * <p>
+	 * It <em>replaces</em> whatever lower bound an item had, and {@code null} removes it;
+	 * {@link #afterIfLater(EventReference)} narrows instead. A business bound, in recording order:
+	 * "the movements after the last stock count". A match-all filter becomes one item of any type
+	 * bounded this way; a match-none filter stays match-none.
 	 *
-	 * <p>Both filters must have the same "until" reference (or both must be unset): a union of two
-	 * filters bounded at different points has no single boundary to compare a cursor against.
+	 * @param after the exclusive lower bound, or {@code null} for none
+	 * @return a new EventFilter whose items are bounded after the reference
+	 */
+	public EventFilter after ( EventReference after ) {
+		return eachItem(item -> item.withBounds(after, item.until()));
+	}
+
+	/**
+	 * Sets the upper bound of every item: only events recorded at or before {@code until} match
+	 * (inclusive).
+	 * <p>
+	 * It <em>replaces</em> whatever upper bound an item had, and {@code null} removes it;
+	 * {@link #untilIfEarlier(EventReference)} narrows instead. A business bound, in recording order:
+	 * "the invoices recorded up to the year close". It is not the technical bound a decider pins its
+	 * reads at, which is {@link EventQuery#notAfter(EventReference)}: an item bound at or before the
+	 * expected reference of an {@link org.sliceworkz.eventstore.stream.AppendCriteria} is left out of the
+	 * check, because no event appended later can match it. A match-all filter becomes one item of any
+	 * type bounded this way; a match-none filter stays match-none.
+	 *
+	 * @param until the inclusive upper bound, or {@code null} for none
+	 * @return a new EventFilter whose items are bounded at the reference
+	 */
+	public EventFilter until ( EventReference until ) {
+		return eachItem(item -> item.withBounds(item.after(), until));
+	}
+
+	/**
+	 * Narrows the lower bound of every item to the later of its own and {@code after}: an item without a
+	 * lower bound gets this one, an item bounded later keeps its own. {@code null} changes nothing.
+	 *
+	 * @param after the exclusive lower bound to narrow to, or {@code null}
+	 * @return a new EventFilter whose items are bounded after the later of the two references
+	 */
+	public EventFilter afterIfLater ( EventReference after ) {
+		if ( after == null ) {
+			return this;
+		}
+		return eachItem(item -> item.withBounds(later(item.after(), after), item.until()));
+	}
+
+	/**
+	 * Narrows the upper bound of every item to the earlier of its own and {@code until}: an item without
+	 * an upper bound gets this one, an item bounded earlier keeps its own. {@code null} changes nothing.
+	 *
+	 * @param until the inclusive upper bound to narrow to, or {@code null}
+	 * @return a new EventFilter whose items are bounded at the earlier of the two references
+	 */
+	public EventFilter untilIfEarlier ( EventReference until ) {
+		if ( until == null ) {
+			return this;
+		}
+		return eachItem(item -> item.withBounds(item.after(), earlier(item.until(), until)));
+	}
+
+	/**
+	 * Creates a new EventFilter that is the union of this filter and another: the result matches every
+	 * event that matches either. The items of both are kept side by side, each with its own types, tags
+	 * and bounds, so the union of two filters narrowed to different entities, or bounded at different
+	 * points of the history, is a filter over both. A match-all on either side makes the union match-all.
+	 * Match-none on either side contributes nothing.
 	 *
 	 * @param other the other filter to unite with this one
 	 * @return a new EventFilter representing the union of both filters
-	 * @throws IllegalArgumentException if the "until" references are incompatible
 	 */
 	public EventFilter or ( EventFilter other ) {
-		List<EventFilterItem> combinedQueryItems;
 		if ( this.items == null || other.items == null ) {
-			combinedQueryItems = null; // match-all on either side: the union is everything
-		} else {
-			combinedQueryItems = Stream.concat(this.items.stream(), other.items.stream()).toList();
+			return matchAll(); // match-all on either side: the union is everything
 		}
-		EventReference combinedUntil = null;
-		if ( this.until == null && other.until == null ) {
-			combinedUntil = null;
-		} else if ( this.until == null || other.until == null) {
-			throw new IllegalArgumentException("can't combine two EventFilter that don't share the same until value (one was not set)");
-		} else if ( this.until.equals(other.until)) {
-			combinedUntil = this.until;
-		} else {
-			throw new IllegalArgumentException("can't combine two EventFilter that don't share the same until value (both different values)");
-		}
-
-		return new EventFilter(combinedQueryItems, combinedUntil);
+		return new EventFilter(Stream.concat(this.items.stream(), other.items.stream()).toList());
 	}
 
 	/**
@@ -275,7 +270,7 @@ public record EventFilter ( List<EventFilterItem> items, EventReference until ) 
 	 * @return an EventFilter that matches no events
 	 */
 	public static EventFilter matchNone ( ) {
-		return new EventFilter(new ArrayList<>(), null);
+		return new EventFilter(new ArrayList<>());
 	}
 
 	/**
@@ -284,18 +279,40 @@ public record EventFilter ( List<EventFilterItem> items, EventReference until ) 
 	 * @return an EventFilter that matches all events
 	 */
 	public static EventFilter matchAll ( ) {
-		return new EventFilter(null, null);
+		return new EventFilter(null);
 	}
 
 	/**
-	 * Creates a filter for events matching the specified event types and tags.
+	 * Creates a filter of one item: events of the given types carrying the given tags. The two halves of
+	 * what {@code forTypes(...).tagged(...)} builds as a chain, given at once; both spellings make equal
+	 * filters.
 	 *
 	 * @param eventTypes the filter specifying which event types to match
 	 * @param tags the tags that events must contain (all tags must be present)
 	 * @return an EventFilter matching the specified criteria
 	 */
-	public static EventFilter forEvents ( EventTypesFilter eventTypes, Tags tags ) {
-		return forEvents(new EventFilterItem(eventTypes, tags));
+	public static EventFilter of ( EventTypesFilter eventTypes, Tags tags ) {
+		return of(new EventFilterItem(eventTypes, tags));
+	}
+
+	/**
+	 * Creates a filter from its items: the union of them, each with its own types, tags and bounds. No
+	 * items is a filter that matches nothing, as {@link #matchNone()}.
+	 *
+	 * @param items the items defining the match criteria
+	 * @return an EventFilter of the items
+	 * @throws IllegalArgumentException if {@code items} or one of them is {@code null}
+	 */
+	public static EventFilter of ( EventFilterItem... items ) {
+		if ( items == null ) {
+			throw new IllegalArgumentException("items is required (none for a filter that matches nothing)");
+		}
+		for ( EventFilterItem item : items ) {
+			if ( item == null ) {
+				throw new IllegalArgumentException("an item of a filter cannot be null");
+			}
+		}
+		return new EventFilter(List.of(items));
 	}
 
 	/**
@@ -307,7 +324,7 @@ public record EventFilter ( List<EventFilterItem> items, EventReference until ) 
 	 * }</pre>
 	 * The classes are resolved as {@link EventTypesFilter#of(Class...)} resolves them, so a sealed
 	 * interface stands for every event type under it and the root of a hierarchy names all of it. It is
-	 * {@link #forEvents(EventTypesFilter, Tags)} with {@link Tags#none()}, and equivalent to it in every
+	 * {@link #of(EventTypesFilter, Tags)} with {@link Tags#none()}, and equivalent to it in every
 	 * respect.
 	 *
 	 * @param eventClasses the event classes to match; a sealed interface stands for every event type under it
@@ -315,30 +332,59 @@ public record EventFilter ( List<EventFilterItem> items, EventReference until ) 
 	 * @throws IllegalArgumentException for an interface that is not sealed
 	 */
 	public static EventFilter forTypes ( Class<?>... eventClasses ) {
-		return forEvents(EventTypesFilter.of(eventClasses), Tags.none());
+		return of(EventTypesFilter.of(eventClasses), Tags.none());
 	}
 
 	/**
-	 * Creates a filter for events of any type carrying the specified tags.
+	 * Creates a filter for events of any type carrying the specified tags: every fact about one entity,
+	 * which is what a consistency boundary is usually spelled with.
 	 * <p>
-	 * {@link #forEvents(EventTypesFilter, Tags)} with {@link EventTypesFilter#any()}, and
-	 * equivalent to it in every respect.
+	 * {@link #of(EventTypesFilter, Tags)} with {@link EventTypesFilter#any()}, and equivalent to it in
+	 * every respect.
 	 *
 	 * @param tags the tags that events must contain (all tags must be present)
 	 * @return an EventFilter matching events of any type carrying the tags
 	 */
 	public static EventFilter forTags ( Tags tags ) {
-		return forEvents(EventTypesFilter.any(), tags);
+		return of(EventTypesFilter.any(), tags);
 	}
 
 	/**
-	 * Creates a filter from a single query item.
+	 * Creates a filter for events of any type carrying the given tag; {@link #forTags(Tags)} with
+	 * {@link Tags#of(String, String)}.
+	 * <pre>{@code
+	 * EventFilter customer = EventFilter.forTags("customer", "123");
+	 * }</pre>
 	 *
-	 * @param queryItem the query item defining the match criteria
-	 * @return an EventFilter containing the single query item
+	 * @param key the tag's key
+	 * @param value the tag's value
+	 * @return an EventFilter matching events of any type carrying the tag
+	 * @throws IllegalArgumentException for a tag that cannot be constructed, see {@link org.sliceworkz.eventstore.events.Tag#of(String, String)}
 	 */
-	public static EventFilter forEvents ( EventFilterItem queryItem ) {
-		return new EventFilter(Collections.singletonList(queryItem), null);
+	public static EventFilter forTags ( String key, String value ) {
+		return forTags(Tags.of(key, value));
+	}
+
+	/**
+	 * Applies an operation to every item: match-none stays match-none, and match-all is first made one
+	 * item of any type without tags, which is the same set of events and has something to narrow.
+	 */
+	private EventFilter eachItem ( UnaryOperator<EventFilterItem> operation ) {
+		if ( isMatchNone() ) {
+			return this;
+		}
+		List<EventFilterItem> current = isMatchAll()
+				? Collections.singletonList(new EventFilterItem(EventTypesFilter.any(), Tags.none()))
+				: items;
+		return new EventFilter(current.stream().map(operation).toList());
+	}
+
+	private static EventReference later ( EventReference current, EventReference candidate ) {
+		return ( current == null || candidate.storedEventHappenedAfter(current) ) ? candidate : current;
+	}
+
+	private static EventReference earlier ( EventReference current, EventReference candidate ) {
+		return ( current == null || current.storedEventHappenedAfter(candidate) ) ? candidate : current;
 	}
 
 }

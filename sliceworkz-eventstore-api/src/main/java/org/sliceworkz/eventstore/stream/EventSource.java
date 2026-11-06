@@ -26,6 +26,7 @@ import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.observability.StreamObservation;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 
 /**
@@ -100,36 +101,33 @@ import org.sliceworkz.eventstore.query.EventQuery;
  * );
  *
  * // Query all events (forward)
- * List<Event<CustomerEvent>> allEvents = stream.query(EventQuery.matchAll());
+ * List<Event<CustomerEvent>> allEvents = stream.query(EventFilter.matchAll());
  *
  * // Query with filters
  * List<Event<CustomerEvent>> filtered = stream.query(
- *     EventQuery.forEvents(
- *         EventTypesFilter.of(CustomerRegistered.class, CustomerNameChanged.class),
- *         Tags.of("region", "EU")
- *     )
+ *     EventFilter.forTypes(CustomerRegistered.class, CustomerNameChanged.class).tagged("region", "EU")
  * );
  *
  * // Paged read (first 10 stored events)
  * EventPage<CustomerEvent> page1 = stream.page(
- *     EventQuery.matchAll().limit(10),
+ *     EventQuery.of(EventFilter.matchAll()).limit(10),
  *     null // start from beginning
  * );
  *
  * // Next page (after the last stored event page1 read)
  * EventPage<CustomerEvent> page2 = stream.page(
- *     EventQuery.matchAll().limit(10),
+ *     EventQuery.of(EventFilter.matchAll()).limit(10),
  *     page1.lastStoredEventReference().orElse(null)
  * );
  *
  * // Backward query (most recent 10 events)
  * List<Event<CustomerEvent>> recent = stream.query(
- *     EventQuery.matchAll().backwards().limit(10)
+ *     EventQuery.of(EventFilter.matchAll()).backwards().limit(10)
  * );
  *
  * // Most recent single event
  * Optional<Event<CustomerEvent>> mostRecent = stream.query(
- *     EventQuery.matchAll().backwards().limit(1)
+ *     EventQuery.of(EventFilter.matchAll()).backwards().limit(1)
  * ).stream().findFirst();
  *
  * // Get specific event by ID: absent when this stream holds no such stored event, otherwise the
@@ -201,8 +199,8 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 *   <li><strong>Forward queries:</strong> the cursor acts as "after" — only events after this reference are returned</li>
 	 *   <li><strong>Backward queries:</strong> the cursor acts as "before" — only events before this reference are returned</li>
 	 * </ul>
-	 * It is a technical starting point and never a functional boundary; the {@code until} reference of
-	 * the {@link EventQuery} is the boundary that determines what a query sees. The direction comes from
+	 * It is a technical starting point and never a functional boundary; the filter's items and the
+	 * query's {@link EventQuery#notAfter(EventReference) read bound} determine what a query sees. The direction comes from
 	 * the query ({@link EventQuery#backwards()}) and so does the limit ({@link EventQuery#limit(long)}),
 	 * exactly as for {@link #query(EventQuery)}, so {@code query(q.limit(500), cursor)} reads 500 stored
 	 * events past the cursor and a query with no limit reads to the end. The alternative — a cursor
@@ -276,7 +274,7 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * "return at most n events".
 	 * <p>
 	 * <b>A query with no limit reads everything before it returns.</b> The list handed back is complete
-	 * (see the class javadoc), so {@code query(EventQuery.matchAll())} on a large stream is an
+	 * (see the class javadoc), so {@code query(EventQuery.of(EventFilter.matchAll()))} on a large stream is an
 	 * {@link OutOfMemoryError} rather than something that can be consumed a piece at a time. Give the
 	 * query a limit and page with
 	 * {@link #page(EventQuery, EventReference)}, or use
@@ -292,6 +290,30 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 */
 	default List<Event<DOMAIN_EVENT_TYPE>> query ( EventQuery query ) {
 		return query(query, null);
+	}
+
+	/**
+	 * Reads every event the filter matches, forward, with no limit and no read bound:
+	 * {@link #query(EventQuery)} with {@link EventQuery#of(EventFilter)}. The shortest way to read what a
+	 * filter selects; anything beyond a plain forward read is an {@link EventQuery}.
+	 *
+	 * @param filter which events are relevant
+	 * @return the events matching the filter, fully read
+	 */
+	default List<Event<DOMAIN_EVENT_TYPE>> query ( EventFilter filter ) {
+		return query(EventQuery.of(filter), null);
+	}
+
+	/**
+	 * Reads the events the filter matches after a cursor, forward, with no limit and no read bound:
+	 * {@link #query(EventQuery, EventReference)} with {@link EventQuery#of(EventFilter)}.
+	 *
+	 * @param filter which events are relevant
+	 * @param cursor optional reference to read after, null to start from the beginning
+	 * @return the events matching the filter after the cursor, fully read
+	 */
+	default List<Event<DOMAIN_EVENT_TYPE>> query ( EventFilter filter, EventReference cursor ) {
+		return query(EventQuery.of(filter), cursor);
 	}
 
 	/**
@@ -335,7 +357,7 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * The reference of the newest stored event of this stream, or empty for an empty stream.
 	 * <p>
 	 * The head exists to <em>pin a consistency boundary before a decision is read</em>: take the head,
-	 * bound every read with {@link EventQuery#until(EventReference)} (or
+	 * bound every read with {@link EventQuery#notAfter(EventReference)} (or
 	 * {@link org.sliceworkz.eventstore.projection.Projector#runUntil(EventReference)}) at it, and hand
 	 * the same reference to {@link AppendCriteria} as the expected last event. Several reads then share
 	 * one boundary, so nothing can land between them unseen, and the optimistic-locking check has a
@@ -343,21 +365,16 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * turns a walk over every stream event since that event into a walk over the few appended during
 	 * the decision. The event at the head need not match the boundary's filter: the reference is a
 	 * cursor for the check, and only matching events after it count.
-	 * <p>
-	 * <b>The head goes to the reads as an {@code until}, and to the check as the expected last event —
-	 * never as an {@code until} on the criteria's filter.</b> Those are two forms of one query, and only
-	 * the second is a boundary:
 	 * <pre>{@code
-	 * EventQuery relevant = EventQuery.forTags(Tags.of("customer", "123"));
+	 * EventFilter relevant = EventFilter.forTags("customer", "123");
 	 * EventReference head = stream.head().orElse(null);
 	 *
-	 * stream.query(relevant.until(head));                     // the READ is bounded at the head
-	 * stream.append(AppendCriteria.of(relevant, head), ...);  // the CHECK gets the unbounded filter
+	 * EventQuery read = EventQuery.of(relevant).notAfter(head);
+	 * stream.query(read);                                   // the READ is bounded at the head
+	 * stream.append(AppendCriteria.of(read, head), ...);    // the CHECK takes the filter, never the read bound
 	 * }</pre>
-	 * An {@code until} bounds a consistency boundary exactly as it bounds a query, so a criteria built
-	 * from {@code relevant.until(head)} matches nothing after the head, finds no new relevant fact and
-	 * admits every append — optimistic locking off, with nothing raised and nothing logged. See
-	 * {@link AppendCriteria}.
+	 * The read bound is a property of the {@link EventQuery}, not of its filter, so the criteria built from
+	 * the query the decision read with checks every matching event after the head. See {@link AppendCriteria}.
 	 * <p>
 	 * Three properties make that sound, and the compliance suite holds every backend to them:
 	 * <ul>
@@ -374,7 +391,7 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 *       make it fail or lie. The typed {@code query(matchAll().backwards().limit(1))} idiom fails on
 	 *       all three, which is why this is a method rather than a convenience over a query.</li>
 	 *   <li><b>It names a stored event, whole.</b> Its {@code index} is 0, and a boundary at the head
-	 *       includes every event the stored event at the head upcasts into — {@code until} bounds stored
+	 *       includes every event the stored event at the head upcasts into — {@code notAfter} bounds stored
 	 *       events, never a fragment of one.</li>
 	 * </ul>
 	 * Observed as its own operation ({@link org.sliceworkz.eventstore.observability.Observation.Head}),
@@ -596,7 +613,7 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * }
 	 *
 	 * // Now start processing from the beginning
-	 * stream.query(EventQuery.matchAll()).forEach(this::processEvent);
+	 * stream.query(EventFilter.matchAll()).forEach(this::processEvent);
 	 * }</pre>
 	 *
 	 * A bookmark recording a read position only is removed too; the answer is then empty, since its reader

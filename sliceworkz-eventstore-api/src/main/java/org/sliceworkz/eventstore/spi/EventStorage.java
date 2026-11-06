@@ -35,6 +35,7 @@ import org.sliceworkz.eventstore.observability.HealthCheck;
 import org.sliceworkz.eventstore.observability.HealthStatus;
 import org.sliceworkz.eventstore.observability.StorageHealth;
 import org.sliceworkz.eventstore.query.EventFilter;
+import org.sliceworkz.eventstore.query.EventFilterItem;
 import org.sliceworkz.eventstore.query.EventQuery.Direction;
 import org.sliceworkz.eventstore.query.Limit;
 import org.sliceworkz.eventstore.shredding.ShreddingCodec;
@@ -94,11 +95,11 @@ import org.sliceworkz.eventstore.stream.EventStreamId;
  *     }
  *
  *     @Override
- *     public List<StoredEvent> query(EventFilter filter, EventStreamId stream,
- *                                    EventReference after, Limit limit, Direction direction) {
+ *     public List<StoredEvent> query(EventFilter filter, EventStreamId stream, EventReference after,
+ *                                    EventReference notAfter, Limit limit, Direction direction) {
  *         // 1. Filter events by stream (a wildcard component reads across it)
- *         // 2. Apply event type filters from the filter
- *         // 3. Apply tag filters and the until boundary from the filter
+ *         // 2. Apply event type, tag and bound filters from each item of the filter
+ *         // 3. Drop what lies after the notAfter read bound
  *         // 4. Filter events after 'after' reference
  *         // 5. Apply limit and direction
  *         // 6. Return the list of StoredEvent records
@@ -205,14 +206,14 @@ public interface EventStorage extends AutoCloseable {
 	/**
 	 * Queries events from storage based on specified criteria with directional control.
 	 * <p>
-	 * This method retrieves the events matching the filter — event types, tags and the {@code until}
-	 * boundary — from the given stream, starting after a reference point, in the given direction and
-	 * up to the given limit.
+	 * This method retrieves the events matching the filter — per item, event types, tags and bounds —
+	 * from the given stream, starting after a reference point, not after the read bound, in the given
+	 * direction and up to the given limit.
 	 * <p>
-	 * Direction and limit are parameters of this method and nothing else: the matching criteria arrive
-	 * as an {@link EventFilter}, which carries neither, rather than as an
-	 * {@link org.sliceworkz.eventstore.query.EventQuery}, which carries both. A backend is therefore
-	 * never handed two limits or two directions and left to decide which wins. The stream layer derives
+	 * Direction, limit and the read bound are parameters of this method and nothing else: the matching
+	 * criteria arrive as an {@link EventFilter}, which carries none of them, rather than as an
+	 * {@link org.sliceworkz.eventstore.query.EventQuery}, which carries all three. A backend is therefore
+	 * never handed two limits, two directions or two read bounds and left to decide which wins. The stream layer derives
 	 * both from the query it was given and passes them here; a caller overriding the query's own limit
 	 * — a projector paging in batches — passes its own. Both arrive as the query's own types,
 	 * {@link Limit} and {@link Direction EventQuery.Direction}: this SPI declares no direction type of
@@ -223,12 +224,13 @@ public interface EventStorage extends AutoCloseable {
 	 * <p>
 	 * Query Parameters:
 	 * <ul>
-	 *   <li><b>filter</b> - Defines which events to retrieve based on types, tags and the until boundary</li>
+	 *   <li><b>filter</b> - Defines which events to retrieve: per item, types, tags and the item's bounds</li>
 	 *   <li><b>stream</b> - The stream to read, never null. A wildcard component reads across it:
 	 *       {@code EventStreamId.forContext("x").anyPurpose()} reads every stream of the context and
 	 *       {@link EventStreamId#anyContext()} reads the whole storage</li>
 	 *   <li><b>after</b> - Starting reference point; events after this reference are returned. Null
 	 *       starts at the beginning (or, going backward, at the end)</li>
+	 *   <li><b>notAfter</b> - The read bound: nothing after this reference is returned, or null for none</li>
 	 *   <li><b>limit</b> - Maximum number of events to return (or unlimited)</li>
 	 *   <li><b>direction</b> - Direction of traversal (FORWARD or BACKWARD)</li>
 	 * </ul>
@@ -239,21 +241,26 @@ public interface EventStorage extends AutoCloseable {
 	 *   <li><b>BACKWARD</b> - Events are returned in reverse chronological order (newest to oldest)</li>
 	 * </ul>
 	 * <p>
-	 * The Until Boundary:
+	 * The Bounds:
 	 * <p>
-	 * {@link EventFilter#until()} is a matching criterion, not a traversal one. It is the <em>inclusive
-	 * upper bound</em> over the total {@code (tx, position, index)} order that
-	 * {@link EventFilter#matches(StoredEvent)} implements, and it selects
-	 * the same events in both directions — direction decides only the order they come back in. An
-	 * implementation must not read it as "traverse until you reach it", which turns it into a lower bound
-	 * when going backward and returns the events on the far side of it. Nor may it compare positions
-	 * alone where positions and transactions can be assigned in different orders: the boundary has to be
-	 * compared the same way the cursor is.
+	 * Two kinds of bound arrive here, and both are matching criteria, not traversal ones. The read bound
+	 * {@code notAfter} applies to the whole read. Each {@link EventFilterItem} may carry its own business
+	 * bounds, {@link EventFilterItem#after()} (exclusive) and {@link EventFilterItem#until()} (inclusive),
+	 * which apply to that item only: an event matches the filter when it matches the types, the tags
+	 * <em>and</em> the bounds of at least one item. Every bound compares <em>stored</em> events in the
+	 * {@code (tx, position)} order, as {@link EventFilterItem#withinBounds} does, and selects the same
+	 * events in both directions — direction decides only the order they come back in. An implementation
+	 * must not read a bound as "traverse until you reach it", which turns it into a lower bound when going
+	 * backward and returns the events on the far side of it. Nor may it compare positions alone where
+	 * positions and transactions can be assigned in different orders: a bound has to be compared the same
+	 * way the cursor is.
 	 * <p>
-	 * A backend may implement the boundary as a superset — dropping only what it can cheaply prove is
-	 * past it — because the exact filter is re-applied above this SPI after upcasting. It must never
-	 * exclude an event the filter would keep. Note that a limit is applied <em>after</em> the boundary:
-	 * spending it on events beyond the boundary that are discarded later returns too few events, or none.
+	 * <b>Item bounds are part of this contract, not an optional extra</b>: every backend answers them, and
+	 * the compliance suite holds every backend to it. A backend may still implement a bound as a superset —
+	 * dropping only what it can cheaply prove is outside it — because the exact filter is re-applied above
+	 * this SPI after upcasting. It must never exclude an event the filter would keep. Note that a limit is
+	 * applied <em>after</em> every bound: spending it on events that are discarded later returns too few
+	 * events, or none, and a page shorter than its limit is read as the last one.
 	 * <p>
 	 * The Returned List:
 	 * <p>
@@ -269,9 +276,10 @@ public interface EventStorage extends AutoCloseable {
 	 * thereby stalls what every reader of that database can see, and because nothing above would ever
 	 * close it.
 	 *
-	 * @param filter the event filter defining type and tag criteria and the until boundary
+	 * @param filter the event filter defining, per item, type, tag and bound criteria
 	 * @param stream the stream to read, with a wildcard component to read across it; never null
 	 * @param after the reference point to start querying after (exclusive - events after this reference), or null
+	 * @param notAfter the read bound (inclusive - nothing after this reference is returned), or null for none
 	 * @param limit maximum number of events to read; {@link Limit#none()} reads everything matching
 	 * @param direction the direction of query traversal (FORWARD or BACKWARD)
 	 * @return the stored events matching the filter, read in full
@@ -281,25 +289,25 @@ public interface EventStorage extends AutoCloseable {
 	 * @see Direction
 	 * @see StoredEvent
 	 */
-	List<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit, Direction direction );
+	List<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, EventReference notAfter, Limit limit, Direction direction );
 
 	/**
 	 * Queries events from storage in forward (chronological) direction.
 	 * <p>
-	 * This is a convenience method that delegates to {@link #query(EventFilter, EventStreamId, EventReference, Limit, Direction)}
-	 * with {@link Direction#FORWARD}. Events are returned in chronological order from oldest to newest.
+	 * This is a convenience method that delegates to {@link #query(EventFilter, EventStreamId, EventReference, EventReference, Limit, Direction)}
+	 * with no read bound and {@link Direction#FORWARD}. Events are returned in chronological order from oldest to newest.
 	 *
-	 * @param filter the event filter defining type and tag criteria and the until boundary
+	 * @param filter the event filter defining, per item, type, tag and bound criteria
 	 * @param stream the stream to read, with a wildcard component to read across it; never null
 	 * @param after the reference point to start querying from (events after this reference), or null
 	 * @param limit maximum number of events to return
 	 * @return the stored events matching the filter in chronological order, read in full
 	 * @throws IllegalArgumentException if the stream is null
 	 * @throws EventStorageException if an error occurs during query execution
-	 * @see #query(EventFilter, EventStreamId, EventReference, Limit, Direction)
+	 * @see #query(EventFilter, EventStreamId, EventReference, EventReference, Limit, Direction)
 	 */
 	default List<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit ) {
-		return query ( filter, stream, after, limit, Direction.FORWARD);
+		return query ( filter, stream, after, null, limit, Direction.FORWARD);
 	}
 
 	/**
@@ -437,7 +445,7 @@ public interface EventStorage extends AutoCloseable {
 	 * @throws EventStorageClosedException if the storage has been closed
 	 */
 	default Optional<EventReference> head ( EventStreamId stream ) {
-		return query(EventFilter.matchAll(), stream, null, Limit.to(1), Direction.BACKWARD)
+		return query(EventFilter.matchAll(), stream, null, null, Limit.to(1), Direction.BACKWARD)
 				.stream()
 				.findFirst()
 				.map(StoredEvent::reference);
@@ -688,7 +696,7 @@ public interface EventStorage extends AutoCloseable {
 	 * Typical Usage:
 	 * <pre>{@code
 	 * // Process events and bookmark progress
-	 * List<Event> events = eventStream.query(EventQuery.matchAll());
+	 * List<Event> events = eventStream.query(EventFilter.matchAll());
 	 * events.forEach(event -> {
 	 *     processEvent(event);
 	 *     storage.bookmark("my-projection", event.reference(), Tags.of("status", "processed"));
@@ -1256,7 +1264,7 @@ public interface EventStorage extends AutoCloseable {
 	 *                       scoped to the event stream (context and purpose)
 	 * @see EventToStore
 	 * @see EventReference
-	 * @see #query(EventFilter, EventStreamId, EventReference, Limit, Direction)
+	 * @see #query(EventFilter, EventStreamId, EventReference, EventReference, Limit, Direction)
 	 */
 	public record StoredEvent ( EventStreamId stream, EventType type, EventReference reference, String payload, Tags tags, Instant timestamp, String idempotencyKey ) {
 

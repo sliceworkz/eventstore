@@ -59,22 +59,19 @@ import org.sliceworkz.eventstore.query.EventFilter;
  * EventStream<AccountEvent> stream = eventStore.getEventStream(streamId, AccountEvent.class);
  *
  * // Define query for relevant events (account transactions)
- * EventQuery query = EventQuery.forEvents(
- *     EventTypesFilter.of(MoneyDeposited.class, MoneyWithdrawn.class),
- *     Tags.of("account", "123")
- * );
+ * EventFilter relevant = EventFilter.forTypes(MoneyDeposited.class, MoneyWithdrawn.class).tagged("account", "123");
  *
  * try {
  *     // Pin the boundary at the stream head, query the relevant events up to it, and decide. An
  *     // absent head is an empty stream, and a valid boundary
  *     EventReference head = stream.head().orElse(null);
- *     List<Event<AccountEvent>> events = stream.query(query.until(head));
+ *     List<Event<AccountEvent>> events = stream.query(EventQuery.of(relevant).notAfter(head));
  *     BigDecimal balance = calculateBalance(events);
  *
  *     // Attempt withdrawal based on current balance
  *     if (balance.compareTo(amount) >= 0) {
  *         stream.append(
- *             AppendCriteria.of(query, head),
+ *             AppendCriteria.of(relevant, head),
  *             Event.of(new MoneyWithdrawn(amount), Tags.of("account", "123"))
  *         );
  *     }
@@ -96,12 +93,12 @@ import org.sliceworkz.eventstore.query.EventFilter;
  *     try {
  *         // Pin the boundary, query up to it, decide, and append with criteria
  *         EventReference head = stream.head().orElse(null);
- *         List<Event<AccountEvent>> events = stream.query(query.until(head));
+ *         List<Event<AccountEvent>> events = stream.query(EventQuery.of(relevant).notAfter(head));
  *
  *         // Make decision and append
  *         Event<AccountEvent> newEvent = makeDecision(events);
  *         stream.append(
- *             AppendCriteria.of(query, head),
+ *             AppendCriteria.of(relevant, head),
  *             newEvent
  *         );
  *         break; // Success

@@ -34,6 +34,7 @@ import org.sliceworkz.eventstore.events.Bookmark;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.spi.EventStorageException;
@@ -55,7 +56,7 @@ public class BookmarksTest extends AbstractEventStoreTest {
 	private EventReference appendOne ( ) {
 		EventStream<MockDomainEvent> s = stream();
 		s.append(AppendCriteria.none(), Collections.singletonList(Event.of(new FirstDomainEvent("e"), Tags.none())));
-		return s.query(EventQuery.matchAll().backwards().limit(1)).stream().findFirst().orElseThrow().reference();
+		return s.query(EventQuery.of(EventFilter.matchAll()).backwards().limit(1)).stream().findFirst().orElseThrow().reference();
 	}
 
 	@ForEachBackend

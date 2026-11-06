@@ -99,7 +99,7 @@ public class EventStoreTest {
 		}
 
 		@Override
-		public List<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, Limit limit, Direction direction ) {
+		public List<StoredEvent> query ( EventFilter filter, EventStreamId stream, EventReference after, EventReference notAfter, Limit limit, Direction direction ) {
 			throw new UnsupportedOperationException();
 		}
 

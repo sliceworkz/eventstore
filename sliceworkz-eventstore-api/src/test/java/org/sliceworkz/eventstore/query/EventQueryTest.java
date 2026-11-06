@@ -56,12 +56,14 @@ public class EventQueryTest {
 	Event<MockDomainEvent> e5_event1TagsA1B1 = Event.<MockDomainEvent>of(EventStreamId.forContext("context"), EventReference.of(EventId.create(), 5, 5), EventType.of(FirstDomainEvent.class), EventType.of(FirstDomainEvent.class), new FirstDomainEvent(), Tags.of(Tag.of("A", "1"),Tag.of("B","1")), Instant.now());
 	Event<MockDomainEvent> e6_event2TagsA2B1 = Event.<MockDomainEvent>of(EventStreamId.forContext("context"), EventReference.of(EventId.create(), 6, 6), EventType.of(SecondDomainEvent.class), EventType.of(SecondDomainEvent.class), new SecondDomainEvent(), Tags.of(Tag.of("A", "2"),Tag.of("B","1")), Instant.now()); 
 	
+	// --- matching is the filter's: a query built from it answers through it --------------------------
+
 	@Test
 	void testMatchAll ( ) {
-		EventQuery q = EventQuery.matchAll();
+		EventQuery q = EventQuery.of(EventFilter.matchAll());
 		assertFalse(q.filter().isMatchNone());
 		assertTrue(q.filter().isMatchAll());
-		
+
 		assertTrue(q.filter().matches(e1_event1NoTags));
 		assertTrue(q.filter().matches(e2_event2NoTags));
 		assertTrue(q.filter().matches(e3_event1TagsA1));
@@ -72,10 +74,8 @@ public class EventQueryTest {
 
 	@Test
 	void testForTagsIsForEventsOfAnyType ( ) {
-		EventQuery q = EventQuery.forTags(Tags.of("A", "1"));
-		assertEquals(EventQuery.forEvents(EventTypesFilter.any(), Tags.of("A", "1")), q);
-		assertFalse(q.filter().isMatchNone());
-		assertFalse(q.filter().isMatchAll());
+		EventQuery q = EventQuery.of(EventFilter.forTags("A", "1"));
+		assertEquals(EventQuery.of(EventFilter.forTags("A", "1")), q);
 
 		assertFalse(q.filter().matches(e1_event1NoTags));
 		assertFalse(q.filter().matches(e2_event2NoTags));
@@ -86,53 +86,17 @@ public class EventQueryTest {
 	}
 
 	@Test
-	void testMatchAllUntil ( ) {
-		EventQuery q = EventQuery.matchAll().until(e4_event2TagsA1.reference());
-		assertFalse(q.filter().isMatchNone());
-		assertTrue(q.filter().isMatchAll());
-		
-		assertTrue(q.filter().matches(e1_event1NoTags));
-		assertTrue(q.filter().matches(e2_event2NoTags));
-		assertTrue(q.filter().matches(e3_event1TagsA1));
-		assertTrue(q.filter().matches(e4_event2TagsA1));
-		assertFalse(q.filter().matches(e5_event1TagsA1B1));
-		assertFalse(q.filter().matches(e6_event2TagsA2B1));
-	}
-
-	@Test
-	void testMatchAllUntilOnStoredEvent ( ) {
-		EventQuery q = EventQuery.matchAll().until(e4_event2TagsA1.reference());
-		assertFalse(q.filter().isMatchNone());
-		assertTrue(q.filter().isMatchAll());
-		
-		assertTrue(q.filter().matches(storedEvent(e1_event1NoTags)));
-		assertTrue(q.filter().matches(storedEvent(e2_event2NoTags)));
-		assertTrue(q.filter().matches(storedEvent(e3_event1TagsA1)));
-		assertTrue(q.filter().matches(storedEvent(e4_event2TagsA1)));
-		assertFalse(q.filter().matches(storedEvent(e5_event1TagsA1B1)));
-		assertFalse(q.filter().matches(storedEvent(e6_event2TagsA2B1)));
-	}
-
-	@Test
 	void testMatchNone ( ) {
-		EventQuery q = EventQuery.matchNone();
+		EventQuery q = EventQuery.of(EventFilter.matchNone());
 		assertTrue(q.filter().isMatchNone());
 		assertFalse(q.filter().isMatchAll());
-		
 		assertFalse(q.filter().matches(e1_event1NoTags));
-		assertFalse(q.filter().matches(e2_event2NoTags));
-		assertFalse(q.filter().matches(e3_event1TagsA1));
-		assertFalse(q.filter().matches(e4_event2TagsA1));
-		assertFalse(q.filter().matches(e5_event1TagsA1B1));
 		assertFalse(q.filter().matches(e6_event2TagsA2B1));
 	}
 
 	@Test
-	void testMatchByType( ) {
-		EventQuery q = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none());
-		assertFalse(q.filter().isMatchNone());
-		assertFalse(q.filter().isMatchAll());
-		
+	void testMatchByType ( ) {
+		EventQuery q = EventQuery.of(EventFilter.forTypes(FirstDomainEvent.class));
 		assertTrue(q.filter().matches(e1_event1NoTags));
 		assertFalse(q.filter().matches(e2_event2NoTags));
 		assertTrue(q.filter().matches(e3_event1TagsA1));
@@ -143,14 +107,10 @@ public class EventQueryTest {
 
 	@Test
 	void testMatchCombined ( ) {
-		EventQuery q1 = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none());
-		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1"));
-		
-		EventQuery q = q1.or(q2);
-		
-		assertFalse(q.filter().isMatchNone());
-		assertFalse(q.filter().isMatchAll());
-		
+		EventFilter f1 = EventFilter.forTypes(FirstDomainEvent.class);
+		EventFilter f2 = EventFilter.forTypes(SecondDomainEvent.class).tagged("A", "1");
+		EventQuery q = EventQuery.of(f1.or(f2));
+
 		assertTrue(q.filter().matches(e1_event1NoTags));
 		assertFalse(q.filter().matches(e2_event2NoTags));
 		assertTrue(q.filter().matches(e3_event1TagsA1));
@@ -160,310 +120,125 @@ public class EventQueryTest {
 	}
 
 	@Test
-	void testMatchCombinedBothUntil ( ) {
-		EventQuery q1 = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).until(e4_event2TagsA1.reference());
-		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1")).until(e4_event2TagsA1.reference());
-		
-		EventQuery q = q1.or(q2);
-		
-		assertFalse(q.filter().isMatchNone());
-		assertFalse(q.filter().isMatchAll());
-		
+	void anItemBoundIsMatchedOnStoredEventsToo ( ) {
+		EventQuery q = EventQuery.of(EventFilter.matchAll().until(e4_event2TagsA1.reference()));
+		assertTrue(q.filter().matches(storedEvent(e1_event1NoTags)));
+		assertTrue(q.filter().matches(storedEvent(e4_event2TagsA1)));
+		assertFalse(q.filter().matches(storedEvent(e5_event1TagsA1B1)));
+		assertFalse(q.filter().matches(storedEvent(e6_event2TagsA2B1)));
+	}
+
+	@Test
+	void aUnionOfItemsBoundedDifferentlyMatchesEachWithinItsOwnBounds ( ) {
+		// the first type only up to e3, the second type only after e4
+		EventFilter early = EventFilter.forTypes(FirstDomainEvent.class).until(e3_event1TagsA1.reference());
+		EventFilter late = EventFilter.forTypes(SecondDomainEvent.class).after(e4_event2TagsA1.reference());
+		EventQuery q = EventQuery.of(early.or(late));
+
 		assertTrue(q.filter().matches(e1_event1NoTags));
-		assertFalse(q.filter().matches(e2_event2NoTags));
 		assertTrue(q.filter().matches(e3_event1TagsA1));
-		assertTrue(q.filter().matches(e4_event2TagsA1));
-		assertFalse(q.filter().matches(e5_event1TagsA1B1));
-		assertFalse(q.filter().matches(e6_event2TagsA2B1)); 
+		assertFalse(q.filter().matches(e5_event1TagsA1B1), "past the first item's until");
+		assertFalse(q.filter().matches(e2_event2NoTags), "before the second item's after");
+		assertFalse(q.filter().matches(e4_event2TagsA1), "after is exclusive");
+		assertTrue(q.filter().matches(e6_event2TagsA2B1));
 	}
 
+	// --- how a filter is read: direction, limit, read bound ---------------------------------------------
 
 	@Test
-	void testCombinedDifferentUntil ( ) {
-		EventQuery q1 = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).until(e4_event2TagsA1.reference());
-		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1")).until(e3_event1TagsA1.reference());
-		
-		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, ()-> q1.or(q2) );
-		assertEquals("can't combine two EventFilter that don't share the same until value (both different values)", e.getMessage());
-	}
-	
-	@Test
-	void testCombinedOneUntil ( ) {
-		EventQuery q1 = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none());
-		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1")).until(e3_event1TagsA1.reference());
-		
-		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, ()-> q1.or(q2) );
-		assertEquals("can't combine two EventFilter that don't share the same until value (one was not set)", e.getMessage());
-	}
-
-	@Test
-	void testUntilIfEarlierFromNull ( ) {
-		EventQuery q = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none());
-		assertNull(q.filter().until());
-		q = q.untilIfEarlier(e3_event1TagsA1.reference());
-		assertEquals(e3_event1TagsA1.reference(), q.filter().until());
-	}
-
-	@Test
-	void testUntilIfEarlierAndSame( ) {
-		EventQuery q = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).until(e3_event1TagsA1.reference());
-		assertEquals(e3_event1TagsA1.reference(), q.filter().until());
-		q = q.untilIfEarlier(e3_event1TagsA1.reference());
-		assertEquals(e3_event1TagsA1.reference(), q.filter().until());
-	}
-
-	@Test
-	void testUntilIfEarlierAndLater( ) {
-		EventQuery q = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).until(e3_event1TagsA1.reference());
-		assertEquals(e3_event1TagsA1.reference(), q.filter().until());
-		q = q.untilIfEarlier(e5_event1TagsA1B1.reference());
-		assertEquals(e3_event1TagsA1.reference(), q.filter().until());
-	}
-	
-
-	@Test
-	void testUntilIfEarlierAndEarlier( ) {
-		EventQuery q = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).until(e3_event1TagsA1.reference());
-		assertEquals(e3_event1TagsA1.reference(), q.filter().until());
-		q = q.untilIfEarlier(e2_event2NoTags.reference());
-		assertEquals(e2_event2NoTags.reference(), q.filter().until());
-	}
-	
-	@Test
-	void testUntilIfEarlierAndNull ( ) {
-		EventQuery q = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).until(e3_event1TagsA1.reference());
-		assertEquals(e3_event1TagsA1.reference(), q.filter().until());
-		q = q.untilIfEarlier(null);
-		assertEquals(e3_event1TagsA1.reference(), q.filter().until());
-	}
-	
-	@Test
-	void testBackwardsDefaultsToForward ( ) {
-		EventQuery q = EventQuery.matchAll();
+	void ofReadsTheFilterForwardWithNoLimitAndNoReadBound ( ) {
+		EventFilter filter = EventFilter.forTypes(FirstDomainEvent.class).tagged("A", "1");
+		EventQuery q = EventQuery.of(filter);
+		assertEquals(filter, q.filter());
 		assertEquals(EventQuery.Direction.FORWARD, q.direction());
 		assertFalse(q.isBackwards());
+		assertEquals(Limit.none(), q.limit());
+		assertNull(q.notAfter());
+		assertEquals(new EventQuery(filter, EventQuery.Direction.FORWARD, Limit.none(), null), q);
+	}
+
+	@Test
+	void ofRefusesANullFilter ( ) {
+		assertThrows(IllegalArgumentException.class, () -> EventQuery.of(null));
+	}
+
+	@Test
+	void theCanonicalConstructorDefaultsWhatIsAbsent ( ) {
+		EventQuery q = new EventQuery(null, null, null, null);
+		assertTrue(q.filter().isMatchNone());
+		assertEquals(EventQuery.Direction.FORWARD, q.direction());
+		assertEquals(Limit.none(), q.limit());
+		assertNull(q.notAfter());
 	}
 
 	@Test
 	void testBackwards ( ) {
-		EventQuery q = EventQuery.matchAll().backwards();
+		EventQuery q = EventQuery.of(EventFilter.matchAll()).backwards();
 		assertEquals(EventQuery.Direction.BACKWARD, q.direction());
 		assertTrue(q.isBackwards());
 	}
 
 	@Test
-	void testBackwardsPreservesOtherFields ( ) {
-		EventQuery q = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.of("A", "1"))
-				.until(e3_event1TagsA1.reference())
-				.backwards();
-		assertTrue(q.isBackwards());
-		assertEquals(e3_event1TagsA1.reference(), q.filter().until());
-		assertFalse(q.filter().isMatchAll());
-		assertFalse(q.filter().isMatchNone());
-		assertTrue(q.filter().matches(e3_event1TagsA1));
-		assertFalse(q.filter().matches(e4_event2TagsA1));
-	}
-
-	@Test
-	void testLimitDefaultsToNone ( ) {
-		EventQuery q = EventQuery.matchAll();
-		assertEquals(Limit.none(), q.limit());
-	}
-
-	@Test
 	void testLimitWithLong ( ) {
-		EventQuery q = EventQuery.matchAll().limit(5);
-		assertEquals(Limit.to(5), q.limit());
+		assertEquals(Limit.to(5), EventQuery.of(EventFilter.matchAll()).limit(5).limit());
 	}
 
 	@Test
 	void testLimitWithLimitObject ( ) {
-		EventQuery q = EventQuery.matchAll().limit(Limit.to(10));
-		assertEquals(Limit.to(10), q.limit());
+		assertEquals(Limit.to(10), EventQuery.of(EventFilter.matchAll()).limit(Limit.to(10)).limit());
 	}
 
 	@Test
-	void testBackwardsAndLimit ( ) {
-		EventQuery q = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none())
-				.backwards()
-				.limit(1);
-		assertTrue(q.isBackwards());
-		assertEquals(Limit.to(1), q.limit());
-		// matching still works as before
-		assertTrue(q.filter().matches(e1_event1NoTags));
-		assertFalse(q.filter().matches(e2_event2NoTags));
+	void notAfterIsAPropertyOfTheReadAndLeavesTheFilterAlone ( ) {
+		EventFilter filter = EventFilter.forTypes(FirstDomainEvent.class).tagged("A", "1");
+		EventQuery q = EventQuery.of(filter).notAfter(e3_event1TagsA1.reference());
+
+		assertEquals(e3_event1TagsA1.reference(), q.notAfter());
+		assertEquals(filter, q.filter(), "the read bound leaves no trace on what is relevant");
+		assertTrue(q.filter().matches(e5_event1TagsA1B1), "so the filter still matches what was recorded after it");
 	}
 
 	@Test
-	void testFilter ( ) {
-		EventQuery q = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.of("A", "1"))
-				.until(e4_event2TagsA1.reference())
-				.backwards()
-				.limit(1);
-
-		EventFilter filter = q.filter();
-
-		// the filter is the one the query was built from, with its until; the direction and the limit
-		// are the query's own and leave no trace on it
-		assertEquals(EventFilter.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.of("A", "1")).until(e4_event2TagsA1.reference()), filter);
-		assertEquals(e4_event2TagsA1.reference(), filter.until());
-
-		// and it is where a query's matching is answered
-		assertTrue(filter.matches(e3_event1TagsA1));
-		assertFalse(filter.matches(e5_event1TagsA1B1));
+	void notAfterReplacesAndNullRemoves ( ) {
+		EventQuery q = EventQuery.of(EventFilter.matchAll()).notAfter(e3_event1TagsA1.reference()).notAfter(e5_event1TagsA1B1.reference());
+		assertEquals(e5_event1TagsA1B1.reference(), q.notAfter(), "the later call wins, even when it is later");
+		assertNull(q.notAfter(null).notAfter());
 	}
 
 	@Test
-	void testFilterMatchAll ( ) {
-		EventFilter filter = EventQuery.matchAll().filter();
-		assertTrue(filter.isMatchAll());
-		assertFalse(filter.isMatchNone());
-		assertTrue(filter.matches(e1_event1NoTags));
+	void directionLimitAndReadBoundCombineInAnyOrder ( ) {
+		EventFilter filter = EventFilter.forTypes(FirstDomainEvent.class);
+		EventReference bound = e4_event2TagsA1.reference();
+		EventQuery one = EventQuery.of(filter).backwards().limit(3).notAfter(bound);
+		EventQuery two = EventQuery.of(filter).notAfter(bound).limit(3).backwards();
+		assertEquals(one, two);
+		assertEquals(new EventQuery(filter, EventQuery.Direction.BACKWARD, Limit.to(3), bound), one);
 	}
 
-	@Test
-	void testFilterMatchNone ( ) {
-		EventFilter filter = EventQuery.matchNone().filter();
-		assertTrue(filter.isMatchNone());
-		assertFalse(filter.isMatchAll());
-		assertFalse(filter.matches(e1_event1NoTags));
-	}
-
-	@Test
-	void testOrSameDirection ( ) {
-		EventQuery q1 = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).backwards();
-		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1")).backwards();
-
-		EventQuery combined = q1.or(q2);
-		assertTrue(combined.isBackwards());
-	}
-
-	@Test
-	void testOrDifferentDirectionThrows ( ) {
-		EventQuery q1 = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).backwards();
-		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1"));
-
-		IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> q1.or(q2));
-		assertEquals("can't combine two EventQuery with different directions", e.getMessage());
-	}
-
-	@Test
-	void testOrLimitOnEitherSideThrows ( ) {
-		EventQuery unlimited = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none());
-		EventQuery limited1 = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none()).limit(1);
-		EventQuery limited5 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1")).limit(5);
-
-		// limited on the left
-		IllegalArgumentException e1 = assertThrows(IllegalArgumentException.class, () -> limited1.or(unlimited));
-		assertEquals("can't combine an EventQuery that has a limit set", e1.getMessage());
-
-		// limited on the right
-		IllegalArgumentException e2 = assertThrows(IllegalArgumentException.class, () -> unlimited.or(limited1));
-		assertEquals("can't combine an EventQuery that has a limit set", e2.getMessage());
-
-		// limited on both
-		IllegalArgumentException e3 = assertThrows(IllegalArgumentException.class, () -> limited1.or(limited5));
-		assertEquals("can't combine an EventQuery that has a limit set", e3.getMessage());
-	}
-
-	@Test
-	void testOrBothUnlimitedSucceeds ( ) {
-		EventQuery q1 = EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.none());
-		EventQuery q2 = EventQuery.forEvents(EventTypesFilter.of(SecondDomainEvent.class), Tags.of("A", "1"));
-
-		EventQuery combined = q1.or(q2);
-
-		assertTrue(combined.limit().isNotSet());
-		// union semantics, mirrors testMatchCombined
-		assertTrue(combined.filter().matches(e1_event1NoTags));
-		assertFalse(combined.filter().matches(e2_event2NoTags));
-		assertTrue(combined.filter().matches(e4_event2TagsA1));
-		assertFalse(combined.filter().matches(e6_event2TagsA2B1));
-	}
-
-	@Test
-	void testUntilPreservesDirectionAndLimit ( ) {
-		EventQuery q = EventQuery.matchAll().backwards().limit(3).until(e4_event2TagsA1.reference());
-		assertTrue(q.isBackwards());
-		assertEquals(Limit.to(3), q.limit());
-		assertEquals(e4_event2TagsA1.reference(), q.filter().until());
-	}
-
-	@Test
-	void testUntilIfEarlierPreservesDirectionAndLimit ( ) {
-		EventQuery q = EventQuery.matchAll().backwards().limit(3);
-		q = q.untilIfEarlier(e3_event1TagsA1.reference());
-		assertTrue(q.isBackwards());
-		assertEquals(Limit.to(3), q.limit());
-		assertEquals(e3_event1TagsA1.reference(), q.filter().until());
-	}
-
-	// --- the fluent form: forTypes(...).tagged(...).or(...) ---------------------------------------
-
-	@Test
-	void testForTypesTaggedIsForEvents ( ) {
-		EventQuery q = EventQuery.forTypes(FirstDomainEvent.class).tagged("A", "1");
-		assertEquals(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class), Tags.of("A", "1")), q);
-		assertEquals(EventFilter.forTypes(FirstDomainEvent.class).tagged("A", "1"), q.filter());
-
-		assertFalse(q.filter().matches(e1_event1NoTags));
-		assertTrue(q.filter().matches(e3_event1TagsA1));
-		assertFalse(q.filter().matches(e4_event2TagsA1));
-		assertTrue(q.filter().matches(e5_event1TagsA1B1));
-	}
-
-	@Test
-	void testForTypesResolvesASealedRoot ( ) {
-		EventQuery q = EventQuery.forTypes(MockDomainEvent.class);
-		assertEquals(EventQuery.forEvents(EventTypesFilter.of(FirstDomainEvent.class, SecondDomainEvent.class), Tags.none()), q);
-		assertTrue(q.filter().matches(e1_event1NoTags));
-		assertTrue(q.filter().matches(e2_event2NoTags));
-	}
-
-	@Test
-	void testTaggedKeepsDirectionAndLimit ( ) {
-		EventQuery q = EventQuery.forTypes(FirstDomainEvent.class).backwards().limit(3).tagged("A", "1").tagged(Tags.of("B", "1"));
-		assertTrue(q.isBackwards());
-		assertEquals(Limit.to(3), q.limit());
-		assertEquals(EventFilter.forTypes(FirstDomainEvent.class).tagged(Tags.of("A", "1", "B", "1")), q.filter());
-
-		assertFalse(q.filter().matches(e3_event1TagsA1), "both tags are required");
-		assertTrue(q.filter().matches(e5_event1TagsA1B1));
-	}
-
-	@Test
-	void testOrWithMatchAllIsMatchAll ( ) {
-		EventQuery q = EventQuery.forTypes(FirstDomainEvent.class).or(EventQuery.matchAll());
-		assertTrue(q.filter().isMatchAll());
-		assertTrue(q.filter().matches(e6_event2TagsA2B1));
-	}
-
-	// --- the surface: the query builds its filter and reads nothing off it -------------------------
+	// --- the surface: a query is a filter plus how it is read, and nothing else -------------------
 
 	/**
-	 * Whether an event matches, whether everything or nothing does, the items and the boundary are the
-	 * filter's to answer, through {@link EventQuery#filter()}; the query's own readers are the two it
-	 * adds, {@link EventQuery#isBackwards()} and {@link EventQuery#limit()}. Pinned reflectively, so a
-	 * filter reader put back on the query is a deliberate choice rather than a convenience that crept in.
+	 * A query builds no filter and reads nothing off one: the types, tags, unions and bounds of what is
+	 * relevant are {@link EventFilter}'s, reached through {@link EventQuery#filter()}. Pinned
+	 * reflectively, so a filter builder put back on the query is a deliberate choice rather than a
+	 * convenience that crept in.
 	 */
 	@Test
-	void theReadersLiveOnTheFilter ( ) {
-		Set<String> filterReaders = Set.of("matches", "isMatchAll", "isMatchNone", "items");
-		List<String> reExposed = Arrays.stream(EventQuery.class.getDeclaredMethods())
+	void aQueryOffersOnlyHowAFilterIsRead ( ) {
+		List<String> methods = Arrays.stream(EventQuery.class.getDeclaredMethods())
 				.filter(m -> Modifier.isPublic(m.getModifiers()))
-				.filter(m -> filterReaders.contains(m.getName()) || (m.getName().equals("until") && m.getParameterCount() == 0))
+				.filter(m -> !Set.of("equals", "hashCode", "toString").contains(m.getName()))
 				.map(Method::getName)
+				.distinct()
 				.sorted()
 				.toList();
-		assertEquals(List.of(), reExposed, "a filter reader re-exposed on the query");
+		assertEquals(List.of("backwards", "direction", "filter", "isBackwards", "limit", "notAfter", "of"), methods);
 
-		// and the filter does answer them, for a query built either way
-		EventQuery q = EventQuery.forTypes(FirstDomainEvent.class).tagged("A", "1").until(e3_event1TagsA1.reference());
-		assertTrue(q.filter().matches(e3_event1TagsA1));
-		assertFalse(q.filter().isMatchAll());
-		assertFalse(q.filter().isMatchNone());
-		assertNotNull(q.filter().items());
-		assertEquals(e3_event1TagsA1.reference(), q.filter().until());
+		List<String> statics = Arrays.stream(EventQuery.class.getDeclaredMethods())
+				.filter(m -> Modifier.isPublic(m.getModifiers()) && Modifier.isStatic(m.getModifiers()))
+				.map(Method::getName)
+				.toList();
+		assertEquals(List.of("of"), statics, "no shortcut: a query is always built from a filter");
 	}
 
 	/**
@@ -473,8 +248,8 @@ public class EventQueryTest {
 	@Test
 	void theQueryIsBuiltFromAFilterAndNamesNoFilterItem ( ) {
 		for ( Constructor<?> constructor : EventQuery.class.getConstructors() ) {
-			assertEquals(List.of(EventFilter.class, EventQuery.Direction.class, Limit.class), List.of(constructor.getParameterTypes()),
-					"the query's one constructor takes the filter, the direction and the limit");
+			assertEquals(List.of(EventFilter.class, EventQuery.Direction.class, Limit.class, EventReference.class), List.of(constructor.getParameterTypes()),
+					"the query's one constructor takes the filter, the direction, the limit and the read bound");
 		}
 		for ( Method method : EventQuery.class.getDeclaredMethods() ) {
 			if ( Modifier.isPublic(method.getModifiers()) ) {
@@ -482,6 +257,22 @@ public class EventQueryTest {
 				assertFalse(method.getReturnType().equals(EventFilterItem.class), method + " names EventFilterItem");
 			}
 		}
+	}
+
+	/**
+	 * A query and its filter render as their components only, bounds included, and read back as the
+	 * same values: an observer or a log line that serializes one shows what was asked.
+	 */
+	@Test
+	void aQueryWithItemBoundsSurvivesAJsonRoundTrip ( ) throws Exception {
+		JsonMapper mapper = JsonMapper.builder().build();
+		EventFilter filter = EventFilter.forTypes(FirstDomainEvent.class).tagged("A", "1").after(e1_event1NoTags.reference())
+				.or(EventFilter.forTypes(SecondDomainEvent.class).until(e4_event2TagsA1.reference()));
+		EventQuery q = EventQuery.of(filter).backwards().limit(7).notAfter(e5_event1TagsA1B1.reference());
+
+		String json = mapper.writeValueAsString(q);
+		assertFalse(json.contains("matchAll") || json.contains("bounded") || json.contains("backwards\""), json);
+		assertEquals(q, mapper.readValue(json, EventQuery.class));
 	}
 
 	private StoredEvent storedEvent ( Event<?> e ) {

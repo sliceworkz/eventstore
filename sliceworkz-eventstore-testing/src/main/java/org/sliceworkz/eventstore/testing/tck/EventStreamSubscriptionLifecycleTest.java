@@ -28,6 +28,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -183,7 +184,7 @@ public class EventStreamSubscriptionLifecycleTest extends AbstractEventStoreTest
 		neverSubscribed.close();
 
 		append(neverSubscribed, "appended through a closed stream");
-		assertEquals(1, neverSubscribed.query(EventQuery.matchAll()).size(),
+		assertEquals(1, neverSubscribed.query(EventFilter.matchAll()).size(),
 			"closing a stream ends its subscriptions; it must not disable the handle");
 	}
 

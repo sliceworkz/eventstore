@@ -70,7 +70,7 @@ public class AppendIdempotencyTest extends AbstractEventStoreTest {
 	}
 
 	private List<StoredEvent> allEvents ( ) {
-		return eventStorage().query(EventFilter.matchAll(), stream, null, Limit.none(), Direction.FORWARD);
+		return eventStorage().query(EventFilter.matchAll(), stream, null, null, Limit.none(), Direction.FORWARD);
 	}
 
 	@ForEachBackend

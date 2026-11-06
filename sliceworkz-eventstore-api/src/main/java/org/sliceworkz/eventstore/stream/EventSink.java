@@ -62,9 +62,9 @@ import org.sliceworkz.eventstore.events.EphemeralEvent;
  * // Conditional append with optimistic locking (DCB pattern)
  * // First, pin the boundary at the stream head and query the relevant facts up to it. An absent
  * // head is an empty stream, and a valid boundary, so a new customer needs no special case
- * EventQuery customer = EventQuery.forTags(Tags.of("customer", "123"));
+ * EventFilter customer = EventFilter.forTags("customer", "123");
  * EventReference head = stream.head().orElse(null);
- * List<Event<CustomerEvent>> relevantEvents = stream.query(customer.until(head));
+ * List<Event<CustomerEvent>> relevantEvents = stream.query(EventQuery.of(customer).notAfter(head));
  *
  * // Make decision based on relevant facts, then attempt the conditional append - it fails if
  * // new relevant facts have emerged after the boundary

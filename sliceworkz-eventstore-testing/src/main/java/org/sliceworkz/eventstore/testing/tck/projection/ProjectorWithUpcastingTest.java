@@ -35,6 +35,7 @@ import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.events.Upcaster;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.projection.Projector.ProjectorMetrics;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -102,7 +103,7 @@ public class ProjectorWithUpcastingTest extends AbstractEventStoreTest {
 		List<String> values = new ArrayList<>();
 		@Override
 		public EventQuery eventQuery ( ) {
-			return EventQuery.matchAll();
+			return EventQuery.of(EventFilter.matchAll());
 		}
 		@Override
 		public void when ( Event<CurrentEvent> event ) {

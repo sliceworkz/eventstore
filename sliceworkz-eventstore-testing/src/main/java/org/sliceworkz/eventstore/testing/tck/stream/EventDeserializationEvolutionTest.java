@@ -32,6 +32,7 @@ import org.sliceworkz.eventstore.events.EventDeserializationException;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.spi.EventStorage;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -85,7 +86,7 @@ public class EventDeserializationEvolutionTest extends AbstractEventStoreTest {
 		// Now read the same stream using V2 schema (which has an additional "email" field)
 		EventStream<OrderEventV2WithAddedField> v2Stream = eventStore().getEventStream(streamId,
 				OrderEventV2WithAddedField.class);
-		List<Event<OrderEventV2WithAddedField>> events = v2Stream.query(EventQuery.matchAll());
+		List<Event<OrderEventV2WithAddedField>> events = v2Stream.query(EventFilter.matchAll());
 
 		assertEquals(1, events.size());
 		OrderEventV2WithAddedField.OrderPlaced data = (OrderEventV2WithAddedField.OrderPlaced) events.get(0).data();
@@ -112,7 +113,7 @@ public class EventDeserializationEvolutionTest extends AbstractEventStoreTest {
 
 		// This should fail because the stored JSON contains "product" which is unknown to V3
 		EventDeserializationException exception = assertThrows(EventDeserializationException.class,
-				() -> v3Stream.query(EventQuery.matchAll()));
+				() -> v3Stream.query(EventFilter.matchAll()));
 
 		assertEquals(EventType.named("OrderPlaced"), exception.getEventType());
 		assertEquals(true, exception.getMessage().contains("Failed to deserialize stored event type 'OrderPlaced'"),

@@ -33,6 +33,7 @@ import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.infra.inmem.fs.InMemoryFsEventStorage;
 import org.sliceworkz.eventstore.infra.inmem.fs.shredding.InMemoryFsShreddingKeyStore;
 import org.sliceworkz.eventstore.infra.inmem.shredding.InMemoryShreddingKeyStore;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.shredding.AesGcmShreddingCodec;
 import org.sliceworkz.eventstore.shredding.DataSubject;
@@ -109,7 +110,7 @@ public class StorageShreddingCodecTest {
 					.append(AppendCriteria.none(), Event.of(new ContactRecorded("c-1", Shreddable.of("Alice Martin", ALICE)), Tags.none()));
 
 			ContactRecorded read = (ContactRecorded) reader.getEventStream(STREAM, ContactEvent.class)
-					.query(EventQuery.matchAll()).getFirst().data();
+					.query(EventFilter.matchAll()).getFirst().data();
 			assertInstanceOf(Shreddable.Withheld.class, read.name());
 			assertEquals(Optional.empty(), reader.shreddingAudit(), "the withholding codec has no audit, so an audit here came from the storage's codec");
 		}
@@ -131,12 +132,12 @@ public class StorageShreddingCodecTest {
 		EventStream<ContactEvent> contacts = store.getEventStream(STREAM, ContactEvent.class);
 		contacts.append(AppendCriteria.none(), Event.of(new ContactRecorded("c-1", Shreddable.of("Alice Martin", ALICE)), Tags.none()));
 
-		ContactRecorded before = (ContactRecorded) contacts.query(EventQuery.matchAll()).getFirst().data();
+		ContactRecorded before = (ContactRecorded) contacts.query(EventFilter.matchAll()).getFirst().data();
 		assertEquals("Alice Martin", before.name().map(n -> n).orElse("[erased]"));
 
 		assertEquals(1, store.eraseCategory(ALICE, ErasureReason.of("GDPR art.17 request #4711")).keysShredded());
 
-		ContactRecorded after = (ContactRecorded) contacts.query(EventQuery.matchAll()).getFirst().data();
+		ContactRecorded after = (ContactRecorded) contacts.query(EventFilter.matchAll()).getFirst().data();
 		Shreddable.Shredded<String> shredded = assertInstanceOf(Shreddable.Shredded.class, after.name());
 		assertEquals(ALICE, shredded.subject());
 		assertEquals(1, store.shreddingAudit().orElseThrow().totals().shreddedKeys());

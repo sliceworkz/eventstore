@@ -77,24 +77,21 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
  * <h2>Querying with Tags:</h2>
  * <pre>{@code
  * // Find all events for a specific customer across all event types
- * EventQuery query = EventQuery.forTags(Tags.of("customer", "123"));
- * List<Event<CustomerEvent>> events = stream.query(query);
+ * EventFilter relevant = EventFilter.forTags("customer", "123");
+ * List<Event<CustomerEvent>> events = stream.query(relevant);
  *
  * // Find events matching multiple tags (EU customers with high priority)
- * EventQuery query = EventQuery.forTags(Tags.of("region", "EU", "priority", "high"));
+ * EventFilter relevant = EventFilter.forTags(Tags.of("region", "EU", "priority", "high"));
  *
  * // Restrict the types as well
- * EventQuery query = EventQuery.forEvents(
- *     EventTypesFilter.of(CustomerRegistered.class),
- *     Tags.of("region", "EU")
- * );
+ * EventFilter relevant = EventFilter.forTypes(CustomerRegistered.class).tagged("region", "EU");
  * }</pre>
  *
  * <h2>DCB Pattern - Optimistic Locking:</h2>
  * <pre>{@code
  * // Define which events are relevant for our decision
  * Tags relevantTags = Tags.of("customer", "123");
- * EventQuery query = EventQuery.forTags(relevantTags);
+ * EventFilter relevant = EventFilter.forTags(relevantTags);
  *
  * // Pin the boundary before reading: the head is empty for an empty stream, which is a
  * // valid boundary ("I decided on an empty stream"), so nothing here has to guard against
@@ -102,11 +99,11 @@ import org.sliceworkz.eventstore.stream.AppendCriteria;
  * EventReference head = stream.head().orElse(null);
  *
  * // Query relevant events up to the boundary and make a business decision
- * List<Event<CustomerEvent>> events = stream.query(query.until(head));
+ * List<Event<CustomerEvent>> events = stream.query(EventQuery.of(relevant).notAfter(head));
  *
  * // Append new events only if no new relevant events appeared after the boundary
  * stream.append(
- *     AppendCriteria.of(query, head),
+ *     AppendCriteria.of(relevant, head),
  *     Event.of(new CustomerUpdated("Jane"), relevantTags)
  * );
  * // If new events with matching tags were added after the head,

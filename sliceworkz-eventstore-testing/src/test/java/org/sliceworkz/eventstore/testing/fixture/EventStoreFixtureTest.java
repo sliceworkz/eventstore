@@ -30,6 +30,7 @@ import org.sliceworkz.eventstore.events.EventReference;
 import org.sliceworkz.eventstore.events.Tag;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.projection.Projection;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -156,7 +157,7 @@ class EventStoreFixtureTest {
 		}
 
 		boolean subscribe ( String studentId, String courseId ) {
-			EventQuery relevant = EventQuery.forEvents(EventTypesFilter.any(), Tags.of("course", courseId));
+			EventQuery relevant = EventQuery.of(EventFilter.forTags("course", courseId));
 			List<Event<LearningEvent>> facts = stream.query(relevant);
 
 			if ( facts.stream().noneMatch(e -> e.data() instanceof CourseDefined) ) {
@@ -188,7 +189,7 @@ class EventStoreFixtureTest {
 
 		@Override
 		public EventQuery eventQuery ( ) {
-			return EventQuery.forEvents(EventTypesFilter.of(StudentSubscribed.class), Tags.of("course", courseId));
+			return EventQuery.of(EventFilter.forTypes(StudentSubscribed.class).tagged("course", courseId));
 		}
 
 		@Override

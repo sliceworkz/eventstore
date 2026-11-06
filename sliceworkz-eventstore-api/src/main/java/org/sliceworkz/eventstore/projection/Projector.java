@@ -60,7 +60,7 @@ import org.sliceworkz.eventstore.stream.AppendListener;
  *
  *     @Override
  *     public EventQuery eventQuery() {
- *         return EventQuery.forEvents(EventTypesFilter.of(CustomerRegistered.class), Tags.none());
+ *         return EventQuery.of(EventFilter.forTypes(CustomerRegistered.class));
  *     }
  *
  *     @Override
@@ -414,7 +414,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 				long handledBefore = eventsHandled;
 				try ( Observation.Scope<Outcome.Projected> scope = startBatch(Observation.ProjectorBatch.Phase.INIT, initQuery.limit(), null) ) {
 					try {
-						EventPage<CONSUMED_EVENT_TYPE> savepoints = es.page(initQuery.untilIfEarlier(until), null);
+						EventPage<CONSUMED_EVENT_TYPE> savepoints = es.page(boundedAt(initQuery, until), null);
 						savepoints.events().forEach(e -> {
 							eventsStreamed++;
 							eventsHandled++;
@@ -472,7 +472,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 			// lower: a projection asking for the newest 10 gets 10, not a page of 500 trimmed to 10
 			Limit limit =  Limit.to(maxEventsPerQuery).orIfLower(eventQuery.limit());
 
-			EventQuery effectiveQuery = eventQuery.untilIfEarlier ( until ).limit ( limit );
+			EventQuery effectiveQuery = boundedAt(eventQuery, until).limit ( limit );
 
 			Limit queryTotalLimit = eventQuery.limit();
 
@@ -510,7 +510,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 					storedInBatch = page.storedEventCount();
 
 					for ( Event<CONSUMED_EVENT_TYPE> e : page.events() ) {
-						offerEventToProjection(e, eventQuery, until, batch);
+						offerEventToProjection(e, effectiveQuery, batch);
 					}
 
 					if ( !page.events().isEmpty() ) {
@@ -664,13 +664,15 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 			placedInBatch = true;
 		}
 	
-		private void offerEventToProjection ( Event<CONSUMED_EVENT_TYPE> e, EventQuery eventQuery, EventReference until, Batch batch ) {
+		private void offerEventToProjection ( Event<CONSUMED_EVENT_TYPE> e, EventQuery eventQuery, Batch batch ) {
 			this.eventsStreamed++;
 			if ( mostRecentEventReference == null || e.reference().happenedAfter(mostRecentEventReference) ) {
 				mostRecentEventReference = e.reference();
 			}
-			// the boundary is over stored events: every event the stored event at the boundary upcasts
-			// into is at or before it, exactly as EventFilter.matches decides for the query itself
+			// the read bound -- the run's own, or the projection's where that is earlier -- is over stored
+			// events: every event the stored event at the bound upcasts into is at or before it, exactly as
+			// the item bounds of the filter are judged by EventFilter.matches
+			EventReference until = eventQuery.notAfter();
 			if ( until == null || !e.reference().storedEventHappenedAfter(until) ) {
 				if ( eventQuery.filter().matches(e) ) {
 					batch.startBatchIfNeeded(e);
@@ -681,6 +683,19 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 			}
 		}
 
+	}
+
+	/**
+	 * The query read up to the earlier of its own read bound and the run's: a projection asking for less
+	 * than the run reads gets less, and a bounded run never reads past its bound whatever the projection
+	 * asks. Compared over stored events, as every bound is.
+	 */
+	private static EventQuery boundedAt ( EventQuery query, EventReference bound ) {
+		if ( bound == null ) {
+			return query;
+		}
+		EventReference current = query.notAfter();
+		return ( current == null || current.storedEventHappenedAfter(bound) ) ? query.notAfter(bound) : query;
 	}
 
 	/**

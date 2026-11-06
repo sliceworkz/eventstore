@@ -138,7 +138,7 @@ and the rejected alternatives. The rules:
   an SPI method on `EventStorage` (default: a backwards limit-1 query); Postgres reads reference
   columns from the stream, context or global order index only, chosen by scope. It has `index` 0 and
   names the whole stored event. An absent head is an empty stream — keep it absent. Reported as
-  `Observation.Head`. Use: take the head, bound reads with `until(head)`, pass the head to
+  `Observation.Head`. Use: take the head, bound reads with `notAfter(head)`, pass the head to
   `AppendCriteria`. Tests: `HeadTest`, `PostgresVisibilityStallTest`, `PostgresHeadStatementTest`,
   `PostgresGlobalOrderIndexTest`, `PostgresOrderIndexAdmissionTest`.
 
@@ -173,44 +173,56 @@ and the rejected alternatives. The rules:
   `Tag.of("customer","123")`. There is no wildcard.
   Tests: `TagTest`, `TagsTest`, `TagRoundTripTest`.
 
+**Read `docs/design/item-bounds.md` before you change how a filter is bounded, how a query is read, or how
+a backend answers either.** The rules:
+
 **EventFilter:**
-- Matching only: event types, tags, optional `until`. No direction or limit.
-- Built by `matchAll()`, `matchNone()`, `forEvents(types, tags)`, `forTags(tags)`,
-  `forTypes(classes...)`, `.tagged(key, value)` (adds the tag to every item, keeps `until`, distributes
-  over `or`), `.or(...)` (union; both sides need the same `until`). Both spellings make equal filters.
-  Test: `EventFilterTest`.
+- Which events are relevant: a union of `EventFilterItem`s, each event types, tags and optional bounds
+  `after` (exclusive) and `until` (inclusive). No direction, no limit, no read bound.
+- Built by `matchAll()`, `matchNone()`, `of(types, tags)`, `of(items...)`, `forTags(tags)`, `forTags(key, value)`,
+  `forTypes(classes...)`, `.tagged(key, value)`, `.after(ref)`, `.until(ref)`, `.afterIfLater(ref)`,
+  `.untilIfEarlier(ref)`, `.or(...)`. Every narrowing method applies to every item; `after`/`until`
+  replace a bound (`null` removes it), the `IfLater`/`IfEarlier` forms narrow it. A bound on match-all
+  makes one item of any type. `.or(...)` has no restrictions: items keep their own bounds. Both spellings
+  make equal filters. Test: `EventFilterTest`.
 - **A sealed interface in a type filter resolves to every type under it at construction.** A
   non-sealed interface is `IllegalArgumentException`. A filter built from `EventType`s is literal.
   Tests: `EventTypesFilterTest`, `EventTypesFilterHierarchyTest`.
-- **`until` is an inclusive bound over stored events in the `(tx, position)` order**, the same forwards
-  and backwards, and it also bounds a consistency boundary. Compare it as the tuple.
-  Test: `EventQueryUntilBoundaryTest`.
-- **An `AppendCriteria` filter must carry no `until`.** `AppendCriteria.of(relevant.until(head), head)`
-  turns optimistic locking off with no error. Use `relevant.until(head)` for the read and
-  `AppendCriteria.of(relevant, head)` for the append. This is documented on `AppendCriteria.of`,
-  `EventFilter.until` and `EventSource.head()`.
+- **Item bounds are business bounds in recording order**, compared over stored events in the
+  `(tx, position)` order, the same forwards and backwards. They are part of the SPI contract: every
+  backend answers them, none may spend a limit on events it discards later. Test: `ItemBoundsTest`.
 - **A boundary names a whole stored event.** The read side compares with
   `EventReference.storedEventHappenedAfter` (ignores `index`). Do not compare `(tx, position, index)`
   on the read side. Test: `HeadTest.theHeadNamesTheWholeStoredEventWhenItUpcastsIntoSeveral`.
 
 **EventQuery:**
-- An `EventFilter` plus direction (`.backwards()`) and limit (`.limit(n)`). It re-exposes the filter
-  builders (`forTypes`, `forTags`, `forEvents`, `tagged`, `or`, `until`, `untilIfEarlier`) but none of
-  the filter readers: ask `query.filter()`. Its own readers are `isBackwards()` and `limit()`. `or`
-  refuses two directions or a limit on either side. The query names no `EventFilterItem`.
-  Test: `EventQueryTest`.
+- How a filter is read: `EventQuery.of(filter)` plus `.backwards()`, `.limit(n)` and the read bound
+  `.notAfter(ref)` (inclusive, replaces). Nothing else: no filter builders, no `or`, no static shortcut
+  (`EventQuery.of(EventFilter.matchAll())`). Readers: `filter()`, `direction()`, `isBackwards()`,
+  `limit()`, `notAfter()`. The query names no `EventFilterItem`. `stream.query(filter)` and
+  `query(filter, cursor)` read a filter forward. Test: `EventQueryTest`.
+- **`notAfter` is technical, `until` is business.** `notAfter(head)` pins a read at the moment a decider
+  decides; it never reaches a consistency boundary. Do not put the read bound on the filter. Test:
+  `NotAfterBoundaryTest`.
 - **`.limit(n)` means "read n stored events" and is pushed into storage** (SQL `LIMIT`, `Stream.limit`).
   A cursor does not change it. `Limit` is a property of the query, never a separate read argument.
 - **The SPI is asked with an `EventFilter`, never an `EventQuery`:** `EventStorage.query(filter, stream,
-  cursor, limit, direction)`, with `Limit` and `EventQuery.Direction`. Do not add an SPI direction enum.
-  The stream scope is never null (`IllegalArgumentException` on `query`, `append`, `head`); `anyContext()`
-  is the whole storage. Test: `StreamScopeTest`.
+  cursor, notAfter, limit, direction)`, with `Limit` and `EventQuery.Direction`. Do not add an SPI direction
+  enum. The stream scope is never null (`IllegalArgumentException` on `query`, `append`, `head`);
+  `anyContext()` is the whole storage. Test: `StreamScopeTest`.
 - With upcasting, n stored events can read as more or fewer events. Do not trim; take a `subList`.
   Test: `UpcastMultiTest`.
+- `Projector.runUntil(ref)` reads with `notAfter`, the earlier of its own and the projection's.
 
 **AppendCriteria:**
 - An `EventFilter` plus an optional expected last `EventReference`. New matching events after the
   reference raise `OptimisticLockingException`.
+- **`AppendCriteria.of(query, ref)` takes the query's filter only**, never its read bound, so the query
+  a decider read with is the one to pass.
+- **The canonical constructor prunes against the reference**: an item `until` the reference or earlier
+  is removed, an `after` at or before it is dropped, everything else is kept and checked. With no
+  reference nothing is pruned. When every item is removed the filter is match-none: an unconditional
+  append, which is correct for a decision on history no later append can change. Test: `ItemBoundsTest`.
 - `AppendCriteria.none()` and `append(events)`/`append(event)` are the same: no check, no exception, no
   advisory lock on Postgres. Test: `EventStreamTest.anAppendWithoutCriteriaIsAnAppendWithNoCriteria`.
 - `AppendCriteria.of(query or filter, reference)`. `expectedLastEventReference()` is never null.
@@ -904,27 +916,30 @@ EventStream<CustomerEvent> stream = eventstore.getEventStream(streamId, Customer
 stream.append(Event.of(new CustomerRegistered("John"), Tags.none()));
 
 // 4. Query all events
-List<Event<CustomerEvent>> events = stream.query(EventQuery.matchAll());
+List<Event<CustomerEvent>> events = stream.query(EventFilter.matchAll());
 
 // 5. Query with filters
-List<Event<CustomerEvent>> filtered = stream.query(
-    EventQuery.forEvents(EventTypesFilter.of(CustomerRegistered.class), Tags.of("region", "EU"))
+List<Event<CustomerEvent>> filtered = stream.query(EventFilter.forTypes(CustomerRegistered.class).tagged("region", "EU")
 );
 
 // 6. Conditional append with optimistic locking: pin the boundary at the head BEFORE reading.
 //    An absent head is an empty stream, and a valid boundary, so a customer with no history yet
 //    needs no special case -- there is no getLast() to throw on an empty result
-EventQuery customerQuery = EventQuery.forTags(Tags.of("customer", "123"));
+EventFilter customer = EventFilter.forTags("customer", "123");
 EventReference head = stream.head().orElse(null);
-List<Event<CustomerEvent>> existingEvents = stream.query(customerQuery.until(head));
+EventQuery read = EventQuery.of(customer).notAfter(head);
+List<Event<CustomerEvent>> existingEvents = stream.query(read);
 
-// the criteria gets the query UNBOUNDED, with the head as the expected last event. Handing it
-// customerQuery.until(head) instead -- reusing the query the read used -- deems nothing after the
-// head relevant, so every append is admitted and no OptimisticLockingException is ever raised
+// the criteria takes the query's filter, never its read bound, with the head as the expected last event
 stream.append(
-    AppendCriteria.of(customerQuery, head),
+    AppendCriteria.of(read, head),
     Event.of(new CustomerNameChanged("Jane"), Tags.of("customer", "123"))
 );
+
+// 7. Facts bounded at different points of the history, in one read: each item keeps its own bounds
+EventFilter movements = EventFilter.forTypes(StockAdded.class, StockPicked.class).tagged("product", "42").after(lastCount);
+EventFilter invoices  = EventFilter.forTypes(InvoiceIssued.class).tagged("customer", "123").until(yearClosed);
+List<Event<ShopEvent>> facts = stream.query(movements.or(invoices));
 ```
 
 ### Savepoint Pattern with initQuery
@@ -944,19 +959,13 @@ class StockLevelProjection implements Projection<StockEvent> {
     @Override
     public EventQuery initQuery() {
         // Find the last stock count (savepoint) — backwards, limit 1
-        return EventQuery.forEvents(
-            EventTypesFilter.of(StockCounted.class),
-            Tags.of("product", product)
-        ).backwards().limit(1);
+        return EventQuery.of(EventFilter.forTypes(StockCounted.class).tagged("product", product)).backwards().limit(1);
     }
 
     @Override
     public EventQuery eventQuery() {
         // Only process movements — savepoints are handled exclusively by initQuery
-        return EventQuery.forEvents(
-            EventTypesFilter.of(StockAdded.class, StockPicked.class),
-            Tags.of("product", product)
-        );
+        return EventQuery.of(EventFilter.forTypes(StockAdded.class, StockPicked.class).tagged("product", product));
     }
 
     @Override
@@ -986,7 +995,7 @@ Projector.from(stream).into(projection).build().run();
 ImportReport report = EventStoreImporter.from(sourceStorage).to(targetStorage)
     .mode(ImportMode.SKIP_EXISTING_ID)                       // default is FAIL_ON_EXISTING_ID
     .stream(EventStreamId.forContext("ledger").withPurpose("2024Q1"))   // optional: one stream only
-    .matching(EventFilter.forEvents(EventTypesFilter.any(), Tags.of("period", "2024Q1")))  // optional: types/tags
+    .matching(EventFilter.forTags("period", "2024Q1"))  // optional: types/tags
     .after(previousReport.sourceTo())                        // optional: catch-up run
     .transform(src -> Optional.of(EventToImport.from(src)    // optional: remap / rewrite / drop
                         .withStream(archiveStream)))
@@ -1001,9 +1010,10 @@ stream scope and the types/tags of the query the source is paged with, so on Pos
 closed period costs what that period's events cost, answered from the stream and tag indexes, not a
 walk over the table. The two compose, and the transformation only sees what the selection read. The
 alternative — dropping unwanted events from `transform` — reads the whole source to discard most of it,
-which looks fine against the in-memory store and is a full pass over the table on Postgres. A filter
-carrying its own `until` bounds the run there when it is earlier than the source head, and
-`ImportReport.sourceTo()` then names that boundary, so `.after(report.sourceTo())` continues correctly.
+which looks fine against the in-memory store and is a full pass over the table on Postgres. The bounds
+of a filter's items are applied by the storage too, so `.matching(filter.until(periodClosed))` selects one
+period; the run itself is always bounded at the source head, which `ImportReport.sourceTo()` names, so
+`.after(report.sourceTo())` continues correctly.
 Types are matched by stored name (a legacy type by its legacy name), since nothing upcasts on this path.
 What a selection does *not* do is touch the source: an archive is a copy, and removing the copied range
 from the live store is a separate, deliberate operator act — the bookmarks foreign key is there to make
@@ -1604,7 +1614,7 @@ LISTEN/NOTIFY machinery, diagnosis SQL, measured plan behaviour — live in
 **`sliceworkz-eventstore-infra-postgres/CLAUDE.md`**, loaded when working in that module. The facts
 that bind everywhere:
 
-- **Ordering is the `(event_tx, event_position)` tuple everywhere** — reads, the `until` boundary,
+- **Ordering is the `(event_tx, event_position)` tuple everywhere** — reads, every bound,
   and the optimistic-locking check. The two columns are assigned independently and genuinely
   disagree, so comparing positions alone is a different order that silently drops events. The cursor
   boundary is written as a SQL **row constructor** and the read path's `ORDER BY event_tx::xid8`

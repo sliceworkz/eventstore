@@ -35,6 +35,7 @@ import org.sliceworkz.eventstore.EventStore;
 import org.sliceworkz.eventstore.events.EphemeralEvent;
 import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.Tags;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.spi.EventStorageException;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -100,7 +101,7 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 		assertEquals(0, repeat.size());
 
 		// and the second event really is absent, rather than written and merely not returned
-		List<Event<MockDomainEvent>> stored = stream.query(EventQuery.matchAll());
+		List<Event<MockDomainEvent>> stored = stream.query(EventFilter.matchAll());
 		assertEquals(1, stored.size());
 		assertEquals(new FirstDomainEvent("1"), stored.getFirst().data());
 	}
@@ -121,8 +122,8 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 		assertEquals(1, onOtherStream.size());
 		assertNotEquals(first.getFirst().reference(), onOtherStream.getFirst().reference());
 
-		assertEquals(1, stream.query(EventQuery.matchAll()).size());
-		assertEquals(1, otherStream.query(EventQuery.matchAll()).size());
+		assertEquals(1, stream.query(EventFilter.matchAll()).size());
+		assertEquals(1, otherStream.query(EventFilter.matchAll()).size());
 	}
 
 	/**
@@ -158,7 +159,7 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 			observer.last(Observation.Append.class).outcome(Outcome.Appended.class);
 
 			// and the observation only reports, it does not change what the caller sees
-			assertEquals(2, observedStream.query(EventQuery.matchAll()).size());
+			assertEquals(2, observedStream.query(EventFilter.matchAll()).size());
 			assertEquals(List.of(), observer.violations());
 		}
 	}
@@ -183,7 +184,7 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 				Event.of(new FirstDomainEvent("2"), Tags.none()).withIdempotencyKey("cmd-4711/2")));
 		assertEquals(0, retry.size());
 
-		List<Event<MockDomainEvent>> stored = stream.query(EventQuery.matchAll());
+		List<Event<MockDomainEvent>> stored = stream.query(EventFilter.matchAll());
 		assertEquals(2, stored.size());
 		assertEquals(new FirstDomainEvent("1"), stored.get(0).data());
 		assertEquals(new FirstDomainEvent("2"), stored.get(1).data());
@@ -215,7 +216,7 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 		assertEquals(Set.of("order-4711"), conflict.storedKeys());
 		assertEquals(Set.of("order-4712", "order-4713"), conflict.newKeys());
 
-		List<Event<MockDomainEvent>> stored = stream.query(EventQuery.matchAll());
+		List<Event<MockDomainEvent>> stored = stream.query(EventFilter.matchAll());
 		assertEquals(1, stored.size(), "a refused batch must store none of its events");
 		assertEquals(new FirstDomainEvent("1"), stored.getFirst().data());
 
@@ -244,7 +245,7 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 				Event.of(new FirstDomainEvent("1"), Tags.none()).withIdempotencyKey("cmd-4711"),
 				Event.of(new FirstDomainEvent("2"), Tags.none())));
 		assertEquals(0, retry.size());
-		assertEquals(2, stream.query(EventQuery.matchAll()).size());
+		assertEquals(2, stream.query(EventFilter.matchAll()).size());
 	}
 
 	/**
@@ -262,7 +263,7 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 				Event.of(new FirstDomainEvent("1"), Tags.none()).withIdempotencyKey("cmd-4711"),
 				Event.of(new FirstDomainEvent("2"), Tags.none()).withIdempotencyKey("cmd-4711"))));
 
-		assertEquals(0, stream.query(EventQuery.matchAll()).size());
+		assertEquals(0, stream.query(EventFilter.matchAll()).size());
 
 		// and the key is not spent by the rejected batch
 		List<Event<MockDomainEvent>> afterwards = stream.append(AppendCriteria.none(),
@@ -294,7 +295,7 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 			observedStream.append(AppendCriteria.none(), batch);
 			assertEquals(3, observer.last(Observation.Append.class).outcome(Outcome.Duplicated.class).events(),
 					"every event of a swallowed batch is de-duplicated");
-			assertEquals(3, observedStream.query(EventQuery.matchAll()).size());
+			assertEquals(3, observedStream.query(EventFilter.matchAll()).size());
 
 			List<EphemeralEvent<? extends MockDomainEvent>> mixed = List.of(
 					Event.<MockDomainEvent>of(new FirstDomainEvent("1"), Tags.none()).withIdempotencyKey("cmd-4711/1"),
@@ -332,7 +333,7 @@ public class EventStreamIdempotencyTest extends AbstractEventStoreTest {
 		assertThrows(EventStorageException.class, () ->
 				stream.append(AppendCriteria.none(), Event.of(new FirstDomainEvent("2"), Tags.none())));
 
-		assertEquals(1, stream.query(EventQuery.matchAll()).size());
+		assertEquals(1, stream.query(EventFilter.matchAll()).size());
 	}
 
 	/**

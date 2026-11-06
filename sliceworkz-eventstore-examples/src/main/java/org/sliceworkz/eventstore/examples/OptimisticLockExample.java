@@ -27,6 +27,7 @@ import org.sliceworkz.eventstore.examples.OptimisticLockExample.CustomerEvent.Cu
 import org.sliceworkz.eventstore.examples.OptimisticLockExample.CustomerEvent.CustomerNameChanged;
 import org.sliceworkz.eventstore.examples.OptimisticLockExample.CustomerEvent.CustomerRegistered;
 import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
+import org.sliceworkz.eventstore.query.EventFilter;
 import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.query.EventTypesFilter;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
@@ -50,18 +51,18 @@ public class OptimisticLockExample {
 
 		// Two registration events of different customers, queried by Event Type
 		List<Event<CustomerEvent>> registrations = 
-				stream.query(EventQuery.forEvents(EventTypesFilter.of(CustomerRegistered.class), Tags.none()));
+				stream.query(EventFilter.forTypes(CustomerRegistered.class));
 		registrations.forEach(System.out::println);
 		
 		
 		// One churn event, queried by Event Type
 		List<Event<CustomerEvent>> churns = 
-				stream.query(EventQuery.forEvents(EventTypesFilter.of(CustomerChurned.class), Tags.none()));
+				stream.query(EventFilter.forTypes(CustomerChurned.class));
 		churns.forEach(System.out::println);
 		
 		
 		// The DCB loop: every fact about the first customer, whatever its type, is the consistency boundary
-		EventQuery customer123 = EventQuery.forTags(Tags.of("customer", "123"));
+		EventFilter customer123 = EventFilter.forTags("customer", "123");
 		
 		// Pin the boundary BEFORE reading: the head is the newest stored event of the stream. It is absent
 		// for an empty stream, and an absent reference is a valid boundary ("I decided on an empty stream"),
@@ -69,7 +70,7 @@ public class OptimisticLockExample {
 		EventReference head = stream.head().orElse(null);
 		
 		// Read the facts up to the boundary and decide; nothing appended after the head is seen here
-		List<Event<CustomerEvent>> singleCustomer = stream.query(customer123.until(head));
+		List<Event<CustomerEvent>> singleCustomer = stream.query(EventQuery.of(customer123).notAfter(head));
 		singleCustomer.forEach(System.out::println);
 
 		// A conditional append: only if no fact about this customer landed after the head
@@ -86,9 +87,9 @@ public class OptimisticLockExample {
 		
 		// A uniqueness check is the same loop over a customer that does not exist yet: the head bounds the
 		// read and feeds the check, and the read comes back empty
-		EventQuery customer125 = EventQuery.forTags(Tags.of("customer", "125"));
+		EventFilter customer125 = EventFilter.forTags("customer", "125");
 		EventReference headBeforeRegistering = stream.head().orElse(null);
-		if ( stream.query(customer125.until(headBeforeRegistering)).isEmpty() ) {
+		if ( stream.query(EventQuery.of(customer125).notAfter(headBeforeRegistering)).isEmpty() ) {
 			stream.append(AppendCriteria.of(customer125, headBeforeRegistering),
 					Event.of(new CustomerRegistered("125", "Anne"), Tags.of("customer", "125")));
 		}

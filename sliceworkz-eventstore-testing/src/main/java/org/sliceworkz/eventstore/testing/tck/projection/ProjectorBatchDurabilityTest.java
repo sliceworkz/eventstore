@@ -17,6 +17,7 @@
  */
 package org.sliceworkz.eventstore.testing.tck.projection;
 
+import org.sliceworkz.eventstore.events.Bookmark;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -103,7 +104,7 @@ public class ProjectorBatchDurabilityTest extends AbstractEventStoreTest {
 		assertEquals(projection.batchEnds().get(1), seen.get(2).orElse(null),
 				"and the third sees the second");
 
-		assertEquals(projection.batchEnds().get(2), es.getBookmark(READER).orElse(null),
+		assertEquals(projection.batchEnds().get(2), es.findBookmark(READER).flatMap(Bookmark::reference).orElse(null),
 				"the run ends with the last batch bookmarked");
 	}
 
@@ -126,7 +127,7 @@ public class ProjectorBatchDurabilityTest extends AbstractEventStoreTest {
 				"a failed commit is a projection failure, not a bare RuntimeException escaping the projector");
 		assertEquals("UNIT TEST FAKED COMMIT FAILURE", failure.getCause().getMessage());
 
-		assertTrue(es.getBookmark(READER).isEmpty(),
+		assertTrue(es.findBookmark(READER).flatMap(Bookmark::reference).isEmpty(),
 				"nothing committed, so nothing is bookmarked");
 		assertEquals(2, projection.handled().size(), "the first batch was offered");
 
@@ -180,7 +181,7 @@ public class ProjectorBatchDurabilityTest extends AbstractEventStoreTest {
 				"the rollback failure is kept, attached to the cause rather than replacing it");
 		assertEquals("UNIT TEST FAKED ROLLBACK FAILURE", failure.getCause().getSuppressed()[0].getMessage());
 
-		assertTrue(es.getBookmark(READER).isEmpty(), "a batch that failed is not bookmarked");
+		assertTrue(es.findBookmark(READER).flatMap(Bookmark::reference).isEmpty(), "a batch that failed is not bookmarked");
 	}
 
 	/** A batch that never reached its first matching event has nothing to roll back either. */
@@ -198,7 +199,7 @@ public class ProjectorBatchDurabilityTest extends AbstractEventStoreTest {
 		assertSame(RuntimeException.class, failure.getCause().getClass());
 
 		assertEquals(1, projection.batchesCancelled(), "the failing batch is rolled back");
-		assertEquals(projection.batchEnds().get(0), es.getBookmark(READER).orElse(null),
+		assertEquals(projection.batchEnds().get(0), es.findBookmark(READER).flatMap(Bookmark::reference).orElse(null),
 				"the batch that did commit stays bookmarked -- its work is durable and must not be repeated");
 		assertFalse(projection.batchEnds().isEmpty());
 	}
@@ -282,7 +283,7 @@ public class ProjectorBatchDurabilityTest extends AbstractEventStoreTest {
 		@Override
 		public void afterBatch ( Optional<EventReference> lastEventReference ) {
 			if ( bookmarkSource != null ) {
-				bookmarksSeen.add(bookmarkSource.getBookmark(READER));
+				bookmarksSeen.add(bookmarkSource.findBookmark(READER).flatMap(Bookmark::reference));
 			}
 			if ( batchesStarted == commitFailsOnBatch ) {
 				throw new RuntimeException("UNIT TEST FAKED COMMIT FAILURE");

@@ -260,7 +260,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 
 		Bookmark bookmark = es.getBookmarks().stream().filter(b -> b.reader().equals("taggedReader")).findFirst().orElseThrow();
 		assertEquals(tags, bookmark.tags());
-		assertEquals(bookmark.reference(), es.getBookmark("taggedReader"));
+		assertEquals(bookmark.reference(), es.findBookmark("taggedReader").flatMap(Bookmark::reference));
 	}
 
 	@ForEachBackend
@@ -369,7 +369,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		ProjectorMetrics projectorMetrics = firstProjector.runSingleBatch();
 		assertEquals(1, first.counter());
 		assertEquals(refOne, projectorMetrics.lastEventReference());
-		assertEquals(refOne, es.getBookmark("someReader").orElse(null));
+		assertEquals(refOne, es.findBookmark("someReader").flatMap(Bookmark::reference).orElse(null));
 
 		// the "restarted process": a projector built with only the reader name resumes at the bookmark,
 		// rather than replaying from the start as one that never reads its bookmark would
@@ -379,7 +379,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		projectorMetrics = secondProjector.runSingleBatch();
 		assertEquals(1, second.counter());
 		assertEquals(refThree, projectorMetrics.lastEventReference()); // the next matching event after the bookmark, not the first in the stream
-		assertEquals(refThree, es.getBookmark("someReader").orElse(null));
+		assertEquals(refThree, es.findBookmark("someReader").flatMap(Bookmark::reference).orElse(null));
 
 		// a bookmark rewound between two executions of the same projector is followed, where a projector
 		// that kept its own cursor would have gone on to the event tagged "four"
@@ -813,7 +813,7 @@ public class ProjectorTest extends AbstractEventStoreTest {
 		assertEquals(4, projection.counter()); // the run finished undisturbed: SecondDomainEvent is left out by the query
 		EventReference last = projector.accumulatedMetrics().lastEventReference();
 		assertNotNull(last);
-		assertEquals(Optional.of(last), es.getBookmark("blocking-reader")); // placed by the run's last batch
+		assertEquals(Optional.of(last), es.findBookmark("blocking-reader").flatMap(Bookmark::reference)); // placed by the run's last batch
 
 		// the read, applied after the run, put the position at that bookmark: nothing is left to project
 		ProjectorMetrics next = projector.runSingleBatch();

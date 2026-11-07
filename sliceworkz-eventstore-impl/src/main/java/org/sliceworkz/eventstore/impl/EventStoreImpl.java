@@ -1121,18 +1121,6 @@ public class EventStoreImpl implements EventStore {
 		}
 
 		@Override
-		public Optional<EventReference> getBookmark(String reader) {
-			checkStoreNotClosed();
-			requireReader(reader);
-			return observed(new Observation.GetBookmark(info, reader), reporter -> {
-				long start = System.nanoTime();
-				Optional<EventReference> bookmark = eventStorage.getBookmark(reader);
-				reporter.completed(new Outcome.Found(since(start), bookmark.isPresent()));
-				return bookmark;
-			});
-		}
-
-		@Override
 		public Optional<Bookmark> findBookmark(String reader) {
 			checkStoreNotClosed();
 			requireReader(reader);

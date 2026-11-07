@@ -136,7 +136,7 @@ import org.sliceworkz.eventstore.query.EventQuery;
  *
  * // Bookmarking for resume capability
  * stream.placeBookmark("myReader", lastProcessedRef, Tags.of("status", "processed"));
- * Optional<EventReference> bookmark = stream.getBookmark("myReader");
+ * Optional<EventReference> resumeAfter = stream.findBookmark("myReader").flatMap(Bookmark::reference);
  * }</pre>
  *
  * @param <DOMAIN_EVENT_TYPE> the type of domain events in this stream (typically a sealed interface)
@@ -541,9 +541,9 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * anything, so it has no handled event to place a bookmark at. Without a read position it would have
 	 * no bookmark at all, and its whole stream would count as its backlog although nothing in it concerns
 	 * it. This records the read position alone (see {@link Bookmark}): {@link #findBookmark(String)} then
-	 * answers a bookmark with an empty {@link Bookmark#reference()}, and {@link #getBookmark(String)} — the
-	 * resume point — stays empty, so the reader still resumes from the beginning, exactly as one without a
-	 * bookmark does. The read position is never a resume point.
+	 * answers a bookmark with an empty {@link Bookmark#reference()} — no resume point — so the reader still
+	 * resumes from the beginning, exactly as one without a bookmark does. The read position is never a
+	 * resume point.
 	 * <p>
 	 * It never clears a handled reference: when the reader's bookmark already names a handled event, that
 	 * reference stays and only the read position, tags and update time are replaced. A later
@@ -570,14 +570,17 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	}
 
 	/**
-	 * The whole bookmark of a named reader — the last event it handled, the event up to which it has read
-	 * the stream, its tags and when it was last placed — or empty when it has none.
+	 * The bookmark of a named reader — the last event it handled, the event up to which it has read the
+	 * stream, its tags and when it was last placed — or empty when it has none.
 	 * <p>
-	 * {@link #getBookmark(String)} answers the resume point only; this is the read for a caller that wants
-	 * to know how far a reader has <em>read</em>, such as one waiting for it to have seen a given event:
-	 * {@link Bookmark#readUpToOrReference()}. It also answers the bookmark of a reader that has read the
-	 * stream without handling anything yet ({@link #placeReadPosition(String, EventReference, Tags)}), whose
-	 * {@link Bookmark#reference()} is empty and for which {@link #getBookmark(String)} answers empty.
+	 * Where the reader resumes is {@code findBookmark(reader).flatMap(Bookmark::reference)}: the last event
+	 * it handled, empty for a reader with no bookmark and for one that has read the stream without
+	 * handling anything yet ({@link #placeReadPosition(String, EventReference, Tags)}), which resumes from
+	 * the beginning either way. How far it has <em>read</em> — what a caller waiting for it to have seen a
+	 * given event wants — is {@link Bookmark#readUpToOrReference()}. The alternative — a second accessor
+	 * answering the resume point alone — loses because two reads of one bookmark, told apart only by
+	 * their result type, leave a caller to guess which one says whether a reader has a bookmark at all:
+	 * for a reader with a read position only, one says yes and the other no.
 	 * <p>
 	 * The default looks the reader up in {@link #getBookmarks()}, so a source written outside this library
 	 * keeps compiling.
@@ -590,21 +593,6 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 		java.util.Objects.requireNonNull(reader, "reader must not be null");
 		return getBookmarks().stream().filter(b -> b.reader().equals(reader)).findFirst();
 	}
-
-	/**
-	 * Retrieves the bookmark for a named reader from this stream.
-	 * <p>
-	 * Returns the last bookmarked position for the specified reader, allowing
-	 * the reader to resume processing from where it left off: the last event it handled. A reader whose
-	 * bookmark records a read position only has handled nothing yet, and gets an empty answer, so it
-	 * resumes from the beginning exactly as a reader without a bookmark does.
-	 *
-	 * @param reader the unique name/identifier of the reader; must not be null
-	 * @return an Optional containing the last event the reader handled, empty if it has no bookmark or has
-	 *         handled nothing yet
-	 * @throws NullPointerException if {@code reader} is null
-	 */
-	Optional<EventReference> getBookmark ( String reader );
 
 	/**
 	 * Removes the bookmark for a named reader and returns its previous value.
@@ -621,8 +609,8 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 *   <li>Implementing bookmark expiration or rotation logic</li>
 	 * </ul>
 	 * <p>
-	 * After this method completes, subsequent calls to {@link #getBookmark(String)} for
-	 * this reader will return {@code Optional.empty()} until a new bookmark is placed.
+	 * After this method completes, {@link #findBookmark(String)} for this reader answers
+	 * {@code Optional.empty()} until a new bookmark is placed.
 	 * <p>
 	 * Typical Usage:
 	 * <pre>{@code
@@ -660,7 +648,7 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 *
 	 * @return a snapshot list of all bookmarks; empty if none exist
 	 * @see Bookmark
-	 * @see #getBookmark(String)
+	 * @see #findBookmark(String)
 	 */
 	List<Bookmark> getBookmarks ( );
 

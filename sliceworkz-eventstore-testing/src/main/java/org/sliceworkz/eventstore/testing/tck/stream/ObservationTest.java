@@ -197,9 +197,9 @@ public class ObservationTest extends AbstractEventStoreTest {
 		assertEquals("reader", placed.observation(Observation.PlaceBookmark.class).reader());
 		placed.outcome(Outcome.Done.class);
 
-		stream.getBookmark("reader");
+		stream.findBookmark("reader");
 		assertTrue(observer.last(Observation.GetBookmark.class).outcome(Outcome.Found.class).found());
-		stream.getBookmark("nobody");
+		stream.findBookmark("nobody");
 		assertFalse(observer.last(Observation.GetBookmark.class).outcome(Outcome.Found.class).found());
 
 		stream.getBookmarks();

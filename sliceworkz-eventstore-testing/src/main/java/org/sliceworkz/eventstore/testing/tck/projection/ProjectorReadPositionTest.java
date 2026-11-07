@@ -192,7 +192,7 @@ public class ProjectorReadPositionTest extends AbstractEventStoreTest {
 		assertEquals(Optional.empty(), bookmark.reference(), "nothing handled, so no handled reference");
 		assertEquals(Optional.of(head), bookmark.readUpTo(), "a run that read to the end has read up to the head");
 		assertEquals(head, bookmark.readUpToOrReference());
-		assertEquals(Optional.empty(), es.getBookmark(READER), "the read position is never a resume point");
+		assertEquals(Optional.empty(), es.findBookmark(READER).flatMap(Bookmark::reference), "the read position is never a resume point");
 	}
 
 	/** An empty stream has no head, so a projector that read all of it has nothing to record. */

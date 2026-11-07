@@ -184,7 +184,7 @@ public class BookmarksTest extends AbstractEventStoreTest {
 		EventReference foreignCoordinates = EventReference.of(real.id(), real.position() + 1_000_000, real.tx() + 1_000_000);
 		s.placeBookmark("resolved-reader", foreignCoordinates, Tags.none());
 
-		assertEquals(Optional.of(real), s.getBookmark("resolved-reader"),
+		assertEquals(Optional.of(real), s.findBookmark("resolved-reader").flatMap(Bookmark::reference),
 				"the bookmark must read back as the store's own reference for the event it names");
 		assertEquals(Optional.of(real), s.getBookmarks().getFirst().reference());
 	}
@@ -230,7 +230,7 @@ public class BookmarksTest extends AbstractEventStoreTest {
 		assertEquals(Optional.of(read), bookmark.readUpTo());
 		assertEquals(read, bookmark.readUpToOrReference());
 		assertEquals(Optional.of(read), s.getBookmarks().getFirst().readUpTo());
-		assertEquals(Optional.of(handled), s.getBookmark("reading-reader"), "the resume point is the reference, never the read position");
+		assertEquals(Optional.of(handled), s.findBookmark("reading-reader").flatMap(Bookmark::reference), "the resume point is the reference, never the read position");
 	}
 
 	/**
@@ -341,7 +341,7 @@ public class BookmarksTest extends AbstractEventStoreTest {
 		assertEquals(Optional.of(read), bookmark.readUpTo(), "the read position, as the store's own reference");
 		assertEquals(read, bookmark.readUpToOrReference());
 		assertEquals(Tags.parse("phase:idle"), bookmark.tags());
-		assertEquals(Optional.empty(), s.getBookmark("idle-reader"), "a read position is never a resume point");
+		assertEquals(Optional.empty(), s.findBookmark("idle-reader").flatMap(Bookmark::reference), "a read position is never a resume point");
 		Bookmark listed = s.getBookmarks().stream().filter(b -> "idle-reader".equals(b.reader())).findFirst().orElseThrow();
 		assertEquals(Optional.empty(), listed.reference());
 		assertEquals(Optional.of(read), listed.readUpTo());
@@ -364,7 +364,7 @@ public class BookmarksTest extends AbstractEventStoreTest {
 		assertEquals(Optional.of(handled), bookmark.reference(), "the handled reference must survive a read position placed alone");
 		assertEquals(Optional.of(read), bookmark.readUpTo());
 		assertEquals(Tags.parse("phase:read"), bookmark.tags());
-		assertEquals(Optional.of(handled), s.getBookmark("busy-reader"));
+		assertEquals(Optional.of(handled), s.findBookmark("busy-reader").flatMap(Bookmark::reference));
 	}
 
 	/** The first placement naming a handled event fills the reference of a read-position-only bookmark in. */
@@ -380,7 +380,7 @@ public class BookmarksTest extends AbstractEventStoreTest {
 		Bookmark bookmark = s.findBookmark("waking-reader").orElseThrow();
 		assertEquals(Optional.of(handled), bookmark.reference());
 		assertEquals(Optional.of(handled), bookmark.readUpTo());
-		assertEquals(Optional.of(handled), s.getBookmark("waking-reader"));
+		assertEquals(Optional.of(handled), s.findBookmark("waking-reader").flatMap(Bookmark::reference));
 	}
 
 	/**

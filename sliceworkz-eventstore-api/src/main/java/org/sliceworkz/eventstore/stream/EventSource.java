@@ -194,6 +194,19 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	 * Queries events from the stream starting from a cursor, respecting the query's own direction and
 	 * limit.
 	 * <p>
+	 * <strong>What a cursor is for.</strong> Most reads need none: a decider reads up to the head it
+	 * pinned ({@link EventQuery#notAfter(EventReference)}), and a read model or any other reader that
+	 * works its way through a long history is driven by a
+	 * {@link org.sliceworkz.eventstore.projection.Projector}, which keeps the cursor itself and moves it
+	 * a batch at a time. This read is for the one case left to application code: asking <em>what is new
+	 * since a reference I already hold</em> — a monitor polling a stream for what was appended since it
+	 * last looked, a test collecting what a command appended after its fixture. Give such a query a
+	 * {@link EventQuery#limit(long) limit} and continue from the last event it returned; without one it
+	 * reads everything after the cursor into heap, which is only right when that is known to be little.
+	 * The cursor is where an iteration stands, not part of what the query asks, which is why it is an
+	 * argument of the read and not a property of the {@link EventQuery}: the same query is read again
+	 * and again with the cursor moved on.
+	 * <p>
 	 * The cursor says where to start reading, not how much to read or what matches:
 	 * <ul>
 	 *   <li><strong>Forward queries:</strong> the cursor acts as "after" — only events after this reference are returned</li>
@@ -307,6 +320,13 @@ public interface EventSource<DOMAIN_EVENT_TYPE> extends AutoCloseable {
 	/**
 	 * Reads the events the filter matches after a cursor, forward, with no limit and no read bound:
 	 * {@link #query(EventQuery, EventReference)} with {@link EventQuery#of(EventFilter)}.
+	 * <p>
+	 * For <em>what is new since a reference I already hold</em> when that is known to be little — what a
+	 * command appended after a test's fixture, say. With no limit it reads everything after the cursor
+	 * in one go, so an open-ended poll gives the query a limit and uses
+	 * {@link #query(EventQuery, EventReference)}, and a replay of a long history belongs to a
+	 * {@link org.sliceworkz.eventstore.projection.Projector}. Without a cursor ({@code null}) this is
+	 * {@link #query(EventFilter)}, which is the spelling to use.
 	 *
 	 * @param filter which events are relevant
 	 * @param cursor optional reference to read after, null to start from the beginning

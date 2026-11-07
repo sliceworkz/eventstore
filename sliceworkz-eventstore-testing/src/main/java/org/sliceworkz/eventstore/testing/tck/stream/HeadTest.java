@@ -335,8 +335,8 @@ public class HeadTest extends AbstractEventStoreTest {
 		private int handled;
 
 		@Override
-		public EventQuery eventQuery ( ) {
-			return EventQuery.of(EventFilter.matchAll());
+		public EventFilter eventFilter ( ) {
+			return EventFilter.matchAll();
 		}
 
 		@Override

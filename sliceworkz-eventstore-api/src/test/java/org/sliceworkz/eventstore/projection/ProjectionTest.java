@@ -115,8 +115,8 @@ public class ProjectionTest {
 		}
 
 		@Override
-		public EventQuery eventQuery ( ) {
-			return EventQuery.of(EventFilter.matchAll());
+		public EventFilter eventFilter ( ) {
+			return EventFilter.matchAll();
 		}
 		
 		List<Event<MockDomainEvent>> handled ( ) {

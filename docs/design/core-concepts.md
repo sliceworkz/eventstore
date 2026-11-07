@@ -494,6 +494,17 @@ The rules in brief are in the root `CLAUDE.md`, under "Core Concepts". This file
   field it answers is `volatile` and published by every run, where `run()`'s return value is only
   seen by the thread that called it, which for a subscribed projector is the storage's notification
   thread
+- **A projection declares a filter; its query is derived.** `Projection.eventFilter()` is the abstract
+  method and `eventQuery()` defaults to reading it forward with no limit and no read bound, which is
+  what nearly every projection does. A projection reading something else — the newest event backwards
+  with a limit of one — overrides `eventQuery()` on top of `eventFilter()`, so the two never describe
+  different events. The alternative — `eventQuery()` as the one abstract method — loses because every
+  projection then wraps its filter in `EventQuery.of(...)` for the handful that read differently
+  (measured over the applications built on this library: 492 of 501 read models and decision models
+  were exactly `return EventQuery.of(filter)`), and because a filter is what everything else that says
+  "these events matter" already takes: an append's consistency boundary, a translator, a dispatcher.
+  A separate filter-only interface was not chosen either: one type with a defaulted query keeps a
+  projection that reads differently from being a different kind of thing
 - **`Projection.eventQuery()` is read once per run.** Storage is asked with that query and every event
   of the run is matched against it, so a projection that computes its query cannot be asked twice and
   answer differently in one run, and is not asked once per event. `ProjectorTest` pins both per backend

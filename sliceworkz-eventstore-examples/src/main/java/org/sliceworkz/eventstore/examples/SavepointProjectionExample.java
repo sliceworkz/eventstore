@@ -135,9 +135,9 @@ public class SavepointProjectionExample {
 		}
 
 		@Override
-		public EventQuery eventQuery ( ) {
+		public EventFilter eventFilter ( ) {
 			// Only process movements — savepoints are handled exclusively by initQuery
-			return EventQuery.of(EventFilter.forTypes(StockAdded.class, StockPicked.class).tagged("product", product));
+			return EventFilter.forTypes(StockAdded.class, StockPicked.class).tagged("product", product);
 		}
 
 		@Override

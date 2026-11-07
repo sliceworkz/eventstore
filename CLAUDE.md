@@ -236,7 +236,10 @@ a backend answers either.** The rules:
   Test: `UpcastTest.aBoundaryOverACurrentTypeCountsTheLegacyEventsUpcastIntoIt`.
 
 **Projection and EventHandler:**
-- A `Projection` is an `EventQuery` plus an `EventHandler`, with an optional `initQuery()`.
+- A `Projection` is an `EventFilter` plus an `EventHandler`, with an optional `initQuery()`.
+- **`eventFilter()` is the abstract method; `eventQuery()` defaults to `EventQuery.of(eventFilter())`.**
+  Override `eventQuery()` only for a read that is not forward and unlimited, and build it on
+  `eventFilter()`. Do not make `eventQuery()` abstract again. Test: `ProjectorTest`.
 - **`EventHandler.when(Event<E>)` is the one handler method.** Do not add a payload-only overload of
   `when`, a `WithoutMetaData` twin, or `when(List)`/`when(Stream)` defaults. Batch work goes in
   `BatchAwareProjection`. Test: `ProjectionTest` (api).
@@ -964,9 +967,9 @@ class StockLevelProjection implements Projection<StockEvent> {
     }
 
     @Override
-    public EventQuery eventQuery() {
+    public EventFilter eventFilter() {
         // Only process movements — savepoints are handled exclusively by initQuery
-        return EventQuery.of(EventFilter.forTypes(StockAdded.class, StockPicked.class).tagged("product", product));
+        return EventFilter.forTypes(StockAdded.class, StockPicked.class).tagged("product", product);
     }
 
     @Override

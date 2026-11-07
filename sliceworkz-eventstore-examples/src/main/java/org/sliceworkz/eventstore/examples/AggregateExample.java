@@ -29,7 +29,6 @@ import org.sliceworkz.eventstore.infra.inmem.InMemoryEventStorage;
 import org.sliceworkz.eventstore.projection.Projection;
 import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.query.EventFilter;
-import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -227,8 +226,8 @@ public class AggregateExample {
 		}
 
 		@Override
-		public EventQuery eventQuery() {
-			return EventQuery.of(EventFilter.forTags("customer", customerId));
+		public EventFilter eventFilter() {
+			return EventFilter.forTags("customer", customerId);
 		}
 
 		public CustomerAggregate customerAggregate ( ) {

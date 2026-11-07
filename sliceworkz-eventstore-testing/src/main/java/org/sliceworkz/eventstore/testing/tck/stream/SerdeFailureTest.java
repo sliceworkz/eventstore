@@ -40,7 +40,6 @@ import org.sliceworkz.eventstore.projection.Projection;
 import org.sliceworkz.eventstore.projection.Projector;
 import org.sliceworkz.eventstore.projection.ProjectorException;
 import org.sliceworkz.eventstore.query.EventFilter;
-import org.sliceworkz.eventstore.query.EventQuery;
 import org.sliceworkz.eventstore.stream.AppendCriteria;
 import org.sliceworkz.eventstore.stream.EventStream;
 import org.sliceworkz.eventstore.stream.EventStreamId;
@@ -317,7 +316,7 @@ public class SerdeFailureTest extends AbstractEventStoreTest {
 	static class CountingProjection implements Projection<OrderEvent> {
 		int handled = 0;
 		@Override
-		public EventQuery eventQuery ( ) { return EventQuery.of(EventFilter.matchAll()); }
+		public EventFilter eventFilter ( ) { return EventFilter.matchAll(); }
 		@Override
 		public void when ( Event<OrderEvent> event ) { handled++; }
 	}

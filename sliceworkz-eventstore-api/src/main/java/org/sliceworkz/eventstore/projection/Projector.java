@@ -980,7 +980,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 		 * @return this builder for method chaining
 		 * @throws IllegalArgumentException if the reader name is null or blank
 		 * @see EventSource#placeBookmark(String, EventReference, Tags)
-		 * @see EventSource#getBookmark(String)
+		 * @see EventSource#findBookmark(String)
 		 */
 		public Builder<EVENT_TYPE> bookmarkAs ( String reader ) {
 			if ( reader == null || reader.isBlank() ) {

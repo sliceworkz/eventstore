@@ -175,7 +175,7 @@ What this depends on that is not in the repository, so it is easily forgotten:
 |---|---|---|
 | `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE` | repository secrets (Actions) | publishing a release to Maven Central, signed with GPG, as Central requires |
 | `CLOUDREPO_USERNAME`, `CLOUDREPO_PASSWORD` | repository secrets (Actions) | deploying snapshots to CloudRepo |
-| `PAT_TOKEN` | repository secret (Actions) | `create-release-tag-and-bump` and `prepare-release-branch` push with it, since a push made with the workflow's own token would not start the release workflow on the tag |
+| The GitHub App **sliceworkz-software-factory** installed on the repository, the organization variable `FACTORY_APP_CLIENT_ID` (the App's Client ID) and secret `FACTORY_APP_PRIVATE_KEY` shared with it, and the App on the bypass list of the ruleset on `develop` and `release/*` | *sliceworkz → Settings → GitHub Apps*, *Secrets and variables → Actions*, *Settings → Rules → Rulesets* | `create-release-tag-and-bump` and `prepare-release-branch` push as the App: a push made with the workflow's own token would not start the release workflow on the tag nor CI on the branch, and a personal access token would act as a person. The token is made per run, lasts an hour and is handed only to the steps that push |
 | Workflow permissions | each workflow declares its own (`permissions:`); the re-scan needs `issues: write` | the re-scan opening and closing issues |
 | Private vulnerability reporting | *Settings → Code security* | lets someone report a vulnerability privately (SECURITY.md) |
 | Dependabot alerts and security updates | *Settings → Code security* | security updates outside the weekly schedule |

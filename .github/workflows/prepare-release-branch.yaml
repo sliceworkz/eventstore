@@ -25,12 +25,8 @@ jobs:
         with:
           ref: develop
           fetch-depth: 0
-          token: ${{ secrets.PAT_TOKEN }}
-      
-      - name: Configure Git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Reading only: the pushes below use the App's token, which no step running Maven ever sees
+          persist-credentials: false
       
       - name: Set up JDK
         uses: actions/setup-java@v5
@@ -85,10 +81,24 @@ jobs:
           git checkout -b $RELEASE_BRANCH
           echo "Created branch: $RELEASE_BRANCH"
       
-      - name: Push release branch
+      # The App's token: what it pushes starts CI on the new release branch and on develop, which a push with
+      # the workflow's own token would not. It is handed only to the steps that push or ask GitHub.
+      - name: App token
+        id: app
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+
+      - name: Commit identity of the App
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          SLUG: ${{ steps.app.outputs.app-slug }}
         run: |
-          git push origin release/${{ steps.new_versions.outputs.release_major }}.${{ steps.new_versions.outputs.release_minor }}
-      
+          id="$(gh api "/users/${SLUG}%5Bbot%5D" --jq .id)"
+          git config user.name "${SLUG}[bot]"
+          git config user.email "${id}+${SLUG}[bot]@users.noreply.github.com"
+
       - name: Checkout develop branch
         run: |
           git checkout develop
@@ -104,10 +114,14 @@ jobs:
           git add .
           git commit -m "bump version to ${{ steps.new_versions.outputs.next_major }}.${{ steps.new_versions.outputs.next_minor }}.0-SNAPSHOT"
       
-      - name: Push develop branch
+      # The release branch and develop in one atomic push: both land or neither does, so a refused push
+      # leaves nothing behind and the workflow can simply be run again
+      - name: Push the release branch and develop
+        env:
+          APP_TOKEN: ${{ steps.app.outputs.token }}
         run: |
-          git push origin develop
-      
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$APP_TOKEN" | base64 -w0)" push --atomic origin "release/${{ steps.new_versions.outputs.release_major }}.${{ steps.new_versions.outputs.release_minor }}" develop
+
       - name: Summary
         run: |
           echo "✅ Release branch created: release/${{ steps.new_versions.outputs.release_major }}.${{ steps.new_versions.outputs.release_minor }}"

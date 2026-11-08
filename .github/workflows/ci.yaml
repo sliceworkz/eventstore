@@ -57,8 +57,8 @@ jobs:
         distribution: 'temurin'
         cache: maven
         server-id: cloudrepo
-        server-username: CLOUDREPO_USERNAME
-        server-password: CLOUDREPO_PASSWORD
+        server-username-env-var: CLOUDREPO_USERNAME
+        server-password-env-var: CLOUDREPO_PASSWORD
     - name: Verify SNAPSHOT version
       if: env.DEPLOY == 'true'
       run: |

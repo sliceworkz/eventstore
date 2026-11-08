@@ -27,8 +27,8 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
           server-id: central
-          server-username: MAVEN_CENTRAL_USERNAME
-          server-password: MAVEN_CENTRAL_PASSWORD
+          server-username-env-var: MAVEN_CENTRAL_USERNAME
+          server-password-env-var: MAVEN_CENTRAL_PASSWORD
       
       - name: Get current version
         run: |

@@ -18,8 +18,8 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          # using a PAT as otherwise the workflow on the tag is not kicked off
-          token: ${{ secrets.PAT_TOKEN }}
+          # Reading only: the pushes below use the App's token, which no step running Maven ever sees
+          persist-credentials: false
       
       - name: Validate branch name
         run: |
@@ -43,11 +43,6 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
           cache: 'maven'
-      
-      - name: Configure Git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
       
       - name: Get current Maven version
         run: |
@@ -82,6 +77,25 @@ jobs:
         run: |
           echo "::notice title=create-release-tag-and-bump - release: v$RELEASE_VERSION"
       
+      # The App's token, made after the build so it cannot expire before the pushes (it lasts an hour).
+      # What it pushes starts the workflows a push with the workflow's own token would not: the release
+      # workflow on the tag, CI on the branch. It is handed only to the steps that push or ask GitHub.
+      - name: App token
+        id: app
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+
+      - name: Commit identity of the App
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          SLUG: ${{ steps.app.outputs.app-slug }}
+        run: |
+          id="$(gh api "/users/${SLUG}%5Bbot%5D" --jq .id)"
+          git config user.name "${SLUG}[bot]"
+          git config user.email "${id}+${SLUG}[bot]@users.noreply.github.com"
+
       - name: Set release version
         run: |
           echo "Setting version to $RELEASE_VERSION"
@@ -90,13 +104,12 @@ jobs:
           git add .
           git commit -m "Release version $RELEASE_VERSION" || echo "No changes to commit"
       
-      - name: Create and push tag
+      - name: Create tag
         run: |
           TAG_NAME="v$RELEASE_VERSION"
           echo "Creating tag: $TAG_NAME"
           
           git tag -a "$TAG_NAME" -m "Release version $RELEASE_VERSION"
-          git push origin "$TAG_NAME"
       
       - name: Set next development version
         run: |
@@ -109,10 +122,14 @@ jobs:
           git add .
           git commit -m "Prepare for next development iteration: $NEXT_VERSION"
       
-      - name: Push changes
+      # The tag and the branch in one atomic push: both land or neither does, so a refused push leaves
+      # nothing behind and the workflow can simply be run again
+      - name: Push the tag and the branch
+        env:
+          APP_TOKEN: ${{ steps.app.outputs.token }}
         run: |
-          git push origin $BRANCH_NAME
-      
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$APP_TOKEN" | base64 -w0)" push --atomic origin "v$RELEASE_VERSION" "$BRANCH_NAME"
+
       - name: Summary
         run: |
           echo "### Release Summary" >> $GITHUB_STEP_SUMMARY

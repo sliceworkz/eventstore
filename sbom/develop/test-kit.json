@@ -4,7 +4,7 @@
   "serialNumber" : "urn:uuid:39c32fac-a366-3aa5-8ecb-919b393717a6",
   "version" : 1,
   "metadata" : {
-    "timestamp" : "2026-11-09T13:01:45Z",
+    "timestamp" : "2026-11-09T12:59:55Z",
     "lifecycles" : [
       {
         "phase" : "build"
@@ -78,6 +78,10 @@
           "url" : "https://sliceworkz.github.io/eventstore"
         },
         {
+          "type" : "distribution-intake",
+          "url" : "https://xti.mycloudrepo.io/repositories/sliceworkz"
+        },
+        {
           "type" : "vcs",
           "url" : "https://github.com/sliceworkz/eventstore/sliceworkz-eventstore-parent-pom/sliceworkz-eventstore-testing"
         }
@@ -106,35 +110,35 @@
       "hashes" : [
         {
           "alg" : "MD5",
-          "content" : "b4d17b03e86fb2ac6a130e4f27b5b98f"
+          "content" : "7002650cce900add622faa8f31ac2b21"
         },
         {
           "alg" : "SHA-1",
-          "content" : "e44e80ca3aef81806ede2a79cc4db331dbb2a3db"
+          "content" : "88f59dbf5c1569d802c7dd6b6071cd304f2c3ff9"
         },
         {
           "alg" : "SHA-256",
-          "content" : "074fc34767f1253339a1d940f3ca477a3bb882cd2d6abbef66598bb80bb202f6"
+          "content" : "39df05753d0b6189ce91cf997238c355d85140e4019508356295a69fa910f920"
         },
         {
           "alg" : "SHA-512",
-          "content" : "9fa2b86fff1ef317a2a6871735b006a3a52937d9a6564dce829bec5fdd35144fa95a4d01961e543a2f895441b70795c3fee8362f8bf75ad80f87fde75b22100e"
+          "content" : "72c24047e38bf69634f0385602f8e34325c3c3510fc680fbab342d4b3254046d418c33f86d766b2cad7138551942a9579aad927f7222a9793ffb07bba60e3ba2"
         },
         {
           "alg" : "SHA-384",
-          "content" : "5ab874df579c8cef8f8331675fb93590a4f44eb31c34320c1812d082b13974372b9d3e312a8783e5f93bd70c13dd803d"
+          "content" : "03064813969e8ae466c19a9bb8a6c069ae8f28fc87fbc960b83819967f6b848fb2cb16677de469b5913f4090b2699b48"
         },
         {
           "alg" : "SHA3-384",
-          "content" : "eb2e183de78ce30746847e1689d8d3da91f29072cf4733844dbe7715c0cee3252e15a4f126b3bf68e7fe6beb3a4d9478"
+          "content" : "b30b999b265b2d4300395827124c283c3454086ba229924ee742260fd6b4af4accf4012883020dcc2973674d8dc39e12"
         },
         {
           "alg" : "SHA3-256",
-          "content" : "1ffd0e7a99a81d13163d2f314750d2377ce04aaed16b0fd626d3bb1e4f399089"
+          "content" : "b50f89a76696f86bbacdf0c2f27975ed57588c490371855ac0a7a793927325ee"
         },
         {
           "alg" : "SHA3-512",
-          "content" : "dfcd6c787f11a6e54ada1ec99e8fd5255022569dcb3b2b9b94d7ed6d14b03aba221698216d6aea110905ef4723b65e4a9ccb6f69625dc8eb87bdd3b4fa994a53"
+          "content" : "d7b734eb7502b367eacd7b66fdf6668de184447139ee292e49a4a25ec6bb23b0786765792e74a70fdc9428c9a2f18f28afca9ce9887964c45df32063e98fe083"
         }
       ],
       "licenses" : [
@@ -235,35 +239,35 @@
       "hashes" : [
         {
           "alg" : "MD5",
-          "content" : "9357b638127a3e28c45c70c897133186"
+          "content" : "f31ac1507ca19dc80c3c9257fecf6ccc"
         },
         {
           "alg" : "SHA-1",
-          "content" : "93624410f7dd8df9217eef36ea45da0482e0d60d"
+          "content" : "ff002539d7bd3d7e947d1b09702bd963c2deb28c"
         },
         {
           "alg" : "SHA-256",
-          "content" : "ba89c791858669198cce066b73424938e9c4742685cfa0aa17a2096f8fda0790"
+          "content" : "1da413b1c83cec4d8910d9a9980d20dd13d280939a9d45a6150fd02d37f09639"
         },
         {
           "alg" : "SHA-512",
-          "content" : "233493c93fa99c27ecd4e9ef2329bb9c553c20ab9c76846ae56b66fd72b893e775bf8422b642319fb7b86502168623f8496bb2e92619608c67203b9dc6874b63"
+          "content" : "1a65f58e0f1c3eef89555538f927d12572a7ee6c3f35f66ca2ac05ae2801c685cc51b81898fdb40829aecab3c6503f39030e70b6a781932b0b32a1017b097907"
         },
         {
           "alg" : "SHA-384",
-          "content" : "06deff36623c53818315277f32f1a908da79c06bc16af69dde80176af891a815e6eb73d6da6e15ab146576823a256488"
+          "content" : "6f0dfc80a1d288322334012d890e5f471ddad286a5e3be9074ba7401c07b5c9b4ce7b6ddeb5cbf719fdaefc3a658b3c1"
         },
         {
           "alg" : "SHA3-384",
-          "content" : "4256dab0b3f7debed3da0d5579932f8aeab76191737382f2682335890d8861f3f86d32ec3c55d1bce16a8616980195e0"
+          "content" : "0c3cea2aed47b01cc01e9a841d760dec8d88169d851890a388860d6104a5c631d9c62291aee1c30dcd305bdc54b3574c"
         },
         {
           "alg" : "SHA3-256",
-          "content" : "034c9239537e29ed38359774988986150a0751bd95d1874cd321d477118c0e0f"
+          "content" : "1bde4c109670f10fc092dd77a7191c635221bb5639e2168383b1f67d52fe0cfd"
         },
         {
           "alg" : "SHA3-512",
-          "content" : "8e0e9636bba7432e404baa47597bdec06706b1a7373c9ac954291fc4e342f13d59d83c6ea2e7497e4106e303974b9b2b6a129f81af40cbc5c0dd0edfe517302d"
+          "content" : "8c4f076a2dd2a670a6d58924015324fbc540ed1aef09e16d2bff461d3a0750cf17c2d39359d1092f5d92d4e23899fc62ae330c7dc11b03bfc1d6c489d75641f8"
         }
       ],
       "licenses" : [
@@ -507,35 +511,35 @@
       "hashes" : [
         {
           "alg" : "MD5",
-          "content" : "267c3594a073d1d63c4f974ab51590c3"
+          "content" : "ee2f496e8f9bad94345e48d5a9818563"
         },
         {
           "alg" : "SHA-1",
-          "content" : "e2620e51ed8d08ca2d94df83f88fce0f515921c0"
+          "content" : "b5f9ad5a60408840dd09e960891d3f9b0cd23ed2"
         },
         {
           "alg" : "SHA-256",
-          "content" : "ba7ab459a02eec74a4107e3096033687b8a89298b531a7ad2a13eb784549deae"
+          "content" : "d6c9ff0fa034bdcf1ed929f911cf459fab27623e74260812067b0ef5aa96849b"
         },
         {
           "alg" : "SHA-512",
-          "content" : "09ef4efe831cbfea8912a36ced4725358aead1c83639b3f977813e83c509b9410b46c7a228e9f83b1ed37aeede8898e7c199cb8493aa5df5d8ea5904058c0edd"
+          "content" : "159aa22b9faebea35dbaaccdba4dbf7ae58c1f006a45dc6d8da900427dfdb0d84dc6cafc4886e72fb30bf4b87c7359ba958f9cc72260c6b3ad85c573f870f4f4"
         },
         {
           "alg" : "SHA-384",
-          "content" : "b9c553922283f06af40e8c41474370393b1081400e86a3b78be2b72691c8da401068ad8159d976b4d07ea24040c9f9c8"
+          "content" : "ee29ab6032523af99b2339491a2ecf70614110adbdc1935883415ead56613ac7ac0f3e59550ebb4a8fb5d0b73cfa01d5"
         },
         {
           "alg" : "SHA3-384",
-          "content" : "0dac59d4a09720456513aff9c8eb2d188629db45f79acf2d6a81278858ed5bbece71559db7720e2598b77a35fb4c358b"
+          "content" : "0eba962ad5a24e194604c9bdbfc87a705ba00a9f15ed9633de7131103b47cecf207b37955a396484b76a65988fb08e10"
         },
         {
           "alg" : "SHA3-256",
-          "content" : "439fc5fa15c550467e33cb0a3a6f1df66249d908a07ec64a242852223716c0c1"
+          "content" : "7308db3f8e25b72b60a72cc7ffa9005bfcbe370861fadf501f500a8e20e18c6f"
         },
         {
           "alg" : "SHA3-512",
-          "content" : "b32a50a0c7c0fdd5af71dffce0eb793c3f5c424ba8a082336a27647367e09afeaf7ddda581e44064f6d12b77fc9f884b0a872d8b849448d1c2205abcb7d0e92f"
+          "content" : "725daf121f18496ff32aa0a88b2061c15ffc07283056c166784c37aed98610c89c1cc5bd52d7c879a4fee94890a0f063a9afeda7aa318f215b5ede544f06135e"
         }
       ],
       "licenses" : [
@@ -1249,35 +1253,35 @@
       "hashes" : [
         {
           "alg" : "MD5",
-          "content" : "1d9c634bc010a14d1ae7e2b2ba55816e"
+          "content" : "a8e4a2e4f136e01c636835137b06c8c2"
         },
         {
           "alg" : "SHA-1",
-          "content" : "efc753348ff896affa0d4af0215d62d26b5f0dfa"
+          "content" : "c245c551140ec5d911c9e3c99a4ea4ce62828a2b"
         },
         {
           "alg" : "SHA-256",
-          "content" : "f0f08aa1dbca7479577b816a18d75a1fa8e33859a1acfeda00fcbd1a5f157ebf"
+          "content" : "23b31fb72a3e74d7421755991c586d9fbc3f3152292807b370c28e48f72d3362"
         },
         {
           "alg" : "SHA-512",
-          "content" : "c5d4d9909bf9049feb6c371b5005d9359f1a0eb5797e22367bb361cacad76b7f2a374d383d727dc8d2e3448c6b0e17ef6a70f8f4556eb0d1a5b746d14014ba40"
+          "content" : "2f96003069e20c92670dd11a260b096c1e8dc911687bb83e0acf641be8237981a7a4e6a1e11c964f8131da71caa1098d6fb949c893392d20f6ab985ebc7d5bc8"
         },
         {
           "alg" : "SHA-384",
-          "content" : "855d2a946ab474af2244d42119352a537b68b87a121aae0246ba491411bd2624afa9cf18047a6b0af0d6cb26d97f466e"
+          "content" : "3f0ea7c5ee836edf797fba49c087949e4966ae868ca18d40d989e096a69d39ee6b66d435c54fa27cd0dbf7705a1f4f1c"
         },
         {
           "alg" : "SHA3-384",
-          "content" : "7606942e63103813f79a14cb3237391fdd47058a9735a43d5573d24810606e1a587fb8816f9222b48a8fa1a3661acf92"
+          "content" : "50ab6be15c5428ccaf70a7e0fb58f03e035a6bf5f72962a2216a3cf737456640ac08ead75d082e52739607b7d3a6a7d4"
         },
         {
           "alg" : "SHA3-256",
-          "content" : "aabb3a31eaf253d6f28fd4ff8c0af77593ea61a81c03823adcebd9572c621e35"
+          "content" : "202f39586d9a5b74e4c4cd0305a09d39c9641e9354eb464a8914048b0f618bf8"
         },
         {
           "alg" : "SHA3-512",
-          "content" : "7ec65bee42d7f2493708bd9d890acfbba817acc3dd02f65810547920ebb8983c96e8128399330fd031ea34bb6f3a38973a6f442b5eaa9902e8f31506bf068189"
+          "content" : "d10339586cfe38829397e92c50683c31406716e4ded055512c8d78d1085c311c285e182a8257bd0db5a9c82e3fb99ad5a8fb03a8291095c3f34c3bf338bd2bc1"
         }
       ],
       "licenses" : [
@@ -1311,35 +1315,35 @@
       "hashes" : [
         {
           "alg" : "MD5",
-          "content" : "9561b618cd5de2da53fb8c033163c000"
+          "content" : "464730088daf758d5283ab2acc9685cb"
         },
         {
           "alg" : "SHA-1",
-          "content" : "a76eebfe4c7aa679d51d80704b7a051b5715d824"
+          "content" : "6ebadff8a68cf6cd53d15c0ba9ad3c980b52257d"
         },
         {
           "alg" : "SHA-256",
-          "content" : "85df327b29b91008fece1b4d85c3e26e0e3f4901f81dbcd7645c9030fa398ccb"
+          "content" : "8a09d1e1cf09c30b5bd7b4d80e29360d7806f4d15d3dcbbeb336098d9ad055eb"
         },
         {
           "alg" : "SHA-512",
-          "content" : "8319eb2e62219c0596628a972378ae723c45bc265456bcb49d2a5d843bc0140419a5acfe7727bfd765e88ad08ba4ef17ff1d998515db24cedad71f69302149a2"
+          "content" : "d5766b4c03de44e8484527167de3cb68f941538f76490bb2d9cae55dc849a4b5badea58f7dabf327919b2ad9bb1bcd27a470ac1f2a15032971cdf6463390e836"
         },
         {
           "alg" : "SHA-384",
-          "content" : "33c228dc25d9a33b6f9fb84bf12c58feec177dcf9a1e47f9f4a3c037c370182f5a188299e807dff251102d5e4d39bfdd"
+          "content" : "5d3078951cf4c4b1eaf2f875da99ff8390d9c29a0a6d0bcec19f973de1edaafaa8dd90f67bbe37b9d28be7d16eba3a3d"
         },
         {
           "alg" : "SHA3-384",
-          "content" : "aaabeecb60a966d20e5dde5f9f1bc781b435f42496ee39b1edbc300889f4986ff4890c590ec3b3a4d4895659be07a979"
+          "content" : "d06429be68ad8084e6571b4be9cb8c0580e9f8df725a49cc1c86356388f61255d9f25a4fbd593d368e066f17976dbb76"
         },
         {
           "alg" : "SHA3-256",
-          "content" : "43affc596289c865a36b7f8b438c1317694ce7e8d471b55c8f53c674f451ede0"
+          "content" : "30f5990d4cf8cd9d4985057058cc2fd0045eaa9e4e2cda860489464b387daf7c"
         },
         {
           "alg" : "SHA3-512",
-          "content" : "86de8b625b0e9b44155409732d7aa78ed345113486eb584dc85ad1d85206fd16a3f9671146f3167cb86a57febc4c41aed1f594eed7fdd831463414cfe3c70c2c"
+          "content" : "1b32d9b02e11d1bd63b270aaf70f6a34c94a746ed6a864de42b3da37c79f23a61a741e2f83bf9f374d0a98775e5ad4cba72785a955a2c46e1fe2ab6a8cb0142b"
         }
       ],
       "licenses" : [
@@ -1373,35 +1377,35 @@
       "hashes" : [
         {
           "alg" : "MD5",
-          "content" : "f8decb5d4459668a004af1903305516a"
+          "content" : "be212ea40e07b4d9bf677c300de3e687"
         },
         {
           "alg" : "SHA-1",
-          "content" : "39294ad7889e8cc09b14a938b4f70facd281b499"
+          "content" : "8fd21af076139380613ae180a05eb382f0a72da9"
         },
         {
           "alg" : "SHA-256",
-          "content" : "61594ca0e0cf9c753d9775e964632af11163b791411676af2b1ed42eb6346b4f"
+          "content" : "5c31f525b9421279c093df0e2d4279be60fb81002e5cee93ba97703f4d207246"
         },
         {
           "alg" : "SHA-512",
-          "content" : "e66a9f49f68c1c47bea17e4725ef221e0381423c037594f7605c9524b776401add0d5f0fecb01d3e56770982b297b2ecbc10476734bbd6564ce8b363daca32c7"
+          "content" : "dff177752358a33adaca522fd324c1906b8b80455436b31e6b372b0ec2fbe25d4a677b7237365167c325ebae7642599434ea8aae2d55122a3b65bd7858779629"
         },
         {
           "alg" : "SHA-384",
-          "content" : "e89a5045dd60c30744a3058628449ac1842613852c45a313ebdd8e3523ac2ebdd0b2666905d333aa188d7defe48eb6f2"
+          "content" : "659b67525925da6e90f28f0460f1092ad8fdf9a7be9377b5ebf73e13f6428b714c7a4c1edf6b401fcb85dc16ec26fcd3"
         },
         {
           "alg" : "SHA3-384",
-          "content" : "c0203e0101227b8287a6ab2e51bf7bc5431147cba48570fd21110e9d406e7508d9e5b274b103eb09a2850278778e99a2"
+          "content" : "1116d60b2183fc4415a7eb5cfda50c98fa05eef456b9b7f248a7124b1b285a9e99ff92d8a6f39309a0cae32df60f6d7d"
         },
         {
           "alg" : "SHA3-256",
-          "content" : "f489007f47eeddff5a1cfd6239efa81a8abce9d36deb898d8338f769152d76af"
+          "content" : "ed96b788de7aa0f4014b0c1993b6948890b6dbaaf8bdd1f61b89920fe30e7886"
         },
         {
           "alg" : "SHA3-512",
-          "content" : "abc7f69ef5e0f65b3c041156746874bda719f4f1756d735201c8d36a2447f4e8d8b6082b71890021228c00fc2930a4173d2ed5f0aab71e5a9217aeb60df32456"
+          "content" : "4b8e1d6f049c2311eb50a6bb1e8126d6776cd0ae198e66381178c7b7f95da116cae03c0362409c41581d7a8b654a1edc448cbb8168a9ae4e76efb60f929081bf"
         }
       ],
       "licenses" : [

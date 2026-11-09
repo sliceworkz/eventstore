@@ -4,7 +4,7 @@
   "serialNumber" : "urn:uuid:68303e05-b60d-3ddf-b31c-aa259a37b77d",
   "version" : 1,
   "metadata" : {
-    "timestamp" : "2026-11-09T13:01:22Z",
+    "timestamp" : "2026-11-09T12:56:41Z",
     "lifecycles" : [
       {
         "phase" : "build"
@@ -78,6 +78,10 @@
           "url" : "https://sliceworkz.github.io/eventstore"
         },
         {
+          "type" : "distribution-intake",
+          "url" : "https://xti.mycloudrepo.io/repositories/sliceworkz"
+        },
+        {
           "type" : "vcs",
           "url" : "https://github.com/sliceworkz/eventstore"
         }
@@ -115,6 +119,10 @@
         {
           "type" : "website",
           "url" : "https://sliceworkz.github.io/eventstore"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://xti.mycloudrepo.io/repositories/sliceworkz"
         },
         {
           "type" : "vcs",
@@ -211,6 +219,10 @@
           "url" : "https://sliceworkz.github.io/eventstore"
         },
         {
+          "type" : "distribution-intake",
+          "url" : "https://xti.mycloudrepo.io/repositories/sliceworkz"
+        },
+        {
           "type" : "vcs",
           "url" : "https://github.com/sliceworkz/eventstore/sliceworkz-eventstore-bom"
         }
@@ -236,6 +248,10 @@
         {
           "type" : "website",
           "url" : "https://sliceworkz.github.io/eventstore"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://xti.mycloudrepo.io/repositories/sliceworkz"
         },
         {
           "type" : "vcs",
@@ -475,6 +491,10 @@
           "url" : "https://sliceworkz.github.io/eventstore"
         },
         {
+          "type" : "distribution-intake",
+          "url" : "https://xti.mycloudrepo.io/repositories/sliceworkz"
+        },
+        {
           "type" : "vcs",
           "url" : "https://github.com/sliceworkz/eventstore/sliceworkz-eventstore-parent-pom/sliceworkz-eventstore-impl"
         }
@@ -500,6 +520,10 @@
         {
           "type" : "website",
           "url" : "https://sliceworkz.github.io/eventstore"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://xti.mycloudrepo.io/repositories/sliceworkz"
         },
         {
           "type" : "vcs",
@@ -529,6 +553,10 @@
           "url" : "https://sliceworkz.github.io/eventstore"
         },
         {
+          "type" : "distribution-intake",
+          "url" : "https://xti.mycloudrepo.io/repositories/sliceworkz"
+        },
+        {
           "type" : "vcs",
           "url" : "https://github.com/sliceworkz/eventstore/sliceworkz-eventstore-parent-pom/sliceworkz-eventstore-infra-inmem"
         }
@@ -554,6 +582,10 @@
         {
           "type" : "website",
           "url" : "https://sliceworkz.github.io/eventstore"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://xti.mycloudrepo.io/repositories/sliceworkz"
         },
         {
           "type" : "vcs",
@@ -845,6 +877,10 @@
         {
           "type" : "website",
           "url" : "https://sliceworkz.github.io/eventstore"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://xti.mycloudrepo.io/repositories/sliceworkz"
         },
         {
           "type" : "vcs",

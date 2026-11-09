@@ -17,7 +17,9 @@ what it depends on outside the code, and why it is built the way it is.
 - Every release **publishes** its SBOM, signed by GitHub as coming from this repository's release workflow.
 - Every morning, the **latest release of each release line is scanned again**: a vulnerability published after a
   release turns up there, as a GitHub issue.
-- **Dependabot** proposes dependency updates as pull requests, and the build tests each one, scan included.
+- **The nightly dependency pipeline** updates the Maven dependencies of `develop` and every release line
+  per `.github/dependency-policy.yaml`, and Dependabot the GitHub Actions and Grype; the build tests each pull
+  request, scan included.
 
 ## The words
 
@@ -35,7 +37,7 @@ what it depends on outside the code, and why it is built the way it is.
 | **VEX** (Vulnerability Exploitability eXchange) | A statement about one vulnerability in one package version **in our product**: "not affected" (it is there but cannot be exploited here, and why), "affected" (it is there and we accept it for now, and what we do about it), "fixed". Ours is `.vex/openvex.json`, in the [OpenVEX](https://openvex.dev) format. The scanner reads it, so a decision taken once is not asked again. |
 | **Attestation** | A signed statement about a file: "this SBOM describes this jar", "this file was built by this workflow from this commit" (**provenance**). Whoever holds the file can check it was made by our workflow and not changed since. |
 | **Dependabot** | GitHub's service that watches our dependencies and opens a pull request when a new version comes out (version updates, on a weekly schedule), and at once when a vulnerability is published in one we use (security updates). |
-| **Cooldown** | Dependabot waits a few days after a release before proposing it, so a broken or tampered release can be noticed and pulled before it reaches us. |
+| **Cooldown** | A new version is only proposed once it has been out for a while (a day for the nightly pipeline, a few days for Dependabot), so a broken or tampered release can be noticed and pulled before it reaches us. |
 
 ## How it fits together
 
@@ -59,7 +61,8 @@ what it depends on outside the code, and why it is built the way it is.
         ▼
   a patch release (or a VEX statement) on release/X.Y  ──▶  the issue closes itself
 
-  Dependabot, all the while: a pull request per new version; the build (scan included) tests it
+  the nightly dependency pipeline and Dependabot, all the while: pull requests with new versions; the build
+  (scan included) tests them
 ```
 
 **1. The build writes the SBOMs.** The CycloneDX Maven plugin (in the root `pom.xml`, `makeAggregateBom` in the
@@ -100,7 +103,8 @@ SECURITY-RELEASES.md.
 - A run turns red only when a scan **could not run** (a download, the registry, Grype). Findings never make it red:
   they are what the issues are for. So a red run is worth a look: it means the check is not working.
 
-**5. Dependabot keeps the dependencies moving.** See [Dependency updates](#dependency-updates) below.
+**5. The nightly dependency pipeline and Dependabot keep the dependencies moving.** See
+[Dependency updates](#dependency-updates) below.
 
 ## What is where
 
@@ -116,7 +120,7 @@ SECURITY-RELEASES.md.
 | `.github/workflows/create-release-tag-and-bump.yaml` | scans, then sets the release version, tags it and moves to the next snapshot |
 | `.github/workflows/build-and-deploy-from-release-tag.yaml` | builds the tag, publishes it with its SBOM and attestations, reports a scan |
 | `.github/workflows/rescan-releases.yaml` | the daily re-scan |
-| `.github/dependabot.yaml` | what Dependabot watches, how often, and how it groups updates |
+| `.github/dependabot.yaml` | what Dependabot watches (the GitHub Actions and Grype), how often, and how it groups updates |
 | `.github/dependency-policy.yaml` | the nightly dependency pipeline's policy: per branch and per level (patch, minor, major) what it does with an update, the cooldown, and what is held |
 | `SECURITY-RELEASES.md` | what to do when a scan finds something |
 | `SECURITY.md` | how to report a vulnerability privately |
@@ -150,32 +154,36 @@ And `scan.sh` scans any SBOM file:
 
 ## Dependency updates
 
-**The nightly dependency pipeline** (`sliceworkz/software-factory`, whose README describes it in full) is on trial
-here. This repository is public and cannot call the pipeline's workflow, which is private, so it has no workflow
-file of its own: `.github/workflows/public-repositories.yaml` in `sliceworkz/software-factory` runs it on its
-behalf, on the schedule of the policy, and its runs and logs are there. Its policy
-(`.github/dependency-policy.yaml`) has `dryRun: true`, so every night it decides per branch what it would update,
-scans the branch, and reports in the run's summary there and on this repository's `dependency-status` branch, but
-opens no pull request. CI keeps its SBOMs as the artifact `sboms` for it. Until the policy is set live and the
-Maven entry is removed from `.github/dependabot.yaml`, Dependabot updates the dependencies as below.
+**The nightly dependency pipeline** (the shared workflow of `sliceworkz/software-factory`, whose README
+describes it in full) updates the **Maven** dependencies, every night, on `develop` and on every `release/X.Y`.
+This repository is public and cannot call the pipeline's workflow, which is private, so it has no workflow file of
+its own: `.github/workflows/public-repositories.yaml` in `sliceworkz/software-factory` runs it on its behalf, on the
+schedule of the policy, and its runs and logs are there. What it does is in `.github/dependency-policy.yaml`:
 
-Dependabot (`.github/dependabot.yaml`) checks every week, and proposes each new version as a pull request; the
-pull request's build tests it, the scan included. What it watches:
+| | `develop` | `release/X.Y` |
+|---|---|---|
+| patch | a PR, merged automatically when CI is green | a PR, merged automatically when CI is green |
+| minor | the same PR | a PR for review |
+| major | a PR per update, for review | only mentioned |
 
-- **Maven**: a pull request per new version.
+- **Cooldown**: a version is proposed once it has been out for a day.
+- **Declining**: close a pipeline PR without merging, and its versions are not proposed again until a newer one comes.
+  A commit of your own on a pipeline PR branch stops the pipeline from rewriting it.
+- **What it found** is on the `dependency-status` branch: `OVERVIEW.md` there shows every branch side by side (its
+  vulnerabilities by severity, the critical and high ones with since when, and the PRs waiting), and
+  `latest/<branch>.json` the detail, with a history. It is also in an issue per
+  branch, "Dependency status &lt;branch&gt;", labelled `action needed` when something needs a person. Each run also
+  scans the branch head's SBOMs (from CI's `sboms` artifact) with Grype and records every finding there.
+
+**Dependabot** watches the rest:
+
 - **The GitHub Actions** the workflows use (`actions/checkout`, `actions/setup-java`, …), in one pull request a week.
   Its build runs the CI workflow with them; the release workflows only run at the next release, so look at that one.
 - **Grype itself**, through `.github/vulnerability-scan/Dockerfile`. Merge these when they are green and do not let
   them wait: a newer Grype matches packages better, and once Anchore moves its database to a format an old Grype
   cannot read, the scan stops getting new data.
-
-Two things to know:
-
-- **Cooldown.** Dependabot proposes a new version only a few days after it is released (its default cooldown), so a
-  broken or tampered release can be withdrawn before it reaches us. A version you read about today may come
-  next week.
-- **Security updates** (a vulnerability published in a dependency we use) come at once, outside the schedule,
-  when Dependabot security updates are switched on in the repository settings.
+- **Security updates** (a vulnerability published in a dependency we use) come at once, outside any schedule, when
+  Dependabot security updates are switched on in the repository settings.
 
 ## Setup outside the code
 
@@ -185,6 +193,8 @@ What this depends on that is not in the repository, so it is easily forgotten:
 |---|---|---|
 | `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE` | repository secrets (Actions) | publishing a release to Maven Central, signed with GPG, as Central requires |
 | `CLOUDREPO_USERNAME`, `CLOUDREPO_PASSWORD` | repository secrets (Actions) | deploying snapshots to CloudRepo |
+| The GitHub App **sliceworkz-software-factory** installed on this repository, and `FACTORY_APP_CLIENT_ID` (variable) and `FACTORY_APP_PRIVATE_KEY` (secret) shared with `sliceworkz/software-factory` | *sliceworkz → Settings → GitHub Apps*, *Secrets and variables → Actions* | the nightly dependency pipeline, run from `sliceworkz/software-factory`, acting here as the App, whose pull requests start CI |
+| *Allow auto-merge*, and the ruleset requiring CI on `develop` and `release/*` | *Settings → General*, *Settings → Rules* | the pipeline's patch and minor PRs merging once CI is green, and not before |
 | The GitHub App **sliceworkz-software-factory** installed on the repository, the organization variable `FACTORY_APP_CLIENT_ID` (the App's Client ID) and secret `FACTORY_APP_PRIVATE_KEY` shared with it, and the App on the bypass list of the ruleset on `develop` and `release/*` | *sliceworkz → Settings → GitHub Apps*, *Secrets and variables → Actions*, *Settings → Rules → Rulesets* | `create-release-tag-and-bump` and `prepare-release-branch` push as the App: a push made with the workflow's own token would not start the release workflow on the tag nor CI on the branch, and a personal access token would act as a person. The token is made per run, lasts an hour and is handed only to the steps that push |
 | Workflow permissions | each workflow declares its own (`permissions:`); the re-scan needs `issues: write` | the re-scan opening and closing issues |
 | Private vulnerability reporting | *Settings → Code security* | lets someone report a vulnerability privately (SECURITY.md) |

@@ -5,10 +5,9 @@
 
 version: 2
 updates:
-  - package-ecosystem: "maven" # See documentation for possible values
-    directory: "/" # Location of package manifests
-    schedule:
-      interval: "weekly"
+  # Maven version updates are not Dependabot's here: the nightly dependency pipeline does them
+  # (.github/dependency-policy.yaml, run by .github/workflows/public-repositories.yaml of sliceworkz/software-factory).
+  # Security updates still come, when switched on in the repository settings.
   # The GitHub Actions the workflows use (actions/checkout, actions/setup-java, docker/build-push-action, ...), in one
   # pull request a week; the build of that pull request runs them
   - package-ecosystem: "github-actions"

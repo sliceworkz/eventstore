@@ -75,6 +75,17 @@ jobs:
     - name: Build with Maven and deploy the SNAPSHOT to cloudrepo
       if: env.DEPLOY == 'true'
       run: mvn -B -Pcloudrepo deploy --file pom.xml
+    # The SBOMs of this commit, for the nightly dependency pipeline: it scans these instead of building the
+    # branch again. The paths are those of .github/vulnerability-scan/targets
+    - name: Keep the SBOMs
+      uses: actions/upload-artifact@v7
+      with:
+        name: sboms
+        path: |
+          target/bom.json
+          sliceworkz-eventstore-testing/target/bom.json
+        retention-days: 7
+        if-no-files-found: warn
     # Fails on a High or Critical vulnerability with a fix available, unless the VEX file (.vex/openvex.json)
     # has a statement on it. What to do then: SECURITY-RELEASES.md
     - name: Scan the SBOMs for known vulnerabilities

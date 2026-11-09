@@ -118,7 +118,6 @@ SECURITY-RELEASES.md.
 | `.github/workflows/rescan-releases.yaml` | the daily re-scan |
 | `.github/dependabot.yaml` | what Dependabot watches, how often, and how it groups updates |
 | `.github/dependency-policy.yaml` | the nightly dependency pipeline's policy: per branch and per level (patch, minor, major) what it does with an update, the cooldown, and what is held |
-| `.github/workflows/nightly-dependencies.yaml` | runs the pipeline every night (sliceworkz/software-factory) |
 | `SECURITY-RELEASES.md` | what to do when a scan finds something |
 | `SECURITY.md` | how to report a vulnerability privately |
 
@@ -151,11 +150,13 @@ And `scan.sh` scans any SBOM file:
 
 ## Dependency updates
 
-**The nightly dependency pipeline** (`.github/workflows/nightly-dependencies.yaml`, the shared workflow of
-`sliceworkz/software-factory`, whose README describes it in full) is on trial here: its policy
-(`.github/dependency-policy.yaml`) has `dryRun: true`, so every night it decides per branch what it would
-update, scans the branch, and reports in the run's summary and on the `dependency-status` branch, but opens
-no pull request. CI keeps its SBOMs as the artifact `sboms` for it. Until the policy is set live and the
+**The nightly dependency pipeline** (`sliceworkz/software-factory`, whose README describes it in full) is on trial
+here. This repository is public and cannot call the pipeline's workflow, which is private, so it has no workflow
+file of its own: `.github/workflows/public-repositories.yaml` in `sliceworkz/software-factory` runs it on its
+behalf, on the schedule of the policy, and its runs and logs are there. Its policy
+(`.github/dependency-policy.yaml`) has `dryRun: true`, so every night it decides per branch what it would update,
+scans the branch, and reports in the run's summary there and on this repository's `dependency-status` branch, but
+opens no pull request. CI keeps its SBOMs as the artifact `sboms` for it. Until the policy is set live and the
 Maven entry is removed from `.github/dependabot.yaml`, Dependabot updates the dependencies as below.
 
 Dependabot (`.github/dependabot.yaml`) checks every week, and proposes each new version as a pull request; the

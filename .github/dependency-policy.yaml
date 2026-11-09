@@ -5,9 +5,8 @@
 timezone: Europe/Brussels
 ecosystems: [maven]
 
-# true: decide and report only, open no PRs and no issue. A trial: Dependabot still updates the
-# dependencies until this is false and its maven entry are removed from .github/dependabot.yaml
-dryRun: true
+# true: decide and report only, open no PRs and no issue
+dryRun: false
 
 branches:
   develop:

@@ -1,0 +1,44 @@
+name: nightly dependency updates
+
+run-name: "nightly dependency updates${{ inputs.branch && format(' [{0}]', inputs.branch) || '' }}"
+
+# Every night, per branch: finds dependency updates (Maven), acts on them per
+# .github/dependency-policy.yaml, scans the branch for known vulnerabilities and writes the result to the
+# dependency-status branch. The pipeline itself is sliceworkz/software-factory (README.md there).
+#
+# A schedule only runs from the default branch; from there the workflow serves every branch. The cron lines
+# are UTC and must equal the schedule: lines of the policy.
+
+on:
+  schedule:
+    - cron: "50 0 * * *"   # release/*
+    - cron: "20 1 * * *"   # develop
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "One branch, or empty for every branch in the policy"
+        type: string
+        default: ""
+      dry-run:
+        description: "Decide and report only: no PRs, no issue"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+  actions: read
+
+jobs:
+  dependencies:
+    uses: sliceworkz/software-factory/.github/workflows/dependency-updates.yaml@v1
+    with:
+      schedule: ${{ github.event.schedule }}
+      branch: ${{ inputs.branch }}
+      dry-run: ${{ inputs.dry-run == true }}
+      client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+    secrets:
+      app-private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+      cloudrepo-username: ${{ secrets.CLOUDREPO_USERNAME }}
+      cloudrepo-password: ${{ secrets.CLOUDREPO_PASSWORD }}

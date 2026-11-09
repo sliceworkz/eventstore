@@ -1,0 +1,27 @@
+# The nightly dependency pipeline's policy for this repository (sliceworkz/software-factory, README.md).
+# The workflow is .github/workflows/nightly-dependencies.yaml; its cron lines must equal the schedule: lines
+# below, character for character (both UTC: 01:50 and 02:20 in Brussels in winter, an hour later in summer).
+timezone: Europe/Brussels
+ecosystems: [maven]
+
+# true: decide and report only, open no PRs and no issue. A trial: Dependabot still updates the
+# dependencies until this is false and its maven entry are removed from .github/dependabot.yaml
+dryRun: true
+
+branches:
+  develop:
+    schedule: "20 1 * * *"
+    ownLibraries: skip              # our SNAPSHOTs on develop are not updates
+    patch:      { action: merge,   cooldownDays: 1 }
+    minor:      { action: merge,   cooldownDays: 1 }
+    major:      { action: pr-each, cooldownDays: 1 }
+    transitive: { action: merge,   cooldownDays: 1 }
+  "release/*":
+    schedule: "50 0 * * *"
+    ownLibraries: include           # released versions of our own libraries: updated like any other
+    patch:      { action: merge,   cooldownDays: 1 }
+    minor:      { action: pr,      cooldownDays: 1 }
+    major:      { action: mention, cooldownDays: 1 }
+    transitive: { action: pr,      cooldownDays: 1 }
+
+ownLibraryCooldownDays: 0

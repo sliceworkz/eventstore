@@ -1,5 +1,6 @@
 # The nightly dependency pipeline's policy for this repository (sliceworkz/software-factory, README.md).
-# The workflow is .github/workflows/nightly-dependencies.yaml; its cron lines must equal the schedule: lines
+# This repository is public and cannot call the pipeline's workflow, so .github/workflows/public-repositories.yaml
+# in sliceworkz/software-factory runs it on its behalf; its cron lines there must equal the schedule: lines
 # below, character for character (both UTC: 01:50 and 02:20 in Brussels in winter, an hour later in summer).
 timezone: Europe/Brussels
 ecosystems: [maven]

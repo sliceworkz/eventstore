@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "runAt": "2026-11-09T14:00:51+01:00",
+  "runAt": "2026-11-10T08:48:34+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "release/0.12",
   "commit": "b4c407940d70ba362a7e2b63cb853e4cb818f9ac",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/42621700987",
-  "dryRun": true,
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/42777850285",
+  "dryRun": false,
   "policy": {
     "pattern": "release/*",
     "schedule": "50 0 * * *",
@@ -54,7 +54,7 @@
       ],
       "own": false,
       "group": null,
-      "newest": "2.24.0"
+      "newest": "2.25.1"
     },
     {
       "ecosystem": "maven",
@@ -481,10 +481,10 @@
       "action": "pr",
       "level": "minor",
       "transitive": false,
-      "commit": "25a9c19fbd22d1342a43d9447d2d3928c14f60bc",
+      "commit": "7359c9fa15c34df8b6059c2a8ee2678c00c20870",
       "error": null,
-      "outcome": "dry-run: would open a PR",
-      "pr": null,
+      "outcome": "pr-opened",
+      "pr": 270,
       "changes": [
         {
           "ecosystem": "maven",
@@ -530,15 +530,24 @@
       "lockfileChanges": []
     }
   ],
-  "pullRequests": [],
+  "pullRequests": [
+    {
+      "number": 270,
+      "url": "https://github.com/sliceworkz/eventstore/pull/270",
+      "head": "deps/release/0.12/minor",
+      "title": "Minor dependency updates on release/0.12",
+      "ci": "pending",
+      "autoMerge": false
+    }
+  ],
   "closedPullRequests": [],
   "deletedBranches": [],
   "declined": [],
   "notes": [],
   "vulnerabilities": {
     "grype": "v0.121.0",
-    "dbBuilt": "2026-11-08T06:19:57Z",
-    "sbomOrigin": "built by this run",
+    "dbBuilt": "2026-11-10T06:21:20Z",
+    "sbomOrigin": "saved by the previous run (branch head unchanged)",
     "sboms": [
       "maven"
     ],

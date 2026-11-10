@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "runAt": "2026-11-09T14:50:11+01:00",
+  "runAt": "2026-11-10T09:27:41+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "develop",
-  "commit": "7312d262306fbf9d0a34d6f1589d7b8cb3631e4f",
+  "commit": "e41ff12492ff02d8767342ba782d3ccf2a0f9369",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/42628905538",
-  "dryRun": true,
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/42782765550",
+  "dryRun": false,
   "policy": {
     "pattern": "develop",
     "schedule": "20 1 * * *",
@@ -49,7 +49,7 @@
       ],
       "own": false,
       "group": null,
-      "newest": "2.24.0"
+      "newest": "2.25.1"
     },
     {
       "ecosystem": "maven",
@@ -397,6 +397,23 @@
   "updates": [
     {
       "ecosystem": "maven",
+      "name": "maven.maven-versions-plugin.version",
+      "where": "pom.xml",
+      "current": "2.24.0",
+      "kind": "property",
+      "artifacts": [
+        "org.codehaus.mojo:versions-maven-plugin"
+      ],
+      "own": false,
+      "group": null,
+      "level": "minor",
+      "target": "2.25.1",
+      "outcome": "held-back",
+      "eligibleFrom": "2026-11-10T19:36:50+00:00",
+      "reason": "cooldown"
+    },
+    {
+      "ecosystem": "maven",
       "name": "jackson.version",
       "where": "sliceworkz-eventstore-parent-pom/pom.xml",
       "current": "3.2.4",
@@ -422,10 +439,10 @@
       "action": "merge",
       "level": "merge",
       "transitive": false,
-      "commit": "ba45230a8514c6514c009c914367bd13dc501be8",
+      "commit": "cf2af09c18c589261934ba7da18c0ddc39c36f69",
       "error": null,
-      "outcome": "dry-run: would open a PR",
-      "pr": null,
+      "outcome": "pr-opened",
+      "pr": 272,
       "changes": [
         {
           "ecosystem": "maven",
@@ -441,15 +458,24 @@
       "lockfileChanges": []
     }
   ],
-  "pullRequests": [],
+  "pullRequests": [
+    {
+      "number": 272,
+      "url": "https://github.com/sliceworkz/eventstore/pull/272",
+      "head": "deps/develop/auto",
+      "title": "Dependency updates on develop",
+      "ci": "pending",
+      "autoMerge": true
+    }
+  ],
   "closedPullRequests": [],
   "deletedBranches": [],
   "declined": [],
   "notes": [],
   "vulnerabilities": {
     "grype": "v0.121.0",
-    "dbBuilt": "2026-11-08T06:19:57Z",
-    "sbomOrigin": "ci-artifact (run 42621126203)",
+    "dbBuilt": "2026-11-10T06:21:20Z",
+    "sbomOrigin": "ci-artifact (run 42652385499)",
     "sboms": [
       "library",
       "test-kit"

@@ -26,6 +26,11 @@ on:
   pull_request:
     branches: [ "develop", "release/*" ]
 
+# Checking out is all the GITHUB_TOKEN is used for: the artifacts go up with the runner's own token and the
+# deploy with the cloudrepo credentials. Without this the token gets the repository's default, which may be write
+permissions:
+  contents: read
+
 jobs:
   build:
 

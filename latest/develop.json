@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "runAt": "2026-11-10T09:27:41+01:00",
+  "runAt": "2026-11-11T08:46:41+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "develop",
-  "commit": "e41ff12492ff02d8767342ba782d3ccf2a0f9369",
+  "commit": "cd715772fa36b7bddda91253b380b583d97e36a1",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/42782765550",
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/42981934041",
   "dryRun": false,
   "policy": {
     "pattern": "develop",
@@ -160,7 +160,7 @@
       "ecosystem": "maven",
       "name": "jackson.version",
       "where": "sliceworkz-eventstore-parent-pom/pom.xml",
-      "current": "3.2.4",
+      "current": "3.3.0",
       "kind": "property",
       "artifacts": [
         "tools.jackson.core:jackson-databind",
@@ -408,27 +408,9 @@
       "group": null,
       "level": "minor",
       "target": "2.25.1",
-      "outcome": "held-back",
-      "eligibleFrom": "2026-11-10T19:36:50+00:00",
-      "reason": "cooldown"
-    },
-    {
-      "ecosystem": "maven",
-      "name": "jackson.version",
-      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
-      "current": "3.2.4",
-      "kind": "property",
-      "artifacts": [
-        "tools.jackson.core:jackson-databind",
-        "tools.jackson.dataformat:jackson-dataformat-yaml"
-      ],
-      "own": false,
-      "group": null,
-      "level": "minor",
-      "target": "3.3.0",
       "action": "merge",
       "batch": "auto",
-      "published": "2026-11-08",
+      "published": "2026-11-09",
       "outcome": "planned"
     }
   ],
@@ -439,18 +421,18 @@
       "action": "merge",
       "level": "merge",
       "transitive": false,
-      "commit": "cf2af09c18c589261934ba7da18c0ddc39c36f69",
+      "commit": "9a70eb221ac8329da6bfd437813d24e737f7bcd3",
       "error": null,
       "outcome": "pr-opened",
-      "pr": 272,
+      "pr": 277,
       "changes": [
         {
           "ecosystem": "maven",
-          "name": "jackson.version",
-          "where": "sliceworkz-eventstore-parent-pom/pom.xml",
+          "name": "maven.maven-versions-plugin.version",
+          "where": "pom.xml",
           "level": "minor",
-          "from": "3.2.4",
-          "to": "3.3.0",
+          "from": "2.24.0",
+          "to": "2.25.1",
           "applied": true,
           "error": null
         }
@@ -460,8 +442,8 @@
   ],
   "pullRequests": [
     {
-      "number": 272,
-      "url": "https://github.com/sliceworkz/eventstore/pull/272",
+      "number": 277,
+      "url": "https://github.com/sliceworkz/eventstore/pull/277",
       "head": "deps/develop/auto",
       "title": "Dependency updates on develop",
       "ci": "pending",
@@ -474,8 +456,8 @@
   "notes": [],
   "vulnerabilities": {
     "grype": "v0.121.0",
-    "dbBuilt": "2026-11-10T06:21:20Z",
-    "sbomOrigin": "ci-artifact (run 42652385499)",
+    "dbBuilt": "2026-11-11T06:21:32Z",
+    "sbomOrigin": "ci-artifact (run 42857718099)",
     "sboms": [
       "library",
       "test-kit"

@@ -1,20 +1,32 @@
 name: auto-assign-issues
 
+# Assigns every new pull request and issue to the maintainer, except the pull requests the nightly dependency
+# pipeline (sliceworkz/software-factory) opens to be merged automatically: those are batch "auto", on the branch
+# deps/<branch>/auto, and squashed as soon as CI is green, so there is nothing for anyone to do. The pipeline's
+# other pull requests (deps/<branch>/minor, deps/<branch>/major-..., ...) say "Review required" and are assigned.
+
 on:
   pull_request:
     types: [opened]
-    
+  issues:
+    types: [opened]
+
 permissions:
   pull-requests: write
-  
+  issues: write
+
 jobs:
   assign:
+    if: >-
+      !(github.event_name == 'pull_request'
+        && github.event.pull_request.user.login == 'sliceworkz-software-factory[bot]'
+        && startsWith(github.event.pull_request.head.ref, 'deps/')
+        && endsWith(github.event.pull_request.head.ref, '/auto'))
     runs-on: ubuntu-latest
     steps:
-      - name: Assign PR
+      - name: Assign
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh pr edit ${{ github.event.pull_request.number }} \
-            --repo ${{ github.repository }} \
-            --add-assignee "vanrogu"
+          KIND: ${{ github.event_name == 'pull_request' && 'pr' || 'issue' }}
+          NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+        run: gh "$KIND" edit "$NUMBER" --repo "$GITHUB_REPOSITORY" --add-assignee vanrogu

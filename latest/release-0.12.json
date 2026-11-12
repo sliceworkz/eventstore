@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "runAt": "2026-11-11T08:16:31+01:00",
+  "runAt": "2026-11-12T08:48:33+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "release/0.12",
   "commit": "6982899a3496e97fbc4f552160891055599960b3",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/42978256557",
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/43177945893",
   "dryRun": false,
   "policy": {
     "pattern": "release/*",
@@ -431,9 +431,9 @@
       "action": "pr",
       "level": "minor",
       "transitive": false,
-      "commit": "9a7e9398d32b76b675b61a119cc476dcc6f12a30",
+      "commit": "4cc32be65e5518d6ca92805684bf3947e10cae15",
       "error": null,
-      "outcome": "pr-opened",
+      "outcome": "unchanged",
       "pr": 276,
       "changes": [
         {
@@ -456,7 +456,7 @@
       "url": "https://github.com/sliceworkz/eventstore/pull/276",
       "head": "deps/release/0.12/minor",
       "title": "Minor dependency updates on release/0.12",
-      "ci": "pending",
+      "ci": "green",
       "autoMerge": false
     }
   ],
@@ -466,8 +466,8 @@
   "notes": [],
   "vulnerabilities": {
     "grype": "v0.121.0",
-    "dbBuilt": "2026-11-11T06:21:32Z",
-    "sbomOrigin": "built by this run",
+    "dbBuilt": "2026-11-12T06:20:58Z",
+    "sbomOrigin": "saved by the previous run (branch head unchanged)",
     "sboms": [
       "maven"
     ],

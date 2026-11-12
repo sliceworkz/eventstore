@@ -1,0 +1,425 @@
+{
+  "schema": 1,
+  "runAt": "2026-11-12T09:23:07+01:00",
+  "timezone": "Europe/Brussels",
+  "repository": "sliceworkz/eventstore",
+  "branch": "develop",
+  "commit": "b5a8228f0457aa1b2f2fe4d0d848481cb1f5ab18",
+  "tooling": "v1",
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/43182441434",
+  "dryRun": false,
+  "policy": {
+    "pattern": "develop",
+    "schedule": "20 1 * * *",
+    "ownLibraries": "skip",
+    "patch": {
+      "action": "merge",
+      "cooldownDays": 1
+    },
+    "minor": {
+      "action": "merge",
+      "cooldownDays": 1
+    },
+    "major": {
+      "action": "pr-each",
+      "cooldownDays": 1
+    },
+    "transitive": {
+      "action": "merge",
+      "cooldownDays": 1
+    },
+    "filter": "default+0",
+    "ecosystems": [
+      "maven"
+    ],
+    "ownLibraryCooldownDays": 0,
+    "hold": [],
+    "groups": []
+  },
+  "release": null,
+  "inventory": [
+    {
+      "ecosystem": "maven",
+      "name": "maven.maven-versions-plugin.version",
+      "where": "pom.xml",
+      "current": "2.25.1",
+      "kind": "property",
+      "artifacts": [
+        "org.codehaus.mojo:versions-maven-plugin"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "2.25.1"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "maven.maven-enforcer-plugin.version",
+      "where": "pom.xml",
+      "current": "3.7.0",
+      "kind": "property",
+      "artifacts": [
+        "org.apache.maven.plugins:maven-enforcer-plugin"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "3.7.0"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "maven.maven-central-publishing-plugin.version",
+      "where": "pom.xml",
+      "current": "0.12.0",
+      "kind": "property",
+      "artifacts": [
+        "org.sonatype.central:central-publishing-maven-plugin"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "0.12.0"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "maven.flatten-plugin.version",
+      "where": "pom.xml",
+      "current": "1.9.0",
+      "kind": "property",
+      "artifacts": [
+        "org.codehaus.mojo:flatten-maven-plugin"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "1.9.0"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "maven.mycila-license-plugin.version",
+      "where": "pom.xml",
+      "current": "5.1.2",
+      "kind": "property",
+      "artifacts": [
+        "com.mycila:license-maven-plugin"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "5.1.2"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "maven.cyclonedx-plugin.version",
+      "where": "pom.xml",
+      "current": "2.9.3",
+      "kind": "property",
+      "artifacts": [
+        "org.cyclonedx:cyclonedx-maven-plugin"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "2.9.3"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "maven.maven-pgp-plugin.version",
+      "where": "pom.xml",
+      "current": "3.2.8",
+      "kind": "property",
+      "artifacts": [
+        "org.apache.maven.plugins:maven-gpg-plugin"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "3.2.8"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "uuid-creator.version",
+      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
+      "current": "6.1.1",
+      "kind": "property",
+      "artifacts": [
+        "com.github.f4b6a3:uuid-creator"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "6.1.1"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "slf4j.version",
+      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
+      "current": "2.0.20",
+      "kind": "property",
+      "artifacts": [
+        "org.slf4j:slf4j-api",
+        "org.slf4j:slf4j-simple"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "2.0.20"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "jackson.version",
+      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
+      "current": "3.3.0",
+      "kind": "property",
+      "artifacts": [
+        "tools.jackson.core:jackson-databind",
+        "tools.jackson.dataformat:jackson-dataformat-yaml"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "3.3.0"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "jackson-annotations.version",
+      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
+      "current": "2.23",
+      "kind": "property",
+      "artifacts": [
+        "com.fasterxml.jackson.core:jackson-annotations"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "2.23"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "junit-jupiter.version",
+      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
+      "current": "6.1.3",
+      "kind": "property",
+      "artifacts": [
+        "org.junit.jupiter:junit-jupiter"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "6.1.3"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "awaitility.version",
+      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
+      "current": "4.3.0",
+      "kind": "property",
+      "artifacts": [
+        "org.awaitility:awaitility"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "4.3.0"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "jmh.version",
+      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
+      "current": "1.37",
+      "kind": "property",
+      "artifacts": [
+        "org.openjdk.jmh:jmh-core",
+        "org.openjdk.jmh:jmh-generator-annprocess"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "1.37"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "hdrhistogram.version",
+      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
+      "current": "2.2.2",
+      "kind": "property",
+      "artifacts": [
+        "org.hdrhistogram:HdrHistogram"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "2.2.2"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "postgresql.jdbc.version",
+      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
+      "current": "42.7.14",
+      "kind": "property",
+      "artifacts": [
+        "org.postgresql:postgresql"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "42.7.14"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "testcontainers.postgresql.version",
+      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
+      "current": "2.0.5",
+      "kind": "property",
+      "artifacts": [
+        "org.testcontainers:testcontainers-postgresql"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "2.0.5"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "hikari.version",
+      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
+      "current": "7.1.0",
+      "kind": "property",
+      "artifacts": [
+        "com.zaxxer:HikariCP"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "7.1.0"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "maven.maven-surefire-plugin.version",
+      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
+      "current": "3.6.1",
+      "kind": "property",
+      "artifacts": [
+        "org.apache.maven.plugins:maven-surefire-plugin",
+        "org.apache.maven.plugins:maven-failsafe-plugin"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "3.6.1"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "maven.maven-assembly-plugin.version",
+      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
+      "current": "3.8.0",
+      "kind": "property",
+      "artifacts": [
+        "org.apache.maven.plugins:maven-assembly-plugin"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "3.8.0"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "maven.maven-compiler-plugin.version",
+      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
+      "current": "3.16.0",
+      "kind": "property",
+      "artifacts": [
+        "org.apache.maven.plugins:maven-compiler-plugin"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "3.16.0"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "maven.maven-jar-plugin.version",
+      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
+      "current": "3.5.1",
+      "kind": "property",
+      "artifacts": [
+        "org.apache.maven.plugins:maven-jar-plugin"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "3.5.1"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "maven.maven-source-plugin.version",
+      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
+      "current": "3.4.0",
+      "kind": "property",
+      "artifacts": [
+        "org.apache.maven.plugins:maven-source-plugin"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "3.4.0"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "maven.maven-javadoc-plugin.version",
+      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
+      "current": "3.12.0",
+      "kind": "property",
+      "artifacts": [
+        "org.apache.maven.plugins:maven-javadoc-plugin"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "3.12.0"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "com.google.code.maven-replacer-plugin:replacer",
+      "where": "sliceworkz-eventstore-infra-postgres/pom.xml",
+      "current": "1.5.3",
+      "kind": "inline",
+      "artifacts": [
+        "com.google.code.maven-replacer-plugin:replacer"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "1.5.3"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "logback.version",
+      "where": "sliceworkz-eventstore-benchmark/pom.xml",
+      "current": "1.6.6",
+      "kind": "property",
+      "artifacts": [
+        "ch.qos.logback:logback-classic"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "1.6.6"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "org.apache.maven.plugins:maven-shade-plugin",
+      "where": "sliceworkz-eventstore-benchmark/pom.xml",
+      "current": "3.6.2",
+      "kind": "inline",
+      "artifacts": [
+        "org.apache.maven.plugins:maven-shade-plugin"
+      ],
+      "own": false,
+      "group": null,
+      "newest": "3.6.2"
+    }
+  ],
+  "updates": [],
+  "batches": [],
+  "pullRequests": [],
+  "closedPullRequests": [],
+  "deletedBranches": [],
+  "declined": [],
+  "notes": [],
+  "vulnerabilities": {
+    "grype": "v0.121.0",
+    "dbBuilt": "2026-11-12T06:20:58Z",
+    "sbomOrigin": "ci-artifact (run 42983300896)",
+    "sboms": [
+      "library",
+      "test-kit"
+    ],
+    "notScanned": [],
+    "findings": [],
+    "counts": {
+      "critical": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "negligible": 0,
+      "unknown": 0,
+      "blocking": 0
+    }
+  },
+  "errors": []
+}

@@ -173,6 +173,30 @@ and the rejected alternatives. The rules:
   `Tag.of("customer","123")`. There is no wildcard.
   Tests: `TagTest`, `TagsTest`, `TagRoundTripTest`.
 
+**Read `docs/design/tagged-events.md` before you change `Tagged`, `TagRequirement` or how an append
+derives and checks tags.** The rules:
+
+**Tagged events:**
+- An event's data may implement `Tagged`: `Tags eventTags()` (the tags its payload states, never null)
+  and `default Set<TagRequirement> tagRequirements()` (how many distinct tags per key the stored event
+  must carry). Neither is a record component nor `get`-prefixed, so neither reaches the payload.
+- **`EventStreamImpl.append` merges and checks, for the whole batch, before serializing or writing**
+  (`withStatedTags`): stored tags = the caller's tags merged with `eventTags()` (a union: nothing the
+  caller passed is lost, the framework's `x-*` tags included). `eventTags()` throwing or returning null
+  is an `EventSerializationException` (the payload's failure); an unmet requirement, a null or duplicate
+  requirement is an `IllegalArgumentException` naming the event type and every unmet requirement. Nothing
+  of the batch is stored, nothing is observed, no shredding key is minted.
+- `TagRequirement(key, min, max)`: `of(key)` is one or more; `exactlyOne()`, `exactly(n)`,
+  `between(min, max)`, `atMostOne()`. Strict constructor: a valid tag key, not `x-`, `0 <= min <= max`,
+  `max >= 1`. **A count is of distinct tags** (`Tags` is a set): a self-transfer carries one `account` tag.
+- Shared logic is on the api so a framework can run the same check early:
+  `Tagged.tagsStatedBy(data)`, `Tagged.unmetTagRequirements(data, tags)`.
+- **Tags are stored once and never derived again.** Upcasting keeps stored tags, an import copies them
+  and checks nothing, and changing `eventTags()` affects new events only. Do not add read-side derivation.
+- `Tag.of(key, null)` is a legal flag tag, so `eventTags()` must refuse a null id itself.
+- One key per kind of thing with several values; a role key (`from-account`) only ever beside it.
+  Tests: `TaggedEventTest` (TCK, per backend), `TagRequirementTest` (api).
+
 **Read `docs/design/item-bounds.md` before you change how a filter is bounded, how a query is read, or how
 a backend answers either.** The rules:
 

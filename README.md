@@ -231,6 +231,26 @@ record CustomerSignedUp ( String id, String name ) implements CustomerEvent { }
 Upcasters chain (`V1 → V2 → V3`), queries and consistency boundaries over the current type include the
 legacy events behind it, and a misdeclared chain fails when the stream is opened rather than on a read.
 
+## Events that state their own tags
+
+```java
+record MoneyTransferred ( String transferId, String from, String to, long amount ) implements BankEvent, Tagged {
+    public Tags eventTags ( ) {
+        return Tags.of(Tag.of("transfer", transferId), Tag.of("account", from), Tag.of("account", to));
+    }
+    public Set<TagRequirement> tagRequirements ( ) {
+        return Set.of(TagRequirement.of("account").between(1, 2),
+                      TagRequirement.of("channel").exactlyOne());     // not in the payload: the caller passes it
+    }
+}
+
+stream.append(Event.of(new MoneyTransferred("t1", "A", "B", 100), Tags.of("channel", "atm")));
+```
+
+The event is stored with its own tags merged into the ones passed, and an append whose tags do not meet
+the event's requirements is refused whole. Tags are stored with the event: events already stored keep
+theirs.
+
 ## Idempotent appends
 
 ```java

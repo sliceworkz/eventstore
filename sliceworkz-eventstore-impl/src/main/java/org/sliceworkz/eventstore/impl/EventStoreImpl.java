@@ -49,8 +49,10 @@ import org.sliceworkz.eventstore.events.Event;
 import org.sliceworkz.eventstore.events.EventDeserializationException;
 import org.sliceworkz.eventstore.events.EventId;
 import org.sliceworkz.eventstore.events.EventReference;
+import org.sliceworkz.eventstore.events.EventSerializationException;
 import org.sliceworkz.eventstore.events.EventType;
 import org.sliceworkz.eventstore.events.Tag;
+import org.sliceworkz.eventstore.events.Tagged;
 import org.sliceworkz.eventstore.events.Tags;
 import org.sliceworkz.eventstore.observability.EventStoreObserver;
 import org.sliceworkz.eventstore.observability.Observation;
@@ -833,6 +835,12 @@ public class EventStoreImpl implements EventStore {
 			// batch would store nothing and report a successful de-duplication. See EventSink.append.
 			rejectRepeatedIdempotencyKeys(events);
 
+			// An event that states its own tags (Tagged) is stored with them merged into the caller's, and
+			// the merged tags must meet the requirements it declares. Done for the whole batch before
+			// anything is serialized -- so an event whose tags fail mints no shredding key -- and before
+			// anything is written, so one incomplete event stores nothing of the batch.
+			List<? extends EphemeralEvent<? extends EVENT_TYPE>> toAppend = withStatedTags(events);
+
 			// The boundary is checked over stored type names, exactly as a query is answered: a legacy
 			// event that upcasts into a type of the boundary is a new relevant fact for it, so the
 			// criteria storage sees carries those legacy names too. The caller's own criteria is kept
@@ -845,7 +853,7 @@ public class EventStoreImpl implements EventStore {
 
 			// append events to the eventstore (with optimistic locking)
 			List<Event<EVENT_TYPE>> appendedEvents = observed(observation, reporter -> {
-				List<EventToStore> eventsToStore = reduce(events);
+				List<EventToStore> eventsToStore = reduce(toAppend);
 				long start = System.nanoTime();
 				List<StoredEvent> storedEvents;
 				try {
@@ -881,6 +889,44 @@ public class EventStoreImpl implements EventStore {
 			// an append on the appending thread is code that caller writes after this call returns.
 			// Subscribers hear about it through the storage notification, on a thread of their own.
 			return appendedEvents;
+		}
+
+		/**
+		 * The batch with every {@link Tagged} event's own tags merged into the tags it was given, refused
+		 * whole when one of them does not meet its tag requirements.
+		 * <p>
+		 * A failure of {@code eventTags()} is the payload's, so it is an {@link EventSerializationException};
+		 * an unmet requirement is the caller's, so it is an {@link IllegalArgumentException}, like the
+		 * other argument checks of an append. Neither is observed: nothing was attempted.
+		 */
+		private static <E> List<? extends EphemeralEvent<? extends E>> withStatedTags ( List<? extends EphemeralEvent<? extends E>> events ) {
+			if ( events.stream().noneMatch(e -> e.data() instanceof Tagged) ) {
+				return events;
+			}
+			List<EphemeralEvent<? extends E>> tagged = new ArrayList<>(events.size());
+			for ( EphemeralEvent<? extends E> event : events ) {
+				tagged.add(withStatedTags(event));
+			}
+			return tagged;
+		}
+
+		private static <T> EphemeralEvent<T> withStatedTags ( EphemeralEvent<T> event ) {
+			if ( !(event.data() instanceof Tagged) ) {
+				return event;
+			}
+			Tags stated;
+			try {
+				stated = Tagged.tagsStatedBy(event.data());
+			} catch ( RuntimeException e ) {
+				throw new EventSerializationException(event.type(),
+						"%s could not state its tags: %s".formatted(event.type().name(), e.getMessage()), e);
+			}
+			Tags tags = event.tags().merge(stated);
+			Optional<String> unmet = Tagged.unmetTagRequirements(event.data(), tags);
+			if ( unmet.isPresent() ) {
+				throw new IllegalArgumentException("%s does not carry the tags it requires: %s".formatted(event.type().name(), unmet.get()));
+			}
+			return event.withTags(tags);
 		}
 
 		private static void rejectRepeatedIdempotencyKeys ( List<? extends EphemeralEvent<?>> events ) {

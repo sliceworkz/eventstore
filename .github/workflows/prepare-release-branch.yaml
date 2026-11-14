@@ -13,6 +13,11 @@ on:
           - major
           - minor
 
+# Maven 4 is not on the runner yet: each job installs this release candidate from the Apache
+# archive, on the runner host, where setup-java's generated ~/.m2/settings.xml is the one Maven loads.
+env:
+  MAVEN_VERSION: 4.0.0-rc-7
+
 jobs:
   version-bump:
     runs-on: ubuntu-latest
@@ -33,11 +38,18 @@ jobs:
         with:
           java-version: '21'
           distribution: 'temurin'
+      - name: Install Maven ${{ env.MAVEN_VERSION }}
+        run: |
+          curl -fsSL "https://archive.apache.org/dist/maven/maven-4/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" \
+            | tar -xz -C "$HOME"
+          echo "$HOME/apache-maven-${MAVEN_VERSION}/bin" >> "$GITHUB_PATH"
+      - name: Verify Maven version
+        run: mvn -version
       
       - name: Extract current version
         id: current_version
         run: |
-          CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout | grep -v '\[')
+          CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout --raw-streams)
           echo "Current version: $CURRENT_VERSION"
           
           # Extract major and minor from version (assumes format X.Y.Z-SNAPSHOT or X.Y.Z)

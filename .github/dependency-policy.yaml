@@ -11,7 +11,8 @@ dryRun: false
 branches:
   develop:
     schedule: "20 1 * * *"
-    ownLibraries: skip              # our SNAPSHOTs on develop are not updates
+    ownLibraries: follow            # a SNAPSHOT of ours moves to the newest one deployed: that library's develop
+    own:        { action: merge,   cooldownDays: 0 }
     patch:      { action: merge,   cooldownDays: 1 }
     minor:      { action: merge,   cooldownDays: 1 }
     major:      { action: pr-each, cooldownDays: 1 }
@@ -19,6 +20,7 @@ branches:
   "release/*":
     schedule: "50 0 * * *"
     ownLibraries: include           # released versions of our own libraries: updated like any other
+    own:        { action: merge,   cooldownDays: 0 }   # a SNAPSHOT of ours becomes the newest release of its line
     patch:      { action: merge,   cooldownDays: 1 }
     minor:      { action: pr,      cooldownDays: 1 }
     major:      { action: mention, cooldownDays: 1 }

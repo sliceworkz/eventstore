@@ -1,0 +1,972 @@
+{
+  "bomFormat" : "CycloneDX",
+  "specVersion" : "1.6",
+  "serialNumber" : "urn:uuid:cb924331-1589-3344-8913-f563e3942efc",
+  "version" : 1,
+  "metadata" : {
+    "timestamp" : "2026-11-08T20:04:25Z",
+    "lifecycles" : [
+      {
+        "phase" : "build"
+      }
+    ],
+    "tools" : {
+      "components" : [
+        {
+          "type" : "library",
+          "author" : "OWASP Foundation",
+          "group" : "org.cyclonedx",
+          "name" : "cyclonedx-maven-plugin",
+          "version" : "2.9.3",
+          "description" : "CycloneDX Maven plugin",
+          "hashes" : [
+            {
+              "alg" : "MD5",
+              "content" : "e7c87ab327b65b23c681fc9dc8bb620b"
+            },
+            {
+              "alg" : "SHA-1",
+              "content" : "fa3f0f04f4d5077b5e085d4d09aa2e68aeba5260"
+            },
+            {
+              "alg" : "SHA-256",
+              "content" : "c452d5eebe28bc86bef2e7c72d129f04f60877bef843eac8120f01fb655be293"
+            },
+            {
+              "alg" : "SHA-512",
+              "content" : "ec0344ed2ffe62d565aaf936a37140d04c7fffa8669a666be0366cd44eec3195232d79841cdec47030b79068216ac7e1a8c805255758e3d418dae32a4b9b9beb"
+            },
+            {
+              "alg" : "SHA-384",
+              "content" : "3df26b2a00d87fe090851975ebcc30217f98634e7c47d07128e148f325ebfe3bc0790b2f52ad4591734b7b0de738f003"
+            },
+            {
+              "alg" : "SHA3-384",
+              "content" : "470c1b4962379b5b6494c75bd1475da3519bbe2543999c95f26b4021164d3d05419b0c3f704443162fe5433a204250e9"
+            },
+            {
+              "alg" : "SHA3-256",
+              "content" : "900e9c4edb18940ed3c4a4ba6946957fa613ef0d4b0c380551638f229206373c"
+            },
+            {
+              "alg" : "SHA3-512",
+              "content" : "5e36433e18ae24f7460902da27818874df5d1d73df1a97e49e7369335f7cc61ca595466a2d37789fba7eaa7f7f251b29216c3d7a78910b2ec38e2ed68ea84876"
+            }
+          ]
+        }
+      ]
+    },
+    "component" : {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore@0.12.2?type=pom",
+      "group" : "org.sliceworkz",
+      "name" : "sliceworkz-eventstore",
+      "version" : "0.12.2",
+      "description" : "DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)",
+      "licenses" : [
+        {
+          "license" : {
+            "name" : "LGPL License",
+            "url" : "https://opensource.org/license/lgpl-3-0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore@0.12.2?type=pom",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://sliceworkz.github.io/eventstore"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/sliceworkz/eventstore"
+        }
+      ]
+    },
+    "properties" : [
+      {
+        "name" : "maven.goal",
+        "value" : "makeAggregateBom"
+      },
+      {
+        "name" : "maven.scopes",
+        "value" : "compile,provided,runtime,system"
+      }
+    ]
+  },
+  "components" : [
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-parent-pom@0.12.2?type=pom",
+      "group" : "org.sliceworkz",
+      "name" : "sliceworkz-eventstore-parent-pom",
+      "version" : "0.12.2",
+      "description" : "DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)",
+      "licenses" : [
+        {
+          "license" : {
+            "name" : "LGPL License",
+            "url" : "https://opensource.org/license/lgpl-3-0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-parent-pom@0.12.2?type=pom",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://sliceworkz.github.io/eventstore"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/sliceworkz/eventstore/sliceworkz-eventstore-parent-pom"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/org.slf4j/slf4j-api@2.0.20?type=jar",
+      "publisher" : "QOS.ch",
+      "group" : "org.slf4j",
+      "name" : "slf4j-api",
+      "version" : "2.0.20",
+      "description" : "The slf4j API",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "a7a6798aa78b29152479f89565f57446"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "7fea9d92ba67e9b3c8f03515fb202b86a1fe44f6"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "7e1446499b359675d8aabe6af2de86b85e72ae8a2a932c0b40d0e5ba57097439"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "6abf6218c2558a0059f35cecc24db3ef1552dbccdfb8f32d6c9d1d8b11fd545405e04e79673219d19e17b99ca6a2a3da7d92006bcaedaa15646bf07737115d17"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "26e4fcbbda8d1037d722e04af82efacf58e28ab93b002921eadb426387c61031d80c9574f45f6a42b423b550424b9323"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "2fbe14046e3b0ffc759d8fd91cccd6913174de77085e294a10375fc453427c040b4a0b4c3d003cc1cee8263013513f31"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "3514a97b9dbec95fe329f277628bc4b2c542c5ec33727aa781d590d5dcfad3d9"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "0dcb60d4abbe2b2474585b0512d3c83c993e79872dfb49ae1880468cb875898e1eeb71d05e7537ad057f8ca666007aa85c0f51d4e272432cd30e320c0710908e"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "MIT",
+            "url" : "https://opensource.org/license/mit/"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/org.slf4j/slf4j-api@2.0.20?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "http://www.slf4j.org"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/qos-ch/slf4j/slf4j-parent/slf4j-api"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-bom@0.12.2?type=pom",
+      "group" : "org.sliceworkz",
+      "name" : "sliceworkz-eventstore-bom",
+      "version" : "0.12.2",
+      "description" : "DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)",
+      "licenses" : [
+        {
+          "license" : {
+            "name" : "LGPL License",
+            "url" : "https://opensource.org/license/lgpl-3-0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-bom@0.12.2?type=pom",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://sliceworkz.github.io/eventstore"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/sliceworkz/eventstore/sliceworkz-eventstore-bom"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.12.2?type=jar",
+      "group" : "org.sliceworkz",
+      "name" : "sliceworkz-eventstore-api",
+      "version" : "0.12.2",
+      "description" : "DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)",
+      "licenses" : [
+        {
+          "license" : {
+            "name" : "LGPL License",
+            "url" : "https://opensource.org/license/lgpl-3-0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.12.2?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://sliceworkz.github.io/eventstore"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/sliceworkz/eventstore/sliceworkz-eventstore-parent-pom/sliceworkz-eventstore-api"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/com.fasterxml.jackson.core/jackson-annotations@2.22?type=jar",
+      "publisher" : "FasterXML",
+      "group" : "com.fasterxml.jackson.core",
+      "name" : "jackson-annotations",
+      "version" : "2.22",
+      "description" : "Core annotations used for value types, used by Jackson data binding package.",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "04c11c456fd1e21b9a21c25c665109cc"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "15c67f9498d6934cff9510fc70c5a12e52290457"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "21ddb598807d3a51a876704eb979d9296e1c6a6f47ab1826ff88c6d6a127a2d0"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "63b597ec02b4e31c57266d9b96f05f301f217bc12ffb7ba046a5658d2829728930a559947b98eb6c3cc448413a96b4939427aa669ae1e2dc3597ab5d5d287f9f"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "35b6fe651afeed54d1e6f7a39ac6cf6fdbafacdf2e3bdff7b29b965ccb79a0c53342a56bf0ecea4d6c4c4651b1d6aa19"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "72267dc54c4175c42ca0dd430a87b12cc68619a8777be2048e1d2f0747db884a568b5c346c77c9c8c0714ab96018f5f7"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "6bfc7b4ba70779fe5f0b1e2af585abab982f7929a68beb2c0e62ea2e2a321de0"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "3f1bdfa32f7df76ac14cd2a3e689b65066fa0a6a760a9b8b1121773bb1b043a44587d4148c67f361dc6c630e6b31f29b2691a57d47caabea5ca23ae44af34a5e"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/com.fasterxml.jackson.core/jackson-annotations@2.22?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://github.com/FasterXML/jackson"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://central.sonatype.com/api/v1/publisher"
+        },
+        {
+          "type" : "issue-tracker",
+          "url" : "https://github.com/FasterXML/jackson-annotations/issues"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/FasterXML/jackson-annotations"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/tools.jackson.core/jackson-databind@3.2.4?type=jar",
+      "publisher" : "FasterXML",
+      "group" : "tools.jackson.core",
+      "name" : "jackson-databind",
+      "version" : "3.2.4",
+      "description" : "General data-binding functionality for Jackson: works on core streaming API",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "63eae1d7fa8d26621ef938d7267c2722"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "73cd5c393378036c5b556355e5257128796b9a9a"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "c4af37223d5024f1294a5450598b01b65f30c53d9e906f02c3955ba1fb14a67d"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "3b879f3f270ca12ce1b89f67898655dcefe3673cc36f598fbbe91fddef6f5bed59d15902ac7de79f23ebc0f72c8d27189f0bef2b3b9c90006a27328b98a101e8"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "5dbdf4e1282de8135b5290ac71e26966921d3379af8c475baf222a0afab0daede2c0f59f0f3e314e4d9292f43547a4ac"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "9c4578d09a927dbc9c81daea466521ac22342568c2e350f6ba1107451a2354e2ae80a57fb0d72019f9725caada62177a"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "cd14fcd2ecb0cd6bbebec5721d9c6532d5160c68f495a24eb2cc86dc9ac15b4f"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "441135c725515017b6493d0e36fc88000a976713506924f30a7be38d570073c7d64ff88e60cc5d0abbb6704ccfc943d39271704efd064feed91ee2ce1eb81675"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/tools.jackson.core/jackson-databind@3.2.4?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://github.com/FasterXML/jackson"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://central.sonatype.com/api/v1/publisher"
+        },
+        {
+          "type" : "issue-tracker",
+          "url" : "https://github.com/FasterXML/jackson-databind/issues"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/FasterXML/jackson-databind"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/tools.jackson.core/jackson-core@3.2.4?type=jar",
+      "publisher" : "FasterXML",
+      "group" : "tools.jackson.core",
+      "name" : "jackson-core",
+      "version" : "3.2.4",
+      "description" : "Core Jackson processing abstractions (aka Streaming API), implementation for JSON",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "024e68187ce475a2a668cb5944e71d88"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "025beaee139ae32025c5f189e4fb39c5b1f78653"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "494b9f5fccf008042d5a72c5bf00629b144c0ba7362a9864cbb02234c9772651"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "7322b44920244c1b799c4952d3472eb9dc86836a3264a517bc74be81c8f38baaff6d805e237bc52b04a51f91fc40b2222ada4cda9906e1d1b43753f8d5661841"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "91b62f9b11b7801835e5f9a41036114877f5592efb0b6ca6a5b9328efe10f9a1b3c1247ef4e13dd1785881a7b4b08250"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "b59c067f42f8ac3dec34589b78290ad2ed0ca94c9cfa42d285c9f6095f707c6558a735ac75ce8b13148368bac9d049d1"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "7624e27628d60e029c51fe65f82ef86773af00dfed24f6785c42ef4a6c5dfb82"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "865947e2983856165fca5ad74077c6d66f73cc17e5ca02c65fdeaed437f4f95b1a9fba550737b343a96a7b819a813c2fecf13155366a5415794e37b7ac108086"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/tools.jackson.core/jackson-core@3.2.4?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://github.com/FasterXML/jackson-core"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://central.sonatype.com/api/v1/publisher"
+        },
+        {
+          "type" : "issue-tracker",
+          "url" : "https://github.com/FasterXML/jackson-core/issues"
+        },
+        {
+          "type" : "vcs",
+          "url" : "http://github.com/FasterXML/jackson-core"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-impl@0.12.2?type=jar",
+      "group" : "org.sliceworkz",
+      "name" : "sliceworkz-eventstore-impl",
+      "version" : "0.12.2",
+      "description" : "DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)",
+      "licenses" : [
+        {
+          "license" : {
+            "name" : "LGPL License",
+            "url" : "https://opensource.org/license/lgpl-3-0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-impl@0.12.2?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://sliceworkz.github.io/eventstore"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/sliceworkz/eventstore/sliceworkz-eventstore-parent-pom/sliceworkz-eventstore-impl"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-serialization-json@0.12.2?type=jar",
+      "group" : "org.sliceworkz",
+      "name" : "sliceworkz-eventstore-serialization-json",
+      "version" : "0.12.2",
+      "description" : "DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres) - JSON serialization codecs",
+      "licenses" : [
+        {
+          "license" : {
+            "name" : "LGPL License",
+            "url" : "https://opensource.org/license/lgpl-3-0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-serialization-json@0.12.2?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://sliceworkz.github.io/eventstore"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/sliceworkz/eventstore/sliceworkz-eventstore-parent-pom/sliceworkz-eventstore-serialization-json"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem@0.12.2?type=jar",
+      "group" : "org.sliceworkz",
+      "name" : "sliceworkz-eventstore-infra-inmem",
+      "version" : "0.12.2",
+      "description" : "DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)",
+      "licenses" : [
+        {
+          "license" : {
+            "name" : "LGPL License",
+            "url" : "https://opensource.org/license/lgpl-3-0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem@0.12.2?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://sliceworkz.github.io/eventstore"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/sliceworkz/eventstore/sliceworkz-eventstore-parent-pom/sliceworkz-eventstore-infra-inmem"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-postgres@0.12.2?type=jar",
+      "group" : "org.sliceworkz",
+      "name" : "sliceworkz-eventstore-infra-postgres",
+      "version" : "0.12.2",
+      "description" : "DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)",
+      "licenses" : [
+        {
+          "license" : {
+            "name" : "LGPL License",
+            "url" : "https://opensource.org/license/lgpl-3-0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-postgres@0.12.2?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://sliceworkz.github.io/eventstore"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/sliceworkz/eventstore/sliceworkz-eventstore-parent-pom/sliceworkz-eventstore-infra-postgres"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/com.github.f4b6a3/uuid-creator@6.1.1?type=jar",
+      "group" : "com.github.f4b6a3",
+      "name" : "uuid-creator",
+      "version" : "6.1.1",
+      "description" : "A Java library to generate RFC-4122 Universally Unique Identifiers (UUID).",
+      "scope" : "optional",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "a3fdcf66cdc1f82c6d35495c3af2a604"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "1da8fa8b8907b42491976e9426bfba5c8fe1d768"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "0e14ed193ddf560883946319a154e7d87f2ef309353574b7389034bb2ae2b7ae"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "8d320f36c82ce63fcd25fa7e5b17d406daf1215bfd080ec65587450279efa5d8b10f1526c02c55bae2fb99afb13ea2d23d4e12920e1876f3607eb539c9a067c1"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "f977ddb7faaeaf8f5efc280d4a90fc703264f973f3ab00b763fea738abe5f86e5c6a5eb22fd0a89fe6725de2bc175548"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "5c62a63b6430f0914409765d00c257e4a70aca2ae3930e7916f19496017e83d3ef991974bd7c6d33d39619f7e80bf412"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "18e2b240107abbc8a3664ffbe5f68257aa2d2b34cc9aaabd22d4b80753bd5ea4"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "87a695cc93d2b5726683067ac1abd0b8362bbd4e8af7afb0d95b65c01e730623af43ed307854162396ba521633165e4feb8408b290797c0ae521913fb6b3780a"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "MIT",
+            "url" : "https://opensource.org/license/mit/"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/com.github.f4b6a3/uuid-creator@6.1.1?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://github.com/f4b6a3/uuid-creator"
+        },
+        {
+          "type" : "distribution-intake",
+          "url" : "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/f4b6a3/uuid-creator"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/org.postgresql/postgresql@42.7.14?type=jar",
+      "publisher" : "PostgreSQL Global Development Group",
+      "group" : "org.postgresql",
+      "name" : "postgresql",
+      "version" : "42.7.14",
+      "description" : "PostgreSQL JDBC Driver Postgresql",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "16f26b00415e27db94b3da7ff77c045d"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "0e7c94ce80cb1dd9875ff44ffe6a40a8aaa3eefd"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "73914527305a40cce504b0d3d90b23caf565136912d607ae8ae7c5895512332c"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "2a7c94c3f86f7ad6cfa16a964fe79dec8b122449679c8bbdb18f7052593349c2d11dd07992034de88d6effd840e2edf5ea8542e947de19905c75677d0dd44abc"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "cf06ef6c1c3ef7e7b2d44e8bbbc8285443f72af505ca4a5622a149e012eaefdad781feacd15ab06a97cfe7e0314d353f"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "1fe621a928c0825b2d5934329e868a9b067f505395494c11c626882ae904a0b168bba8a159e8f6256173362798e3facf"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "03e9c42ea0edd507ed196aacf07f37a12234d6cad370c32aca8dc575d85f9e72"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "3f816b473762f284863fdd4a9d255ade2e3e9e938c40d737d0819026c064d2b2ebe5a80c0cd24485f0e507b2dba12aa2ade1ccffdc339f6415a3b2986b4d9424"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "BSD-2-Clause",
+            "url" : "https://opensource.org/licenses/BSD-2-Clause"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/org.postgresql/postgresql@42.7.14?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://jdbc.postgresql.org"
+        },
+        {
+          "type" : "issue-tracker",
+          "url" : "https://github.com/pgjdbc/pgjdbc/issues"
+        },
+        {
+          "type" : "mailing-list",
+          "url" : "https://www.postgresql.org/list/pgsql-jdbc/"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/pgjdbc/pgjdbc"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/org.checkerframework/checker-qual@3.55.1?type=jar",
+      "group" : "org.checkerframework",
+      "name" : "checker-qual",
+      "version" : "3.55.1",
+      "description" : "checker-qual contains annotations (type qualifiers) that a programmerwrites to specify Java code for type-checking by the Checker Framework.",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "05361199dc29af8334d1405f28b83109"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "3d40699936a66b2d4c1f759f2f1a0446c8cf64fc"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "857658c8bdcbff794949a8d9922f88d63ee3751c203c7cd7d21ea97f9e745288"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "564b78a1a0e76c756b74c60f9441a43cc5232b5d887bf7a701fdf8ff9e646f2900a10a56254534fa69499dff864338037edfb6d05f59ba52351e1013a522f316"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "cd20464a20b4f93e85f5e1917f747696b28803d171fa8d34762b3eac6b4541a0472772c21585fa5f43c1ae188a6dab48"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "1c7d8fe4a8922ef5a739ff7cf52c1a93f3aec79c7024a0e6f827ec865e6c63ee2818ce1d9412d9768bb2f45eb441bc0b"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "9eae4832715938932bbaf8846e4f8d24daf664bc2f368f65a6847644faab7329"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "5be2781a61e995e9cf1b284a9439f32391fc280b41d5b5c34c75539e055be9fd519564caef2f4a96672ad4946fd83ee391126c45d74f30c1ef606e5338dd842e"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "MIT"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/org.checkerframework/checker-qual@3.55.1?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://checkerframework.org/"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/typetools/checker-framework.git"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/com.zaxxer/HikariCP@7.1.0?type=jar",
+      "publisher" : "Zaxxer.com",
+      "group" : "com.zaxxer",
+      "name" : "HikariCP",
+      "version" : "7.1.0",
+      "description" : "Ultimate JDBC Connection Pool",
+      "scope" : "required",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "4f40811c9309be1d38e27dbec4200359"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "13ac26e0d5ef25ae7f1515e59e525c500f013ccc"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "2be45c641b841e81df87292e181f2c203500c5f0e9a1676f135927387f3cf40b"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "d49d6cfd831d0b973fa16e61dc8682f983205dbb4399b679df4f18f3f30e1ddbc5247d3724881c1d3579144cc9aba11bd56e2aa9755a2c4754f5df21cc4760f3"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "dd518256d0ecade85921e17bae8b41d63e458b06cf7b80e8d2d666735b1ad87b6f6c4ebcb9545454cad5253966c3b11b"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "ca14a89ee53fa74f2864fd70da166b9ea70ba7ddf74aa06d19b3f034163ab0afd664bb168f28d9d7c255d7758faff67b"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "5ef8c54addf0ee782714d73dbcb40f64dca61f38dc1dd00b6e477a1854f7d22d"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "d46da214debedf24f58be53c2b679c1300af4ce96f8fdc94e2fb9c73608750056004f3b6d60f00c2884ce899b82a6b191bbc2a1455be6205af226b9ed2129b43"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "Apache-2.0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/com.zaxxer/HikariCP@7.1.0?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://github.com/brettwooldridge/HikariCP"
+        },
+        {
+          "type" : "issue-tracker",
+          "url" : "https://github.com/brettwooldridge/HikariCP/issues"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/brettwooldridge/HikariCP"
+        }
+      ]
+    },
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem-fs@0.12.2?type=jar",
+      "group" : "org.sliceworkz",
+      "name" : "sliceworkz-eventstore-infra-inmem-fs",
+      "version" : "0.12.2",
+      "description" : "DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres) - In-memory with filesystem persistence",
+      "licenses" : [
+        {
+          "license" : {
+            "name" : "LGPL License",
+            "url" : "https://opensource.org/license/lgpl-3-0"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem-fs@0.12.2?type=jar",
+      "externalReferences" : [
+        {
+          "type" : "website",
+          "url" : "https://sliceworkz.github.io/eventstore"
+        },
+        {
+          "type" : "vcs",
+          "url" : "https://github.com/sliceworkz/eventstore/sliceworkz-eventstore-parent-pom/sliceworkz-eventstore-infra-inmem-fs"
+        }
+      ]
+    }
+  ],
+  "dependencies" : [
+    {
+      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore@0.12.2?type=pom",
+      "dependsOn" : [
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-parent-pom@0.12.2?type=pom",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-bom@0.12.2?type=pom"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-parent-pom@0.12.2?type=pom",
+      "dependsOn" : [
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.12.2?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-impl@0.12.2?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-serialization-json@0.12.2?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem@0.12.2?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-postgres@0.12.2?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem-fs@0.12.2?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-bom@0.12.2?type=pom",
+      "dependsOn" : [ ]
+    },
+    {
+      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.12.2?type=jar",
+      "dependsOn" : [
+        "pkg:maven/org.slf4j/slf4j-api@2.0.20?type=jar",
+        "pkg:maven/com.fasterxml.jackson.core/jackson-annotations@2.22?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/org.slf4j/slf4j-api@2.0.20?type=jar",
+      "dependsOn" : [ ]
+    },
+    {
+      "ref" : "pkg:maven/com.fasterxml.jackson.core/jackson-annotations@2.22?type=jar",
+      "dependsOn" : [ ]
+    },
+    {
+      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-impl@0.12.2?type=jar",
+      "dependsOn" : [
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.12.2?type=jar",
+        "pkg:maven/tools.jackson.core/jackson-databind@3.2.4?type=jar",
+        "pkg:maven/org.slf4j/slf4j-api@2.0.20?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/tools.jackson.core/jackson-databind@3.2.4?type=jar",
+      "dependsOn" : [
+        "pkg:maven/com.fasterxml.jackson.core/jackson-annotations@2.22?type=jar",
+        "pkg:maven/tools.jackson.core/jackson-core@3.2.4?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/tools.jackson.core/jackson-core@3.2.4?type=jar",
+      "dependsOn" : [ ]
+    },
+    {
+      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-serialization-json@0.12.2?type=jar",
+      "dependsOn" : [
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.12.2?type=jar",
+        "pkg:maven/tools.jackson.core/jackson-databind@3.2.4?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem@0.12.2?type=jar",
+      "dependsOn" : [
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.12.2?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-impl@0.12.2?type=jar",
+        "pkg:maven/tools.jackson.core/jackson-databind@3.2.4?type=jar",
+        "pkg:maven/org.slf4j/slf4j-api@2.0.20?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-postgres@0.12.2?type=jar",
+      "dependsOn" : [
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.12.2?type=jar",
+        "pkg:maven/com.github.f4b6a3/uuid-creator@6.1.1?type=jar",
+        "pkg:maven/org.postgresql/postgresql@42.7.14?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-impl@0.12.2?type=jar",
+        "pkg:maven/com.zaxxer/HikariCP@7.1.0?type=jar",
+        "pkg:maven/tools.jackson.core/jackson-databind@3.2.4?type=jar",
+        "pkg:maven/org.slf4j/slf4j-api@2.0.20?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/com.github.f4b6a3/uuid-creator@6.1.1?type=jar",
+      "dependsOn" : [ ]
+    },
+    {
+      "ref" : "pkg:maven/org.postgresql/postgresql@42.7.14?type=jar",
+      "dependsOn" : [
+        "pkg:maven/org.checkerframework/checker-qual@3.55.1?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/org.checkerframework/checker-qual@3.55.1?type=jar",
+      "dependsOn" : [ ]
+    },
+    {
+      "ref" : "pkg:maven/com.zaxxer/HikariCP@7.1.0?type=jar",
+      "dependsOn" : [
+        "pkg:maven/org.slf4j/slf4j-api@2.0.20?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem-fs@0.12.2?type=jar",
+      "dependsOn" : [
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.12.2?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-serialization-json@0.12.2?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem@0.12.2?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-impl@0.12.2?type=jar",
+        "pkg:maven/tools.jackson.core/jackson-databind@3.2.4?type=jar"
+      ]
+    }
+  ]
+}

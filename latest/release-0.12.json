@@ -1,13 +1,14 @@
 {
   "schema": 1,
-  "runAt": "2026-11-14T08:06:13+01:00",
+  "runAt": "2026-11-14T13:10:45+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "release/0.12",
   "commit": "8420c6a5fae4c50407245495273cebf98931043f",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/43569461984",
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/43593493164",
   "dryRun": false,
+  "projectVersion": "0.12.3-SNAPSHOT",
   "policy": {
     "pattern": "release/*",
     "schedule": "50 0 * * *",
@@ -51,6 +52,31 @@
     ],
     "otherChanges": 0
   },
+  "releaseScan": {
+    "tag": "v0.12.2",
+    "tagDate": "2026-11-08T20:02:49Z",
+    "origin": "attached to the release",
+    "assets": [
+      "sliceworkz-eventstore-0.12.2.cdx.json",
+      "sliceworkz-eventstore-testing-0.12.2.cdx.json"
+    ],
+    "reason": null,
+    "sboms": [
+      "sliceworkz-eventstore-0.12.2",
+      "sliceworkz-eventstore-testing-0.12.2"
+    ],
+    "notScanned": [],
+    "findings": [],
+    "counts": {
+      "critical": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "negligible": 0,
+      "unknown": 0,
+      "blocking": 0
+    }
+  },
   "inventory": [
     {
       "ecosystem": "maven",
@@ -63,7 +89,7 @@
       ],
       "own": false,
       "group": null,
-      "newest": "2.25.1"
+      "newest": "2.25.2"
     },
     {
       "ecosystem": "maven",
@@ -408,7 +434,25 @@
       "newest": "3.6.2"
     }
   ],
-  "updates": [],
+  "updates": [
+    {
+      "ecosystem": "maven",
+      "name": "maven.maven-versions-plugin.version",
+      "where": "pom.xml",
+      "current": "2.25.1",
+      "kind": "property",
+      "artifacts": [
+        "org.codehaus.mojo:versions-maven-plugin"
+      ],
+      "own": false,
+      "group": null,
+      "level": "patch",
+      "target": "2.25.2",
+      "outcome": "held-back",
+      "eligibleFrom": "2026-11-15T10:49:44+00:00",
+      "reason": "cooldown"
+    }
+  ],
   "batches": [],
   "pullRequests": [],
   "closedPullRequests": [],
@@ -417,7 +461,7 @@
   "notes": [],
   "vulnerabilities": {
     "grype": "v0.121.0",
-    "dbBuilt": "2026-11-13T15:40:34Z",
+    "dbBuilt": "2026-11-14T06:19:25Z",
     "sbomOrigin": "saved by the previous run (branch head unchanged)",
     "sboms": [
       "maven"

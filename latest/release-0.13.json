@@ -1,13 +1,14 @@
 {
   "schema": 1,
-  "runAt": "2026-11-14T08:06:14+01:00",
+  "runAt": "2026-11-14T11:44:34+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "release/0.13",
   "commit": "2565336ba25e9c8e69aeadd432a658914156ea25",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/43569461984",
-  "dryRun": false,
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/43586678899",
+  "dryRun": true,
+  "projectVersion": "0.13.1-SNAPSHOT",
   "policy": {
     "pattern": "release/*",
     "schedule": "50 0 * * *",
@@ -41,6 +42,30 @@
     "tagDate": "2026-11-12T11:37:26Z",
     "dependencyUpdates": [],
     "otherChanges": 0
+  },
+  "releaseScan": {
+    "tag": "v0.13.0",
+    "tagDate": "2026-11-12T11:37:26Z",
+    "assets": [
+      "sliceworkz-eventstore-0.13.0.cdx.json",
+      "sliceworkz-eventstore-testing-0.13.0.cdx.json"
+    ],
+    "reason": null,
+    "sboms": [
+      "sliceworkz-eventstore-0.13.0",
+      "sliceworkz-eventstore-testing-0.13.0"
+    ],
+    "notScanned": [],
+    "findings": [],
+    "counts": {
+      "critical": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "negligible": 0,
+      "unknown": 0,
+      "blocking": 0
+    }
   },
   "inventory": [
     {
@@ -408,7 +433,7 @@
   "notes": [],
   "vulnerabilities": {
     "grype": "v0.121.0",
-    "dbBuilt": "2026-11-13T15:40:34Z",
+    "dbBuilt": "2026-11-14T06:19:25Z",
     "sbomOrigin": "ci-artifact (run 43210766256)",
     "sboms": [
       "library",

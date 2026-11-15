@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "runAt": "2026-11-14T11:44:34+01:00",
+  "runAt": "2026-11-15T08:16:29+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "release/0.13",
   "commit": "2565336ba25e9c8e69aeadd432a658914156ea25",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/43586678899",
-  "dryRun": true,
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/43689187030",
+  "dryRun": false,
   "projectVersion": "0.13.1-SNAPSHOT",
   "policy": {
     "pattern": "release/*",
@@ -29,6 +29,10 @@
       "action": "pr",
       "cooldownDays": 1
     },
+    "own": {
+      "action": "merge",
+      "cooldownDays": 0
+    },
     "filter": "default+0",
     "ecosystems": [
       "maven"
@@ -46,6 +50,7 @@
   "releaseScan": {
     "tag": "v0.13.0",
     "tagDate": "2026-11-12T11:37:26Z",
+    "origin": "attached to the release",
     "assets": [
       "sliceworkz-eventstore-0.13.0.cdx.json",
       "sliceworkz-eventstore-testing-0.13.0.cdx.json"
@@ -79,7 +84,7 @@
       ],
       "own": false,
       "group": null,
-      "newest": "2.25.1"
+      "newest": "2.25.2"
     },
     {
       "ecosystem": "maven",
@@ -408,7 +413,7 @@
       ],
       "own": false,
       "group": null,
-      "newest": "1.6.6"
+      "newest": "1.6.7"
     },
     {
       "ecosystem": "maven",
@@ -424,7 +429,42 @@
       "newest": "3.6.2"
     }
   ],
-  "updates": [],
+  "updates": [
+    {
+      "ecosystem": "maven",
+      "name": "maven.maven-versions-plugin.version",
+      "where": "pom.xml",
+      "current": "2.25.1",
+      "kind": "property",
+      "artifacts": [
+        "org.codehaus.mojo:versions-maven-plugin"
+      ],
+      "own": false,
+      "group": null,
+      "level": "patch",
+      "target": "2.25.2",
+      "outcome": "held-back",
+      "eligibleFrom": "2026-11-15T10:49:44+00:00",
+      "reason": "cooldown"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "logback.version",
+      "where": "sliceworkz-eventstore-benchmark/pom.xml",
+      "current": "1.6.6",
+      "kind": "property",
+      "artifacts": [
+        "ch.qos.logback:logback-classic"
+      ],
+      "own": false,
+      "group": null,
+      "level": "patch",
+      "target": "1.6.7",
+      "outcome": "held-back",
+      "eligibleFrom": "2026-11-15T16:05:06+00:00",
+      "reason": "cooldown"
+    }
+  ],
   "batches": [],
   "pullRequests": [],
   "closedPullRequests": [],
@@ -433,7 +473,7 @@
   "notes": [],
   "vulnerabilities": {
     "grype": "v0.121.0",
-    "dbBuilt": "2026-11-14T06:19:25Z",
+    "dbBuilt": "2026-11-15T06:19:39Z",
     "sbomOrigin": "ci-artifact (run 43210766256)",
     "sboms": [
       "library",

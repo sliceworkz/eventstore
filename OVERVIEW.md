@@ -5,7 +5,7 @@ Written by the nightly dependency pipeline after every run (sliceworkz/software-
 | Branch | Last run | Head | Critical | High | Medium | Low | Blocking | Released version | Open PRs | Unreleased updates | SBOMs |
 |---|---|---|---:|---:|---:|---:|---:|---|---:|---|---|
 | [`develop`](#develop) | 2026-11-15T08:53:43+01:00 | `19d79bf578` | 0 | 0 | 0 | 0 | 0 | - | 0 | - | ci-artifact (run 43601101741) |
-| [`release/0.13`](#release013) | 2026-11-15T08:16:29+01:00 | `2565336ba2` | 0 | 0 | 0 | 0 | 0 | v0.13.0: none critical/high | 0 | none since v0.13.0 | ci-artifact (run 43210766256) |
+| [`release/0.13`](#release013) | 2026-11-16T08:22:52+01:00 | `2565336ba2` | 0 | 0 | 0 | 0 | 0 | v0.13.0: none critical/high | 1 | none since v0.13.0 | ci-artifact (run 43210766256) |
 | [`release/0.12`](#release012) | 2026-11-15T08:16:32+01:00 | `8420c6a5fa` | 0 | 0 | 0 | 0 | 0 | v0.12.2: none critical/high | 0 | **2 since v0.12.2** | saved by the previous run (branch head unchanged) |
 
 ## develop
@@ -19,6 +19,8 @@ No dependency updates since v0.13.0 (2026-11-12).
 No critical or high findings in the released v0.13.0 (scanned from the SBOMs attached to it).
 
 No critical or high findings on the branch head.
+
+Pipeline PRs open: [#284](https://github.com/sliceworkz/eventstore/pull/284) (auto-merge, CI pending)
 
 ## release/0.12
 

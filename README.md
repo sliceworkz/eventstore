@@ -57,7 +57,7 @@ the store; use the framework when you want an application structure around it.
 
 - **Java 21** or later at runtime
 - For PostgreSQL: **PostgreSQL 16** or later, with the `btree_gin` extension available
-- To build from source: JDK 21 and Maven 3.6.3+ (the build targets release 21)
+- To build from source: JDK 21 and Maven 4 (4.0.0-rc-7 or later; the build targets release 21)
 
 ## Add the dependency
 

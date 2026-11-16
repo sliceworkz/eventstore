@@ -17,7 +17,3 @@ nohup.out
 jte-classes
 db.properties
 eventstore-data/
-
-# flatten-maven-plugin output
-.flattened-pom.xml
-**/.flattened-pom.xml

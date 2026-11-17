@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "runAt": "2026-11-16T08:22:55+01:00",
+  "runAt": "2026-11-17T09:34:45+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "release/0.12",
-  "commit": "8420c6a5fae4c50407245495273cebf98931043f",
+  "commit": "08d0d06889281049f4eb5aa0f87a2188c9617d1f",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/43823396319",
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/44047879680",
   "dryRun": false,
   "projectVersion": "0.12.3-SNAPSHOT",
   "policy": {
@@ -45,6 +45,10 @@
     "lastTag": "v0.12.2",
     "tagDate": "2026-11-08T20:02:49Z",
     "dependencyUpdates": [
+      {
+        "commit": "08d0d06889281049f4eb5aa0f87a2188c9617d1f",
+        "subject": "Dependency updates (#285)"
+      },
       {
         "commit": "8420c6a5fae4c50407245495273cebf98931043f",
         "subject": "Minor dependency updates (#276)"
@@ -86,7 +90,7 @@
       "ecosystem": "maven",
       "name": "maven.maven-versions-plugin.version",
       "where": "pom.xml",
-      "current": "2.25.1",
+      "current": "2.25.2",
       "kind": "property",
       "artifacts": [
         "org.codehaus.mojo:versions-maven-plugin"
@@ -415,7 +419,7 @@
       "ecosystem": "maven",
       "name": "logback.version",
       "where": "sliceworkz-eventstore-benchmark/pom.xml",
-      "current": "1.6.6",
+      "current": "1.6.7",
       "kind": "property",
       "artifacts": [
         "ch.qos.logback:logback-classic"
@@ -438,98 +442,17 @@
       "newest": "3.6.2"
     }
   ],
-  "updates": [
-    {
-      "ecosystem": "maven",
-      "name": "maven.maven-versions-plugin.version",
-      "where": "pom.xml",
-      "current": "2.25.1",
-      "kind": "property",
-      "artifacts": [
-        "org.codehaus.mojo:versions-maven-plugin"
-      ],
-      "own": false,
-      "group": null,
-      "level": "patch",
-      "target": "2.25.2",
-      "action": "merge",
-      "batch": "auto",
-      "published": "2026-11-14",
-      "outcome": "planned"
-    },
-    {
-      "ecosystem": "maven",
-      "name": "logback.version",
-      "where": "sliceworkz-eventstore-benchmark/pom.xml",
-      "current": "1.6.6",
-      "kind": "property",
-      "artifacts": [
-        "ch.qos.logback:logback-classic"
-      ],
-      "own": false,
-      "group": null,
-      "level": "patch",
-      "target": "1.6.7",
-      "action": "merge",
-      "batch": "auto",
-      "published": "2026-11-14",
-      "outcome": "planned"
-    }
-  ],
-  "batches": [
-    {
-      "key": "auto",
-      "branch": "deps/release/0.12/auto",
-      "action": "merge",
-      "level": "merge",
-      "transitive": false,
-      "commit": "ef042a8fe5e5685ee4dd125216f99c471348bbfc",
-      "error": null,
-      "outcome": "pr-opened",
-      "pr": 285,
-      "changes": [
-        {
-          "ecosystem": "maven",
-          "name": "maven.maven-versions-plugin.version",
-          "where": "pom.xml",
-          "level": "patch",
-          "from": "2.25.1",
-          "to": "2.25.2",
-          "applied": true,
-          "error": null
-        },
-        {
-          "ecosystem": "maven",
-          "name": "logback.version",
-          "where": "sliceworkz-eventstore-benchmark/pom.xml",
-          "level": "patch",
-          "from": "1.6.6",
-          "to": "1.6.7",
-          "applied": true,
-          "error": null
-        }
-      ],
-      "lockfileChanges": []
-    }
-  ],
-  "pullRequests": [
-    {
-      "number": 285,
-      "url": "https://github.com/sliceworkz/eventstore/pull/285",
-      "head": "deps/release/0.12/auto",
-      "title": "Dependency updates on release/0.12",
-      "ci": "pending",
-      "autoMerge": true
-    }
-  ],
+  "updates": [],
+  "batches": [],
+  "pullRequests": [],
   "closedPullRequests": [],
   "deletedBranches": [],
   "declined": [],
   "notes": [],
   "vulnerabilities": {
     "grype": "v0.121.0",
-    "dbBuilt": "2026-11-16T06:30:54Z",
-    "sbomOrigin": "saved by the previous run (branch head unchanged)",
+    "dbBuilt": "2026-11-17T06:20:58Z",
+    "sbomOrigin": "built by this run",
     "sboms": [
       "maven"
     ],

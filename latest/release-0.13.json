@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "runAt": "2026-11-16T08:22:52+01:00",
+  "runAt": "2026-11-17T09:34:44+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "release/0.13",
-  "commit": "2565336ba25e9c8e69aeadd432a658914156ea25",
+  "commit": "7b6ea951c650d0d5d80ec48ea7cc674ac492cdcc",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/43823396319",
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/44047879680",
   "dryRun": false,
   "projectVersion": "0.13.1-SNAPSHOT",
   "policy": {
@@ -44,7 +44,12 @@
   "release": {
     "lastTag": "v0.13.0",
     "tagDate": "2026-11-12T11:37:26Z",
-    "dependencyUpdates": [],
+    "dependencyUpdates": [
+      {
+        "commit": "7b6ea951c650d0d5d80ec48ea7cc674ac492cdcc",
+        "subject": "Dependency updates (#284)"
+      }
+    ],
     "otherChanges": 0
   },
   "releaseScan": {
@@ -77,7 +82,7 @@
       "ecosystem": "maven",
       "name": "maven.maven-versions-plugin.version",
       "where": "pom.xml",
-      "current": "2.25.1",
+      "current": "2.25.2",
       "kind": "property",
       "artifacts": [
         "org.codehaus.mojo:versions-maven-plugin"
@@ -406,7 +411,7 @@
       "ecosystem": "maven",
       "name": "logback.version",
       "where": "sliceworkz-eventstore-benchmark/pom.xml",
-      "current": "1.6.6",
+      "current": "1.6.7",
       "kind": "property",
       "artifacts": [
         "ch.qos.logback:logback-classic"
@@ -429,98 +434,17 @@
       "newest": "3.6.2"
     }
   ],
-  "updates": [
-    {
-      "ecosystem": "maven",
-      "name": "maven.maven-versions-plugin.version",
-      "where": "pom.xml",
-      "current": "2.25.1",
-      "kind": "property",
-      "artifacts": [
-        "org.codehaus.mojo:versions-maven-plugin"
-      ],
-      "own": false,
-      "group": null,
-      "level": "patch",
-      "target": "2.25.2",
-      "action": "merge",
-      "batch": "auto",
-      "published": "2026-11-14",
-      "outcome": "planned"
-    },
-    {
-      "ecosystem": "maven",
-      "name": "logback.version",
-      "where": "sliceworkz-eventstore-benchmark/pom.xml",
-      "current": "1.6.6",
-      "kind": "property",
-      "artifacts": [
-        "ch.qos.logback:logback-classic"
-      ],
-      "own": false,
-      "group": null,
-      "level": "patch",
-      "target": "1.6.7",
-      "action": "merge",
-      "batch": "auto",
-      "published": "2026-11-14",
-      "outcome": "planned"
-    }
-  ],
-  "batches": [
-    {
-      "key": "auto",
-      "branch": "deps/release/0.13/auto",
-      "action": "merge",
-      "level": "merge",
-      "transitive": false,
-      "commit": "21d8b2e246b9c66e608d9e669c09f3ba9a3f775c",
-      "error": null,
-      "outcome": "pr-opened",
-      "pr": 284,
-      "changes": [
-        {
-          "ecosystem": "maven",
-          "name": "maven.maven-versions-plugin.version",
-          "where": "pom.xml",
-          "level": "patch",
-          "from": "2.25.1",
-          "to": "2.25.2",
-          "applied": true,
-          "error": null
-        },
-        {
-          "ecosystem": "maven",
-          "name": "logback.version",
-          "where": "sliceworkz-eventstore-benchmark/pom.xml",
-          "level": "patch",
-          "from": "1.6.6",
-          "to": "1.6.7",
-          "applied": true,
-          "error": null
-        }
-      ],
-      "lockfileChanges": []
-    }
-  ],
-  "pullRequests": [
-    {
-      "number": 284,
-      "url": "https://github.com/sliceworkz/eventstore/pull/284",
-      "head": "deps/release/0.13/auto",
-      "title": "Dependency updates on release/0.13",
-      "ci": "pending",
-      "autoMerge": true
-    }
-  ],
+  "updates": [],
+  "batches": [],
+  "pullRequests": [],
   "closedPullRequests": [],
   "deletedBranches": [],
   "declined": [],
   "notes": [],
   "vulnerabilities": {
     "grype": "v0.121.0",
-    "dbBuilt": "2026-11-16T06:30:54Z",
-    "sbomOrigin": "ci-artifact (run 43210766256)",
+    "dbBuilt": "2026-11-17T06:20:58Z",
+    "sbomOrigin": "ci-artifact (run 43824951925)",
     "sboms": [
       "library",
       "test-kit"

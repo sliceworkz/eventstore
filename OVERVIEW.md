@@ -5,7 +5,7 @@ Written by the nightly dependency pipeline after every run (sliceworkz/software-
 | Branch | Last run | Head | Critical | High | Medium | Low | Blocking | Released version | Open PRs | Unreleased updates | SBOMs |
 |---|---|---|---:|---:|---:|---:|---:|---|---:|---|---|
 | [`develop`](#develop) | 2026-11-16T09:01:17+01:00 | `19d79bf578` | 0 | 0 | 0 | 0 | 0 | - | 1 | - | ci-artifact (run 43601101741) |
-| [`release/0.13`](#release013) | 2026-11-16T08:22:52+01:00 | `2565336ba2` | 0 | 0 | 0 | 0 | 0 | v0.13.0: none critical/high | 1 | none since v0.13.0 | ci-artifact (run 43210766256) |
+| [`release/0.13`](#release013) | 2026-11-17T09:34:44+01:00 | `7b6ea951c6` | 0 | 0 | 0 | 0 | 0 | v0.13.0: none critical/high | 0 | **1 since v0.13.0** | ci-artifact (run 43824951925) |
 | [`release/0.12`](#release012) | 2026-11-16T08:22:55+01:00 | `8420c6a5fa` | 0 | 0 | 0 | 0 | 0 | v0.12.2: none critical/high | 1 | **2 since v0.12.2** | saved by the previous run (branch head unchanged) |
 
 ## develop
@@ -16,13 +16,11 @@ Pipeline PRs open: [#286](https://github.com/sliceworkz/eventstore/pull/286) (au
 
 ## release/0.13
 
-No dependency updates since v0.13.0 (2026-11-12).
+**1 dependency update(s) merged since v0.13.0 (2026-11-12), not released yet**: release a patch (`create-release-tag-and-bump` on this line) to ship them.
 
 No critical or high findings in the released v0.13.0 (scanned from the SBOMs attached to it).
 
 No critical or high findings on the branch head.
-
-Pipeline PRs open: [#284](https://github.com/sliceworkz/eventstore/pull/284) (auto-merge, CI pending)
 
 ## release/0.12
 

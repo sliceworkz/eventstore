@@ -4,15 +4,13 @@ Written by the nightly dependency pipeline after every run (sliceworkz/software-
 
 | Branch | Last run | Head | Critical | High | Medium | Low | Blocking | Released version | Open PRs | Unreleased updates | SBOMs |
 |---|---|---|---:|---:|---:|---:|---:|---|---:|---|---|
-| [`develop`](#develop) | 2026-11-16T09:01:17+01:00 | `19d79bf578` | 0 | 0 | 0 | 0 | 0 | - | 1 | - | ci-artifact (run 43601101741) |
+| [`develop`](#develop) | 2026-11-17T10:14:59+01:00 | `971cf0823c` | 0 | 0 | 0 | 0 | 0 | - | 0 | - | ci-artifact (run 43829285864) |
 | [`release/0.13`](#release013) | 2026-11-17T09:34:44+01:00 | `7b6ea951c6` | 0 | 0 | 0 | 0 | 0 | v0.13.0: none critical/high | 0 | **1 since v0.13.0** | ci-artifact (run 43824951925) |
 | [`release/0.12`](#release012) | 2026-11-17T09:34:45+01:00 | `08d0d06889` | 0 | 0 | 0 | 0 | 0 | v0.12.2: none critical/high | 0 | **3 since v0.12.2** | built by this run |
 
 ## develop
 
 No critical or high findings on the branch head.
-
-Pipeline PRs open: [#286](https://github.com/sliceworkz/eventstore/pull/286) (auto-merge, CI pending)
 
 ## release/0.13
 

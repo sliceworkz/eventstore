@@ -79,7 +79,10 @@ The SBOMs the scan reads are listed in `.github/vulnerability-scan/targets`:
 **2. Every build scans them.** The CI workflow (`ci.yaml`, on every push and pull request) runs
 `.github/vulnerability-scan/scan.sh project gate` after the build. Grype is installed and its database downloaded
 at the start of the job, in the background while Maven builds, so the scan itself adds seconds. The verdict is in
-the run's summary; the reports are kept as the `vulnerability-reports` artifact.
+the run's summary; the reports are kept as the `vulnerability-reports` artifact. For a package listed in an SBOM, the summary
+also says how it gets in, read from the SBOM's dependency graph: a direct dependency of one of our modules, or via
+the chain from the dependency a module declares, the one to change or to pin the package against. The daily
+re-scan's issues (below) say the same. An image has no dependency graph, so its findings name the package only.
 
 **3. A release is scanned before it is tagged.** `create-release-tag-and-bump` builds without tests and scans
 **before** it sets the release version, commits and tags. A release the scan stops has changed nothing: no tag,

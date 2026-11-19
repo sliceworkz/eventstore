@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "runAt": "2026-11-19T09:00:43+01:00",
+  "runAt": "2026-11-19T15:27:25+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "release/0.12",
   "commit": "08d0d06889281049f4eb5aa0f87a2188c9617d1f",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/44483971155",
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/44543858130",
   "dryRun": false,
   "projectVersion": "0.12.3-SNAPSHOT",
   "policy": {
@@ -42,6 +42,10 @@
       "ltsOnly": true,
       "scanImages": true
     },
+    "containerImages": {
+      "scanImages": true,
+      "images": []
+    },
     "hold": [],
     "groups": []
   },
@@ -73,7 +77,6 @@
       "sliceworkz-eventstore-testing-0.12.2.cdx.json"
     ],
     "reason": null,
-    "images": [],
     "sboms": [
       "sliceworkz-eventstore-0.12.2",
       "sliceworkz-eventstore-testing-0.12.2"
@@ -431,7 +434,7 @@
       ],
       "own": false,
       "group": null,
-      "newest": "1.6.7"
+      "newest": "1.6.8"
     },
     {
       "ecosystem": "maven",
@@ -447,9 +450,28 @@
       "newest": "3.6.2"
     }
   ],
-  "updates": [],
+  "updates": [
+    {
+      "ecosystem": "maven",
+      "name": "logback.version",
+      "where": "sliceworkz-eventstore-benchmark/pom.xml",
+      "current": "1.6.7",
+      "kind": "property",
+      "artifacts": [
+        "ch.qos.logback:logback-classic"
+      ],
+      "own": false,
+      "group": null,
+      "level": "patch",
+      "target": "1.6.8",
+      "outcome": "held-back",
+      "eligibleFrom": "2026-11-20T11:14:55+00:00",
+      "reason": "cooldown"
+    }
+  ],
   "batches": [],
   "pullRequests": [],
+  "pullRequestsReadAt": "2026-11-19T14:28:57+00:00",
   "images": [],
   "closedPullRequests": [],
   "deletedBranches": [],

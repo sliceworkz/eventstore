@@ -15,7 +15,7 @@ branches:
     own:        { action: merge,   cooldownDays: 0 }
     patch:      { action: merge,   cooldownDays: 1 }
     minor:      { action: merge,   cooldownDays: 1 }
-    major:      { action: pr-each, cooldownDays: 1 }
+    major:      { action: merge-each, cooldownDays: 1 }  # a PR per major, merged once its own CI is green
     transitive: { action: merge,   cooldownDays: 1 }
   "release/*":
     schedule: "50 0 * * *"

@@ -167,7 +167,7 @@ schedule of the policy, and its runs and logs are there. What it does is in `.gi
 |---|---|---|
 | patch | a PR, merged automatically when CI is green | a PR, merged automatically when CI is green |
 | minor | the same PR | a PR for review |
-| major | a PR per update, for review | only mentioned |
+| major | a PR per update, merged automatically when its own CI is green | only mentioned |
 
 - **Cooldown**: a version is proposed once it has been out for a day.
 - **Declining**: close a pipeline PR without merging, and its versions are not proposed again until a newer one comes.

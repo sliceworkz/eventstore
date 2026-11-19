@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "runAt": "2026-11-19T09:50:28+01:00",
+  "runAt": "2026-11-19T15:27:23+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "develop",
   "commit": "a40d9dc3e89ede8dbba77950263f44ad60ff4696",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/44490981126",
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/44543858130",
   "dryRun": false,
   "projectVersion": "0.14.0-SNAPSHOT",
   "policy": {
@@ -41,6 +41,10 @@
     "jdk": {
       "ltsOnly": true,
       "scanImages": true
+    },
+    "containerImages": {
+      "scanImages": true,
+      "images": []
     },
     "hold": [],
     "groups": []
@@ -388,7 +392,7 @@
       ],
       "own": false,
       "group": null,
-      "newest": "1.6.7"
+      "newest": "1.6.8"
     },
     {
       "ecosystem": "maven",
@@ -404,10 +408,28 @@
       "newest": "3.6.2"
     }
   ],
-  "updates": [],
+  "updates": [
+    {
+      "ecosystem": "maven",
+      "name": "logback.version",
+      "where": "sliceworkz-eventstore-benchmark/pom.xml",
+      "current": "1.6.7",
+      "kind": "property",
+      "artifacts": [
+        "ch.qos.logback:logback-classic"
+      ],
+      "own": false,
+      "group": null,
+      "level": "patch",
+      "target": "1.6.8",
+      "outcome": "held-back",
+      "eligibleFrom": "2026-11-20T11:14:55+00:00",
+      "reason": "cooldown"
+    }
+  ],
   "batches": [],
   "pullRequests": [],
-  "pullRequestsReadAt": "2026-11-19T08:51:56+00:00",
+  "pullRequestsReadAt": "2026-11-19T14:28:52+00:00",
   "images": [],
   "closedPullRequests": [],
   "deletedBranches": [],

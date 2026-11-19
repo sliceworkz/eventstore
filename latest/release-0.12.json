@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "runAt": "2026-11-18T08:59:26+01:00",
+  "runAt": "2026-11-19T09:00:43+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "release/0.12",
   "commit": "08d0d06889281049f4eb5aa0f87a2188c9617d1f",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/44263127269",
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/44483971155",
   "dryRun": false,
   "projectVersion": "0.12.3-SNAPSHOT",
   "policy": {
@@ -38,6 +38,10 @@
       "maven"
     ],
     "ownLibraryCooldownDays": 0,
+    "jdk": {
+      "ltsOnly": true,
+      "scanImages": true
+    },
     "hold": [],
     "groups": []
   },
@@ -69,6 +73,7 @@
       "sliceworkz-eventstore-testing-0.12.2.cdx.json"
     ],
     "reason": null,
+    "images": [],
     "sboms": [
       "sliceworkz-eventstore-0.12.2",
       "sliceworkz-eventstore-testing-0.12.2"
@@ -445,13 +450,14 @@
   "updates": [],
   "batches": [],
   "pullRequests": [],
+  "images": [],
   "closedPullRequests": [],
   "deletedBranches": [],
   "declined": [],
   "notes": [],
   "vulnerabilities": {
     "grype": "v0.121.0",
-    "dbBuilt": "2026-11-18T06:21:08Z",
+    "dbBuilt": "2026-11-19T06:23:17Z",
     "sbomOrigin": "saved by the previous run (branch head unchanged)",
     "sboms": [
       "maven"

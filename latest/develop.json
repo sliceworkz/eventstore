@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "runAt": "2026-11-20T09:36:18+01:00",
+  "runAt": "2026-11-20T18:29:56+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "develop",
-  "commit": "a40d9dc3e89ede8dbba77950263f44ad60ff4696",
+  "commit": "3f9202be050e6bdc7c8220a2449d96ef2e1afd2b",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/44703828967",
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/44783796091",
   "dryRun": false,
   "projectVersion": "0.14.0-SNAPSHOT",
   "policy": {
@@ -422,14 +422,42 @@
       "group": null,
       "level": "patch",
       "target": "1.6.8",
-      "outcome": "held-back",
-      "eligibleFrom": "2026-11-20T11:14:55+00:00",
-      "reason": "cooldown"
+      "action": "merge",
+      "batch": "auto",
+      "published": "2026-11-19",
+      "outcome": "planned"
     }
   ],
-  "batches": [],
+  "batches": [
+    {
+      "key": "auto",
+      "branch": "deps/develop/auto",
+      "action": "merge",
+      "level": "merge",
+      "transitive": false,
+      "commit": "f918e94ce90982f92ff75ed792f9a8904ff80309",
+      "error": null,
+      "outcome": "pr-opened",
+      "pr": 290,
+      "changes": [
+        {
+          "ecosystem": "maven",
+          "name": "logback.version",
+          "where": "sliceworkz-eventstore-benchmark/pom.xml",
+          "level": "patch",
+          "from": "1.6.7",
+          "to": "1.6.8",
+          "applied": true,
+          "error": null,
+          "follows": null
+        }
+      ],
+      "lockfileChanges": [],
+      "mergedAt": "2026-11-20T17:40:27Z"
+    }
+  ],
   "pullRequests": [],
-  "pullRequestsReadAt": "2026-11-20T08:37:46+00:00",
+  "pullRequestsReadAt": "2026-11-20T17:40:38+00:00",
   "images": [],
   "closedPullRequests": [],
   "deletedBranches": [],
@@ -438,7 +466,7 @@
   "vulnerabilities": {
     "grype": "v0.121.0",
     "dbBuilt": "2026-11-20T06:21:00Z",
-    "sbomOrigin": "ci-artifact (run 44485372316)",
+    "sbomOrigin": "ci-artifact (run 44709643798)",
     "sboms": [
       "library",
       "test-kit"

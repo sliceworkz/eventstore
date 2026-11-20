@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "runAt": "2026-11-20T18:29:56+01:00",
+  "runAt": "2026-11-20T19:39:10+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "develop",
-  "commit": "3f9202be050e6bdc7c8220a2449d96ef2e1afd2b",
+  "commit": "9f5e468f91b0721b6b719ae288eaf3b44f10cb1e",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/44783796091",
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/44794723675",
   "dryRun": false,
   "projectVersion": "0.14.0-SNAPSHOT",
   "policy": {
@@ -385,7 +385,7 @@
       "ecosystem": "maven",
       "name": "logback.version",
       "where": "sliceworkz-eventstore-benchmark/pom.xml",
-      "current": "1.6.7",
+      "current": "1.6.8",
       "kind": "property",
       "artifacts": [
         "ch.qos.logback:logback-classic"
@@ -408,56 +408,10 @@
       "newest": "3.6.2"
     }
   ],
-  "updates": [
-    {
-      "ecosystem": "maven",
-      "name": "logback.version",
-      "where": "sliceworkz-eventstore-benchmark/pom.xml",
-      "current": "1.6.7",
-      "kind": "property",
-      "artifacts": [
-        "ch.qos.logback:logback-classic"
-      ],
-      "own": false,
-      "group": null,
-      "level": "patch",
-      "target": "1.6.8",
-      "action": "merge",
-      "batch": "auto",
-      "published": "2026-11-19",
-      "outcome": "planned"
-    }
-  ],
-  "batches": [
-    {
-      "key": "auto",
-      "branch": "deps/develop/auto",
-      "action": "merge",
-      "level": "merge",
-      "transitive": false,
-      "commit": "f918e94ce90982f92ff75ed792f9a8904ff80309",
-      "error": null,
-      "outcome": "pr-opened",
-      "pr": 290,
-      "changes": [
-        {
-          "ecosystem": "maven",
-          "name": "logback.version",
-          "where": "sliceworkz-eventstore-benchmark/pom.xml",
-          "level": "patch",
-          "from": "1.6.7",
-          "to": "1.6.8",
-          "applied": true,
-          "error": null,
-          "follows": null
-        }
-      ],
-      "lockfileChanges": [],
-      "mergedAt": "2026-11-20T17:40:27Z"
-    }
-  ],
+  "updates": [],
+  "batches": [],
   "pullRequests": [],
-  "pullRequestsReadAt": "2026-11-20T17:40:38+00:00",
+  "pullRequestsReadAt": "2026-11-20T18:40:19+00:00",
   "images": [],
   "closedPullRequests": [],
   "deletedBranches": [],
@@ -466,7 +420,7 @@
   "vulnerabilities": {
     "grype": "v0.121.0",
     "dbBuilt": "2026-11-20T06:21:00Z",
-    "sbomOrigin": "ci-artifact (run 44709643798)",
+    "sbomOrigin": "ci-artifact (run 44785544615)",
     "sboms": [
       "library",
       "test-kit"

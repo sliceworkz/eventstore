@@ -38,6 +38,7 @@ That is the whole idea. The rest of this library is what it takes to run it in p
 | **Three backends** | PostgreSQL 16+ for production, in-memory for tests, and in-memory persisted to JSON files for local development that survives a restart |
 | **Projections** | `Projector` replays a query into a read model in batches, resumes from a bookmark, keeps running on new appends, and reports its lag |
 | **Schema evolution** | `@LegacyEvent` upcasters, chained version by version; `@EventName` to rename a class without touching history |
+| **Self-tagging events** | Optionally, an event states its own tags from its payload and the tags it requires, so every stored event carries the tags your consistency boundaries rely on |
 | **Idempotent appends** | Per-event idempotency keys, so a retried command stores nothing twice |
 | **Personal data** | Crypto-shredding: a `Shreddable<T>` field is encrypted per data subject, and erasing the subject destroys the key — the event log is never rewritten |
 | **Operations** | Health reporting, an observability SPI you bind to Micrometer, OpenTelemetry or anything else, leases for leader election, and an importer for moving or archiving events between stores |
@@ -233,6 +234,9 @@ legacy events behind it, and a misdeclared chain fails when the stream is opened
 
 ## Events that state their own tags
 
+Passing tags with each append is all DCB needs. Optionally, an event can also state its own tags, and
+the tags it must carry, so a forgotten tag is refused rather than silently missed by a consistency boundary:
+
 ```java
 record MoneyTransferred ( String transferId, String from, String to, long amount ) implements BankEvent, Tagged {
     public Tags eventTags ( ) {
@@ -249,7 +253,8 @@ stream.append(Event.of(new MoneyTransferred("t1", "A", "B", 100), Tags.of("chann
 
 The event is stored with its own tags merged into the ones passed, and an append whose tags do not meet
 the event's requirements is refused whole. Tags are stored with the event: events already stored keep
-theirs.
+theirs. Event types that do not implement `Tagged` are appended exactly as before. See
+[Events That State Their Own Tags](https://sliceworkz.github.io/posts/eventstore-appending-events/#events-that-state-their-own-tags).
 
 ## Idempotent appends
 

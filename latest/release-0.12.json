@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "runAt": "2026-11-20T18:29:57+01:00",
+  "runAt": "2026-11-20T19:39:10+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "release/0.12",
-  "commit": "08d0d06889281049f4eb5aa0f87a2188c9617d1f",
+  "commit": "88fe6070f303b75f3b7a8b90a9a128df807d9a15",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/44783796091",
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/44794723675",
   "dryRun": false,
   "projectVersion": "0.12.3-SNAPSHOT",
   "policy": {
@@ -53,6 +53,10 @@
     "lastTag": "v0.12.2",
     "tagDate": "2026-11-08T20:02:49Z",
     "dependencyUpdates": [
+      {
+        "commit": "88fe6070f303b75f3b7a8b90a9a128df807d9a15",
+        "subject": "Dependency updates (#292)"
+      },
       {
         "commit": "08d0d06889281049f4eb5aa0f87a2188c9617d1f",
         "subject": "Dependency updates (#285)"
@@ -427,7 +431,7 @@
       "ecosystem": "maven",
       "name": "logback.version",
       "where": "sliceworkz-eventstore-benchmark/pom.xml",
-      "current": "1.6.7",
+      "current": "1.6.8",
       "kind": "property",
       "artifacts": [
         "ch.qos.logback:logback-classic"
@@ -450,56 +454,10 @@
       "newest": "3.6.2"
     }
   ],
-  "updates": [
-    {
-      "ecosystem": "maven",
-      "name": "logback.version",
-      "where": "sliceworkz-eventstore-benchmark/pom.xml",
-      "current": "1.6.7",
-      "kind": "property",
-      "artifacts": [
-        "ch.qos.logback:logback-classic"
-      ],
-      "own": false,
-      "group": null,
-      "level": "patch",
-      "target": "1.6.8",
-      "action": "merge",
-      "batch": "auto",
-      "published": "2026-11-19",
-      "outcome": "planned"
-    }
-  ],
-  "batches": [
-    {
-      "key": "auto",
-      "branch": "deps/release/0.12/auto",
-      "action": "merge",
-      "level": "merge",
-      "transitive": false,
-      "commit": "3d31ea167f7b4cf080673df59103aa9abc40723e",
-      "error": null,
-      "outcome": "pr-opened",
-      "pr": 292,
-      "changes": [
-        {
-          "ecosystem": "maven",
-          "name": "logback.version",
-          "where": "sliceworkz-eventstore-benchmark/pom.xml",
-          "level": "patch",
-          "from": "1.6.7",
-          "to": "1.6.8",
-          "applied": true,
-          "error": null,
-          "follows": null
-        }
-      ],
-      "lockfileChanges": [],
-      "mergedAt": "2026-11-20T17:38:46Z"
-    }
-  ],
+  "updates": [],
+  "batches": [],
   "pullRequests": [],
-  "pullRequestsReadAt": "2026-11-20T17:39:01+00:00",
+  "pullRequestsReadAt": "2026-11-20T18:41:59+00:00",
   "images": [],
   "closedPullRequests": [],
   "deletedBranches": [],
@@ -508,7 +466,7 @@
   "vulnerabilities": {
     "grype": "v0.121.0",
     "dbBuilt": "2026-11-20T06:21:00Z",
-    "sbomOrigin": "saved by the previous run (branch head unchanged)",
+    "sbomOrigin": "built by this run",
     "sboms": [
       "maven"
     ],

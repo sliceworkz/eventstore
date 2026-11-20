@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "runAt": "2026-11-19T15:27:23+01:00",
+  "runAt": "2026-11-20T09:36:18+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "develop",
   "commit": "a40d9dc3e89ede8dbba77950263f44ad60ff4696",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/44543858130",
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/44703828967",
   "dryRun": false,
   "projectVersion": "0.14.0-SNAPSHOT",
   "policy": {
@@ -429,7 +429,7 @@
   ],
   "batches": [],
   "pullRequests": [],
-  "pullRequestsReadAt": "2026-11-19T14:28:52+00:00",
+  "pullRequestsReadAt": "2026-11-20T08:37:46+00:00",
   "images": [],
   "closedPullRequests": [],
   "deletedBranches": [],
@@ -437,7 +437,7 @@
   "notes": [],
   "vulnerabilities": {
     "grype": "v0.121.0",
-    "dbBuilt": "2026-11-19T06:23:17Z",
+    "dbBuilt": "2026-11-20T06:21:00Z",
     "sbomOrigin": "ci-artifact (run 44485372316)",
     "sboms": [
       "library",

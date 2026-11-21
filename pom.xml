@@ -136,7 +136,7 @@
 						A release must not depend on a SNAPSHOT: what it resolves to changes after the
 						release, so the released artifacts could no longer be rebuilt or trusted.
 						onlyWhenRelease keeps it silent on a -SNAPSHOT version (develop, feature and
-						release branches), so it only bites once create-release-tag-and-bump has set the
+						release branches), so it only bites once Release 2 · Tag has set the
 						release version, and that workflow checks it before the tag is created.
 					-->
 					<execution>

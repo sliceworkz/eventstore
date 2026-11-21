@@ -1,4 +1,4 @@
-[![ci build - mvn package](https://github.com/sliceworkz/eventstore/actions/workflows/ci.yaml/badge.svg)](https://github.com/sliceworkz/eventstore/actions/workflows/ci.yaml)
+[![CI](https://github.com/sliceworkz/eventstore/actions/workflows/ci.yaml/badge.svg)](https://github.com/sliceworkz/eventstore/actions/workflows/ci.yaml)
 [![Status: Release Candidate](https://img.shields.io/badge/status-release%20candidate-yellowgreen)](#project-status)
 [![Maven Central](https://img.shields.io/maven-central/v/org.sliceworkz/sliceworkz-eventstore-bom)](https://central.sonatype.com/search?q=g:org.sliceworkz)
 [![Quickstart](https://img.shields.io/badge/Quickstart%20Guide-blue)](https://sliceworkz.github.io/posts/eventstore-quickstart/)

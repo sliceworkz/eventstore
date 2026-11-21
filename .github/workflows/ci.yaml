@@ -1,6 +1,6 @@
-name: ci build - mvn package
+name: CI
 
-run-name: "ci build - mvn package [${{ github.ref_name }}]"
+run-name: "CI · ${{ github.ref_name }}"
 
 # Builds and tests every push and pull request. A push to develop also deploys the SNAPSHOT to the
 # sliceworkz cloudrepo, so what downstream builds resolve is always what develop holds. To deploy

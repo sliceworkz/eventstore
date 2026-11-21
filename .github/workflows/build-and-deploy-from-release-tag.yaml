@@ -1,6 +1,6 @@
-name: build-and-deploy-from-release-tag
+name: "Release 3 · Publish"
 
-run-name: "build-and-deploy-from-release-tag [${{ github.ref_name }}]"
+run-name: "Publish ${{ github.ref_name }}"
 
 on:
   push:
@@ -143,7 +143,7 @@ jobs:
           sbom-path: sbom/sliceworkz-eventstore-testing-${{ steps.get_version.outputs.VERSION }}.cdx.json
           subject-path: sliceworkz-eventstore-testing/target/sliceworkz-eventstore-testing-${{ steps.get_version.outputs.VERSION }}.jar
 
-      # Report only: the gate ran before the tag was created (create-release-tag-and-bump), and a release
+      # Report only: the gate ran before the tag was created (Release 2 · Tag), and a release
       # that is already tagged is not stopped here. The findings are in the job summary and the
       # vulnerability-reports artifact.
       - name: Report known vulnerabilities in the release

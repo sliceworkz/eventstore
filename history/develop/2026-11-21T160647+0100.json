@@ -1,60 +1,69 @@
 {
   "schema": 1,
-  "runAt": "2026-11-09T14:00:51+01:00",
+  "runAt": "2026-11-21T16:06:47+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
-  "branch": "release/0.12",
-  "commit": "b4c407940d70ba362a7e2b63cb853e4cb818f9ac",
+  "branch": "develop",
+  "commit": "f63297b1ff810c2b8cd47f601a8d92f3f9059ab7",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/42621700987",
-  "dryRun": true,
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/44917395742",
+  "dryRun": false,
+  "projectVersion": "0.15.0-SNAPSHOT",
   "policy": {
-    "pattern": "release/*",
-    "schedule": "50 0 * * *",
-    "ownLibraries": "include",
+    "pattern": "develop",
+    "schedule": "20 1 * * *",
+    "ownLibraries": "follow",
     "patch": {
       "action": "merge",
       "cooldownDays": 1
     },
     "minor": {
-      "action": "pr",
+      "action": "merge",
       "cooldownDays": 1
     },
     "major": {
-      "action": "mention",
+      "action": "merge-each",
       "cooldownDays": 1
     },
     "transitive": {
-      "action": "pr",
+      "action": "merge",
       "cooldownDays": 1
+    },
+    "own": {
+      "action": "merge",
+      "cooldownDays": 0
     },
     "filter": "default+0",
     "ecosystems": [
       "maven"
     ],
     "ownLibraryCooldownDays": 0,
+    "jdk": {
+      "ltsOnly": true,
+      "scanImages": true
+    },
+    "containerImages": {
+      "scanImages": true,
+      "images": []
+    },
     "hold": [],
     "groups": []
   },
-  "release": {
-    "lastTag": "v0.12.2",
-    "tagDate": "2026-11-08T20:02:49Z",
-    "dependencyUpdates": [],
-    "otherChanges": 0
-  },
+  "release": null,
+  "releaseScan": null,
   "inventory": [
     {
       "ecosystem": "maven",
       "name": "maven.maven-versions-plugin.version",
       "where": "pom.xml",
-      "current": "2.23.0",
+      "current": "2.25.2",
       "kind": "property",
       "artifacts": [
         "org.codehaus.mojo:versions-maven-plugin"
       ],
       "own": false,
       "group": null,
-      "newest": "2.24.0"
+      "newest": "2.25.2"
     },
     {
       "ecosystem": "maven",
@@ -86,7 +95,7 @@
       "ecosystem": "maven",
       "name": "maven.flatten-plugin.version",
       "where": "pom.xml",
-      "current": "1.8.0",
+      "current": "1.9.0",
       "kind": "property",
       "artifacts": [
         "org.codehaus.mojo:flatten-maven-plugin"
@@ -165,7 +174,7 @@
       "ecosystem": "maven",
       "name": "jackson.version",
       "where": "sliceworkz-eventstore-parent-pom/pom.xml",
-      "current": "3.2.4",
+      "current": "3.3.0",
       "kind": "property",
       "artifacts": [
         "tools.jackson.core:jackson-databind",
@@ -179,7 +188,7 @@
       "ecosystem": "maven",
       "name": "jackson-annotations.version",
       "where": "sliceworkz-eventstore-parent-pom/pom.xml",
-      "current": "2.22",
+      "current": "2.23",
       "kind": "property",
       "artifacts": [
         "com.fasterxml.jackson.core:jackson-annotations"
@@ -376,14 +385,14 @@
       "ecosystem": "maven",
       "name": "logback.version",
       "where": "sliceworkz-eventstore-benchmark/pom.xml",
-      "current": "1.6.6",
+      "current": "1.6.8",
       "kind": "property",
       "artifacts": [
         "ch.qos.logback:logback-classic"
       ],
       "own": false,
       "group": null,
-      "newest": "1.6.6"
+      "newest": "1.6.8"
     },
     {
       "ecosystem": "maven",
@@ -399,148 +408,22 @@
       "newest": "3.6.2"
     }
   ],
-  "updates": [
-    {
-      "ecosystem": "maven",
-      "name": "maven.maven-versions-plugin.version",
-      "where": "pom.xml",
-      "current": "2.23.0",
-      "kind": "property",
-      "artifacts": [
-        "org.codehaus.mojo:versions-maven-plugin"
-      ],
-      "own": false,
-      "group": null,
-      "level": "minor",
-      "target": "2.24.0",
-      "action": "pr",
-      "batch": "minor",
-      "published": "2026-11-06",
-      "outcome": "planned"
-    },
-    {
-      "ecosystem": "maven",
-      "name": "maven.flatten-plugin.version",
-      "where": "pom.xml",
-      "current": "1.8.0",
-      "kind": "property",
-      "artifacts": [
-        "org.codehaus.mojo:flatten-maven-plugin"
-      ],
-      "own": false,
-      "group": null,
-      "level": "minor",
-      "target": "1.9.0",
-      "action": "pr",
-      "batch": "minor",
-      "published": "2026-11-06",
-      "outcome": "planned"
-    },
-    {
-      "ecosystem": "maven",
-      "name": "jackson.version",
-      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
-      "current": "3.2.4",
-      "kind": "property",
-      "artifacts": [
-        "tools.jackson.core:jackson-databind",
-        "tools.jackson.dataformat:jackson-dataformat-yaml"
-      ],
-      "own": false,
-      "group": null,
-      "level": "minor",
-      "target": "3.3.0",
-      "action": "pr",
-      "batch": "minor",
-      "published": "2026-11-08",
-      "outcome": "planned"
-    },
-    {
-      "ecosystem": "maven",
-      "name": "jackson-annotations.version",
-      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
-      "current": "2.22",
-      "kind": "property",
-      "artifacts": [
-        "com.fasterxml.jackson.core:jackson-annotations"
-      ],
-      "own": false,
-      "group": null,
-      "level": "minor",
-      "target": "2.23",
-      "action": "pr",
-      "batch": "minor",
-      "published": "2026-11-07",
-      "outcome": "planned"
-    }
-  ],
-  "batches": [
-    {
-      "key": "minor",
-      "branch": "deps/release/0.12/minor",
-      "action": "pr",
-      "level": "minor",
-      "transitive": false,
-      "commit": "25a9c19fbd22d1342a43d9447d2d3928c14f60bc",
-      "error": null,
-      "outcome": "dry-run: would open a PR",
-      "pr": null,
-      "changes": [
-        {
-          "ecosystem": "maven",
-          "name": "maven.maven-versions-plugin.version",
-          "where": "pom.xml",
-          "level": "minor",
-          "from": "2.23.0",
-          "to": "2.24.0",
-          "applied": true,
-          "error": null
-        },
-        {
-          "ecosystem": "maven",
-          "name": "maven.flatten-plugin.version",
-          "where": "pom.xml",
-          "level": "minor",
-          "from": "1.8.0",
-          "to": "1.9.0",
-          "applied": true,
-          "error": null
-        },
-        {
-          "ecosystem": "maven",
-          "name": "jackson.version",
-          "where": "sliceworkz-eventstore-parent-pom/pom.xml",
-          "level": "minor",
-          "from": "3.2.4",
-          "to": "3.3.0",
-          "applied": true,
-          "error": null
-        },
-        {
-          "ecosystem": "maven",
-          "name": "jackson-annotations.version",
-          "where": "sliceworkz-eventstore-parent-pom/pom.xml",
-          "level": "minor",
-          "from": "2.22",
-          "to": "2.23",
-          "applied": true,
-          "error": null
-        }
-      ],
-      "lockfileChanges": []
-    }
-  ],
+  "updates": [],
+  "batches": [],
   "pullRequests": [],
+  "pullRequestsReadAt": "2026-11-21T15:07:59+00:00",
+  "images": [],
   "closedPullRequests": [],
   "deletedBranches": [],
   "declined": [],
   "notes": [],
   "vulnerabilities": {
     "grype": "v0.121.0",
-    "dbBuilt": "2026-11-08T06:19:57Z",
-    "sbomOrigin": "built by this run",
+    "dbBuilt": "2026-11-21T06:20:06Z",
+    "sbomOrigin": "ci-artifact (run 44891066539)",
     "sboms": [
-      "maven"
+      "library",
+      "test-kit"
     ],
     "notScanned": [],
     "findings": [],

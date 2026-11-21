@@ -1,17 +1,18 @@
-name: prepare-release-branch - create release branch and bump develop
+name: "▶ Release 1 · Branch"
 
-run-name: "prepare-release-branch - create release branch and bump develop"
+run-name: "Release branch (${{ inputs.bump_type }}) by @${{ github.actor }}"
 
 on:
   workflow_dispatch:
     inputs:
       bump_type:
-        description: 'Version bump type'
+        description: 'Creates release/X.Y from develop at its current version and bumps develop to the next minor (or major) -SNAPSHOT. Start Release 2 · Tag on release/X.Y to release it.'
         required: true
         type: choice
+        default: minor
         options:
-          - major
           - minor
+          - major
 
 jobs:
   version-bump:

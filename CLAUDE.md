@@ -1743,7 +1743,7 @@ that bind everywhere:
 
 ## Known vulnerabilities (Grype)
 
-CI, `create-release-tag-and-bump` (before it tags) and the release workflow scan the SBOMs listed in
+CI, *Release 2 · Tag* (before it tags) and the release workflow scan the SBOMs listed in
 `.github/vulnerability-scan/targets` with `.github/vulnerability-scan/scan.sh`. A High or Critical vulnerability
 with a fix available fails CI and stops a release before its version is set; the release workflow only
 reports. Decisions on findings are statements in `.vex/openvex.json` (OpenVEX): `not_affected` with a

@@ -1,6 +1,6 @@
-name: rescan released versions
+name: "Daily · Rescan releases"
 
-run-name: "rescan released versions"
+run-name: "Rescan releases"
 
 # Every day, the latest release of each release/* line is scanned again, against that day's vulnerability
 # data: a vulnerability published after a release is found here, where the build-time scan cannot see it.

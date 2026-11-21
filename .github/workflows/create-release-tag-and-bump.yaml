@@ -1,6 +1,6 @@
-name: create-release-tag-and-bump - on release/<major>.<micro>
+name: "▶ Release 2 · Tag"
 
-run-name: "create-release-tag-and-bump on [${{ github.ref_name }}]"
+run-name: "Release tag on ${{ github.ref_name }}"
 
 on:
   workflow_dispatch:
@@ -85,7 +85,7 @@ jobs:
       
       - name: Update workflow run name
         run: |
-          echo "::notice title=create-release-tag-and-bump - release: v$RELEASE_VERSION"
+          echo "::notice title=Release 2 · Tag::Releasing v$RELEASE_VERSION"
       
       # The vulnerability gate, before anything is changed: a release with a known High or Critical
       # vulnerability that has a fix stops here, with no commit, tag or version bump, so its version

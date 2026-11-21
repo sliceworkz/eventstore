@@ -1,4 +1,4 @@
-name: auto-assign-issues
+name: Auto-assign
 
 # Assigns every new pull request and issue to the maintainer, except the pull requests the nightly dependency
 # pipeline (sliceworkz/software-factory) opens to be merged automatically: those are batch "auto", on the branch

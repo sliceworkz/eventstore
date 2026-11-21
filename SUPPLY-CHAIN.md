@@ -49,9 +49,9 @@ what it depends on outside the code, and why it is built the way it is.
   │  build   │ ──────────▶ │  SBOM(s) │ ──────────────────────────────────────▶ High/Critical with a fix?
   └──────────┘             └──────────┘                                           yes: the build stops
         │                                                                          no:  it goes on
-        ▼  a release (create-release-tag-and-bump, then build-and-deploy-from-release-tag)
+        ▼  a release (Release 2 · Tag, then Release 3 · Publish)
   published: jars, with the SBOM on the GitHub release
-        │  every morning (rescan released versions)
+        │  every morning (Daily · Rescan releases)
         ▼
   the latest release of each release/X.Y line, scanned again with that day's data
         │
@@ -84,9 +84,9 @@ also says how it gets in, read from the SBOM's dependency graph: a direct depend
 the chain from the dependency a module declares, the one to change or to pin the package against. The daily
 re-scan's issues (below) say the same. An image has no dependency graph, so its findings name the package only.
 
-**3. A release is scanned before it is tagged.** `create-release-tag-and-bump` builds without tests and scans
+**3. A release is scanned before it is tagged.** *Release 2 · Tag* builds without tests and scans
 **before** it sets the release version, commits and tags. A release the scan stops has changed nothing: no tag,
-no commit, the version number is not used up. Then `build-and-deploy-from-release-tag` builds the tag,
+no commit, the version number is not used up. Then *Release 3 · Publish* builds the tag,
 publishes, and scans what it published again, for the record only (it cannot stop a release that is already
 tagged).
 
@@ -198,14 +198,14 @@ What this depends on that is not in the repository, so it is easily forgotten:
 | `CLOUDREPO_USERNAME`, `CLOUDREPO_PASSWORD` | repository secrets (Actions) | deploying snapshots to CloudRepo |
 | The GitHub App **sliceworkz-software-factory** installed on this repository, and `FACTORY_APP_CLIENT_ID` (variable) and `FACTORY_APP_PRIVATE_KEY` (secret) shared with `sliceworkz/software-factory` | *sliceworkz → Settings → GitHub Apps*, *Secrets and variables → Actions* | the nightly dependency pipeline, run from `sliceworkz/software-factory`, acting here as the App, whose pull requests start CI |
 | *Allow auto-merge*, and the ruleset requiring CI on `develop` and `release/*` | *Settings → General*, *Settings → Rules* | the pipeline's patch and minor PRs merging once CI is green, and not before |
-| The GitHub App **sliceworkz-software-factory** installed on the repository, the organization variable `FACTORY_APP_CLIENT_ID` (the App's Client ID) and secret `FACTORY_APP_PRIVATE_KEY` shared with it, and the App on the bypass list of the ruleset on `develop` and `release/*` | *sliceworkz → Settings → GitHub Apps*, *Secrets and variables → Actions*, *Settings → Rules → Rulesets* | `create-release-tag-and-bump` and `prepare-release-branch` push as the App: a push made with the workflow's own token would not start the release workflow on the tag nor CI on the branch, and a personal access token would act as a person. The token is made per run, lasts an hour and is handed only to the steps that push |
+| The GitHub App **sliceworkz-software-factory** installed on the repository, the organization variable `FACTORY_APP_CLIENT_ID` (the App's Client ID) and secret `FACTORY_APP_PRIVATE_KEY` shared with it, and the App on the bypass list of the ruleset on `develop` and `release/*` | *sliceworkz → Settings → GitHub Apps*, *Secrets and variables → Actions*, *Settings → Rules → Rulesets* | *Release 2 · Tag* and *Release 1 · Branch* push as the App: a push made with the workflow's own token would not start the release workflow on the tag nor CI on the branch, and a personal access token would act as a person. The token is made per run, lasts an hour and is handed only to the steps that push |
 | Workflow permissions | each workflow declares its own (`permissions:`); the re-scan needs `issues: write` | the re-scan opening and closing issues |
 | Private vulnerability reporting | *Settings → Code security* | lets someone report a vulnerability privately (SECURITY.md) |
 | Dependabot alerts and security updates | *Settings → Code security* | security updates outside the weekly schedule |
 
 GitHub suspends the scheduled workflows of a **public** repository after 60 days without a commit, and sends an
-e-mail when it does; the daily re-scan then stops until it is switched on again (*Actions → rescan released
-versions → Enable workflow*).
+e-mail when it does; the daily re-scan then stops until it is switched on again (*Actions → Daily · Rescan releases →
+Enable workflow*).
 
 ## Links with the other repositories
 
@@ -247,7 +247,7 @@ versions → Enable workflow*).
 
 - **Run the scan locally**, after `mvn package`, with Grype installed (`brew install grype`): `.github/vulnerability-scan/scan.sh project gate`.
   The first run downloads the database.
-- **See the daily re-scan**: *Actions → rescan released versions*; its summary lists every release line, and the
+- **See the daily re-scan**: *Actions → Daily · Rescan releases*; its summary lists every release line, and the
   `rescan-reports` artifact holds the reports. *Run workflow* starts one by hand.
 - **See the open findings**: the issues labelled `vulnerability`.
 - **Record a decision**, or release anyway: SECURITY-RELEASES.md.

@@ -12,9 +12,9 @@ The words used here, and how the SBOMs, the scans and the dependency updates fit
 | Workflow | What it does | Stops the build? |
 |---|---|---|
 | CI (every push and pull request) | scans the SBOMs the build writes | yes, on a High or Critical vulnerability with a fix available |
-| `create-release-tag-and-bump` | builds without tests and scans, **before** the release version is set and tagged | yes, and then nothing has changed: no commit, no tag, no version bump, so the version number is not lost |
-| `build-and-deploy-from-release-tag` | scans what is released (and, for an image, the image) | no: it only reports, since the release is tagged by then |
-| `rescan released versions` (daily) | scans the latest release of each `release/*` line again, against that day's data | no: it opens an issue (below) |
+| *Release 2 · Tag* | builds without tests and scans, **before** the release version is set and tagged | yes, and then nothing has changed: no commit, no tag, no version bump, so the version number is not lost |
+| *Release 3 · Publish* | scans what is released (and, for an image, the image) | no: it only reports, since the release is tagged by then |
+| *Daily · Rescan releases* | scans the latest release of each `release/*` line again, against that day's data | no: it opens an issue (below) |
 
 Only a vulnerability that is **High or Critical** and **has a fixed version** stops a build. Lower severities
 and vulnerabilities nobody has fixed yet are reported, never blocking.
@@ -94,7 +94,7 @@ done about it, and the scan lets it through.
 3. **Commit it to the release branch** (`release/<major>.<minor>`), through a pull request like any change,
    with a commit message naming the vulnerability and the reason for releasing anyway. Take the same
    statement to `develop` too, as long as `develop` still has that package version.
-4. **Run `create-release-tag-and-bump` again.** The scan now lists the finding under *covered by a statement
+4. **Run *Release 2 · Tag* again.** The scan now lists the finding under *covered by a statement
    in the VEX file* and lets the release through. The release has the version it would have had.
 5. **Fix it in the next release** (A). Then remove the statement from the VEX file, or change it to
    `"status": "fixed"`. A statement only ever covers the package version it names, so it never hides the same
@@ -113,7 +113,7 @@ done about it, and the scan lets it through.
 ## When the daily re-scan finds one
 
 A vulnerability published after a release is not something the build could have stopped. Every morning the
-workflow `rescan released versions` takes the latest release of each `release/X.Y` branch (its highest tag
+workflow *Daily · Rescan releases* takes the latest release of each `release/X.Y` branch (its highest tag
 `vX.Y.N`), downloads the SBOMs attached to its GitHub release,
 and scans them against that day's vulnerability data, with the VEX file **at the head of `release/X.Y`**. A
 release with a blocking finding (the same rule as the build's) gets an issue, labelled `vulnerability`:
@@ -127,7 +127,7 @@ Deal with it on the release branch, with the same three choices as above:
   through a pull request to that branch. An older release branch may have no VEX file yet: copy the one on
   `develop` and empty its `statements`. Take a statement that still applies to `develop` there too.
 
-The next re-scan (or a run by hand: *Actions*, `rescan released versions`, *Run workflow*) closes the issue once
+The next re-scan (or a run by hand: *Actions*, *Daily · Rescan releases*, *Run workflow*) closes the issue once
 nothing blocking is left, and also once the release is no longer the latest of its line, since its successor is
 scanned instead. Releasing a fix therefore closes it.
 

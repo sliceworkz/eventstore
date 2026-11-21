@@ -8,6 +8,10 @@ ecosystems: [maven]
 # true: decide and report only, open no PRs and no issue
 dryRun: false
 
+# who a pipeline PR that waits for a person is assigned to (a pr PR, or one whose auto-merge was not switched on);
+# a PR that merges by itself is assigned to nobody
+assignees: [vanrogu]
+
 branches:
   develop:
     schedule: "20 1 * * *"
@@ -24,6 +28,6 @@ branches:
     patch:      { action: merge,   cooldownDays: 1 }
     minor:      { action: pr,      cooldownDays: 1 }
     major:      { action: mention, cooldownDays: 1 }
-    transitive: { action: pr,      cooldownDays: 1 }
+    transitive: { action: merge,   cooldownDays: 1 }  # the lockfile refresh rides in the auto-merged PR
 
 ownLibraryCooldownDays: 0

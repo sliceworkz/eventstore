@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "runAt": "2026-11-21T08:46:43+01:00",
+  "runAt": "2026-11-21T16:06:45+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "release/0.13",
   "commit": "1832c23069e0950724ba9125fc415380f662eeed",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/44881781187",
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/44917395742",
   "dryRun": false,
   "projectVersion": "0.13.1-SNAPSHOT",
   "policy": {
@@ -449,7 +449,7 @@
   "updates": [],
   "batches": [],
   "pullRequests": [],
-  "pullRequestsReadAt": "2026-11-21T07:48:32+00:00",
+  "pullRequestsReadAt": "2026-11-21T15:08:17+00:00",
   "images": [],
   "closedPullRequests": [],
   "deletedBranches": [],

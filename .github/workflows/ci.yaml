@@ -1,4 +1,4 @@
-name: CI
+name: "🔨 🤖 CI"
 
 run-name: "CI · ${{ github.ref_name }}"
 

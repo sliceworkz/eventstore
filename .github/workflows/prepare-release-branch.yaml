@@ -1,4 +1,4 @@
-name: "▶ Release 1 · Branch"
+name: "🚀 ▶️ Release 1 · Branch"
 
 run-name: "Release branch (${{ inputs.bump_type }}) by @${{ github.actor }}"
 

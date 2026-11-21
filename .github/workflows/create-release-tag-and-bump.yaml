@@ -1,4 +1,4 @@
-name: "▶ Release 2 · Tag"
+name: "🚀 ▶️ Release 2 · Tag"
 
 run-name: "Release tag on ${{ github.ref_name }}"
 

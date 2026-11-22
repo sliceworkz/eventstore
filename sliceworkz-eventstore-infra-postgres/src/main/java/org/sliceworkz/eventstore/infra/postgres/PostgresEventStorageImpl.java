@@ -647,6 +647,41 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 		return lockTimeout;
 	}
 
+	/** see {@link #appendPipelining(AppendPipelining)} */
+	private volatile AppendPipelining appendPipelining = AppendPipelining.OFF;
+
+	/** see {@link #appendTimingRecorder(AppendPipelining.Recorder)} */
+	private volatile AppendPipelining.Recorder appendTimingRecorder;
+
+	/**
+	 * <b>Experimental.</b> How many round trips a conditional append spends under its stream's lock; see
+	 * {@link AppendPipelining}. Set by the builder from {@link AppendPipelining#SYSTEM_PROPERTY}, and by
+	 * the package's tests.
+	 *
+	 * @param mode the mode; {@code null} restores {@link AppendPipelining#OFF}
+	 * @return this instance for method chaining
+	 */
+	PostgresEventStorageImpl appendPipelining ( AppendPipelining mode ) {
+		this.appendPipelining = mode == null ? AppendPipelining.OFF : mode;
+		return this;
+	}
+
+	/** @return how a conditional append is sent */
+	AppendPipelining appendPipelining ( ) {
+		return appendPipelining;
+	}
+
+	/**
+	 * <b>Experimental.</b> Told every conditional append that reaches the database, for the
+	 * experiment's benchmarks and tests; {@code null}, the default, times nothing.
+	 *
+	 * @return this instance for method chaining
+	 */
+	PostgresEventStorageImpl appendTimingRecorder ( AppendPipelining.Recorder recorder ) {
+		this.appendTimingRecorder = recorder;
+		return this;
+	}
+
 	/**
 	 * How long a monitoring connection may stay silent before its monitor asks the server whether it is
 	 * still there.
@@ -2667,6 +2702,17 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 
 			sqlBuilder.append("RETURNING event_position, event_timestamp, event_tx::text, event_id::text");
 
+			// experimental, see AppendPipelining: lock, INSERT and COMMIT in one round trip
+			if ( ! appendCriteria.isNone() && appendPipelining == AppendPipelining.SINGLE_ROUND_TRIP ) {
+				return appendInOneRoundTrip(appendCriteria, streamId, events, sqlBuilder.toString(), parameters, scanFromCursor);
+			}
+
+			// experimental, see AppendPipelining: timed only when a recorder is set, for the benchmarks
+			AppendPipelining.Recorder recorder = appendCriteria.isNone() ? null : appendTimingRecorder;
+			long appendStarted = recorder == null ? 0 : System.nanoTime();
+			long lockRequested = 0;
+			long lockHeld = 0;
+			boolean conflicted = false;
 
 			try ( Connection writeConnection = dataSource.getConnection()) {
 				writeConnection.setAutoCommit(false);
@@ -2682,7 +2728,9 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 						// check, which READ COMMITTED does not protect. Held until this transaction ends,
 						// and taken as its own statement so the INSERT's snapshot is taken after the
 						// previous holder committed. See appendLockKey.
+						lockRequested = recorder == null ? 0 : System.nanoTime();
 						acquireAdvisoryLock(writeConnection, ACQUIRE_APPEND_LOCK, appendLockKey(streamId));
+						lockHeld = recorder == null ? 0 : System.nanoTime();
 					}
 
 					// Set parameters
@@ -2713,6 +2761,7 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 
 						if ( storedEvents.size() != events.size() ) {
 							// Insert failed due to optimistic locking conflict
+							conflicted = true;
 							writeConnection.rollback();
 							throw new OptimisticLockingException(appendCriteria.eventFilter(), appendCriteria.expectedLastEventReference());
 						}
@@ -2741,6 +2790,11 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 					} else {
 						throw new EventStorageException("SQLException during append", e);
 					}
+				} finally {
+					if ( recorder != null && lockHeld != 0 ) {
+						long ended = System.nanoTime();
+						recorder.record(new AppendPipelining.Timing(lockHeld - lockRequested, ended - lockHeld, ended - appendStarted, conflicted));
+					}
 				}
 				
 			} catch (SQLException e) {
@@ -2750,6 +2804,109 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 		
 		return storedEvents;
 			
+	}
+
+	/**
+	 * <b>Experimental</b> ({@link AppendPipelining#SINGLE_ROUND_TRIP}): a conditional append as one
+	 * pipelined statement string — the lock (with its {@code SET LOCAL lock_timeout}), the
+	 * {@code INSERT} with its check, and {@code COMMIT} — so the lock is held for the work and the
+	 * commit, and no round trip.
+	 * <p>
+	 * pgjdbc writes the parts as one batch of extended-protocol messages behind one sync, and the server
+	 * runs them in order, each as its own statement: the {@code INSERT} fixes its snapshot after the lock
+	 * is granted, exactly as when the lock is a round trip of its own. The transaction is the one the
+	 * driver opens for {@code autoCommit=false} and the {@code COMMIT} in the batch ends it.
+	 * <p>
+	 * A conflict inserts nothing, so the batch commits an empty transaction, which releases the lock and
+	 * writes nothing. A statement that fails — the lock timing out, a unique violation — makes the server
+	 * skip the rest of the batch up to the sync, the {@code COMMIT} included, and the transaction is rolled
+	 * back here, after which a unique violation on the idempotency index is resolved exactly as on the
+	 * shipped path.
+	 */
+	private List<StoredEvent> appendInOneRoundTrip ( AppendCriteria appendCriteria, EventStreamId streamId,
+			List<EventToStore> events, String insertSql, List<Object> parameters, boolean scanFromCursor ) {
+		Duration timeout = lockTimeout;
+		String setTimeout = timeout.isZero() ? "" : "SET LOCAL lock_timeout = '%dms'; ".formatted(timeout.toMillis());
+		String sql = setTimeout + ACQUIRE_APPEND_LOCK + "; " + insertSql + "; COMMIT";
+		// the INSERT's result is the second result set: SET (when present) and COMMIT answer none
+		int insertResult = (setTimeout.isEmpty() ? 0 : 1) + 1;
+
+		AppendPipelining.Recorder recorder = appendTimingRecorder;
+		long started = recorder == null ? 0 : System.nanoTime();
+		boolean conflicted = false;
+		List<StoredEvent> storedEvents = new ArrayList<>(events.size());
+
+		try ( Connection writeConnection = dataSource.getConnection() ) {
+			writeConnection.setAutoCommit(false);
+			try ( PreparedStatement stmt = writeConnection.prepareStatement(sql) ) {
+				if ( !scanFromCursor ) {
+					disableServerPreparation(stmt);
+				}
+				stmt.setLong(1, appendLockKey(streamId));
+				for ( int i = 0; i < parameters.size(); i++ ) {
+					Object param = parameters.get(i);
+					if ( param instanceof String[] array ) {
+						stmt.setArray(i + 2, writeConnection.createArrayOf("text", array));
+					} else if ( param == null ) {
+						// typed, not left unspecified: once the driver server-prepares this multi-statement
+						// string, a parameter of unknown type costs a describe round trip before every execution
+						stmt.setNull(i + 2, java.sql.Types.VARCHAR);
+					} else {
+						stmt.setObject(i + 2, param);
+					}
+				}
+
+				stmt.execute();
+				for ( int i = 0; i < insertResult; i++ ) {
+					stmt.getMoreResults();
+				}
+				try ( ResultSet rs = stmt.getResultSet() ) {
+					if ( rs == null ) {
+						throw new IllegalStateException("the pipelined append returned no rows for its INSERT: " + sql);
+					}
+					Iterator<EventToStore> it = events.iterator();
+					while ( rs.next() ) {
+						long position = rs.getLong("event_position");
+						long tx = Long.parseUnsignedLong(rs.getString("event_tx"));
+						Instant timestamp = rs.getObject("event_timestamp", OffsetDateTime.class).toInstant();
+						EventId id = new EventId(rs.getString("event_id"));
+						EventReference reference = EventReference.of(id, position, tx);
+						storedEvents.add(it.next().positionAt(reference, timestamp));
+					}
+				}
+				// drain the COMMIT's answer, so a failure to commit is raised here and not lost
+				while ( stmt.getMoreResults() || stmt.getUpdateCount() != -1 ) {
+					// nothing to read
+				}
+
+				if ( storedEvents.size() != events.size() ) {
+					// the check found a relevant event: nothing was inserted, and the COMMIT ended an empty transaction
+					conflicted = true;
+					throw new OptimisticLockingException(appendCriteria.eventFilter(), appendCriteria.expectedLastEventReference());
+				}
+				return storedEvents;
+
+			} catch ( SQLException e ) {
+				try {
+					writeConnection.rollback();
+				} catch ( SQLException rollbackEx ) {
+					e.addSuppressed(rollbackEx);
+				}
+				if ( isIdempotencyKeyViolation(e) ) {
+					return deduplicatedOrConflicting(writeConnection, events, e);
+				} else if ( isLockTimeout(e) ) {
+					throw new EventStorageException(lockTimedOut("conditional append to " + streamId, "the stream's append lock"), e);
+				} else {
+					throw new EventStorageException("SQLException during append", e);
+				}
+			} finally {
+				if ( recorder != null ) {
+					recorder.record(new AppendPipelining.Timing(0, 0, System.nanoTime() - started, conflicted));
+				}
+			}
+		} catch ( SQLException e ) {
+			throw new EventStorageException("SQLException during append", e);
+		}
 	}
 
 	/**

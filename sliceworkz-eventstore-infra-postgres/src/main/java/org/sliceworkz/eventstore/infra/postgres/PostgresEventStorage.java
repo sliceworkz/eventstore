@@ -914,6 +914,13 @@ public interface PostgresEventStorage extends EventStorage {
 
 				result.lockTimeout(lockTimeout).notificationProbeInterval(notificationProbeInterval);
 
+				// experimental, off unless the system property selects it; see AppendPipelining
+				AppendPipelining appendPipelining = AppendPipelining.fromSystemProperty();
+				if ( appendPipelining != AppendPipelining.OFF ) {
+					LOGGER.info("storage {}: experimental append pipelining {} selected by {}", name, appendPipelining, AppendPipelining.SYSTEM_PROPERTY);
+				}
+				result.appendPipelining(appendPipelining);
+
 				// the setter folds the deprecated spelling into RECREATE, so this is every mode there is
 				switch ( databaseInitMode ) {
 					case NONE     -> { }

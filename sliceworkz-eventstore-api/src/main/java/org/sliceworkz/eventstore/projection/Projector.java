@@ -166,6 +166,11 @@ import org.sliceworkz.eventstore.stream.AppendListener;
  *       bookmark names no handled event resumes from the beginning, exactly as one without a bookmark —
  *       unless it was built to {@link Builder#resumeAfterReadPosition() resume after its read position},
  *       for a reader that was started at a point in the stream on purpose and has handled nothing since.</li>
+ *   <li>A {@link Builder#startingAfter(EventReference) starting point} is not taken for what the bookmark
+ *       records: unless the projector read its bookmark back, a run that handles nothing records the starting
+ *       point — or the head, by the rules above — as its read position alone, so a reader started at the
+ *       head of a quiet stream reads as caught up rather than as behind by everything before its start. It
+ *       handled none of what came before, so the handled reference stays as it was.</li>
  * </ol>
  *
  * @param <CONSUMED_EVENT_TYPE> the type of domain events processed by the projection
@@ -192,6 +197,14 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 	private final boolean resumeAfterReadPosition;
 	
 	private Optional<EventReference> lastEventReference = null;
+
+	/**
+	 * Whether the bookmark is not known to record the position this projector resumes from: a projector
+	 * given a {@link Builder#startingAfter(EventReference) starting point} it has neither read back from
+	 * the bookmark nor written to it yet. A run that handles nothing then records that point as its read
+	 * position, so a reader of the bookmark learns where it stands without waiting for a new event.
+	 */
+	private boolean startingPointUnrecorded;
 
 	/** The read position this projector last placed or read back, empty when it does not know of one. */
 	private Optional<EventReference> recordedReadUpTo = Optional.empty();
@@ -228,6 +241,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 		this.idleBookmarkInterval = idleBookmarkInterval;
 		this.resumeAfterReadPosition = resumeAfterReadPosition;
 		this.lastEventReference =  ( after == null ) ? null : Optional.ofNullable(after); // keep it to null to detect first run if needed
+		this.startingPointUnrecorded = after != null && bookmarkReader != null;
 		// contained again, which is a no-op for the observer of a store of this library, so that a source
 		// written elsewhere cannot fail a batch through its observer
 		this.observation = es.observation().map(o -> new StreamObservation(EventStoreObserver.contained(o.observer()), o.stream()));
@@ -359,6 +373,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 			// read position only resumes from the beginning, as no bookmark does
 			lastEventReference = bookmark.flatMap(Bookmark::reference);
 			recordedReadUpTo = bookmark.flatMap(Bookmark::readUpTo);
+			startingPointUnrecorded = false;
 		}
 		return this;
 	}
@@ -613,6 +628,12 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 			EventReference readUpTo = readToHead != null && readToHead.happenedAfter(handled) ? readToHead : handled;
 
 			boolean referenceMoved = !lastEventReference.equals(bookmarked);
+			if ( !referenceMoved && startingPointUnrecorded ) {
+				// nothing handled past the starting point, which the bookmark does not hold: the projector
+				// has read up to it -- or to the head -- and has handled nothing, so that is what it records
+				placeReadPositionIfMoved(readUpTo);
+				return bookmarked;
+			}
 			// what a reader of the bookmark takes the read position to be: the one recorded, or the
 			// reference it falls back to
 			EventReference readUpToAsKnown = recordedReadUpTo.orElse(bookmarked == null ? null : bookmarked.orElse(null));
@@ -630,6 +651,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 				lastIdleBookmarkNanos = now;
 			}
 			es.placeBookmark(bookmarkReader, handled, readUpTo, bookmarkTags);
+			startingPointUnrecorded = false;
 			recordedReadUpTo = Optional.of(readUpTo);
 			readUpToDeferred = false;
 			movedBookmarkThisRun = true;
@@ -658,6 +680,7 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 			}
 			lastIdleBookmarkNanos = now;
 			es.placeReadPosition(bookmarkReader, readToHead, bookmarkTags);
+			startingPointUnrecorded = false;
 			recordedReadUpTo = Optional.of(readToHead);
 			readUpToDeferred = false;
 			movedBookmarkThisRun = true;
@@ -897,7 +920,8 @@ public class Projector<CONSUMED_EVENT_TYPE> implements AppendListener {
 		 * Configures the starting position in the event stream.
 		 * <p>
 		 * Events before this reference will be skipped. Useful for resuming projection from a checkpoint
-		 * or processing only recent events.
+		 * or processing only recent events. A bookmarked projector that does not read its bookmark back
+		 * records this point as its read position on its first run, even when that run handles nothing.
 		 *
 		 * @param after the event reference to start after, or null to start from the beginning
 		 * @return this builder for method chaining

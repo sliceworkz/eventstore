@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -388,6 +389,9 @@ public class PostgresAppendPipeliningTest {
 
 		@Test
 		void aStoreBuiltWithoutTheSystemPropertyRunsTheShippedAppend ( ) {
+			// a run of the whole suite with the switch on sets the property for every store, this one included
+			assumeTrue(System.getProperty(AppendPipelining.SYSTEM_PROPERTY) == null,
+					"the property is set for this run, so no store here is built without it");
 			PostgresEventStorageImpl storage = (PostgresEventStorageImpl) PostgresEventStorage.newBuilder()
 					.name("pipelining-default")
 					.prefix("pipeliningdefault_")

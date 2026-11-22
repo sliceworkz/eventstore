@@ -364,6 +364,43 @@ public class ProjectorReadPositionTest extends AbstractEventStoreTest {
 		assertThrows(IllegalStateException.class, () -> Projector.from(es).into(new FirstEvents()).resumeAfterReadPosition().build());
 	}
 
+	/**
+	 * A projector started at the head of a stream that stays quiet handles nothing, yet has read up to its
+	 * starting point: its first run records it, so its backlog is nothing rather than everything before it.
+	 * The starting point is not taken for what the bookmark holds, which here is nothing at all.
+	 */
+	@ForEachBackend
+	void aProjectorStartedAtTheHeadRecordsItsStartingPointWithoutHandlingAnything ( ) {
+		append(new FirstDomainEvent("1"));
+		EventReference head = append(new SecondDomainEvent("2"));
+
+		Projector<MockDomainEvent> projector = Projector.from(es).into(new FirstEvents()).bookmarkAs(READER)
+				.readBookmarkOnRequest().startingAfter(head).idleBookmarkInterval(Duration.ZERO).build();
+		assertEquals(0, projector.run().eventsHandled());
+
+		assertEquals(Optional.of(head), bookmark().readUpTo(), "caught up to where it started");
+		assertEquals(Optional.empty(), bookmark().reference(), "having handled nothing");
+
+		EventReference handled = append(new FirstDomainEvent("3"));
+		assertEquals(1, projector.run().eventsHandled());
+		assertEquals(Optional.of(handled), bookmark().reference());
+	}
+
+	/** A projector that read its bookmark back resumes from it, and a starting point does not move it. */
+	@ForEachBackend
+	void aStartingPointReadBackFromTheBookmarkIsNotWrittenAgain ( ) {
+		EventReference handled = append(new FirstDomainEvent("1"));
+		EventReference later = append(new SecondDomainEvent("2"));
+		Projector.from(es).into(new FirstEvents()).bookmarkAs(READER).idleBookmarkInterval(Duration.ZERO).build().run();
+		assertEquals(Optional.of(handled), bookmark().reference());
+
+		Projector<MockDomainEvent> projector = Projector.from(es).into(new FirstEvents()).bookmarkAs(READER)
+				.readBookmarkOnce().startingAfter(later).idleBookmarkInterval(Duration.ZERO).build();
+		projector.readBookmark();
+		assertEquals(0, projector.run().eventsHandled());
+		assertEquals(Optional.of(handled), bookmark().reference(), "the bookmark read back is the resume point, unchanged");
+	}
+
 	private Projector<MockDomainEvent> resumingAfterReadPosition ( Projection<MockDomainEvent> projection ) {
 		return Projector.from(es).into(projection).bookmarkAs(READER).resumeAfterReadPosition().idleBookmarkInterval(Duration.ZERO).build();
 	}

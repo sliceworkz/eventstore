@@ -255,12 +255,18 @@ public final class DcbAppendBenchmark {
 	/** the timing the storage reported for the append the current thread just made */
 	static final ThreadLocal<AppendPipelining.Timing> LAST_TIMING = new ThreadLocal<>();
 
+	/** with {@code auditConflicts=true}: where each conflict is looked up, on a connection of its own */
+	static volatile HikariDataSource AUDIT;
+
 	static void run ( Config config ) throws Exception {
 		Files.createDirectories(config.out);
 		int backgroundThreads = config.backgroundRate == 0 ? 0 : Math.max(1, config.backgroundRate / 4000);
 		try ( HikariDataSource main = pool(config, config.writers + backgroundThreads + 4); HikariDataSource monitoring = pool(config, 2);
 			  PostgresEventStorageImpl storage = storage(config, main, monitoring, DatabaseInitMode.NONE) ) {
 			storage.appendPipelining(config.mode).appendTimingRecorder(LAST_TIMING::set);
+			if ( Boolean.parseBoolean(config.args.getOrDefault("auditConflicts", "false")) ) {
+				AUDIT = pool(config, 2);
+			}
 
 			AtomicBoolean measuring = new AtomicBoolean();
 			AtomicBoolean stop = new AtomicBoolean();
@@ -320,6 +326,12 @@ public final class DcbAppendBenchmark {
 			}
 			System.out.printf("%s %s: %.1f decisions/s, %d conflicts, background %.0f ev/s%n", run, config.mode,
 					committed / (windowNanos / 1e9), conflicts, background / (windowNanos / 1e9));
+			if ( AUDIT != null ) {
+				System.out.printf("%s %s audit (whole run): %d conflicts, %d committed-but-reported-conflicting, %d head behind own last write, %d other%n",
+						run, config.mode, writers.stream().mapToLong(w -> w.audited).sum(), writers.stream().mapToLong(w -> w.phantoms).sum(),
+						writers.stream().mapToLong(w -> w.headBehindOwnWrite).sum(), writers.stream().mapToLong(w -> w.otherConflicts).sum());
+				AUDIT.close();
+			}
 		}
 	}
 
@@ -350,6 +362,8 @@ public final class DcbAppendBenchmark {
 		final List<String> decisions = new ArrayList<>();
 		long committed;
 		long conflicts;
+		EventReference lastCommitted;
+		long audited, phantoms, headBehindOwnWrite, otherConflicts;
 		long allocatedBytes;
 
 		Writer ( Config config, PostgresEventStorageImpl storage, int index, AtomicBoolean measuring, AtomicBoolean stop, CountDownLatch done ) {
@@ -388,6 +402,31 @@ public final class DcbAppendBenchmark {
 			}
 		}
 
+		void audit ( String key, EventReference n ) {
+			audited++;
+			try ( java.sql.Connection c = AUDIT.getConnection();
+				  java.sql.PreparedStatement stmt = c.prepareStatement("SELECT count(*) FROM " + config.prefix + "events WHERE stream_context = ? AND stream_purpose = ? AND idempotency_key = ?") ) {
+				stmt.setString(1, STREAM.context());
+				stmt.setString(2, STREAM.purpose());
+				stmt.setString(3, key);
+				try ( java.sql.ResultSet rs = stmt.executeQuery() ) {
+					rs.next();
+					if ( rs.getLong(1) > 0 ) {
+						phantoms++;
+						System.out.printf("PHANTOM CONFLICT: writer %d, key %s committed but the append reported a conflict (reference %s)%n", index, key, n);
+						return;
+					}
+				}
+			} catch ( java.sql.SQLException e ) {
+				throw new IllegalStateException(e);
+			}
+			if ( lastCommitted != null && (n == null || lastCommitted.happenedAfter(n)) ) {
+				headBehindOwnWrite++;
+			} else {
+				otherConflicts++;
+			}
+		}
+
 		void decide ( SplittableRandom random, boolean measure ) {
 			String account = config.account(config.instance, index, random.nextInt(config.accountsPerWriter));
 			EventFilter boundary = config.boundary(account);
@@ -415,16 +454,21 @@ public final class DcbAppendBenchmark {
 				}
 				List<EventToStore> events = new ArrayList<>(config.batch);
 				for ( int k = 0; k < config.batch; k++ ) {
-					events.add(new EventToStore(STREAM, EventType.named("Decided"), "{\"seen\": %d}".formatted(seen + k), Tags.of("account", account), null));
+					events.add(new EventToStore(STREAM, EventType.named("Decided"), "{\"seen\": %d}".formatted(seen + k), Tags.of("account", account),
+							AUDIT == null ? null : java.util.UUID.randomUUID().toString()));
 				}
 				LAST_TIMING.remove();
 				long appendStarted = System.nanoTime();
 				boolean conflicted;
 				try {
-					storage.append(AppendCriteria.of(boundary, n), STREAM, events);
+					List<StoredEvent> stored = storage.append(AppendCriteria.of(boundary, n), STREAM, events);
 					conflicted = false;
+					lastCommitted = stored.getLast().reference();
 				} catch ( OptimisticLockingException e ) {
 					conflicted = true;
+					if ( AUDIT != null ) {
+						audit(events.getFirst().idempotencyKey(), n);
+					}
 				}
 				long appendNanos = System.nanoTime() - appendStarted;
 				AppendPipelining.Timing timing = LAST_TIMING.get();

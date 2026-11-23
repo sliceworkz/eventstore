@@ -29,5 +29,8 @@ branches:
     minor:      { action: pr,      cooldownDays: 1 }
     major:      { action: mention, cooldownDays: 1 }
     transitive: { action: merge,   cooldownDays: 1 }  # the lockfile refresh rides in the auto-merged PR
+    # never start Release 2 · Tag automatically: every release of this line goes to Maven Central, and those are kept
+    # to a few a month, so a person releases (the verdict and the link are on the status page and in the issue)
+    release: { automatic: never }
 
 ownLibraryCooldownDays: 0

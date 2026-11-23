@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "runAt": "2026-11-22T08:33:28+01:00",
+  "runAt": "2026-11-23T09:20:47+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "release/0.13",
   "commit": "1832c23069e0950724ba9125fc415380f662eeed",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/44998749398",
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/45137823389",
   "dryRun": false,
   "projectVersion": "0.13.1-SNAPSHOT",
   "policy": {
@@ -104,7 +104,7 @@
       ],
       "own": false,
       "group": null,
-      "newest": "2.25.2"
+      "newest": "2.25.3"
     },
     {
       "ecosystem": "maven",
@@ -143,7 +143,7 @@
       ],
       "own": false,
       "group": null,
-      "newest": "1.9.0"
+      "newest": "1.10.0"
     },
     {
       "ecosystem": "maven",
@@ -449,10 +449,45 @@
       "newest": "3.6.2"
     }
   ],
-  "updates": [],
+  "updates": [
+    {
+      "ecosystem": "maven",
+      "name": "maven.maven-versions-plugin.version",
+      "where": "pom.xml",
+      "current": "2.25.2",
+      "kind": "property",
+      "artifacts": [
+        "org.codehaus.mojo:versions-maven-plugin"
+      ],
+      "own": false,
+      "group": null,
+      "level": "patch",
+      "target": "2.25.3",
+      "outcome": "held-back",
+      "eligibleFrom": "2026-11-23T23:55:20+00:00",
+      "reason": "cooldown"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "maven.flatten-plugin.version",
+      "where": "pom.xml",
+      "current": "1.9.0",
+      "kind": "property",
+      "artifacts": [
+        "org.codehaus.mojo:flatten-maven-plugin"
+      ],
+      "own": false,
+      "group": null,
+      "level": "minor",
+      "target": "1.10.0",
+      "outcome": "held-back",
+      "eligibleFrom": "2026-11-23T23:55:20+00:00",
+      "reason": "cooldown"
+    }
+  ],
   "batches": [],
   "pullRequests": [],
-  "pullRequestsReadAt": "2026-11-22T07:35:11+00:00",
+  "pullRequestsReadAt": "2026-11-23T08:21:59+00:00",
   "images": [],
   "closedPullRequests": [],
   "deletedBranches": [],
@@ -460,7 +495,7 @@
   "notes": [],
   "vulnerabilities": {
     "grype": "v0.121.0",
-    "dbBuilt": "2026-11-22T06:19:59Z",
+    "dbBuilt": "2026-11-23T06:28:32Z",
     "sbomOrigin": "ci-artifact (run 44785379902)",
     "sboms": [
       "library",

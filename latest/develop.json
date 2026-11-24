@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "runAt": "2026-11-23T10:08:50+01:00",
+  "runAt": "2026-11-24T11:58:22+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "develop",
-  "commit": "fcbcfda188a4eaa98f71c1f7c13da5743dfde05d",
+  "commit": "1500687856d90a13fb32a4999a08a4349a9ecb57",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/45144358714",
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/45379732808",
   "dryRun": false,
   "projectVersion": "0.15.0-SNAPSHOT",
   "policy": {
@@ -32,6 +32,10 @@
     "own": {
       "action": "merge",
       "cooldownDays": 0
+    },
+    "release": {
+      "automatic": "never",
+      "minimumIntervalDays": 0
     },
     "filter": "default+0",
     "ecosystems": [
@@ -264,7 +268,7 @@
       ],
       "own": false,
       "group": null,
-      "newest": "42.7.14"
+      "newest": "42.7.15"
     },
     {
       "ecosystem": "maven",
@@ -425,9 +429,10 @@
       "group": null,
       "level": "patch",
       "target": "2.25.3",
-      "outcome": "held-back",
-      "eligibleFrom": "2026-11-23T23:55:20+00:00",
-      "reason": "cooldown"
+      "action": "merge",
+      "batch": "auto",
+      "published": "2026-11-22",
+      "outcome": "planned"
     },
     {
       "ecosystem": "maven",
@@ -442,14 +447,70 @@
       "group": null,
       "level": "minor",
       "target": "1.10.0",
+      "action": "merge",
+      "batch": "auto",
+      "published": "2026-11-22",
+      "outcome": "planned"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "postgresql.jdbc.version",
+      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
+      "current": "42.7.14",
+      "kind": "property",
+      "artifacts": [
+        "org.postgresql:postgresql"
+      ],
+      "own": false,
+      "group": null,
+      "level": "patch",
+      "target": "42.7.15",
       "outcome": "held-back",
-      "eligibleFrom": "2026-11-23T23:55:20+00:00",
+      "eligibleFrom": "2026-11-24T14:11:07+00:00",
       "reason": "cooldown"
     }
   ],
-  "batches": [],
+  "batches": [
+    {
+      "key": "auto",
+      "branch": "deps/develop/auto",
+      "action": "merge",
+      "level": "merge",
+      "transitive": false,
+      "commit": "32107ccc78e69ea0110de18d80511b819d6ad57b",
+      "error": null,
+      "outcome": "pr-opened",
+      "pr": 304,
+      "changes": [
+        {
+          "ecosystem": "maven",
+          "name": "maven.maven-versions-plugin.version",
+          "where": "pom.xml",
+          "level": "patch",
+          "from": "2.25.2",
+          "to": "2.25.3",
+          "applied": true,
+          "error": null,
+          "follows": null
+        },
+        {
+          "ecosystem": "maven",
+          "name": "maven.flatten-plugin.version",
+          "where": "pom.xml",
+          "level": "minor",
+          "from": "1.9.0",
+          "to": "1.10.0",
+          "applied": true,
+          "error": null,
+          "follows": null
+        }
+      ],
+      "lockfileChanges": [],
+      "mergedAt": "2026-11-24T11:07:45Z"
+    }
+  ],
   "pullRequests": [],
-  "pullRequestsReadAt": "2026-11-23T09:10:21+00:00",
+  "pullRequestsReadAt": "2026-11-24T11:07:54+00:00",
   "images": [],
   "closedPullRequests": [],
   "deletedBranches": [],
@@ -457,8 +518,8 @@
   "notes": [],
   "vulnerabilities": {
     "grype": "v0.121.0",
-    "dbBuilt": "2026-11-23T06:28:32Z",
-    "sbomOrigin": "ci-artifact (run 45052629482)",
+    "dbBuilt": "2026-11-24T06:22:05Z",
+    "sbomOrigin": "ci-artifact (run 45212361103)",
     "sboms": [
       "library",
       "test-kit"

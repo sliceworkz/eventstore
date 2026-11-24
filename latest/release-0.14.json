@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "runAt": "2026-11-23T09:20:46+01:00",
+  "runAt": "2026-11-24T11:29:25+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "release/0.14",
   "commit": "5a3fa32427fa61eca00e503135ecf19e7a15dea7",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/45137823389",
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/45375202817",
   "dryRun": false,
   "projectVersion": "0.14.1-SNAPSHOT",
   "policy": {
@@ -33,6 +33,10 @@
       "action": "merge",
       "cooldownDays": 0
     },
+    "release": {
+      "automatic": "never",
+      "minimumIntervalDays": 0
+    },
     "filter": "default+0",
     "ecosystems": [
       "maven"
@@ -56,7 +60,38 @@
     "lastTag": "v0.14.0",
     "tagDate": "2026-11-20T19:37:12Z",
     "dependencyUpdates": [],
-    "otherChanges": 0
+    "otherChanges": 0,
+    "ci": {
+      "commit": "5a3fa32427fa61eca00e503135ecf19e7a15dea7",
+      "state": "green"
+    },
+    "readiness": {
+      "verdict": "nothing",
+      "lastTag": "v0.14.0",
+      "commit": "5a3fa32427fa61eca00e503135ecf19e7a15dea7",
+      "headMoved": false,
+      "ci": "green",
+      "dependencyUpdates": 0,
+      "otherChanges": 0,
+      "fixes": [],
+      "reasons": [],
+      "notes": [
+        "pipeline PR #303 waits for review: its updates are not in this release"
+      ],
+      "workflow": {
+        "name": "Release 2 \u00b7 Tag",
+        "file": "create-release-tag-and-bump.yaml",
+        "url": "https://github.com/sliceworkz/eventstore/actions/workflows/create-release-tag-and-bump.yaml",
+        "command": "gh workflow run create-release-tag-and-bump.yaml --ref release/0.14 -R sliceworkz/eventstore"
+      }
+    },
+    "automatic": {
+      "setting": "never",
+      "minimumIntervalDays": 0,
+      "decision": "off",
+      "reason": null,
+      "at": "2026-11-24T10:40:07+00:00"
+    }
   },
   "releaseScan": {
     "tag": "v0.14.0",
@@ -293,7 +328,7 @@
       ],
       "own": false,
       "group": null,
-      "newest": "42.7.14"
+      "newest": "42.7.15"
     },
     {
       "ecosystem": "maven",
@@ -454,9 +489,10 @@
       "group": null,
       "level": "patch",
       "target": "2.25.3",
-      "outcome": "held-back",
-      "eligibleFrom": "2026-11-23T23:55:20+00:00",
-      "reason": "cooldown"
+      "action": "merge",
+      "batch": "auto",
+      "published": "2026-11-22",
+      "outcome": "planned"
     },
     {
       "ecosystem": "maven",
@@ -471,14 +507,96 @@
       "group": null,
       "level": "minor",
       "target": "1.10.0",
+      "action": "pr",
+      "batch": "minor",
+      "published": "2026-11-22",
+      "outcome": "planned"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "postgresql.jdbc.version",
+      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
+      "current": "42.7.14",
+      "kind": "property",
+      "artifacts": [
+        "org.postgresql:postgresql"
+      ],
+      "own": false,
+      "group": null,
+      "level": "patch",
+      "target": "42.7.15",
       "outcome": "held-back",
-      "eligibleFrom": "2026-11-23T23:55:20+00:00",
+      "eligibleFrom": "2026-11-24T14:11:07+00:00",
       "reason": "cooldown"
     }
   ],
-  "batches": [],
-  "pullRequests": [],
-  "pullRequestsReadAt": "2026-11-23T08:22:15+00:00",
+  "batches": [
+    {
+      "key": "auto",
+      "branch": "deps/release/0.14/auto",
+      "action": "merge",
+      "level": "merge",
+      "transitive": false,
+      "commit": "141daf5b053857507c39f26e454cdc24979884fc",
+      "error": null,
+      "outcome": "pr-opened",
+      "pr": 301,
+      "changes": [
+        {
+          "ecosystem": "maven",
+          "name": "maven.maven-versions-plugin.version",
+          "where": "pom.xml",
+          "level": "patch",
+          "from": "2.25.2",
+          "to": "2.25.3",
+          "applied": true,
+          "error": null,
+          "follows": null
+        }
+      ],
+      "lockfileChanges": [],
+      "mergedAt": "2026-11-24T10:39:42Z"
+    },
+    {
+      "key": "minor",
+      "branch": "deps/release/0.14/minor",
+      "action": "pr",
+      "level": "minor",
+      "transitive": false,
+      "commit": "eccd5cfeb8e6cf65ba4dd5eb10132f72f0eac3ba",
+      "error": null,
+      "outcome": "pr-opened",
+      "pr": 303,
+      "changes": [
+        {
+          "ecosystem": "maven",
+          "name": "maven.flatten-plugin.version",
+          "where": "pom.xml",
+          "level": "minor",
+          "from": "1.9.0",
+          "to": "1.10.0",
+          "applied": true,
+          "error": null,
+          "follows": null
+        }
+      ],
+      "lockfileChanges": [],
+      "assignees": [
+        "vanrogu"
+      ]
+    }
+  ],
+  "pullRequests": [
+    {
+      "number": 303,
+      "url": "https://github.com/sliceworkz/eventstore/pull/303",
+      "head": "deps/release/0.14/minor",
+      "title": "Minor dependency updates on release/0.14",
+      "ci": "green",
+      "autoMerge": false
+    }
+  ],
+  "pullRequestsReadAt": "2026-11-24T10:40:05+00:00",
   "images": [],
   "closedPullRequests": [],
   "deletedBranches": [],
@@ -486,7 +604,7 @@
   "notes": [],
   "vulnerabilities": {
     "grype": "v0.121.0",
-    "dbBuilt": "2026-11-23T06:28:32Z",
+    "dbBuilt": "2026-11-24T06:22:05Z",
     "sbomOrigin": "ci-artifact (run 44803853083)",
     "sboms": [
       "library",

@@ -1,0 +1,32 @@
+name: write-contention-one-stream-ext-latency
+description: >
+  write-contention-one-stream-ext with the server a network hop away: run it with db.properties
+  pointing at a server whose round trip has been lengthened -- kernel shaping (tc qdisc ... netem
+  delay) on the server's interface, or the suite's own delay-proxy -- and state the measured round
+  trip when quoting it, since the manifest cannot. Against write-contention-one-stream-ext, the
+  difference is what the round trips inside the advisory lock hold cost a stream every writer
+  appends to. See docs/design/append-lock-hold.md.
+
+corpus:
+  volume: 100000
+  streamDesign: PER_ENTITY
+  composition: CLEAN
+  payload: REALISTIC
+  entityCount: 2000
+  seed: 20260823
+
+targets:
+  - backend: POSTGRES
+    server: EXTERNAL
+
+jmh:
+  workloads:
+    - append-none
+    - append-type-and-tag
+    - decide-then-append
+  threads: [ 1, 4, 8, 16 ]
+  collision: one-stream
+  forks: 4
+  warmupIterations: 3
+  measurementIterations: 5
+  iterationSeconds: 2

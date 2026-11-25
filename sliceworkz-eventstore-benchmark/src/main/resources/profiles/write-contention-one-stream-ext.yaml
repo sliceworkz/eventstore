@@ -1,0 +1,33 @@
+name: write-contention-one-stream-ext
+description: >
+  write-contention-one-stream against an external server, PostgreSQL only: every writer conditionally
+  appending to one stream, serialised on that stream's advisory lock with no logical conflict. The
+  external target is what lets the run record the server's CPU per decision
+  (-Dbenchmark.server.cpu=<the server's cgroup cpu.stat>) and be published. Pair it with
+  write-contention-one-stream-ext-latency, the same profile with the server a network hop away: the
+  difference between the two is what the round trips inside the lock hold cost. See
+  docs/design/append-lock-hold.md.
+
+corpus:
+  volume: 100000
+  streamDesign: PER_ENTITY
+  composition: CLEAN
+  payload: REALISTIC
+  entityCount: 2000
+  seed: 20260823
+
+targets:
+  - backend: POSTGRES
+    server: EXTERNAL
+
+jmh:
+  workloads:
+    - append-none
+    - append-type-and-tag
+    - decide-then-append
+  threads: [ 1, 4, 8, 16 ]
+  collision: one-stream
+  forks: 4
+  warmupIterations: 3
+  measurementIterations: 5
+  iterationSeconds: 2

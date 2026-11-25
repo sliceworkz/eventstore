@@ -213,6 +213,42 @@ settings, CPU model, core count, RAM, and the JVM. Two runs whose environments d
 comparable, and the comparators say so rather than reporting a difference in hardware as a change in
 the store.
 
+### The server's CPU per operation
+
+A throughput says how many operations finished, not how much work the database did for each, so it
+cannot tell a change that makes the server do less from one that only makes the client wait less.
+Where the forks can read the server's control group, the run records that too:
+
+```bash
+java -Dbenchmark.server.cpu=/sys/fs/cgroup/system.slice/docker-<id>.scope/cpu.stat \
+     -jar target/*.jar jmh --profile=...
+```
+
+The path is the server's cgroup v2 `cpu.stat` (or a cgroup v1 `cpuacct.usage`) on the machine the
+forks run on: a container's on a Docker host, a service's under systemd. Everything in that group is
+counted, so it should hold the server and nothing else. `ServerCpuProfiler` reads it at the start of
+each measured iteration's window -- after the corpus restore, which costs far more than the appends --
+and at its end, and reports the server's CPU per second as the secondary metric `server-cpu`; the
+report divides it by the score into a **server CPU/op** column. Warm-up iterations are left out like
+everything else. What the restore leaves the server to do in the background (writing out the copied
+pages, analysing the table) lands in the window, the same for every run; measured idle after a
+restore, it is under a millisecond of CPU per second.
+
+### A server a network hop away
+
+A server on the same machine answers in a tenth of a millisecond, which hides every cost that is paid
+per round trip. `delay-proxy` puts the hop back for a server the suite reaches over TCP:
+
+```bash
+java -jar target/*.jar delay-proxy --listen=6432 --to=<server-host>:5432 --one-way-us=500
+```
+
+Point `db.properties` at the proxy's port and run the profile as usual. Every chunk is delayed by the
+given time in each direction, in order. It adds about 0.4ms of round trip of its own on a small VM, so
+measure the round trip through it (a timed `SELECT 1` in `psql`) and quote that; `tc qdisc … netem` is
+the better instrument where the kernel offers it. `docs/design/append-lock-hold.md` at the repository
+root is the measurement this was built for.
+
 ## Reading a report
 
 Each run writes `report.json` (the record) and `report.md` (a rendering of it) beside JMH's own JSON.

@@ -123,6 +123,16 @@ public record BenchmarkRow (
 		return operationsPerSecond() * ( 1 - conflictRate() );
 	}
 
+	/**
+	 * The database server's CPU per operation, in microseconds, or NaN when the run did not measure it
+	 * (see {@code ServerCpuProfiler}): its CPU per second of iteration divided by operations per second.
+	 */
+	public double serverCpuMicrosPerOperation ( ) {
+		Double perSecond = secondary.get("server-cpu");
+		double operations = operationsPerSecond();
+		return perSecond == null || !( operations > 0 ) ? Double.NaN : perSecond / operations;
+	}
+
 	/** The score with its error, or just the score when a single fork produced no interval. */
 	public String scoreWithError ( ) {
 		if ( Double.isNaN(error) ) {

@@ -130,6 +130,7 @@ public final class Main {
 			case "load" -> load(options);
 			case "report" -> report(options);
 			case "compare" -> compare(options);
+			case "delay-proxy" -> delayProxy(options);
 			default -> {
 				System.err.println("unknown subcommand '%s'".formatted(command));
 				usage();
@@ -999,6 +1000,24 @@ public final class Main {
 		return "%dh%02dm".formatted(seconds / 3600, ( seconds % 3600 ) / 60);
 	}
 
+	private static int delayProxy ( Map<String, String> options ) {
+		String listen = options.get("listen");
+		String to = options.get("to");
+		String oneWay = options.get("one-way-us");
+		if ( listen == null || to == null || oneWay == null || !to.contains(":") ) {
+			System.err.println("delay-proxy needs --listen=<port> --to=<host:port> --one-way-us=<microseconds>");
+			return 2;
+		}
+		try {
+			org.sliceworkz.eventstore.benchmark.env.DelayProxy.run(Integer.parseInt(listen),
+					to.substring(0, to.lastIndexOf(':')), Integer.parseInt(to.substring(to.lastIndexOf(':') + 1)),
+					Long.parseLong(oneWay));
+			return 0;
+		} catch ( java.io.IOException e ) {
+			throw new java.io.UncheckedIOException(e);
+		}
+	}
+
 	private static void usage ( ) {
 		System.out.println("""
 			sliceworkz eventstore benchmark suite
@@ -1019,6 +1038,9 @@ public final class Main {
 			                                 composition, volume); refuses across environments
 			  workloads                      the workload catalogue a profile's 'workloads:' draws on
 			  dry-run   --profile=<name>     invoke each workload once and check it measures something
+			  delay-proxy --listen=<port> --to=<host:port> --one-way-us=<n>
+			                                 forward to a server, adding n µs each way: a network hop
+			                                 for a server on this machine (see the README)
 
 			A profile is a YAML file: pass its name to use one that ships on the classpath, or a path
 			to use one of your own.

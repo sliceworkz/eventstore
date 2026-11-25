@@ -171,7 +171,12 @@ public final class JmhRunner {
 			int threads, List<String> forkArgs, Path resultsFile ) {
 		BenchmarkProfile.JmhSettings settings = profile.jmh();
 
-		return new OptionsBuilder()
+		OptionsBuilder builder = new OptionsBuilder();
+		String serverCpu = System.getProperty(ServerCpuProfiler.PATH_PROPERTY);
+		if ( serverCpu != null && !serverCpu.isBlank() ) {
+			builder.addProfiler(ServerCpuProfiler.class, serverCpu);
+		}
+		return builder
 				.include(EventStoreBenchmark.class.getSimpleName())
 				.forks(settings.forks())
 				.threads(threads)

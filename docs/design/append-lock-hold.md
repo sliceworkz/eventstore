@@ -48,6 +48,20 @@ container's cgroup CPU over each measured iteration (`ServerCpuProfiler`), divid
 - A single writer gains too: one round trip per conditional append instead of three, so 7.5ms → 4.2ms per
   decision with the latency — a conditional append is now cheaper on the wire than an unconditional one,
   which still commits separately.
+- **Which part buys what**, at eight writers, decisions per millisecond · server CPU per decision. Two
+  further runs separate the pieces: the pipeline bound with an untyped NULL (so pgjdbc splits it again),
+  and separate calls with the NULL bound typed.
+
+  | | same host | +1.7ms RTT |
+  |---|---|---|
+  | separate calls, untyped NULL (before) | 0.562 · 1.39ms | 0.228 · 1.79ms |
+  | separate calls, typed NULL | 0.605 · 1.30ms | 0.235 · 1.76ms |
+  | pipeline, untyped NULL | 0.617 · 1.26ms | 0.225 · 1.86ms |
+  | pipeline, typed NULL (after) | 0.916 · 1.05ms | 0.777 · 1.21ms |
+
+  Neither half alone moves the latency case, and each moves the same host by under 10%: the typed NULL
+  saves the server a describe per execution, the untyped pipeline a little protocol work. Together they
+  are the one round trip, and the gain is the two together.
 - Caveats, in the suite's own terms: a container on a developer-class VM, the client and the server
   sharing four cores, a userspace proxy rather than kernel shaping, and relative errors up to ~20% on some
   rows. Read the direction and the rough magnitude, which no error bar here comes near.

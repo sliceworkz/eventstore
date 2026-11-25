@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "runAt": "2026-11-24T11:58:22+01:00",
+  "runAt": "2026-11-25T10:53:33+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "develop",
-  "commit": "1500687856d90a13fb32a4999a08a4349a9ecb57",
+  "commit": "6fe7282e271d7c2bcd9d839668cdad18bc3aad4e",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/45379732808",
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/45589644031",
   "dryRun": false,
   "projectVersion": "0.15.0-SNAPSHOT",
   "policy": {
@@ -63,7 +63,7 @@
       "ecosystem": "maven",
       "name": "maven.maven-versions-plugin.version",
       "where": "pom.xml",
-      "current": "2.25.2",
+      "current": "2.25.3",
       "kind": "property",
       "artifacts": [
         "org.codehaus.mojo:versions-maven-plugin"
@@ -102,7 +102,7 @@
       "ecosystem": "maven",
       "name": "maven.flatten-plugin.version",
       "where": "pom.xml",
-      "current": "1.9.0",
+      "current": "1.10.0",
       "kind": "property",
       "artifacts": [
         "org.codehaus.mojo:flatten-maven-plugin"
@@ -418,42 +418,6 @@
   "updates": [
     {
       "ecosystem": "maven",
-      "name": "maven.maven-versions-plugin.version",
-      "where": "pom.xml",
-      "current": "2.25.2",
-      "kind": "property",
-      "artifacts": [
-        "org.codehaus.mojo:versions-maven-plugin"
-      ],
-      "own": false,
-      "group": null,
-      "level": "patch",
-      "target": "2.25.3",
-      "action": "merge",
-      "batch": "auto",
-      "published": "2026-11-22",
-      "outcome": "planned"
-    },
-    {
-      "ecosystem": "maven",
-      "name": "maven.flatten-plugin.version",
-      "where": "pom.xml",
-      "current": "1.9.0",
-      "kind": "property",
-      "artifacts": [
-        "org.codehaus.mojo:flatten-maven-plugin"
-      ],
-      "own": false,
-      "group": null,
-      "level": "minor",
-      "target": "1.10.0",
-      "action": "merge",
-      "batch": "auto",
-      "published": "2026-11-22",
-      "outcome": "planned"
-    },
-    {
-      "ecosystem": "maven",
       "name": "postgresql.jdbc.version",
       "where": "sliceworkz-eventstore-parent-pom/pom.xml",
       "current": "42.7.14",
@@ -465,9 +429,10 @@
       "group": null,
       "level": "patch",
       "target": "42.7.15",
-      "outcome": "held-back",
-      "eligibleFrom": "2026-11-24T14:11:07+00:00",
-      "reason": "cooldown"
+      "action": "merge",
+      "batch": "auto",
+      "published": "2026-11-23",
+      "outcome": "planned"
     }
   ],
   "batches": [
@@ -477,40 +442,29 @@
       "action": "merge",
       "level": "merge",
       "transitive": false,
-      "commit": "32107ccc78e69ea0110de18d80511b819d6ad57b",
+      "commit": "43fceaceaf8d41f0b7bcf1dcf291b6347cab6398",
       "error": null,
       "outcome": "pr-opened",
-      "pr": 304,
+      "pr": 308,
       "changes": [
         {
           "ecosystem": "maven",
-          "name": "maven.maven-versions-plugin.version",
-          "where": "pom.xml",
+          "name": "postgresql.jdbc.version",
+          "where": "sliceworkz-eventstore-parent-pom/pom.xml",
           "level": "patch",
-          "from": "2.25.2",
-          "to": "2.25.3",
-          "applied": true,
-          "error": null,
-          "follows": null
-        },
-        {
-          "ecosystem": "maven",
-          "name": "maven.flatten-plugin.version",
-          "where": "pom.xml",
-          "level": "minor",
-          "from": "1.9.0",
-          "to": "1.10.0",
+          "from": "42.7.14",
+          "to": "42.7.15",
           "applied": true,
           "error": null,
           "follows": null
         }
       ],
       "lockfileChanges": [],
-      "mergedAt": "2026-11-24T11:07:45Z"
+      "mergedAt": "2026-11-25T10:04:44Z"
     }
   ],
   "pullRequests": [],
-  "pullRequestsReadAt": "2026-11-24T11:07:54+00:00",
+  "pullRequestsReadAt": "2026-11-25T10:04:54+00:00",
   "images": [],
   "closedPullRequests": [],
   "deletedBranches": [],
@@ -518,8 +472,8 @@
   "notes": [],
   "vulnerabilities": {
     "grype": "v0.121.0",
-    "dbBuilt": "2026-11-24T06:22:05Z",
-    "sbomOrigin": "ci-artifact (run 45212361103)",
+    "dbBuilt": "2026-11-25T06:22:21Z",
+    "sbomOrigin": "ci-artifact (run 45381303632)",
     "sboms": [
       "library",
       "test-kit"

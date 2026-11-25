@@ -80,6 +80,9 @@ class PostgresAppendLockHoldTest {
 
 	private static final Duration ONE_WAY = Duration.ofMillis(40);
 
+	/** how long a holder's state must have lasted to count: well under a round trip of 2 × ONE_WAY */
+	private static final Duration SETTLED = Duration.ofMillis(20);
+
 	/** comfortably past pgjdbc's default prepareThreshold of five */
 	private static final int APPENDS = 12;
 
@@ -279,12 +282,18 @@ class PostgresAppendLockHoldTest {
 
 		Observer ( DataSource dataSource, long key ) throws SQLException {
 			Connection connection = dataSource.getConnection();
+			// A state counts once it has lasted SETTLED: the two views are not read as one, so a session that
+			// has just committed and received its next BEGIN can show the moment between that BEGIN and the
+			// rest of its pipeline beside the lock of the transaction before. A wait on the client lasts a
+			// round trip, two ONE_WAYs, far longer.
 			PreparedStatement query = connection.prepareStatement("""
 					SELECT a.state FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
-					WHERE l.locktype = 'advisory' AND l.granted AND l.classid::bigint = ? AND l.objid::bigint = ? AND l.objsubid = 1""");
+					WHERE l.locktype = 'advisory' AND l.granted AND l.classid::bigint = ? AND l.objid::bigint = ? AND l.objsubid = 1
+					  AND clock_timestamp() - a.state_change > make_interval(secs => ?)""");
 			// a bigint advisory key is split over classid (its high half) and objid (its low half)
 			query.setLong(1, key >>> 32);
 			query.setLong(2, key & 0xffffffffL);
+			query.setDouble(3, SETTLED.toMillis() / 1000d);
 			thread = Thread.ofPlatform().daemon().start(() -> {
 				try ( connection; query ) {
 					while ( running.get() ) {

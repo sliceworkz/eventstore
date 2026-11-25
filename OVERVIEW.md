@@ -5,7 +5,7 @@ Written by the nightly dependency pipeline after every run (sliceworkz/software-
 | Branch | Last run | Head | Critical | High | Medium | Low | Blocking | Released version | Open PRs | Unreleased updates | SBOMs |
 |---|---|---|---:|---:|---:|---:|---:|---|---:|---|---|
 | [`develop`](#develop) | 2026-11-24T11:58:22+01:00 | `1500687856` | 0 | 0 | 0 | 0 | 0 | - | 0 | - | ci-artifact (run 45212361103) |
-| [`release/0.14`](#release014) | 2026-11-24T11:29:25+01:00 | `5a3fa32427` | 0 | 0 | 0 | 0 | 0 | v0.14.0: none critical/high | 1 | none since v0.14.0 | ci-artifact (run 44803853083) |
+| [`release/0.14`](#release014) | 2026-11-25T10:17:08+01:00 | `045f874ba6` | 0 | 0 | 0 | 0 | 0 | v0.14.0: none critical/high | 1 | **1 since v0.14.0**, can be released | ci-artifact (run 45376900225) |
 | [`release/0.13`](#release013) | 2026-11-25T10:17:11+01:00 | `97103fd736` | 0 | 0 | 0 | 0 | 0 | v0.13.0: none critical/high | 1 | **3 since v0.13.0**, can be released | ci-artifact (run 45376866509) |
 
 ## develop
@@ -14,11 +14,17 @@ No critical or high findings on the branch head.
 
 ## release/0.14
 
-No dependency updates since v0.14.0 (2026-11-20).
+**1 dependency update(s) merged since v0.14.0 (2026-11-20), not released yet**: a patch release (*Release 2 · Tag* on this line) ships them.
 
-**Nothing to release: no changes since v0.14.0.**
+**Can be released: 1 dependency update since v0.14.0.**
 
 - pipeline PR #303 waits for review: its updates are not in this release
+
+Release it with [Release 2 · Tag](https://github.com/sliceworkz/eventstore/actions/workflows/create-release-tag-and-bump.yaml) (*Run workflow*, branch `release/0.14`), or:
+
+```bash
+gh workflow run create-release-tag-and-bump.yaml --ref release/0.14 -R sliceworkz/eventstore
+```
 
 Automatic release: off (`release.automatic: never` in the policy).
 

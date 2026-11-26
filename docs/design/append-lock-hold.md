@@ -18,11 +18,50 @@ becomes the network rather than the database.
 
 ## What it costs and buys, measured
 
-`write-contention-one-stream` (100.000 events, `PER_ENTITY`, every writer appending to one stream with no
-logical conflict), PostgreSQL 18 in a container on a four-core VM, the forks on the same machine, two forks
-of five two-second iterations. Latency was added with `delay-proxy` (the benchmark's TCP proxy, 500µs each
-way), measured at **1.7ms round trip** against 0.08ms direct. The server's CPU per decision is the
-container's cgroup CPU over each measured iteration (`ServerCpuProfiler`), divided by the operations.
+### On the reference machine
+
+The published runs `write-contention-one-stream-ext` and `write-contention-one-stream-ext-latency`
+(`sliceworkz-eventstore-benchmark/results/0.15.0-SNAPSHOT/`), with the pipeline: 100.000 events,
+`PER_ENTITY`, every writer appending to one stream with no logical conflict, an external PostgreSQL 18.6
+on a 16-core Ryzen AI 7 350 with `fsync` and `synchronous_commit` on, the client on the same host, four
+forks of five two-second iterations, relative errors 0.4–5%. The latency run puts `tc qdisc … netem delay
+0.85ms` on loopback: **1.86ms round trip** (`ping`, mean of 20), against well under 0.1ms without it.
+Decisions per millisecond · the server's CPU per decision (`ServerCpuProfiler`, the server's cgroup CPU
+over each measured iteration divided by the operations):
+
+| threads | `append-type-and-tag` near | +1.86ms RTT | `append-none` near | +1.86ms RTT |
+|---|---|---|---|---|
+| 1 | 1.813 · 376µs | 0.312 · 710µs | 3.603 · 110µs | 0.260 · 557µs |
+| 4 | 1.857 · 505µs | 1.326 · 425µs | 5.113 · 129µs | 1.058 · 185µs |
+| 8 | 1.655 · 585µs | 1.975 · 441µs | 4.925 · 165µs | 2.103 · 152µs |
+| 16 | 1.580 · 623µs | 1.882 · 494µs | 4.774 · 203µs | 4.141 · 150µs |
+
+- **The network is out of the lock hold.** A network hop away the hot stream reaches ~1.9–2.0 decisions
+  per millisecond, as much as on the same host (1.6–1.9). Separate calls hold the lock for at least two
+  round trips, 3.7ms here, which caps the stream at 0.27 decisions per millisecond however little the
+  server does; the pipeline is seven times that bound. (The separate-calls runs on this machine are not
+  published; the bound is arithmetic on the measured round trip, and the VM runs below are the measured
+  before and after.)
+- **What is left of the hold is the server's own work, about 0.5ms per append**: one writer near the
+  server spends 0.55ms per decision, and sixteen writers a hop away settle at the same pace.
+- **On the same host, writers beyond about four make a hot stream slightly worse**: 1.86 → 1.58 decisions
+  per millisecond from four writers to sixteen, while the server's CPU per decision rises 505 → 623µs.
+  The appends are the same, so the likely cost is the longer queue at the lock (not measured on its own).
+  A hop away the writers arrive spread out, and the same sixteen spend less (494µs) and achieve more.
+- **One writer a hop away now waits less for a conditional append (3.2ms) than for an unconditional one
+  (3.85ms)**: the unconditional append still sends its INSERT and its COMMIT as two round trips.
+- `decide-then-append` is its unbounded read, 2.4–3.1ms of server CPU per decision, and scales with
+  writers in both settings (1.21 near, 1.32 a hop away, at sixteen); the hop costs it 2.7ms per decision
+  at one writer (5.45 → 8.11ms).
+- The server's CPU per operation is only meaningful where the server is busy: at one writer a hop away it
+  does a few hundred operations a second, and its background work (WAL writer, checkpointer, statistics)
+  is spread over few operations — 557µs per unconditional append there against 110µs near.
+
+### Before and after, on a four-core VM
+
+`write-contention-one-stream` against PostgreSQL 18 in a container on a four-core VM, the forks on the same
+machine, two forks of five two-second iterations. Latency was added with `delay-proxy` (the benchmark's TCP
+proxy, 500µs each way), measured at **1.7ms round trip** against 0.08ms direct. Same CPU measurement.
 
 `append-type-and-tag`, decisions per millisecond, and the server's CPU per decision:
 
@@ -33,9 +72,9 @@ container's cgroup CPU over each measured iteration (`ServerCpuProfiler`), divid
 | 8 | 0.562 · 1.39ms | 0.916 · 1.05ms | 0.228 · 1.79ms | 0.777 · 1.21ms |
 | 16 | 0.541 · 1.44ms | 0.827 · 1.14ms | 0.224 · 1.98ms | 0.780 · 1.19ms |
 
-- **The assumption holds.** Before, the hot stream is flat from 4 to 16 writers in both settings, and the
-  added latency takes its ceiling from ~0.56 to ~0.23 decisions per millisecond: the hold grows from
-  ~1.8ms to ~4.4ms, two round trips of 1.7ms.
+- **Separate calls put the network in the hold.** Before, the hot stream is flat from 4 to 16 writers in
+  both settings, and the added latency takes its ceiling from ~0.56 to ~0.23 decisions per millisecond:
+  the hold grows from ~1.8ms to ~4.4ms, two round trips of 1.7ms.
 - **After, the ceiling a network hop away is 3.4× higher**, and above what the same host managed before.
 - **The server also works less per decision**, by a third with the latency. Part of that is protocol
   work no longer done (two syncs and their `ReadyForQuery` per append), part is that the statement is no
@@ -45,9 +84,6 @@ container's cgroup CPU over each measured iteration (`ServerCpuProfiler`), divid
   with the latency — within the error bars.
 - `decide-then-append` gains less, since its unbounded decide read runs outside the lock: 0.20 → 0.40 at
   sixteen writers with the latency.
-- A single writer gains too: one round trip per conditional append instead of three, so 7.5ms → 4.2ms per
-  decision with the latency — a conditional append is now cheaper on the wire than an unconditional one,
-  which still commits separately.
 - **Which part buys what**, at eight writers, decisions per millisecond · server CPU per decision. Two
   further runs separate the pieces: the pipeline bound with an untyped NULL (so pgjdbc splits it again),
   and separate calls with the NULL bound typed.
@@ -62,9 +98,9 @@ container's cgroup CPU over each measured iteration (`ServerCpuProfiler`), divid
   Neither half alone moves the latency case, and each moves the same host by under 10%: the typed NULL
   saves the server a describe per execution, the untyped pipeline a little protocol work. Together they
   are the one round trip, and the gain is the two together.
-- Caveats, in the suite's own terms: a container on a developer-class VM, the client and the server
-  sharing four cores, a userspace proxy rather than kernel shaping, and relative errors up to ~20% on some
-  rows. Read the direction and the rough magnitude, which no error bar here comes near.
+- Caveats: a container on a developer-class VM, the client and the server sharing four cores, a
+  userspace proxy rather than kernel shaping, and relative errors up to ~20% on some rows. Not published;
+  read the direction and the rough magnitude, which no error bar here comes near.
 
 ## What keeps it one round trip, and how it came apart
 
@@ -116,6 +152,10 @@ control holds the lock in a session that waits, which the same observer must see
 ## What it does not change
 
 The lock is still held for the server's whole work on the append — the check, the insert, the trigger and
-the commit's WAL flush — so a hot stream still has a ceiling: the server's own time per append, which on
-this machine is ~1.2–1.4ms of CPU. That ceiling is bought off by stream layout, as before; this removes
-the network from it.
+the commit's WAL flush — so a hot stream still has a ceiling: the server's own time per append, about
+0.5ms on the reference machine. That ceiling is bought off by stream layout, as before; this removes the
+network from it.
+
+The unconditional append is untouched: it takes no lock, and still sends its INSERT and its COMMIT as two
+round trips, so a single writer a hop away waits two round trips for it against one for a conditional
+append.

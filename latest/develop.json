@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "runAt": "2026-11-25T10:53:33+01:00",
+  "runAt": "2026-11-26T10:33:53+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "develop",
-  "commit": "6fe7282e271d7c2bcd9d839668cdad18bc3aad4e",
+  "commit": "08ab1420ceedcbd409c48443ca483862384e7fd2",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/45589644031",
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/45793070468",
   "dryRun": false,
   "projectVersion": "0.15.0-SNAPSHOT",
   "policy": {
@@ -261,7 +261,7 @@
       "ecosystem": "maven",
       "name": "postgresql.jdbc.version",
       "where": "sliceworkz-eventstore-parent-pom/pom.xml",
-      "current": "42.7.14",
+      "current": "42.7.15",
       "kind": "property",
       "artifacts": [
         "org.postgresql:postgresql"
@@ -415,56 +415,10 @@
       "newest": "3.6.2"
     }
   ],
-  "updates": [
-    {
-      "ecosystem": "maven",
-      "name": "postgresql.jdbc.version",
-      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
-      "current": "42.7.14",
-      "kind": "property",
-      "artifacts": [
-        "org.postgresql:postgresql"
-      ],
-      "own": false,
-      "group": null,
-      "level": "patch",
-      "target": "42.7.15",
-      "action": "merge",
-      "batch": "auto",
-      "published": "2026-11-23",
-      "outcome": "planned"
-    }
-  ],
-  "batches": [
-    {
-      "key": "auto",
-      "branch": "deps/develop/auto",
-      "action": "merge",
-      "level": "merge",
-      "transitive": false,
-      "commit": "43fceaceaf8d41f0b7bcf1dcf291b6347cab6398",
-      "error": null,
-      "outcome": "pr-opened",
-      "pr": 308,
-      "changes": [
-        {
-          "ecosystem": "maven",
-          "name": "postgresql.jdbc.version",
-          "where": "sliceworkz-eventstore-parent-pom/pom.xml",
-          "level": "patch",
-          "from": "42.7.14",
-          "to": "42.7.15",
-          "applied": true,
-          "error": null,
-          "follows": null
-        }
-      ],
-      "lockfileChanges": [],
-      "mergedAt": "2026-11-25T10:04:44Z"
-    }
-  ],
+  "updates": [],
+  "batches": [],
   "pullRequests": [],
-  "pullRequestsReadAt": "2026-11-25T10:04:54+00:00",
+  "pullRequestsReadAt": "2026-11-26T09:35:24+00:00",
   "images": [],
   "closedPullRequests": [],
   "deletedBranches": [],
@@ -472,8 +426,8 @@
   "notes": [],
   "vulnerabilities": {
     "grype": "v0.121.0",
-    "dbBuilt": "2026-11-25T06:22:21Z",
-    "sbomOrigin": "ci-artifact (run 45381303632)",
+    "dbBuilt": "2026-11-26T06:22:34Z",
+    "sbomOrigin": "ci-artifact (run 45591485577)",
     "sboms": [
       "library",
       "test-kit"

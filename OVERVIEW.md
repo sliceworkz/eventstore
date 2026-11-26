@@ -6,7 +6,7 @@ Written by the nightly dependency pipeline after every run (sliceworkz/software-
 |---|---|---|---:|---:|---:|---:|---:|---|---:|---|---|
 | [`develop`](#develop) | 2026-11-25T10:53:33+01:00 | `6fe7282e27` | 0 | 0 | 0 | 0 | 0 | - | 0 | - | ci-artifact (run 45381303632) |
 | [`release/0.14`](#release014) | 2026-11-26T09:57:22+01:00 | `715c232a78` | 0 | 0 | 0 | 0 | 0 | v0.14.0: none critical/high | 1 | **2 since v0.14.0**, can be released | ci-artifact (run 45585629388) |
-| [`release/0.13`](#release013) | 2026-11-25T10:17:11+01:00 | `97103fd736` | 0 | 0 | 0 | 0 | 0 | v0.13.0: none critical/high | 1 | **3 since v0.13.0**, can be released | ci-artifact (run 45376866509) |
+| [`release/0.13`](#release013) | 2026-11-26T09:57:21+01:00 | `56470bd7b4` | 0 | 0 | 0 | 0 | 0 | v0.13.0: none critical/high | 1 | **4 since v0.13.0**, can be released | ci-artifact (run 45585605405) |
 
 ## develop
 
@@ -36,9 +36,9 @@ Pipeline PRs open: [#303](https://github.com/sliceworkz/eventstore/pull/303) (re
 
 ## release/0.13
 
-**3 dependency update(s) merged since v0.13.0 (2026-11-12), not released yet**: a patch release (*Release 2 · Tag* on this line) ships them.
+**4 dependency update(s) merged since v0.13.0 (2026-11-12), not released yet**: a patch release (*Release 2 · Tag* on this line) ships them.
 
-**Can be released: 3 dependency updates since v0.13.0.**
+**Can be released: 4 dependency updates since v0.13.0.**
 
 - pipeline PR #302 waits for review: its updates are not in this release
 

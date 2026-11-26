@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "runAt": "2026-11-25T10:17:11+01:00",
+  "runAt": "2026-11-26T09:57:21+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "release/0.13",
-  "commit": "97103fd736930c2673e317a37d1bea7f0d2a28e6",
+  "commit": "56470bd7b4d237815edaab0ba0342dfcac8db455",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/45583882822",
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/45787506857",
   "dryRun": false,
   "projectVersion": "0.13.1-SNAPSHOT",
   "policy": {
@@ -61,6 +61,10 @@
     "tagDate": "2026-11-12T11:37:26Z",
     "dependencyUpdates": [
       {
+        "commit": "56470bd7b4d237815edaab0ba0342dfcac8db455",
+        "subject": "Dependency updates (#306)"
+      },
+      {
         "commit": "97103fd736930c2673e317a37d1bea7f0d2a28e6",
         "subject": "Dependency updates (#300)"
       },
@@ -75,16 +79,16 @@
     ],
     "otherChanges": 0,
     "ci": {
-      "commit": "97103fd736930c2673e317a37d1bea7f0d2a28e6",
+      "commit": "56470bd7b4d237815edaab0ba0342dfcac8db455",
       "state": "green"
     },
     "readiness": {
       "verdict": "ready",
       "lastTag": "v0.13.0",
-      "commit": "97103fd736930c2673e317a37d1bea7f0d2a28e6",
+      "commit": "56470bd7b4d237815edaab0ba0342dfcac8db455",
       "headMoved": false,
       "ci": "green",
-      "dependencyUpdates": 3,
+      "dependencyUpdates": 4,
       "otherChanges": 0,
       "fixes": [],
       "reasons": [],
@@ -103,7 +107,7 @@
       "minimumIntervalDays": 0,
       "decision": "off",
       "reason": null,
-      "at": "2026-11-25T09:27:51+00:00"
+      "at": "2026-11-26T09:07:25+00:00"
     }
   },
   "releaseScan": {
@@ -334,7 +338,7 @@
       "ecosystem": "maven",
       "name": "postgresql.jdbc.version",
       "where": "sliceworkz-eventstore-parent-pom/pom.xml",
-      "current": "42.7.14",
+      "current": "42.7.15",
       "kind": "property",
       "artifacts": [
         "org.postgresql:postgresql"
@@ -506,24 +510,6 @@
       "batch": "minor",
       "published": "2026-11-22",
       "outcome": "planned"
-    },
-    {
-      "ecosystem": "maven",
-      "name": "postgresql.jdbc.version",
-      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
-      "current": "42.7.14",
-      "kind": "property",
-      "artifacts": [
-        "org.postgresql:postgresql"
-      ],
-      "own": false,
-      "group": null,
-      "level": "patch",
-      "target": "42.7.15",
-      "action": "merge",
-      "batch": "auto",
-      "published": "2026-11-23",
-      "outcome": "planned"
     }
   ],
   "batches": [
@@ -533,7 +519,7 @@
       "action": "pr",
       "level": "minor",
       "transitive": false,
-      "commit": "8de9534020b38e5e2a8568acc73b8542d06ab5fd",
+      "commit": "a6ef12a9ebea95c018c25eb661f80a1bdc00457a",
       "error": null,
       "outcome": "pr-updated",
       "pr": 302,
@@ -554,32 +540,6 @@
       "assignees": [
         "vanrogu"
       ]
-    },
-    {
-      "key": "auto",
-      "branch": "deps/release/0.13/auto",
-      "action": "merge",
-      "level": "merge",
-      "transitive": false,
-      "commit": "d20ad3dcbfb3663abe75a03d373af6e4559a227d",
-      "error": null,
-      "outcome": "pr-opened",
-      "pr": 306,
-      "changes": [
-        {
-          "ecosystem": "maven",
-          "name": "postgresql.jdbc.version",
-          "where": "sliceworkz-eventstore-parent-pom/pom.xml",
-          "level": "patch",
-          "from": "42.7.14",
-          "to": "42.7.15",
-          "applied": true,
-          "error": null,
-          "follows": null
-        }
-      ],
-      "lockfileChanges": [],
-      "mergedAt": "2026-11-25T09:27:36Z"
     }
   ],
   "pullRequests": [
@@ -592,7 +552,7 @@
       "autoMerge": false
     }
   ],
-  "pullRequestsReadAt": "2026-11-25T09:27:50+00:00",
+  "pullRequestsReadAt": "2026-11-26T09:07:24+00:00",
   "images": [],
   "closedPullRequests": [],
   "deletedBranches": [],
@@ -600,8 +560,8 @@
   "notes": [],
   "vulnerabilities": {
     "grype": "v0.121.0",
-    "dbBuilt": "2026-11-25T06:22:21Z",
-    "sbomOrigin": "ci-artifact (run 45376866509)",
+    "dbBuilt": "2026-11-26T06:22:34Z",
+    "sbomOrigin": "ci-artifact (run 45585605405)",
     "sboms": [
       "library",
       "test-kit"

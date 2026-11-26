@@ -22,7 +22,7 @@ becomes the network rather than the database.
 
 Published runs under `sliceworkz-eventstore-benchmark/results/0.15.0-SNAPSHOT/`: the pipeline as
 `write-contention-one-stream-ext` and `write-contention-one-stream-ext-latency`, separate calls as the same
-profiles with the suffix `-separate-calls` (the code as it is with `append` put back as separate calls,
+profiles with the suffix `-separate-calls`, and a back-to-back near pair with the suffix `-rerun` (the code as it is with `append` put back as separate calls,
 kept beside the published runs as the measured alternative). 100.000 events, `PER_ENTITY`, every writer
 appending to one stream with no logical conflict; an external PostgreSQL 18.6 on a 16-core Ryzen AI 7 350
 with `fsync` and `synchronous_commit` on, the client on the same host; four forks of five two-second
@@ -62,17 +62,25 @@ measured iteration (`ServerCpuProfiler`), divided by the operations.
   in the same 4.2ms hold; the pipeline lets it scale, 5.5× at sixteen writers (0.239 → 1.318).
 - **One writer a hop away waits less for a conditional append (3.2ms) than for an unconditional one
   (3.85ms)**: the unconditional append still sends its INSERT and its COMMIT as two round trips.
-- **Near the server there is no gain, and at eight and sixteen writers a small loss.** The pipeline does
-  better at one writer (1.64 → 1.81, +11%) and slightly worse at eight (1.85 → 1.66, −11%) and sixteen
-  (1.72 → 1.58, −8%), with the server's CPU per decision up 455 → 585µs and 504 → 623µs. Read it with the
-  control beside it: the two near runs are 3.5 hours apart, and the control moved too — −3% and −4% at
-  eight and sixteen, with its CPU per append up 27% and 36% at the same throughput — so part of the
-  difference is the runs, and what is beyond the control's drift (−7% and −4%) is small and not
-  explained. Near the server the round trips inside the hold are tens of microseconds either way, so the
-  pipeline has little to save there; a back-to-back repeat of the pair is what would tell whether the
-  remainder is real.
-- `decide-then-append` near the server is unchanged (within 6% at every writer count, both ways); its
-  unbounded read is 2.3–3.1ms of server CPU per decision.
+- **Near the server the pipeline gains about 10% from four writers up**, measured as a back-to-back pair
+  (`-rerun`, separate calls first, the pipeline straight after), in which the control agrees within 2% at
+  every writer count:
+
+  | threads | separate calls | pipeline | | control, separate calls | control, pipeline |
+  |---|---|---|---|---|---|
+  | 1 | 1.839 · 359µs | 1.916 · 350µs | +4% | 3.637 · 111µs | 3.648 · 108µs |
+  | 4 | 1.877 · 449µs | 2.085 · 428µs | +11% | 5.028 · 128µs | 4.998 · 129µs |
+  | 8 | 1.836 · 458µs | 2.018 · 446µs | +10% | 5.000 · 132µs | 5.019 · 132µs |
+  | 16 | 1.730 · 493µs | 1.914 · 481µs | +11% | 5.009 · 148µs | 4.956 · 148µs |
+
+  The round trips inside the hold are tens of microseconds here, and the gain is about what dropping two
+  of them and the server's per-statement protocol work is worth on a ~0.5ms hold; the server's CPU per
+  decision falls 2–5%. The first near pair, 3.5 hours apart, showed a loss of 8–11% at eight and sixteen
+  writers; its control had drifted too (−3% and −4%, with its CPU per append up 27–36%), and the
+  back-to-back pair does not reproduce it, so that pair measured the hours between its runs more than the
+  code. Both pairs stay published; the back-to-back one is the comparison.
+- `decide-then-append` near the server gains little, its unbounded read being 2.3–3.1ms of server CPU
+  per decision: 0%, +2%, +5% and +12% at 1, 4, 8 and 16 writers in the back-to-back pair.
 - The server's CPU per operation is only meaningful where the server is busy: at one writer a hop away it
   does a few hundred operations a second, and its background work (WAL writer, checkpointer, statistics)
   is spread over few operations — 524–557µs per unconditional append there against 110–131µs near.

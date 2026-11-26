@@ -599,7 +599,8 @@ sent as one pipeline it is ~0.78 at the same distance, and the server's CPU per 
 On the reference machine, published as `write-contention-one-stream-ext` and `...-ext-latency`
 (`results/0.15.0-SNAPSHOT/`, with the separate-calls runs beside them under `-separate-calls`), the hot
 stream goes from 0.23–0.24 to ~1.9–2.0 decisions/ms at 1.86ms of round trip (8×, the control identical),
-and near the server there is no gain (a few percent either way, partly drift between the runs).
+and near the server ~10% from four writers up (the back-to-back `-rerun` pair; a pair run hours apart
+showed a loss its own control's drift explains — run a before/after pair back to back).
 Those VM runs, their caveats (a container on a four-core VM, client and server sharing the cores) and the pitfall
 that makes a pipeline measure exactly like none (an untyped NULL) are in `docs/design/append-lock-hold.md` at
 the repository root. Two things about measuring it that apply to any profile:

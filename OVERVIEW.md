@@ -5,7 +5,7 @@ Written by the nightly dependency pipeline after every run (sliceworkz/software-
 | Branch | Last run | Head | Critical | High | Medium | Low | Blocking | Released version | Open PRs | Unreleased updates | SBOMs |
 |---|---|---|---:|---:|---:|---:|---:|---|---:|---|---|
 | [`develop`](#develop) | 2026-11-25T10:53:33+01:00 | `6fe7282e27` | 0 | 0 | 0 | 0 | 0 | - | 0 | - | ci-artifact (run 45381303632) |
-| [`release/0.14`](#release014) | 2026-11-25T10:17:08+01:00 | `045f874ba6` | 0 | 0 | 0 | 0 | 0 | v0.14.0: none critical/high | 1 | **1 since v0.14.0**, can be released | ci-artifact (run 45376900225) |
+| [`release/0.14`](#release014) | 2026-11-26T09:57:22+01:00 | `715c232a78` | 0 | 0 | 0 | 0 | 0 | v0.14.0: none critical/high | 1 | **2 since v0.14.0**, can be released | ci-artifact (run 45585629388) |
 | [`release/0.13`](#release013) | 2026-11-25T10:17:11+01:00 | `97103fd736` | 0 | 0 | 0 | 0 | 0 | v0.13.0: none critical/high | 1 | **3 since v0.13.0**, can be released | ci-artifact (run 45376866509) |
 
 ## develop
@@ -14,9 +14,9 @@ No critical or high findings on the branch head.
 
 ## release/0.14
 
-**1 dependency update(s) merged since v0.14.0 (2026-11-20), not released yet**: a patch release (*Release 2 · Tag* on this line) ships them.
+**2 dependency update(s) merged since v0.14.0 (2026-11-20), not released yet**: a patch release (*Release 2 · Tag* on this line) ships them.
 
-**Can be released: 1 dependency update since v0.14.0.**
+**Can be released: 2 dependency updates since v0.14.0.**
 
 - pipeline PR #303 waits for review: its updates are not in this release
 

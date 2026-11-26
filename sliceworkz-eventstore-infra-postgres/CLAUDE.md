@@ -265,6 +265,19 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
   - **The lock is taken as its own statement, before the INSERT** — this is load-bearing, not stylistic.
     Folded into the INSERT's `WHERE`, the statement would block with its stale snapshot already taken and
     the check would still miss the other appender's row: the same race with a lock in front of it.
+  - **The lock is held for the server's work only: lock, INSERT and COMMIT go as one pipeline.**
+    `conditionalAppendStatement` sends `[SET LOCAL lock_timeout; ]SELECT pg_advisory_xact_lock(?);
+    INSERT …; COMMIT` behind one sync, so no round trip falls inside the hold; sent as separate calls the
+    server held the lock across two round trips, which a network hop away is most of a hot stream's
+    ceiling (measured 0.24 → 1.98 decisions/ms at +1.86ms RTT on the reference machine, ~10% near the
+    server). Two things keep it one round trip and are
+    load-bearing: the results are read positionally after the lock's (`insertedRows`), and **every NULL is
+    bound typed** (`setNull(i, Types.VARCHAR)`) — pgjdbc, once the statement is server-prepared, describes
+    a statement bound with an unknown-typed parameter again on every execution and syncs after each part,
+    which silently restores the three round trips. The connection's `commit()`/`rollback()` afterwards
+    send nothing. `PostgresAppendLockHoldTest` watches the lock holder through a delaying proxy, past the
+    prepare threshold, and fails if it is ever `idle in transaction`. Reasons, measurements and the
+    rejected alternatives: `docs/design/append-lock-hold.md`.
   - **Only conditional appends take it.** `AppendCriteria.none()` reads nothing and so cannot observe a
     stale boundary; a conditional append that misses one is still equivalent to the two having run in the
     order conditional-then-unconditional, which is a legitimate history. Bulk ingestion stays fully parallel.

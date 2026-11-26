@@ -1652,7 +1652,11 @@ that bind everywhere:
   `PostgresCursorBoundaryTest` guards it, and the expansion costs 2–3× on cursor walks.
 - **Conditional appends serialize per stream via `pg_advisory_xact_lock`** keyed on the prefix and
   `(stream_context, stream_purpose)`; unconditional appends take no lock. A hot stream is therefore
-  a ceiling, and stream layout the fix — see the write-contention findings under Benchmarking.
+  a ceiling, and stream layout the fix — see the write-contention findings under Benchmarking. The
+  lock, the INSERT and the COMMIT go to the server as **one pipeline**, so the lock is never held
+  across a round trip; every NULL the INSERT binds is bound typed, or pgjdbc splits the pipeline
+  again once the statement is server-prepared. `PostgresAppendLockHoldTest` pins it;
+  `docs/design/append-lock-hold.md` has the measurements.
   **The wait for the lock is bounded** — the builder's `lockTimeout`, 10s by default, sent as
   `SET LOCAL lock_timeout` in the lock's own round trip and scoped to that transaction — so a holder
   that has stalled fails the appends queued behind it one at a time (`EventStorageException`, SQLSTATE

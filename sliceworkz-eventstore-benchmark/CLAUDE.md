@@ -587,3 +587,28 @@ move (11.3 / 11.6 / 10.9 at one thread; 33.5 / 34.2 / 33.6 at eight — it does 
   and magnitude rather than publishable figures, and both profiles grow the store 68–69% within an
   iteration. The relative errors here are tighter than in that pair (2–10%), and the comparator
   reports the `spread` → `one-stream` gap as outside both error bars at every thread count.
+
+#### How long the lock is held, and what a network hop adds
+
+**The one-stream ceiling is the time the lock is held, and the network is part of it unless the append
+keeps it out.** `write-contention-one-stream` over an external target, with `delay-proxy` adding a hop and
+`ServerCpuProfiler` (`-Dbenchmark.server.cpu=<cgroup file>`) adding the server's CPU per operation to the
+report, measures it directly: sent as separate calls (lock, INSERT, COMMIT), the hot stream's ceiling fell
+from ~0.56 to ~0.23 decisions/ms when ~1.7ms of round trip was added, two round trips inside every hold;
+sent as one pipeline it is ~0.78 at the same distance, and the server's CPU per decision fell by a third.
+On the reference machine, published as `write-contention-one-stream-ext` and `...-ext-latency`
+(`results/0.15.0-SNAPSHOT/`, with the separate-calls runs beside them under `-separate-calls`), the hot
+stream goes from 0.23–0.24 to ~1.9–2.0 decisions/ms at 1.86ms of round trip (8×, the control identical),
+and near the server ~10% from four writers up (the back-to-back `-rerun` pair; a pair run hours apart
+showed a loss its own control's drift explains — run a before/after pair back to back).
+Those VM runs, their caveats (a container on a four-core VM, client and server sharing the cores) and the pitfall
+that makes a pipeline measure exactly like none (an untyped NULL) are in `docs/design/append-lock-hold.md` at
+the repository root. Two things about measuring it that apply to any profile:
+
+- **A server-CPU window must start after the iteration's setup.** JMH calls a profiler's
+  `beforeIteration` before `@Setup(Level.Iteration)`, and an append workload's setup restores the corpus,
+  which costs the server far more than the iteration's appends — measured, it doubled the CPU per append.
+  `CorpusState` marks the window's start after the restore (`ServerCpuProfiler.iterationStarts()`).
+- **Probe more executions than the driver's `prepareThreshold`.** pgjdbc sends a statement differently
+  once it is server-prepared, so a probe of a statement's first few executions can show a round-trip
+  saving that the steady state does not have.

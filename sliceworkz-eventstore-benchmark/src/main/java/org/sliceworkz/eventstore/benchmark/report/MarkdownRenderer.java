@@ -647,16 +647,24 @@ final class MarkdownRenderer {
 		// "ok" and "conflicts" are totals over the whole trial, which is what JMH's aux counters are --
 		// they used to be headed "useful/s" and "conflicts/s", turning a count of operations into a rate
 		// nobody had computed. The rate is next to them now, derived from the score.
-		out.append("| target | workload | mode | threads | score | unit | error | useful ops/s | ok | conflicts |\n");
-		out.append("|---|---|---|---|---|---|---|---|---|---|\n");
+		// the server's CPU per operation, only where the run measured it (ServerCpuProfiler)
+		boolean serverCpu = report.benchmarks().stream().anyMatch(row -> !Double.isNaN(row.serverCpuMicrosPerOperation()));
+		out.append("| target | workload | mode | threads | score | unit | error | useful ops/s | ok | conflicts |"
+				+ ( serverCpu ? " server CPU/op |\n" : "\n" ));
+		out.append("|---|---|---|---|---|---|---|---|---|---|" + ( serverCpu ? "---|\n" : "\n" ));
 
 		for ( BenchmarkRow row : BenchmarkRow.sorted(report.benchmarks()) ) {
 			String relativeError = Double.isNaN(row.relativeError())
 					? "--"
 					: "%.1f%%".formatted(row.relativeError() * 100);
-			out.append("| %s | %s | %s | %d | %.3f | %s | %s | %s | %,.0f | %,.0f |\n".formatted(
+			out.append("| %s | %s | %s | %d | %.3f | %s | %s | %s | %,.0f | %,.0f |".formatted(
 					row.target(), row.workload(), row.mode(), row.threads(), row.score(), row.unit(),
 					relativeError, rate(row.usefulOperationsPerSecond()), row.successes(), row.conflicts()));
+			if ( serverCpu ) {
+				double micros = row.serverCpuMicrosPerOperation();
+				out.append(Double.isNaN(micros) ? " -- |" : " %,.0f µs |".formatted(micros));
+			}
+			out.append("\n");
 		}
 		out.append("\nA relative error above about 10% means the measurement is too noisy to compare "
 				+ "against anything; raise the iteration count or quieten the machine.\n");

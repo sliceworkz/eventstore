@@ -27,6 +27,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Types;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -2274,15 +2275,17 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 
 	/**
 	 * Takes an advisory lock in the transaction open on {@code connection}, waiting at most
-	 * {@link #lockTimeout()} for it.
+	 * {@link #lockTimeout()} for it. The lease requests take theirs this way; a conditional append
+	 * sends the same two statements at the head of its own pipeline instead, so that its lock is not
+	 * held across a round trip (see {@link #conditionalAppendStatement}).
 	 * <p>
 	 * The bound is {@code SET LOCAL lock_timeout}, sent in the same round trip as the lock statement:
 	 * pgjdbc splits a statement string on {@code ;} and pipelines the parts behind one sync, so a
 	 * bounded acquisition costs the wire what an unbounded one does. {@code SET LOCAL} rather than
 	 * {@code SET} because the connection goes back to a pool, and a session-level setting would follow
 	 * it to whatever runs on it next. It lasts until this transaction ends, so the statements behind
-	 * the lock — the INSERT, the lease writes — run under the same bound, which they can only meet by
-	 * waiting on DDL. The alternative — the driver's {@code options} connection property, or a
+	 * the lock — the append's INSERT, the lease writes — run under the same bound, which they can only
+	 * meet by waiting on DDL. The alternative — the driver's {@code options} connection property, or a
 	 * {@code connectionInitSql} on the pool — would bound every statement of every caller sharing the
 	 * pool, and only for pools this library builds.
 	 * <p>
@@ -2668,34 +2671,46 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 			sqlBuilder.append("RETURNING event_position, event_timestamp, event_tx::text, event_id::text");
 
 
+			// A conditional append serializes on its stream's advisory lock, and sends the lock, the
+			// INSERT and the COMMIT as one pipelined round trip, so the lock is held for the server's
+			// own work and never across the network; see conditionalAppendStatement. An unconditional
+			// append takes no lock and is the INSERT alone, committed below.
+			boolean conditional = ! appendCriteria.isNone();
+			Duration timeout = lockTimeout; // read once: the statement and the reading of its results agree
+			String statement = sqlBuilder.toString();
+			if ( conditional ) {
+				parameters.addFirst(appendLockKey(streamId));
+				statement = conditionalAppendStatement(statement, timeout);
+			}
+
 			try ( Connection writeConnection = dataSource.getConnection()) {
 				writeConnection.setAutoCommit(false);
 
-				try ( PreparedStatement stmt = writeConnection.prepareStatement(sqlBuilder.toString()) ) {
+				try ( PreparedStatement stmt = writeConnection.prepareStatement(statement) ) {
 
-					if ( ! appendCriteria.isNone() ) {
-						if ( !scanFromCursor ) {
-							disableServerPreparation(stmt);
-						}
-
-						// Serialize this stream's conditional appends: the NOT EXISTS below is a phantom
-						// check, which READ COMMITTED does not protect. Held until this transaction ends,
-						// and taken as its own statement so the INSERT's snapshot is taken after the
-						// previous holder committed. See appendLockKey.
-						acquireAdvisoryLock(writeConnection, ACQUIRE_APPEND_LOCK, appendLockKey(streamId));
+					if ( conditional && !scanFromCursor ) {
+						disableServerPreparation(stmt);
 					}
 
-					// Set parameters
+					// Set parameters. An absent value -- an event without an idempotency key -- is bound as
+					// a typed NULL, never through setObject(null): pgjdbc binds that as of unknown type, and
+					// a server-prepared statement bound with a parameter of unknown type is described again
+					// on every execution, with a sync after each of its statements. That would split the
+					// conditional append's pipeline back into a round trip per statement, with the lock held
+					// across each (see conditionalAppendStatement). The values that can be absent are text,
+					// so VARCHAR is their type.
 					for (int i = 0; i < parameters.size(); i++) {
 						Object param = parameters.get(i);
 						if (param instanceof String[]) {
 							stmt.setArray(i + 1, writeConnection.createArrayOf("text", (String[]) param));
+						} else if (param == null) {
+							stmt.setNull(i + 1, Types.VARCHAR);
 						} else {
 							stmt.setObject(i + 1, param);
 						}
 					}
 
-					try (ResultSet rs = stmt.executeQuery()) {
+					try (ResultSet rs = conditional ? insertedRows(stmt, timeout) : stmt.executeQuery()) {
 
 						Iterator<EventToStore> it = events.iterator();
 
@@ -2712,11 +2727,14 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 						}
 
 						if ( storedEvents.size() != events.size() ) {
-							// Insert failed due to optimistic locking conflict
+							// Insert failed due to optimistic locking conflict. The statement stored
+							// nothing, so the COMMIT pipelined behind a conditional append committed an
+							// empty transaction and this rollback has nothing left to do.
 							writeConnection.rollback();
 							throw new OptimisticLockingException(appendCriteria.eventFilter(), appendCriteria.expectedLastEventReference());
 						}
 					}
+					// a no-op after a conditional append, whose COMMIT went with its INSERT
 					writeConnection.commit();
 
 				} catch (SQLException e) {
@@ -2750,6 +2768,74 @@ class PostgresEventStorageImpl implements PostgresEventStorage {
 		
 		return storedEvents;
 			
+	}
+
+	/**
+	 * The conditional append as one pipelined round trip: the lock's bound, the stream's advisory lock,
+	 * the checked INSERT and the {@code COMMIT}, in that order, behind one sync. The lock key is the
+	 * first parameter, the INSERT's follow.
+	 *
+	 * <p><b>Why.</b> Sent as separate calls, the lock is granted in the first round trip, the INSERT
+	 * travels in the second and the {@code COMMIT} in the third, so the server holds the lock for two
+	 * round trips on top of its own work. On one hot stream that is the ceiling: every other conditional
+	 * appender waits for it, so the stream's throughput is bounded by the network between the
+	 * application and the database rather than by the database. pgjdbc splits a statement string on
+	 * {@code ;} and sends its parts as one pipeline, so here the server receives all three at once and
+	 * the lock is held for the check, the insert and the commit's WAL flush, nothing else.
+	 *
+	 * <p><b>Why it means exactly what the separate calls meant.</b>
+	 * <ul>
+	 *   <li>The lock is still a statement of its own before the INSERT (see {@link #ACQUIRE_APPEND_LOCK}).
+	 *       The server executes a pipeline's statements one after another, so the INSERT starts, and
+	 *       takes its READ COMMITTED snapshot, only once the lock statement has returned: after the
+	 *       previous holder committed, as before.</li>
+	 *   <li>{@code SET LOCAL lock_timeout} still precedes it in the same transaction, which pgjdbc opens
+	 *       with its {@code BEGIN} ahead of the pipeline, so the wait is bounded as before.</li>
+	 *   <li>A conflict inserts no row, and committing a transaction that wrote nothing stores nothing,
+	 *       which is what the rollback that followed it did; the lock is released at that commit.</li>
+	 *   <li>A failure -- the lock wait timing out, a duplicate idempotency key -- aborts the transaction,
+	 *       and the server skips the rest of the pipeline up to its sync, the {@code COMMIT} included.
+	 *       PostgreSQL releases the locks of an aborted transaction at the failure, and the caller's
+	 *       catch rolls back and classifies it exactly as before, the idempotency lookup running on the
+	 *       same connection after the rollback.</li>
+	 *   <li>pgjdbc tracks the transaction state the server reports, so the connection's own
+	 *       {@code commit()} and {@code rollback()} after a pipelined {@code COMMIT} send nothing.</li>
+	 * </ul>
+	 *
+	 * <p><b>What keeps it one round trip.</b> pgjdbc pipelines a statement string only as long as it can
+	 * bind it without asking the server first. Once a statement is server-prepared (after the driver's
+	 * {@code prepareThreshold} executions, five by default), a parameter bound as of unknown type --
+	 * {@code setObject(i, null)} -- makes it describe the statement again on every execution and sync
+	 * after each part: the lock, the INSERT and the COMMIT then travel one round trip each, exactly as
+	 * separate calls do. So every NULL is bound typed. {@code PostgresAppendLockHoldTest} runs past the
+	 * threshold through a delaying proxy and watches the lock holder's state to keep it that way.
+	 *
+	 * <p>The alternative -- the same pipeline on an autocommit connection, relying on the server running
+	 * everything up to the sync as one implicit transaction -- loses on what it leans on: {@code SET LOCAL}
+	 * and a transaction-scoped lock would then depend on how the server scopes an implicit transaction in
+	 * the extended protocol, where an explicit transaction states it. The other alternative -- folding the
+	 * lock into the INSERT itself -- is the race {@link #ACQUIRE_APPEND_LOCK} describes.
+	 */
+	private static String conditionalAppendStatement ( String insert, Duration timeout ) {
+		return ( timeout.isZero() ? "" : "SET LOCAL lock_timeout = '%dms'; ".formatted(timeout.toMillis()) )
+				+ ACQUIRE_APPEND_LOCK + "; " + insert + "; COMMIT";
+	}
+
+	/**
+	 * Executes {@link #conditionalAppendStatement} and hands back the INSERT's {@code RETURNING} rows,
+	 * which come after the result of the lock statement, and of the {@code SET LOCAL} where there is one.
+	 */
+	private static ResultSet insertedRows ( PreparedStatement stmt, Duration timeout ) throws SQLException {
+		stmt.execute();
+		int skip = timeout.isZero() ? 1 : 2;
+		for ( int i = 0; i < skip; i++ ) {
+			stmt.getMoreResults();
+		}
+		ResultSet rows = stmt.getResultSet();
+		if ( rows == null ) {
+			throw new SQLException("the conditional append returned no rows from its INSERT");
+		}
+		return rows;
 	}
 
 	/**

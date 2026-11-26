@@ -110,6 +110,8 @@ public class CorpusState {
 		} else {
 			regenerateInMemory();
 		}
+		// the restore is the iteration's setup, not its work: keep it out of the server's CPU
+		ServerCpuProfiler.iterationStarts();
 	}
 
 	private void regenerateInMemory ( ) {

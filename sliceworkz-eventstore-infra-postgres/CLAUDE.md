@@ -269,8 +269,8 @@ locks, schema and trigger repair, migrations, diagnosis SQL, measured plan behav
     `conditionalAppendStatement` sends `[SET LOCAL lock_timeout; ]SELECT pg_advisory_xact_lock(?);
     INSERT …; COMMIT` behind one sync, so no round trip falls inside the hold; sent as separate calls the
     server held the lock across two round trips, which a network hop away is most of a hot stream's
-    ceiling (measured 0.23 → 0.78 decisions/ms at +1.7ms RTT on a VM; ~1.9 on the reference machine at
-    +1.86ms, against a bound of 0.27 for separate calls). Two things keep it one round trip and are
+    ceiling (measured 0.24 → 1.98 decisions/ms at +1.86ms RTT on the reference machine, no gain near
+    the server). Two things keep it one round trip and are
     load-bearing: the results are read positionally after the lock's (`insertedRows`), and **every NULL is
     bound typed** (`setNull(i, Types.VARCHAR)`) — pgjdbc, once the statement is server-prepared, describes
     a statement bound with an unknown-typed parameter again on every execution and syncs after each part,

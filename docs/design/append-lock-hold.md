@@ -20,42 +20,62 @@ becomes the network rather than the database.
 
 ### On the reference machine
 
-The published runs `write-contention-one-stream-ext` and `write-contention-one-stream-ext-latency`
-(`sliceworkz-eventstore-benchmark/results/0.15.0-SNAPSHOT/`), with the pipeline: 100.000 events,
-`PER_ENTITY`, every writer appending to one stream with no logical conflict, an external PostgreSQL 18.6
-on a 16-core Ryzen AI 7 350 with `fsync` and `synchronous_commit` on, the client on the same host, four
-forks of five two-second iterations, relative errors 0.4–5%. The latency run puts `tc qdisc … netem delay
-0.85ms` on loopback: **1.86ms round trip** (`ping`, mean of 20), against well under 0.1ms without it.
-Decisions per millisecond · the server's CPU per decision (`ServerCpuProfiler`, the server's cgroup CPU
-over each measured iteration divided by the operations):
+Published runs under `sliceworkz-eventstore-benchmark/results/0.15.0-SNAPSHOT/`: the pipeline as
+`write-contention-one-stream-ext` and `write-contention-one-stream-ext-latency`, separate calls as the same
+profiles with the suffix `-separate-calls` (the code as it is with `append` put back as separate calls,
+kept beside the published runs as the measured alternative). 100.000 events, `PER_ENTITY`, every writer
+appending to one stream with no logical conflict; an external PostgreSQL 18.6 on a 16-core Ryzen AI 7 350
+with `fsync` and `synchronous_commit` on, the client on the same host; four forks of five two-second
+iterations, relative errors 0.4–5%. The latency runs put `tc qdisc … netem delay 0.85ms` on loopback:
+**1.86ms round trip** (`ping`, mean of 20). The server's CPU per decision is its cgroup CPU over each
+measured iteration (`ServerCpuProfiler`), divided by the operations.
 
-| threads | `append-type-and-tag` near | +1.86ms RTT | `append-none` near | +1.86ms RTT |
+`append-type-and-tag`, decisions per millisecond · the server's CPU per decision:
+
+| threads | near, separate calls | near, pipeline | +1.86ms, separate calls | +1.86ms, pipeline |
 |---|---|---|---|---|
-| 1 | 1.813 · 376µs | 0.312 · 710µs | 3.603 · 110µs | 0.260 · 557µs |
-| 4 | 1.857 · 505µs | 1.326 · 425µs | 5.113 · 129µs | 1.058 · 185µs |
-| 8 | 1.655 · 585µs | 1.975 · 441µs | 4.925 · 165µs | 2.103 · 152µs |
-| 16 | 1.580 · 623µs | 1.882 · 494µs | 4.774 · 203µs | 4.141 · 150µs |
+| 1 | 1.636 · 422µs | 1.813 · 376µs | 0.144 · 1,132µs | 0.312 · 710µs |
+| 4 | 1.777 · 489µs | 1.857 · 505µs | 0.244 · 901µs | 1.326 · 425µs |
+| 8 | 1.852 · 455µs | 1.655 · 585µs | 0.237 · 1,007µs | 1.975 · 441µs |
+| 16 | 1.718 · 504µs | 1.580 · 623µs | 0.233 · 1,086µs | 1.882 · 494µs |
 
-- **The network is out of the lock hold.** A network hop away the hot stream reaches ~1.9–2.0 decisions
-  per millisecond, as much as on the same host (1.6–1.9). Separate calls hold the lock for at least two
-  round trips, 3.7ms here, which caps the stream at 0.27 decisions per millisecond however little the
-  server does; the pipeline is seven times that bound. (The separate-calls runs on this machine are not
-  published; the bound is arithmetic on the measured round trip, and the VM runs below are the measured
-  before and after.)
-- **What is left of the hold is the server's own work, about 0.5ms per append**: one writer near the
-  server spends 0.55ms per decision, and sixteen writers a hop away settle at the same pace.
-- **On the same host, writers beyond about four make a hot stream slightly worse**: 1.86 → 1.58 decisions
-  per millisecond from four writers to sixteen, while the server's CPU per decision rises 505 → 623µs.
-  The appends are the same, so the likely cost is the longer queue at the lock (not measured on its own).
-  A hop away the writers arrive spread out, and the same sixteen spend less (494µs) and achieve more.
-- **One writer a hop away now waits less for a conditional append (3.2ms) than for an unconditional one
+`append-none` (no lock, its path unchanged but for the typed NULL) is the control:
+
+| threads | near, separate calls | near, pipeline | +1.86ms, separate calls | +1.86ms, pipeline |
+|---|---|---|---|---|
+| 1 | 3.386 · 131µs | 3.603 · 110µs | 0.260 · 524µs | 0.260 · 557µs |
+| 4 | 5.064 · 131µs | 5.113 · 129µs | 1.057 · 187µs | 1.058 · 185µs |
+| 8 | 5.086 · 130µs | 4.925 · 165µs | 2.105 · 151µs | 2.103 · 152µs |
+| 16 | 4.948 · 149µs | 4.774 · 203µs | 4.139 · 151µs | 4.141 · 150µs |
+
+- **A network hop away, the pipeline multiplies a hot stream's ceiling by eight.** Separate calls cap it
+  at 0.23–0.24 decisions per millisecond from four writers up: a hold of ~4.2ms, two round trips of 1.86ms
+  plus the server's ~0.5ms. The pipeline reaches 1.98 at eight writers — 8.3× — and 1.88 at sixteen.
+  The control is identical in both runs to the third digit, so the whole difference is the append.
+- **The server works less than half as hard per decision a hop away** (1.0–1.1ms → 0.44–0.49ms from
+  four writers up). Part of that is the protocol work saved, part is per-decision background work spread
+  over eight times as many decisions; the two are not separated here.
+- **What is left of the hold is the server's own work, about 0.5ms per append**: sixteen writers a hop
+  away settle at the pace of one writer near the server (0.55ms per decision).
+- **`decide-then-append` gains as much a hop away once enough writers overlap their reads**: separate
+  calls hold it to ~0.24 decisions per millisecond whatever the writer count, since every decision ends
+  in the same 4.2ms hold; the pipeline lets it scale, 5.5× at sixteen writers (0.239 → 1.318).
+- **One writer a hop away waits less for a conditional append (3.2ms) than for an unconditional one
   (3.85ms)**: the unconditional append still sends its INSERT and its COMMIT as two round trips.
-- `decide-then-append` is its unbounded read, 2.4–3.1ms of server CPU per decision, and scales with
-  writers in both settings (1.21 near, 1.32 a hop away, at sixteen); the hop costs it 2.7ms per decision
-  at one writer (5.45 → 8.11ms).
+- **Near the server there is no gain, and at eight and sixteen writers a small loss.** The pipeline does
+  better at one writer (1.64 → 1.81, +11%) and slightly worse at eight (1.85 → 1.66, −11%) and sixteen
+  (1.72 → 1.58, −8%), with the server's CPU per decision up 455 → 585µs and 504 → 623µs. Read it with the
+  control beside it: the two near runs are 3.5 hours apart, and the control moved too — −3% and −4% at
+  eight and sixteen, with its CPU per append up 27% and 36% at the same throughput — so part of the
+  difference is the runs, and what is beyond the control's drift (−7% and −4%) is small and not
+  explained. Near the server the round trips inside the hold are tens of microseconds either way, so the
+  pipeline has little to save there; a back-to-back repeat of the pair is what would tell whether the
+  remainder is real.
+- `decide-then-append` near the server is unchanged (within 6% at every writer count, both ways); its
+  unbounded read is 2.3–3.1ms of server CPU per decision.
 - The server's CPU per operation is only meaningful where the server is busy: at one writer a hop away it
   does a few hundred operations a second, and its background work (WAL writer, checkpointer, statistics)
-  is spread over few operations — 557µs per unconditional append there against 110µs near.
+  is spread over few operations — 524–557µs per unconditional append there against 110–131µs near.
 
 ### Before and after, on a four-core VM
 

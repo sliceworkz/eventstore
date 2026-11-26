@@ -597,8 +597,9 @@ report, measures it directly: sent as separate calls (lock, INSERT, COMMIT), the
 from ~0.56 to ~0.23 decisions/ms when ~1.7ms of round trip was added, two round trips inside every hold;
 sent as one pipeline it is ~0.78 at the same distance, and the server's CPU per decision fell by a third.
 On the reference machine, published as `write-contention-one-stream-ext` and `...-ext-latency`
-(`results/0.15.0-SNAPSHOT/`), the pipeline reaches ~1.9–2.0 decisions/ms at 1.86ms of round trip — as
-much as on the same host, and seven times the 0.27 that two round trips inside every hold would allow.
+(`results/0.15.0-SNAPSHOT/`, with the separate-calls runs beside them under `-separate-calls`), the hot
+stream goes from 0.23–0.24 to ~1.9–2.0 decisions/ms at 1.86ms of round trip (8×, the control identical),
+and near the server there is no gain (a few percent either way, partly drift between the runs).
 Those VM runs, their caveats (a container on a four-core VM, client and server sharing the cores) and the pitfall
 that makes a pipeline measure exactly like none (an untyped NULL) are in `docs/design/append-lock-hold.md` at
 the repository root. Two things about measuring it that apply to any profile:

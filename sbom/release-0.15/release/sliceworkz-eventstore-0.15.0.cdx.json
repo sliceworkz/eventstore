@@ -1,10 +1,10 @@
 {
   "bomFormat" : "CycloneDX",
   "specVersion" : "1.6",
-  "serialNumber" : "urn:uuid:2d630658-47af-38c9-9dc4-209204b0ed77",
+  "serialNumber" : "urn:uuid:b188cb58-e821-3572-9f7b-49554c4d4a28",
   "version" : 1,
   "metadata" : {
-    "timestamp" : "2026-11-25T09:28:13Z",
+    "timestamp" : "2026-11-26T20:40:44Z",
     "lifecycles" : [
       {
         "phase" : "build"
@@ -58,10 +58,10 @@
     },
     "component" : {
       "type" : "library",
-      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore@0.13.1-SNAPSHOT?type=pom",
+      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore@0.15.0?type=pom",
       "group" : "org.sliceworkz",
       "name" : "sliceworkz-eventstore",
-      "version" : "0.13.1-SNAPSHOT",
+      "version" : "0.15.0",
       "description" : "DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)",
       "licenses" : [
         {
@@ -71,7 +71,7 @@
           }
         }
       ],
-      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore@0.13.1-SNAPSHOT?type=pom",
+      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore@0.15.0?type=pom",
       "externalReferences" : [
         {
           "type" : "website",
@@ -97,10 +97,10 @@
   "components" : [
     {
       "type" : "library",
-      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-parent-pom@0.13.1-SNAPSHOT?type=pom",
+      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-parent-pom@0.15.0?type=pom",
       "group" : "org.sliceworkz",
       "name" : "sliceworkz-eventstore-parent-pom",
-      "version" : "0.13.1-SNAPSHOT",
+      "version" : "0.15.0",
       "description" : "DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)",
       "licenses" : [
         {
@@ -110,7 +110,7 @@
           }
         }
       ],
-      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-parent-pom@0.13.1-SNAPSHOT?type=pom",
+      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-parent-pom@0.15.0?type=pom",
       "externalReferences" : [
         {
           "type" : "website",
@@ -191,10 +191,10 @@
     },
     {
       "type" : "library",
-      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-bom@0.13.1-SNAPSHOT?type=pom",
+      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-bom@0.15.0?type=pom",
       "group" : "org.sliceworkz",
       "name" : "sliceworkz-eventstore-bom",
-      "version" : "0.13.1-SNAPSHOT",
+      "version" : "0.15.0",
       "description" : "DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)",
       "licenses" : [
         {
@@ -204,7 +204,7 @@
           }
         }
       ],
-      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-bom@0.13.1-SNAPSHOT?type=pom",
+      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-bom@0.15.0?type=pom",
       "externalReferences" : [
         {
           "type" : "website",
@@ -218,10 +218,10 @@
     },
     {
       "type" : "library",
-      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.13.1-SNAPSHOT?type=jar",
+      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.15.0?type=jar",
       "group" : "org.sliceworkz",
       "name" : "sliceworkz-eventstore-api",
-      "version" : "0.13.1-SNAPSHOT",
+      "version" : "0.15.0",
       "description" : "DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)",
       "licenses" : [
         {
@@ -231,7 +231,7 @@
           }
         }
       ],
-      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.13.1-SNAPSHOT?type=jar",
+      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.15.0?type=jar",
       "externalReferences" : [
         {
           "type" : "website",
@@ -455,10 +455,10 @@
     },
     {
       "type" : "library",
-      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-impl@0.13.1-SNAPSHOT?type=jar",
+      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-impl@0.15.0?type=jar",
       "group" : "org.sliceworkz",
       "name" : "sliceworkz-eventstore-impl",
-      "version" : "0.13.1-SNAPSHOT",
+      "version" : "0.15.0",
       "description" : "DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)",
       "licenses" : [
         {
@@ -468,7 +468,7 @@
           }
         }
       ],
-      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-impl@0.13.1-SNAPSHOT?type=jar",
+      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-impl@0.15.0?type=jar",
       "externalReferences" : [
         {
           "type" : "website",
@@ -482,10 +482,10 @@
     },
     {
       "type" : "library",
-      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-serialization-json@0.13.1-SNAPSHOT?type=jar",
+      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-serialization-json@0.15.0?type=jar",
       "group" : "org.sliceworkz",
       "name" : "sliceworkz-eventstore-serialization-json",
-      "version" : "0.13.1-SNAPSHOT",
+      "version" : "0.15.0",
       "description" : "DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres) - JSON serialization codecs",
       "licenses" : [
         {
@@ -495,7 +495,7 @@
           }
         }
       ],
-      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-serialization-json@0.13.1-SNAPSHOT?type=jar",
+      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-serialization-json@0.15.0?type=jar",
       "externalReferences" : [
         {
           "type" : "website",
@@ -509,10 +509,10 @@
     },
     {
       "type" : "library",
-      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem@0.13.1-SNAPSHOT?type=jar",
+      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem@0.15.0?type=jar",
       "group" : "org.sliceworkz",
       "name" : "sliceworkz-eventstore-infra-inmem",
-      "version" : "0.13.1-SNAPSHOT",
+      "version" : "0.15.0",
       "description" : "DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)",
       "licenses" : [
         {
@@ -522,7 +522,7 @@
           }
         }
       ],
-      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem@0.13.1-SNAPSHOT?type=jar",
+      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem@0.15.0?type=jar",
       "externalReferences" : [
         {
           "type" : "website",
@@ -536,10 +536,10 @@
     },
     {
       "type" : "library",
-      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-postgres@0.13.1-SNAPSHOT?type=jar",
+      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-postgres@0.15.0?type=jar",
       "group" : "org.sliceworkz",
       "name" : "sliceworkz-eventstore-infra-postgres",
-      "version" : "0.13.1-SNAPSHOT",
+      "version" : "0.15.0",
       "description" : "DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres)",
       "licenses" : [
         {
@@ -549,7 +549,7 @@
           }
         }
       ],
-      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-postgres@0.13.1-SNAPSHOT?type=jar",
+      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-postgres@0.15.0?type=jar",
       "externalReferences" : [
         {
           "type" : "website",
@@ -827,10 +827,10 @@
     },
     {
       "type" : "library",
-      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem-fs@0.13.1-SNAPSHOT?type=jar",
+      "bom-ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem-fs@0.15.0?type=jar",
       "group" : "org.sliceworkz",
       "name" : "sliceworkz-eventstore-infra-inmem-fs",
-      "version" : "0.13.1-SNAPSHOT",
+      "version" : "0.15.0",
       "description" : "DCB (Dynamic Consistency Boundary) compliant EventStore (Java/Postgres) - In-memory with filesystem persistence",
       "licenses" : [
         {
@@ -840,7 +840,7 @@
           }
         }
       ],
-      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem-fs@0.13.1-SNAPSHOT?type=jar",
+      "purl" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem-fs@0.15.0?type=jar",
       "externalReferences" : [
         {
           "type" : "website",
@@ -855,29 +855,29 @@
   ],
   "dependencies" : [
     {
-      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore@0.13.1-SNAPSHOT?type=pom",
+      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore@0.15.0?type=pom",
       "dependsOn" : [
-        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-parent-pom@0.13.1-SNAPSHOT?type=pom",
-        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-bom@0.13.1-SNAPSHOT?type=pom"
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-parent-pom@0.15.0?type=pom",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-bom@0.15.0?type=pom"
       ]
     },
     {
-      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-parent-pom@0.13.1-SNAPSHOT?type=pom",
+      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-parent-pom@0.15.0?type=pom",
       "dependsOn" : [
-        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.13.1-SNAPSHOT?type=jar",
-        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-impl@0.13.1-SNAPSHOT?type=jar",
-        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-serialization-json@0.13.1-SNAPSHOT?type=jar",
-        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem@0.13.1-SNAPSHOT?type=jar",
-        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-postgres@0.13.1-SNAPSHOT?type=jar",
-        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem-fs@0.13.1-SNAPSHOT?type=jar"
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.15.0?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-impl@0.15.0?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-serialization-json@0.15.0?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem@0.15.0?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-postgres@0.15.0?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem-fs@0.15.0?type=jar"
       ]
     },
     {
-      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-bom@0.13.1-SNAPSHOT?type=pom",
+      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-bom@0.15.0?type=pom",
       "dependsOn" : [ ]
     },
     {
-      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.13.1-SNAPSHOT?type=jar",
+      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.15.0?type=jar",
       "dependsOn" : [
         "pkg:maven/org.slf4j/slf4j-api@2.0.20?type=jar",
         "pkg:maven/com.fasterxml.jackson.core/jackson-annotations@2.23?type=jar"
@@ -892,9 +892,9 @@
       "dependsOn" : [ ]
     },
     {
-      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-impl@0.13.1-SNAPSHOT?type=jar",
+      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-impl@0.15.0?type=jar",
       "dependsOn" : [
-        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.13.1-SNAPSHOT?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.15.0?type=jar",
         "pkg:maven/tools.jackson.core/jackson-databind@3.3.0?type=jar",
         "pkg:maven/org.slf4j/slf4j-api@2.0.20?type=jar"
       ]
@@ -911,28 +911,28 @@
       "dependsOn" : [ ]
     },
     {
-      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-serialization-json@0.13.1-SNAPSHOT?type=jar",
+      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-serialization-json@0.15.0?type=jar",
       "dependsOn" : [
-        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.13.1-SNAPSHOT?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.15.0?type=jar",
         "pkg:maven/tools.jackson.core/jackson-databind@3.3.0?type=jar"
       ]
     },
     {
-      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem@0.13.1-SNAPSHOT?type=jar",
+      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem@0.15.0?type=jar",
       "dependsOn" : [
-        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.13.1-SNAPSHOT?type=jar",
-        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-impl@0.13.1-SNAPSHOT?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.15.0?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-impl@0.15.0?type=jar",
         "pkg:maven/tools.jackson.core/jackson-databind@3.3.0?type=jar",
         "pkg:maven/org.slf4j/slf4j-api@2.0.20?type=jar"
       ]
     },
     {
-      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-postgres@0.13.1-SNAPSHOT?type=jar",
+      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-postgres@0.15.0?type=jar",
       "dependsOn" : [
-        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.13.1-SNAPSHOT?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.15.0?type=jar",
         "pkg:maven/com.github.f4b6a3/uuid-creator@6.1.1?type=jar",
         "pkg:maven/org.postgresql/postgresql@42.7.15?type=jar",
-        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-impl@0.13.1-SNAPSHOT?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-impl@0.15.0?type=jar",
         "pkg:maven/com.zaxxer/HikariCP@7.1.0?type=jar",
         "pkg:maven/tools.jackson.core/jackson-databind@3.3.0?type=jar",
         "pkg:maven/org.slf4j/slf4j-api@2.0.20?type=jar"
@@ -959,12 +959,12 @@
       ]
     },
     {
-      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem-fs@0.13.1-SNAPSHOT?type=jar",
+      "ref" : "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem-fs@0.15.0?type=jar",
       "dependsOn" : [
-        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.13.1-SNAPSHOT?type=jar",
-        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-serialization-json@0.13.1-SNAPSHOT?type=jar",
-        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem@0.13.1-SNAPSHOT?type=jar",
-        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-impl@0.13.1-SNAPSHOT?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-api@0.15.0?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-serialization-json@0.15.0?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-infra-inmem@0.15.0?type=jar",
+        "pkg:maven/org.sliceworkz/sliceworkz-eventstore-impl@0.15.0?type=jar",
         "pkg:maven/tools.jackson.core/jackson-databind@3.3.0?type=jar"
       ]
     }

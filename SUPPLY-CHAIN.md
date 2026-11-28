@@ -125,6 +125,7 @@ SECURITY-RELEASES.md.
 | `.github/workflows/rescan-releases.yaml` | the daily re-scan |
 | `.github/dependabot.yaml` | what Dependabot watches (the GitHub Actions and Grype), how often, and how it groups updates |
 | `.github/dependency-policy.yaml` | the nightly dependency pipeline's policy: per branch and per level (patch, minor, major) what it does with an update, the cooldown, and what is held |
+| `.github/workflows/dependency-follow-up.yaml` | starts the pipeline in `sliceworkz/software-factory` again on a branch once CI has finished on a commit of the App, or a release is published |
 | `SECURITY-RELEASES.md` | what to do when a scan finds something |
 | `SECURITY.md` | how to report a vulnerability privately |
 
@@ -170,6 +171,11 @@ schedule of the policy, and its runs and logs are there. What it does is in `.gi
 | major | a PR per update, merged automatically when its own CI is green | only mentioned |
 
 - **Cooldown**: a version is proposed once it has been out for a day.
+- **Right after a merge** the pipeline runs again on that branch: once CI has finished on a commit of the App (a
+  pipeline PR merged, a version bump) and once a release is published, `.github/workflows/dependency-follow-up.yaml`
+  starts `public-repositories.yaml` in `sliceworkz/software-factory` for that branch. So the `dependency-status`
+  branch, the issue and the Software Supply Chain Status page show the merged state within minutes, not at the next
+  night. Every run also starts the build of that page.
 - **Assigned**: a PR for review is assigned to the maintainer by the pipeline (`assignees` in the policy); one
   that merges by itself is assigned to nobody.
 - **Releasing**: each run on a release line says whether the line can be released (release recommended, can be

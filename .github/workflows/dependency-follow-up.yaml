@@ -1,6 +1,6 @@
 name: "🛡️ 🔁 Dependency updates · follow-up"
 
-run-name: "Dependency updates follow-up · after ${{ github.event.workflow_run.name }} on ${{ github.event.workflow_run.head_branch }}"
+run-name: "Dependency updates · follow-up of ${{ github.event.workflow_run.head_branch }}"
 
 # A follow-up run of the nightly dependency pipeline: once CI has finished on a commit of the App (a pipeline PR
 # merged, a version bump) or a release is published, the pipeline runs again on that one branch, so what is recorded

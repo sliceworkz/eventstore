@@ -4,7 +4,7 @@ Written by the nightly dependency pipeline after every run (sliceworkz/software-
 
 | Branch | Last run | Head | Critical | High | Medium | Low | Blocking | Released version | Open PRs | Unreleased updates | SBOMs |
 |---|---|---|---:|---:|---:|---:|---:|---|---:|---|---|
-| [`develop`](#develop) | 2026-11-28T09:55:58+01:00 | `fa22b64bf9` | 0 | 0 | 0 | 0 | 0 | - | 0 | - | ci-artifact (run 45891132910) |
+| [`develop`](#develop) | 2026-11-28T10:36:28+01:00 | `31a2594575` | 0 | 0 | 0 | 0 | 0 | - | 0 | - | built by this run |
 | [`release/0.15`](#release015) | 2026-11-28T09:30:32+01:00 | `cbac9dd415` | 0 | 0 | 0 | 0 | 0 | v0.15.0: none critical/high | 0 | none since v0.15.0 | ci-artifact (run 45892575937) |
 | [`release/0.14`](#release014) | 2026-11-28T09:30:31+01:00 | `7755a815e7` | 0 | 0 | 0 | 0 | 0 | v0.14.0: none critical/high | 0 | **3 since v0.14.0**, can be released | ci-artifact (run 45879490759) |
 

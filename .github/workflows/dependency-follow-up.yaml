@@ -1,0 +1,50 @@
+name: "🛡️ 🔁 Dependency updates · follow-up"
+
+run-name: "Dependency updates follow-up · after ${{ github.event.workflow_run.name }} on ${{ github.event.workflow_run.head_branch }}"
+
+# A follow-up run of the nightly dependency pipeline: once CI has finished on a commit of the App (a pipeline PR
+# merged, a version bump) or a release is published, the pipeline runs again on that one branch, so what is recorded
+# follows the merges within minutes ("Follow-up runs" in sliceworkz/software-factory's docs/dependency-updates.md).
+#
+# This repository is public, so the pipeline runs in sliceworkz/software-factory on its behalf
+# (public-repositories.yaml there): this workflow only starts it, with an App token able to start a workflow there and
+# nothing else. The pipeline's plan decides again what the run covers; the condition below only saves a run.
+#
+# It checks nothing out and runs no code of this repository, and follows push runs only: a workflow_run workflow holds
+# the repository's secrets even when the run it follows was a fork's pull request.
+
+on:
+  workflow_run:
+    workflows: ["🔨 🤖 CI", "🚀 🤖 Release 3 · Publish"]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  follow-up:
+    if: >-
+      github.event.workflow_run.event == 'push' && (startsWith(github.event.workflow_run.head_branch, 'v')
+      || endsWith(github.event.workflow_run.head_commit.author.email, '+sliceworkz-software-factory[bot]@users.noreply.github.com'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: App token to start the pipeline in software-factory
+        id: app
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          owner: sliceworkz
+          repositories: software-factory
+          permission-actions: write
+      - name: Start the follow-up run
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          NAME: ${{ github.event.repository.name }}
+          REF: ${{ github.event.workflow_run.head_branch }}
+          AUTHOR: ${{ github.event.workflow_run.head_commit.author.email }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: >-
+          gh workflow run public-repositories.yaml --repo sliceworkz/software-factory --ref develop
+          -f repository="$NAME" -f dry-run=false
+          -f follow-up-ref="$REF" -f follow-up-author="$AUTHOR" -f follow-up-conclusion="$CONCLUSION"

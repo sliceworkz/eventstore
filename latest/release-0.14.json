@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "runAt": "2026-11-27T10:10:22+01:00",
+  "runAt": "2026-11-28T09:30:31+01:00",
   "timezone": "Europe/Brussels",
   "repository": "sliceworkz/eventstore",
   "branch": "release/0.14",
   "commit": "7755a815e7dffae45a4fcd68aba9d6b383efad82",
   "tooling": "v1",
-  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/45971410740",
+  "workflowRun": "https://github.com/sliceworkz/software-factory/actions/runs/46126100608",
   "dryRun": false,
   "projectVersion": "0.14.1-SNAPSHOT",
   "policy": {
@@ -101,7 +101,7 @@
       "minimumIntervalDays": 0,
       "decision": "off",
       "reason": null,
-      "at": "2026-11-27T09:11:59+00:00"
+      "at": "2026-11-28T08:32:21+00:00"
     }
   },
   "releaseScan": {
@@ -299,7 +299,7 @@
       ],
       "own": false,
       "group": null,
-      "newest": "4.3.0"
+      "newest": "4.4.0"
     },
     {
       "ecosystem": "maven",
@@ -486,10 +486,28 @@
       "newest": "3.6.2"
     }
   ],
-  "updates": [],
+  "updates": [
+    {
+      "ecosystem": "maven",
+      "name": "awaitility.version",
+      "where": "sliceworkz-eventstore-parent-pom/pom.xml",
+      "current": "4.3.0",
+      "kind": "property",
+      "artifacts": [
+        "org.awaitility:awaitility"
+      ],
+      "own": false,
+      "group": null,
+      "level": "minor",
+      "target": "4.4.0",
+      "outcome": "held-back",
+      "eligibleFrom": "2026-11-28T11:00:36+00:00",
+      "reason": "cooldown"
+    }
+  ],
   "batches": [],
   "pullRequests": [],
-  "pullRequestsReadAt": "2026-11-27T09:11:58+00:00",
+  "pullRequestsReadAt": "2026-11-28T08:32:20+00:00",
   "images": [],
   "closedPullRequests": [],
   "deletedBranches": [],
@@ -497,7 +515,7 @@
   "notes": [],
   "vulnerabilities": {
     "grype": "v0.121.0",
-    "dbBuilt": "2026-11-27T06:22:11Z",
+    "dbBuilt": "2026-11-28T06:20:09Z",
     "sbomOrigin": "ci-artifact (run 45879490759)",
     "sboms": [
       "library",
